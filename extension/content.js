@@ -129,11 +129,11 @@ async function upload(env, payload) {
     // 文件已经交给 input。重试只复查预览，避免同一张图再挂一次。
     part.assigned = true
   }
-  const ready = await waitUntil(Number(payload.timeoutMs) || 30000, function () {
+  const attached = await waitUntil(Number(payload.timeoutMs) || 30000, function () {
     return Page.freshAttachment(document, part.baseline)
   }, 2)
-  if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '上传等待已取消')
-  if (ready !== true) {
+  if (attached === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '上传等待已取消')
+  if (attached !== true) {
     return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '未确认当前输入区源图附件已就绪')
   }
   uploadApplied.set(uploadId, true)
