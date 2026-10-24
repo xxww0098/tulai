@@ -459,4 +459,7 @@ function generatedCard(prompt) {
   assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), ['https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/full.image'])
 }
 
+assert.strictEqual(Page.attachLocalImage, undefined)
+assert.strictEqual(Page.createChooserBridge, undefined)
+
 console.log('doubao page.js anchors ok')

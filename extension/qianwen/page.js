@@ -1,6 +1,7 @@
 // 千问页面动作。选择器沿用 internal/strategy/js/ego.js 里已经对着通义/千问页面验证过的锚点，
-// 不另起一套 class 名。上传优先找输入区旁边的 input[type=file]（可以是隐藏的），
-// 用 DataTransfer 赋值；只有找不到 input 时才点「添加附件」。
+// 不另起一套 class 名。输入区旁边已有 input[type=file]（可以是隐藏的）时直接 DataTransfer 赋值。
+// 当前千问菜单里没有这个 input：「上传图片」会临时创建 input 并调用 showPicker。
+// 主世界 chooser.js 武装之后，点这项把源图交进去，不打开系统文件框。
 // 本文件不碰 chrome.*，方便用 node 对锚点做夹具测试。
 globalThis.XBSPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
@@ -410,6 +411,155 @@ globalThis.XBSPage = (function () {
     return !!(input.files && input.files.length)
   }
 
+  // 与 qianwen/chooser.js 约定的事件名。源图只在派发 arm 的同步调用里留在 DOM 上。
+  const CHOOSER_SLOT = 'xbs-qianwen-file-slot'
+
+  function createChooserBridge(doc) {
+    const root = doc && doc.documentElement
+    if (!root || typeof root.getAttribute !== 'function' || root.getAttribute('data-xbs-chooser') !== 'qianwen') return null
+    return {
+      arm: function (file) { return armChooserSlot(doc, root, file) },
+      result: function () { return root.getAttribute('data-xbs-chooser-result') || '' },
+      disarm: function () {
+        try { doc.dispatchEvent(new Event('xbs-qianwen-disarm')) } catch (e) {}
+        const slot = doc.getElementById && doc.getElementById(CHOOSER_SLOT)
+        if (slot && typeof slot.remove === 'function') {
+          try { slot.remove() } catch (err) {}
+        }
+      },
+    }
+  }
+
+  function ensureChooserSlot(doc) {
+    if (!doc || typeof doc.createElement !== 'function') return null
+    const existing = doc.getElementById && doc.getElementById(CHOOSER_SLOT)
+    if (existing) return existing
+    const slot = doc.createElement('pre')
+    slot.id = CHOOSER_SLOT
+    slot.textContent = ''
+    if (typeof slot.setAttribute === 'function') {
+      slot.setAttribute('hidden', '')
+      slot.setAttribute('aria-hidden', 'true')
+    }
+    const parent = doc.documentElement || doc.body
+    if (!parent || typeof parent.appendChild !== 'function') return null
+    parent.appendChild(slot)
+    return slot
+  }
+
+  async function armChooserSlot(doc, root, file) {
+    root.setAttribute('data-xbs-chooser-result', '')
+    root.setAttribute('data-xbs-chooser-armed', '0')
+    let bytes
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer())
+    } catch (e) {
+      return false
+    }
+    const slot = ensureChooserSlot(doc)
+    if (!slot) return false
+    try {
+      slot.textContent = JSON.stringify({
+        name: (file && file.name) || 'image',
+        mime: (file && file.type) || 'application/octet-stream',
+        b64: bytesToBase64(bytes),
+      })
+      doc.dispatchEvent(new Event('xbs-qianwen-arm'))
+    } catch (e) {
+      slot.textContent = ''
+      return false
+    }
+    const armed = root.getAttribute('data-xbs-chooser-armed') === '1'
+    slot.textContent = ''
+    if (typeof slot.remove === 'function') {
+      try { slot.remove() } catch (e) {}
+    }
+    return armed
+  }
+
+  function nestedFileInput(doc) {
+    const item = uploadImageItem(doc)
+    if (!item || typeof item.querySelector !== 'function') return null
+    return item.querySelector('input[type="file"]')
+  }
+
+  function failedAssign() {
+    return { error: '无法把文件写入 input[type=file]', code: 'E_UPLOAD_FAIL' }
+  }
+
+  // 先走已有 file input（旧千问、以及菜单项里嵌着 input 的情况）。
+  // 没有 input、且主世界桥已就绪时，才点「上传图片」，让页面自己创建 input 并调用 showPicker。
+  async function attachLocalImage(doc, file, opts) {
+    opts = opts || {}
+    const cancelled = opts.cancelled || function () { return false }
+    const pause = opts.sleep || function (ms) { return new Promise(function (resolve) { setTimeout(resolve, ms) }) }
+    const timeout = Number(opts.timeout) || 2000
+    const bridge = opts.bridge || null
+    const comp = composer(doc)
+    const direct = fileInput(doc, comp)
+    if (direct) {
+      if (!assignFiles(direct, [file])) return failedAssign()
+      return { input: direct, assigned: true }
+    }
+    const nestedNow = nestedFileInput(doc)
+    if (nestedNow) {
+      if (!assignFiles(nestedNow, [file])) return failedAssign()
+      return { input: nestedNow, assigned: true }
+    }
+    const entry = uploadEntry(doc, comp)
+    if (!entry) return { error: '未找到当前输入区上传入口', code: 'E_SELECTOR_MISS' }
+    let armed = false
+    try {
+      if (cancelled()) return { error: '上传已取消', code: 'E_CANCELLED' }
+      if (bridge && bridge.arm) {
+        try {
+          armed = !!(await bridge.arm(file))
+        } catch (e) {
+          armed = false
+        }
+        if (!armed) return { error: '页面上传桥没有就绪，请刷新千问页面后重试', code: 'E_UPLOAD_FAIL' }
+      }
+      if (!uploadImageItem(doc)) {
+        try { entry.click() } catch (e) {}
+      }
+      const deadline = Date.now() + timeout
+      let clickedItem = false
+      while (Date.now() < deadline) {
+        if (cancelled()) return { error: '上传已取消', code: 'E_CANCELLED' }
+        const status = bridge && bridge.result ? bridge.result() : ''
+        if (status === 'ok') return { assigned: true, via: 'chooser' }
+        if (status === 'fail') return failedAssign()
+        const input = fileInput(doc, composer(doc))
+        if (input) {
+          if (!assignFiles(input, [file])) return failedAssign()
+          return { input: input, assigned: true }
+        }
+        const nested = nestedFileInput(doc)
+        if (nested) {
+          if (!assignFiles(nested, [file])) return failedAssign()
+          return { input: nested, assigned: true }
+        }
+        const item = uploadImageItem(doc)
+        if (bridge && item && !clickedItem) {
+          clickedItem = true
+          try { item.click() } catch (e) {}
+          const immediate = bridge.result ? bridge.result() : ''
+          if (immediate === 'ok') return { assigned: true, via: 'chooser' }
+          if (immediate === 'fail') return failedAssign()
+          continue
+        }
+        await pause(50)
+      }
+      if (bridge && bridge.result && bridge.result() === 'ok') return { assigned: true, via: 'chooser' }
+      if (clickedItem) return { error: '点击「上传图片」后没有接到文件选择（页面没有交出 input[type=file]）', code: 'E_SELECTOR_MISS' }
+      return { error: '未找到输入区的文件选择框（上传入口旁没有 input[type=file]）', code: 'E_SELECTOR_MISS' }
+    } finally {
+      if (armed && bridge && bridge.disarm) {
+        try { bridge.disarm() } catch (e) {}
+      }
+    }
+  }
+
   function freshAttachment(doc, baseline) {
     const comp = composer(doc)
     const scope = attachmentScope(comp, uploadEntry(doc, comp))
@@ -513,6 +663,8 @@ globalThis.XBSPage = (function () {
     composerCleared,
     sendAccepted,
     assignFiles,
+    createChooserBridge,
+    attachLocalImage,
     freshAttachment,
     attachmentScope,
     detectCaptcha,
