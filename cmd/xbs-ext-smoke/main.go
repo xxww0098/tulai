@@ -1,5 +1,6 @@
-// ext-smoke 启动本机扩展桥，等待千问扩展 hello，并做一次 ping 与 status。
-// 设置 XBS_EXT_LIVE=1 时，在已登录的千问页上再跑一次图生图。步骤见 extension/qianwen/README.md。
+// ext-smoke 启动本机扩展桥，等待扩展 hello，并做一次 ping 与 status。
+// 设置 XBS_EXT_LIVE=1 时，在已登录的页面上再跑一次图生图。
+// XBS_EXT_PLATFORM 默认 qianwen，豆包实机设为 doubao。步骤见 extension/README.md。
 package main
 
 import (
@@ -31,7 +32,7 @@ func main() {
 	defer srv.Close()
 	fmt.Printf("扩展桥监听 %s\n", srv.Addr())
 	fmt.Printf("令牌 %s\n", token)
-	fmt.Println("加载 extension/qianwen 后，在选项页保存同一令牌和端口。")
+	fmt.Println("加载 extension 后，在选项页保存同一令牌和端口。扩展会同时 hello 千问和豆包。")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -42,6 +43,10 @@ func main() {
 			return
 		}
 		fmt.Printf("hello 已通过 session=%s platform=%s\n", sess.ID(), sess.Platform())
+		if os.Getenv("XBS_EXT_LIVE") == "1" && sess.Platform() != livePlatform() {
+			fmt.Printf("实机目标是 %s，先跳过这条 %s hello。\n", livePlatform(), sess.Platform())
+			continue
+		}
 		callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		if err := sess.Ping(callCtx); err != nil {
 			fmt.Println("ping 失败:", err)
@@ -69,8 +74,16 @@ func main() {
 			return
 		}
 		fmt.Println("等待扩展断开或下一次 hello。Ctrl+C 退出。")
-		fmt.Println("要在已登录页面上跑一次图生图，另开进程并设置 XBS_EXT_LIVE=1、XBS_EXT_IMAGE、XBS_EXT_PROMPT。")
+		fmt.Println("要在已登录页面上跑一次图生图，另开进程并设置 XBS_EXT_LIVE=1、XBS_EXT_IMAGE、XBS_EXT_PROMPT。豆包再加 XBS_EXT_PLATFORM=doubao。")
 	}
+}
+
+func livePlatform() string {
+	platform := os.Getenv("XBS_EXT_PLATFORM")
+	if platform == "" {
+		return extbridge.PlatformQianwen
+	}
+	return platform
 }
 
 func liveOnce(ctx context.Context, sess *extbridge.Session) error {
@@ -87,14 +100,22 @@ func liveOnce(ctx context.Context, sess *extbridge.Session) error {
 		}
 		wait = time.Duration(seconds) * time.Second
 	}
-	fmt.Println("开始一次实机图生图。请确认通义/千问页已经打开并登录。")
-	out, err := tasks.RunQianwenExtension(ctx, sess, tasks.QianwenJob{
+	job := tasks.QianwenJob{
 		TaskID:            "live",
 		IdempotencyPrefix: "live",
 		Prompt:            prompt,
 		Images:            []string{image},
 		Wait:              wait,
-	})
+	}
+	var out tasks.QianwenRun
+	var err error
+	if sess.Platform() == extbridge.PlatformDoubao {
+		fmt.Println("开始一次实机图生图。请确认豆包页 https://www.doubao.com/chat/ 已经打开并登录。")
+		out, err = tasks.RunDoubaoExtension(ctx, sess, job)
+	} else {
+		fmt.Println("开始一次实机图生图。请确认通义/千问页已经打开并登录。")
+		out, err = tasks.RunQianwenExtension(ctx, sess, job)
+	}
 	if out.Submitted {
 		fmt.Println("发送已确认")
 	}

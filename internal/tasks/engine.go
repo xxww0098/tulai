@@ -300,7 +300,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			}
 			return t
 		}
-		if errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, errQianwenLogin) {
+		if errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) {
 			if e.cancel != nil {
 				e.cancel()
 			}
@@ -326,6 +326,9 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 // attempt 单次尝试：会话准备 → 上传 → 发送 → 等结果 → 保存。
 func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	if e.useExtension(t.Platform) {
+		if t.Platform == "豆包" {
+			return e.attemptDoubaoExtension(ctx, t)
+		}
 		return e.attemptQianwenExtension(ctx, t)
 	}
 	strat := strategy.Factory(t.Platform)

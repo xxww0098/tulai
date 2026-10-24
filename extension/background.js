@@ -1,19 +1,32 @@
 importScripts('protocol.js')
 
 const XBS = globalThis.XBS
-const ALARM = 'xbs-qianwen-reconnect'
-// 桌面端千问首页是 www.tongyi.com，ego.js 也认 qianwen.com。chat.qwen.ai 保留给国际站。
-const TAB_URLS = [
-  'https://www.tongyi.com/*',
-  'https://*.tongyi.com/*',
-  'https://tongyi.com/*',
-  'https://www.qianwen.com/*',
-  'https://*.qianwen.com/*',
-  'https://qianwen.com/*',
-  'https://chat.qwen.ai/*',
-  'https://*.qwen.ai/*',
-  'https://qwen.ai/*',
-]
+const ALARM = 'xbs-bridge-reconnect'
+// 一条 WebSocket hello 只登记一个 platform。千问和豆包各开一条连接，命令只发给对应站点的标签页。
+const SITES = {
+  qianwen: {
+    urls: [
+      'https://www.tongyi.com/*',
+      'https://*.tongyi.com/*',
+      'https://tongyi.com/*',
+      'https://www.qianwen.com/*',
+      'https://*.qianwen.com/*',
+      'https://qianwen.com/*',
+      'https://chat.qwen.ai/*',
+      'https://*.qwen.ai/*',
+      'https://qwen.ai/*',
+    ],
+    noTab: '没有千问标签页（tongyi.com / qianwen.com / qwen.ai）',
+  },
+  doubao: {
+    urls: [
+      'https://www.doubao.com/*',
+      'https://*.doubao.com/*',
+      'https://doubao.com/*',
+    ],
+    noTab: '没有豆包标签页（doubao.com）',
+  },
+}
 
 function isQianwenURL(url) {
   try {
@@ -23,13 +36,38 @@ function isQianwenURL(url) {
   }
 }
 
-let socket = null
-let opened = false
-let sessionId = ''
-let retryMs = 1000
-let reconnectTimer = null
-let pingTimer = null
-let connecting = false
+function isDoubaoURL(url) {
+  try {
+    return /(^|\.)doubao\.com$/.test(new URL(url).hostname)
+  } catch (err) {
+    return false
+  }
+}
+
+function siteOf(url) {
+  if (isQianwenURL(url)) return 'qianwen'
+  if (isDoubaoURL(url)) return 'doubao'
+  return ''
+}
+
+function newLink(platform) {
+  return {
+    platform,
+    socket: null,
+    opened: false,
+    sessionId: '',
+    retryMs: 1000,
+    reconnectTimer: null,
+    pingTimer: null,
+    connecting: false,
+    authError: '',
+  }
+}
+
+const links = {
+  qianwen: newLink('qianwen'),
+  doubao: newLink('doubao'),
+}
 const tabs = new Map()
 
 function storageGet() {
@@ -45,25 +83,45 @@ function setBadge(text, color) {
   chrome.action.setBadgeBackgroundColor({ color }).catch(() => {})
 }
 
-function stopPing() {
-  if (pingTimer) {
-    clearInterval(pingTimer)
-    pingTimer = null
+function refreshBadge() {
+  const all = Object.values(links)
+  if (all.some((link) => link.opened)) {
+    setBadge('ON', '#1b7f3a')
+    remember('on', '')
+    return
+  }
+  const auth = all.map((link) => link.authError).find(Boolean)
+  if (auth) {
+    setBadge('ERR', '#8c2f2f')
+    remember('error', auth)
+    return
+  }
+  setBadge('OFF', '#666666')
+  remember('off', '')
+}
+
+function stopPing(link) {
+  if (link.pingTimer) {
+    clearInterval(link.pingTimer)
+    link.pingTimer = null
   }
 }
 
-function startPing() {
-  stopPing()
-  pingTimer = setInterval(() => {
-    if (!opened || !socket || socket.readyState !== WebSocket.OPEN) return
-    socket.send(JSON.stringify(XBS.envelope('ping')))
+function startPing(link) {
+  stopPing(link)
+  link.pingTimer = setInterval(() => {
+    if (!link.opened || !link.socket || link.socket.readyState !== WebSocket.OPEN) return
+    const env = XBS.envelope('ping')
+    env.platform = link.platform
+    link.socket.send(JSON.stringify(env))
   }, XBS.pingEveryMs)
 }
 
-function sendToHost(env) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return false
-  if (sessionId && !env.sessionId) env.sessionId = sessionId
-  socket.send(JSON.stringify(env))
+function sendToHost(link, env) {
+  if (!link.socket || link.socket.readyState !== WebSocket.OPEN) return false
+  if (link.sessionId && !env.sessionId) env.sessionId = link.sessionId
+  if (!env.platform) env.platform = link.platform
+  link.socket.send(JSON.stringify(env))
   return true
 }
 
@@ -71,131 +129,135 @@ function remember(status, lastError) {
   return storageSet({ bridgeStatus: status, lastError: lastError || '' })
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer) return
-  const wait = retryMs
-  retryMs = Math.min(retryMs * 2, 15000)
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    connect()
+function scheduleReconnect(link) {
+  if (link.reconnectTimer) return
+  const wait = link.retryMs
+  link.retryMs = Math.min(link.retryMs * 2, 15000)
+  link.reconnectTimer = setTimeout(() => {
+    link.reconnectTimer = null
+    connect(link)
   }, wait)
 }
 
-function reconnect() {
-  const current = socket
-  socket = null
-  connecting = false
-  opened = false
-  sessionId = ''
-  stopPing()
+function reconnect(link) {
+  const current = link.socket
+  link.socket = null
+  link.connecting = false
+  link.opened = false
+  link.sessionId = ''
+  stopPing(link)
   if (current) {
     current.onclose = null
     current.close()
   }
-  connect()
+  connect(link)
 }
 
-async function connect() {
-  if (connecting || (socket && socket.readyState !== WebSocket.CLOSED)) return
-  connecting = true
+function reconnectAll() {
+  Object.values(links).forEach(reconnect)
+}
+
+async function connect(link) {
+  if (link.connecting || (link.socket && link.socket.readyState !== WebSocket.CLOSED)) return
+  link.connecting = true
   const cfg = await storageGet()
   const port = Number(cfg.port) || 18765
   let ws
   try {
     ws = new WebSocket('ws://127.0.0.1:' + port + '/')
   } catch (err) {
-    connecting = false
-    setBadge('ERR', '#8c2f2f')
-    await remember('error', String(err && err.message || err))
-    scheduleReconnect()
+    link.connecting = false
+    link.authError = String(err && err.message || err)
+    refreshBadge()
+    scheduleReconnect(link)
     return
   }
-  socket = ws
-  connecting = false
-  opened = false
-  sessionId = ''
+  link.socket = ws
+  link.connecting = false
+  link.opened = false
+  link.sessionId = ''
   ws.onopen = () => {
-    ws.send(JSON.stringify(XBS.hello(cfg.token)))
+    ws.send(JSON.stringify(XBS.hello(cfg.token, link.platform)))
   }
   ws.onmessage = (ev) => {
     if (typeof ev.data !== 'string') return
-    onHostMessage(ws, ev.data)
+    onHostMessage(link, ws, ev.data)
   }
   ws.onerror = () => {}
   ws.onclose = () => {
-    if (socket !== ws) return
-    const wasOpen = opened
-    socket = null
-    opened = false
-    sessionId = ''
-    stopPing()
-    if (wasOpen) {
-      setBadge('OFF', '#666666')
-      remember('off', '')
-    } else {
-      setBadge('ERR', '#8c2f2f')
-    }
-    scheduleReconnect()
+    if (link.socket !== ws) return
+    const wasOpen = link.opened
+    link.socket = null
+    link.opened = false
+    link.sessionId = ''
+    stopPing(link)
+    if (wasOpen) link.authError = ''
+    refreshBadge()
+    scheduleReconnect(link)
   }
 }
 
-function onHostMessage(ws, data) {
+function connectAll() {
+  Object.values(links).forEach(connect)
+}
+
+function onHostMessage(link, ws, data) {
   let env
   try {
     env = JSON.parse(data)
   } catch (err) {
     return
   }
-  if (!opened) {
+  if (!link.opened) {
     if (env.type === 'error') {
       const code = env.payload && env.payload.code
       const message = (env.payload && env.payload.message) || code || 'hello 失败'
-      setBadge('ERR', '#8c2f2f')
-      remember('error', message)
+      link.authError = message
+      refreshBadge()
       ws.close()
       return
     }
     if (env.type === 'ack' && env.payload && env.payload.name === XBS.commands.helloAck) {
-      opened = true
-      sessionId = env.sessionId || ''
-      retryMs = 1000
-      startPing()
-      setBadge('ON', '#1b7f3a')
-      remember('on', '')
+      link.opened = true
+      link.authError = ''
+      link.sessionId = env.sessionId || ''
+      link.retryMs = 1000
+      startPing(link)
+      refreshBadge()
     }
     return
   }
   if (env.type === 'ping') {
-    sendToHost(XBS.reply(env, 'pong'))
+    sendToHost(link, XBS.reply(env, 'pong'))
     return
   }
   if (env.type === 'pong' || env.type === 'ack' || env.type === 'error') return
   if (env.type === 'cmd') {
-    dispatchCommand(env)
+    dispatchCommand(link, env)
   }
 }
 
-async function dispatchCommand(env) {
+async function dispatchCommand(link, env) {
   const name = env.payload && env.payload.name
   if (name === XBS.commands.ping) {
-    sendToHost(XBS.ack(env, { name, ok: true }))
+    sendToHost(link, XBS.ack(env, { name, ok: true }))
     return
   }
   if (name === XBS.commands.status) {
-    sendToHost(XBS.ack(env, { name, ok: true, tabs: await snapshotTabs() }))
+    sendToHost(link, XBS.ack(env, { name, ok: true, tabs: await snapshotTabs(link.platform) }))
     return
   }
-  if (name === XBS.commands.cancel && !(await pickTab())) {
-    sendToHost(XBS.ack(env, { name, ok: true, message: '没有进行中的页面任务' }))
+  if (name === XBS.commands.cancel && !(await pickTab(link.platform))) {
+    sendToHost(link, XBS.ack(env, { name, ok: true, message: '没有进行中的页面任务' }))
     return
   }
   if (!XBS.pageCommands.includes(name) && name !== XBS.commands.cancel) {
-    sendToHost(XBS.fail(env, XBS.errors.E_PROTOCOL, '未知命令 ' + name))
+    sendToHost(link, XBS.fail(env, XBS.errors.E_PROTOCOL, '未知命令 ' + name))
     return
   }
-  const tab = await pickTab()
+  const tab = await pickTab(link.platform)
   if (!tab) {
-    sendToHost(XBS.fail(env, XBS.errors.E_NO_TAB, '没有千问标签页（tongyi.com / qianwen.com / qwen.ai）'))
+    sendToHost(link, XBS.fail(env, XBS.errors.E_NO_TAB, SITES[link.platform].noTab))
     return
   }
   markTab(tab.id, 'busy', env.taskId || '', tab.url || '')
@@ -205,12 +267,12 @@ async function dispatchCommand(env) {
       envelope: env,
     })
     if (!response) {
-      sendToHost(XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '内容脚本没有返回结果'))
+      sendToHost(link, XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '内容脚本没有返回结果'))
       return
     }
-    sendToHost(response)
+    sendToHost(link, response)
   } catch (err) {
-    sendToHost(XBS.fail(env, XBS.errors.E_NO_TAB, String(err && err.message || err)))
+    sendToHost(link, XBS.fail(env, XBS.errors.E_NO_TAB, String(err && err.message || err)))
   } finally {
     markTab(tab.id, 'idle', '', tab.url || '')
   }
@@ -227,8 +289,8 @@ function markTab(tabId, state, taskId, url) {
   })
 }
 
-async function snapshotTabs() {
-  const found = await chrome.tabs.query({ url: TAB_URLS })
+async function snapshotTabs(platform) {
+  const found = await chrome.tabs.query({ url: SITES[platform].urls })
   const seen = new Set()
   const out = []
   for (const tab of found) {
@@ -241,15 +303,14 @@ async function snapshotTabs() {
       taskId: known ? known.taskId || '' : '',
     })
   }
-  for (const [tabId, info] of tabs) {
-    if (!seen.has(tabId)) tabs.delete(tabId)
-    else if (info) info.url = info.url
+  for (const [tabId] of tabs) {
+    if (!seen.has(tabId) && siteOf((tabs.get(tabId) || {}).url) === platform) tabs.delete(tabId)
   }
   return out
 }
 
-async function pickTab() {
-  const found = await chrome.tabs.query({ url: TAB_URLS })
+async function pickTab(platform) {
+  const found = await chrome.tabs.query({ url: SITES[platform].urls })
   const idle = found.find((tab) => {
     const info = tabs.get(tab.id)
     return !info || info.state !== 'busy'
@@ -323,7 +384,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
   if (msg.type === 'RECONNECT') {
-    reconnect()
+    reconnectAll()
     return
   }
   if (msg.type === 'TAB_READY' && sender.tab) {
@@ -336,7 +397,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 })
 
 chrome.tabs.onUpdated.addListener((tabId, _info, tab) => {
-  if (!isQianwenURL(tab.url || '')) return
+  if (!siteOf(tab.url || '')) return
   const current = tabs.get(tabId)
   markTab(tabId, current && current.state === 'busy' ? 'busy' : 'idle', current ? current.taskId : '', tab.url)
 })
@@ -347,22 +408,22 @@ function ensureAlarm() {
 
 chrome.runtime.onInstalled.addListener(() => {
   ensureAlarm()
-  connect()
+  connectAll()
 })
 
 chrome.runtime.onStartup.addListener(() => {
   ensureAlarm()
-  connect()
+  connectAll()
 })
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM) connect()
+  if (alarm.name === ALARM) connectAll()
 })
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return
-  if (changes.token || changes.port) reconnect()
+  if (changes.token || changes.port) reconnectAll()
 })
 
 ensureAlarm()
-connect()
+connectAll()

@@ -123,7 +123,7 @@ func TestClassifyConnErr(t *testing.T) {
 
 func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 	root := repoRoot(t)
-	protocol := mustRead(t, filepath.Join(root, "extension", "qianwen", "protocol.js"))
+	protocol := mustRead(t, filepath.Join(root, "extension", "protocol.js"))
 	for _, name := range append(append([]string{}, Commands()...), ErrorCodes()...) {
 		if !bytes.Contains(protocol, []byte(name)) {
 			t.Errorf("protocol.js missing %s", name)
@@ -132,13 +132,13 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 	if !bytes.Contains(protocol, []byte("15000")) {
 		t.Fatal("protocol.js ping interval")
 	}
-	background := mustRead(t, filepath.Join(root, "extension", "qianwen", "background.js"))
+	background := mustRead(t, filepath.Join(root, "extension", "background.js"))
 	for _, needle := range []string{"COMMAND_FROM_HOST", "chrome.alarms", "pingEveryMs", "periodInMinutes: 0.5"} {
 		if !bytes.Contains(background, []byte(needle)) {
 			t.Errorf("background.js missing %s", needle)
 		}
 	}
-	content := mustRead(t, filepath.Join(root, "extension", "qianwen", "content.js"))
+	content := mustRead(t, filepath.Join(root, "extension", "content.js"))
 	for _, needle := range []string{"COMMAND_FROM_HOST", "E_SELECTOR_MISS", "E_SEND_UNCERTAIN", "DataTransfer", "idempotencyKey"} {
 		if !bytes.Contains(content, []byte(needle)) && !bytes.Contains(mustRead(t, filepath.Join(root, "extension", "qianwen", "page.js")), []byte(needle)) {
 			t.Errorf("qianwen extension missing %s", needle)
@@ -151,7 +151,7 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	var manifest map[string]any
-	if err := json.Unmarshal(mustRead(t, filepath.Join(root, "extension", "qianwen", "manifest.json")), &manifest); err != nil {
+	if err := json.Unmarshal(mustRead(t, filepath.Join(root, "extension", "manifest.json")), &manifest); err != nil {
 		t.Fatal(err)
 	}
 	if manifest["manifest_version"] != float64(3) {
@@ -166,19 +166,25 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		t.Fatalf("missing permissions: %v", need)
 	}
 	hosts, _ := json.Marshal(manifest["host_permissions"])
-	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "*.qwen.ai", "127.0.0.1"} {
+	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "*.qwen.ai", "www.doubao.com", "127.0.0.1"} {
 		if !bytes.Contains(hosts, []byte(needle)) {
 			t.Errorf("host_permissions missing %s: %s", needle, hosts)
 		}
 	}
 	scripts, _ := json.Marshal(manifest["content_scripts"])
-	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "page.js", "content.js"} {
+	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "qianwen/page.js", "doubao/page.js", "www.doubao.com", "content.js"} {
 		if !bytes.Contains(scripts, []byte(needle)) {
 			t.Errorf("content_scripts missing %s: %s", needle, scripts)
 		}
 	}
-	if !bytes.Contains(background, []byte("tongyi.com")) || !bytes.Contains(background, []byte("qianwen.com")) {
-		t.Fatal("background tab patterns do not cover tongyi.com and qianwen.com")
+	if !bytes.Contains(background, []byte("tongyi.com")) || !bytes.Contains(background, []byte("qianwen.com")) || !bytes.Contains(background, []byte("doubao.com")) {
+		t.Fatal("background tab patterns do not cover tongyi.com, qianwen.com, and doubao.com")
+	}
+	doubaoPage := mustRead(t, filepath.Join(root, "extension", "doubao", "page.js"))
+	for _, needle := range []string{"upload_file_button", "上传文件或图片", "mdbox_image", "message_image_content", "captchaBlocked", "DataTransfer"} {
+		if !bytes.Contains(doubaoPage, []byte(needle)) && !bytes.Contains(content, []byte(needle)) {
+			t.Errorf("doubao page actions missing %s", needle)
+		}
 	}
 }
 
@@ -187,6 +193,14 @@ func TestQianwenPageSelectors(t *testing.T) {
 	out, err := exec.Command("node", filepath.Join(root, "extension", "qianwen", "page_test.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("page_test.js: %v\n%s", err, out)
+	}
+}
+
+func TestDoubaoPageSelectors(t *testing.T) {
+	root := repoRoot(t)
+	out, err := exec.Command("node", filepath.Join(root, "extension", "doubao", "page_test.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("doubao page_test.js: %v\n%s", err, out)
 	}
 }
 
