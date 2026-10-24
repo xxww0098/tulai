@@ -188,6 +188,23 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 	}
 }
 
+func TestExtensionScriptsParse(t *testing.T) {
+	root := repoRoot(t)
+	for _, rel := range []string{
+		"extension/content.js",
+		"extension/background.js",
+		"extension/protocol.js",
+		"extension/options.js",
+		"extension/doubao/page.js",
+		"extension/qianwen/page.js",
+	} {
+		out, err := exec.Command("node", "--check", filepath.Join(root, rel)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", rel, err, out)
+		}
+	}
+}
+
 func TestQianwenPageSelectors(t *testing.T) {
 	root := repoRoot(t)
 	out, err := exec.Command("node", filepath.Join(root, "extension", "qianwen", "page_test.js")).CombinedOutput()

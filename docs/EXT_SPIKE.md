@@ -60,6 +60,7 @@ internal/extbridge                extension/
 
 ```sh
 go test ./internal/extbridge/... ./internal/tasks/ -count=1
+node --check extension/content.js
 node extension/qianwen/page_test.js
 node extension/doubao/page_test.js
 go run ./cmd/xbs-ext-smoke
