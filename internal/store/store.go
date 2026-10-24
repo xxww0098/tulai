@@ -32,7 +32,8 @@ type Store struct {
 	path string
 }
 
-// defaults 与原软件 settings 表实测默认值一一对应。
+// defaults 是新库的初始设置。除 browserBackend 外，键与原软件 settings 表实测默认值对应。
+// browserBackend 只接受 extension 或 ego，默认 ego；任务引擎尚未读取，当前路径仍看 browser_backend。
 var defaults = map[string]string{
 	"selected_platforms":     "豆包",
 	"task_type":              "ImageGeneration",
@@ -69,6 +70,7 @@ var defaults = map[string]string{
 	"captcha_ikunocr_track":  "dom2",
 	"minimize_browser":       "0",
 	"sent_count_total":       "0",
+	"browserBackend":         "ego",
 }
 
 const schema = `

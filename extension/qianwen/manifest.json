@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "xbs 千问桥",
+  "version": "0.1.0",
+  "description": "把本机 xbs 的命令转到千问页面。这一版只接通 WebSocket，页面操作返回 E_SELECTOR_MISS。",
+  "permissions": ["storage", "tabs", "alarms", "scripting"],
+  "host_permissions": [
+    "https://chat.qwen.ai/*",
+    "https://*.qwen.ai/*",
+    "http://127.0.0.1/*",
+    "ws://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chat.qwen.ai/*", "https://*.qwen.ai/*"],
+      "js": ["protocol.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "xbs 千问桥"
+  }
+}
