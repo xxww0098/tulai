@@ -139,13 +139,13 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	content := mustRead(t, filepath.Join(root, "extension", "content.js"))
-	for _, needle := range []string{"COMMAND_FROM_HOST", "E_SELECTOR_MISS", "E_SEND_UNCERTAIN", "DataTransfer", "idempotencyKey"} {
+	for _, needle := range []string{"COMMAND_FROM_HOST", "E_SELECTOR_MISS", "E_SEND_UNCERTAIN", "DataTransfer", "idempotencyKey", "attachLocalImage", "createChooserBridge", "locateFileInput"} {
 		if !bytes.Contains(content, []byte(needle)) && !bytes.Contains(mustRead(t, filepath.Join(root, "extension", "qianwen", "page.js")), []byte(needle)) {
 			t.Errorf("qianwen extension missing %s", needle)
 		}
 	}
 	page := mustRead(t, filepath.Join(root, "extension", "qianwen", "page.js"))
-	for _, needle := range []string{"添加附件", "上传图片", "DataTransfer", "#qk-markdown-react", "captchaBlocked"} {
+	for _, needle := range []string{"添加附件", "上传图片", "DataTransfer", "#qk-markdown-react", "captchaBlocked", "attachLocalImage"} {
 		if !bytes.Contains(page, []byte(needle)) && !bytes.Contains(content, []byte(needle)) {
 			t.Errorf("qianwen page actions missing %s", needle)
 		}
@@ -172,7 +172,7 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	scripts, _ := json.Marshal(manifest["content_scripts"])
-	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "qianwen/page.js", "doubao/page.js", "www.doubao.com", "content.js"} {
+	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "qianwen/page.js", "qianwen/chooser.js", "MAIN", "doubao/page.js", "www.doubao.com", "content.js"} {
 		if !bytes.Contains(scripts, []byte(needle)) {
 			t.Errorf("content_scripts missing %s: %s", needle, scripts)
 		}
@@ -180,7 +180,16 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 	if !bytes.Contains(background, []byte("tongyi.com")) || !bytes.Contains(background, []byte("qianwen.com")) || !bytes.Contains(background, []byte("doubao.com")) {
 		t.Fatal("background tab patterns do not cover tongyi.com, qianwen.com, and doubao.com")
 	}
+	chooser := mustRead(t, filepath.Join(root, "extension", "qianwen", "chooser.js"))
+	for _, needle := range []string{"showPicker", "data-xbs-chooser", "xbs-qianwen-arm", "xbs-qianwen-disarm"} {
+		if !bytes.Contains(chooser, []byte(needle)) {
+			t.Errorf("qianwen chooser missing %s", needle)
+		}
+	}
 	doubaoPage := mustRead(t, filepath.Join(root, "extension", "doubao", "page.js"))
+	if bytes.Contains(doubaoPage, []byte("attachLocalImage")) || bytes.Contains(doubaoPage, []byte("createChooserBridge")) {
+		t.Fatal("doubao page should keep assigning an existing file input and not grow the qianwen chooser")
+	}
 	for _, needle := range []string{"upload_file_button", "上传文件或图片", "mdbox_image", "message_image_content", "captchaBlocked", "DataTransfer"} {
 		if !bytes.Contains(doubaoPage, []byte(needle)) && !bytes.Contains(content, []byte(needle)) {
 			t.Errorf("doubao page actions missing %s", needle)
@@ -197,6 +206,7 @@ func TestExtensionScriptsParse(t *testing.T) {
 		"extension/options.js",
 		"extension/doubao/page.js",
 		"extension/qianwen/page.js",
+		"extension/qianwen/chooser.js",
 	} {
 		out, err := exec.Command("node", "--check", filepath.Join(root, rel)).CombinedOutput()
 		if err != nil {

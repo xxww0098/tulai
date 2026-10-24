@@ -7,7 +7,7 @@
 - `qianwen/page.js`：`添加附件`、`上传图片`、`#qk-markdown-react`
 - `doubao/page.js`：`button[data-testid="upload_file_button"]`、菜单全文「上传文件或图片」、结果必须在 `[data-testid="mdbox_image"]`
 
-两边共用 `content.js`。上传优先写输入区旁边的 `input[type=file]`（可以是隐藏的），不弹系统文件框。ego / Chrome 路径还在。
+两边共用 `content.js`。上传优先写输入区旁边的 `input[type=file]`（可以是隐藏的），不弹系统文件框。千问当前菜单里没有这个 input：`qianwen/chooser.js` 在页面主世界拦住这一次 `showPicker`，点「上传图片」后把源图交进去。豆包仍只给已有的 file input 赋值，不点菜单项。ego / Chrome 路径还在。
 
 ## 加载（Load unpacked）
 

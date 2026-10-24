@@ -114,8 +114,6 @@ async function upload(env, payload) {
   if (!part.assigned) {
     const blocked = Page.unsentBlocksUpload(document, Page.composer(document))
     if (blocked) return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, blocked)
-    const located = await locateFileInput()
-    if (located.error) return XBS.fail(env, located.code || XBS.errors.E_SELECTOR_MISS, located.error)
     let file
     try {
       file = new File([bytes], part.fileName, { type: part.mime })
@@ -123,10 +121,16 @@ async function upload(env, payload) {
       return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '无法构造上传文件')
     }
     part.baseline = new Set(Array.from(document.querySelectorAll('img')))
-    if (!Page.assignFiles(located.input, [file])) {
-      return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '无法把文件写入 input[type=file]')
-    }
-    // 文件已经交给 input。重试只复查预览，避免同一张图再挂一次。
+    // 千问 page.js 提供 attachLocalImage：有 file input 就赋值，没有则点「上传图片」走主世界桥。
+    // 豆包没有这个函数，仍只给已有 input 赋值，不点菜单项。
+    const located = typeof Page.attachLocalImage === 'function'
+      ? await Page.attachLocalImage(document, file, {
+          bridge: typeof Page.createChooserBridge === 'function' ? Page.createChooserBridge(document) : null,
+          cancelled: function () { return cancelRequested },
+        })
+      : await assignExistingInput(file)
+    if (located.error) return XBS.fail(env, located.code || XBS.errors.E_SELECTOR_MISS, located.error)
+    // 文件已经交给页面。重试只复查预览，避免同一张图再挂一次。
     part.assigned = true
   }
   const attached = await waitUntil(Number(payload.timeoutMs) || 30000, function () {
@@ -153,6 +157,16 @@ function concatChunks(part) {
     cursor += chunk.length
   }
   return out
+}
+
+// 豆包（以及没有主世界桥的页面）只给已经出现的 file input 赋值。
+async function assignExistingInput(file) {
+  const located = await locateFileInput()
+  if (located.error) return located
+  if (!Page.assignFiles(located.input, [file])) {
+    return { error: '无法把文件写入 input[type=file]', code: XBS.errors.E_UPLOAD_FAIL }
+  }
+  return located
 }
 
 // 先找输入区旁的 file input（可以是隐藏的）。菜单已经开着、并且选项里面嵌着 input 时直接用它，

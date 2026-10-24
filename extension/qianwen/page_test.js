@@ -311,4 +311,215 @@ function surfaceWithInputs() {
   assert.strictEqual(Page.loginWall(doc), false)
 }
 
-console.log('page.js anchors ok')
+function installChooserMocks() {
+  global.DataTransfer = class DataTransfer {
+    constructor() {
+      const files = []
+      this.items = { add(file) { files.push(file) } }
+      Object.defineProperty(this, 'files', {
+        get() {
+          return {
+            length: files.length,
+            item: (i) => files[i],
+            [Symbol.iterator]: function* () { yield* files },
+          }
+        },
+      })
+    }
+  }
+  const elements = {}
+  const listeners = {}
+  const attrs = {}
+  global.document = {
+    documentElement: {
+      setAttribute(name, value) { attrs[name] = String(value) },
+      getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null },
+      appendChild(el) {
+        if (el && el.id) elements[el.id] = el
+        return el
+      },
+    },
+    getElementById(id) { return elements[id] || null },
+    createElement() {
+      return {
+        id: '',
+        textContent: '',
+        setAttribute() {},
+        remove() {
+          if (this.id && elements[this.id] === this) delete elements[this.id]
+        },
+      }
+    },
+    addEventListener(type, fn) {
+      ;(listeners[type] || (listeners[type] = [])).push(fn)
+    },
+    dispatchEvent(ev) {
+      ;(listeners[ev.type] || []).forEach((fn) => fn(ev))
+      return true
+    },
+  }
+  global.HTMLElement = class HTMLElement {}
+  global.HTMLElement.nativeClicks = 0
+  global.HTMLElement.prototype.click = function () { global.HTMLElement.nativeClicks++ }
+  global.HTMLInputElement = class HTMLInputElement extends global.HTMLElement {
+    constructor() {
+      super()
+      this.type = ''
+      this.accept = ''
+      this.files = null
+      this.value = ''
+      this._listeners = {}
+    }
+    getAttribute(name) {
+      if (name === 'accept') return this.accept || null
+      return null
+    }
+    addEventListener(type, fn) {
+      ;(this._listeners[type] || (this._listeners[type] = [])).push(fn)
+    }
+    dispatchEvent(ev) {
+      const list = this._listeners[ev.type] || []
+      for (const fn of list) fn(ev)
+      return true
+    }
+    remove() {}
+  }
+  global.HTMLInputElement.prototype.tagName = 'INPUT'
+  global.HTMLInputElement.nativePickers = 0
+  global.HTMLInputElement.prototype.showPicker = function () { global.HTMLInputElement.nativePickers++ }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function chooserFlow() {
+  installChooserMocks()
+  vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'chooser.js'), 'utf8'))
+  assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser'), 'qianwen')
+
+  document.documentElement.setAttribute('data-xbs-chooser', '')
+  assert.strictEqual(Page.createChooserBridge(document), null)
+  document.documentElement.setAttribute('data-xbs-chooser', 'qianwen')
+
+  const bytes = Uint8Array.from([137, 80, 78, 71, 0, 255])
+  const file = new File([bytes], 'src.png', { type: 'image/png' })
+
+  {
+    const { doc, entry, hidden } = surfaceWithInputs()
+    let armed = false
+    const located = await Page.attachLocalImage(doc, file, {
+      bridge: {
+        arm() { armed = true; return true },
+        result() { return '' },
+        disarm() {},
+      },
+    })
+    assert.strictEqual(armed, false, '已有 file input 时不应武装菜单桥')
+    assert.strictEqual(entry.clicked || 0, 0)
+    assert.strictEqual(located.input, hidden)
+    assert.strictEqual(located.assigned, true)
+    assert.strictEqual(hidden.files.length, 1)
+  }
+
+  {
+    const doc = makeDoc('www.qianwen.com')
+    const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+    surface.className = 'guidance-input-surface'
+    surface.append(new El('textarea'))
+    const entry = surface.append(new El('button', { 'aria-label': '添加附件' }))
+    let item = null
+    entry.click = function () {
+      this.clicked = (this.clicked || 0) + 1
+      item = doc.body.append(new El('div', { role: 'menuitem' }))
+      item.addText('上传图片\n最多上传10张')
+      item.click = function () {
+        this.clicked = (this.clicked || 0) + 1
+        const input = new HTMLInputElement()
+        input.type = 'file'
+        input.accept = 'image/jpeg,image/png,.jpg,.png,.webp,.bmp'
+        input.addEventListener('change', () => {
+          item.picked = Array.from(input.files || [])
+          input.value = ''
+          input.files = { length: 0 }
+        })
+        try { input.showPicker() } catch (e) { input.click() }
+      }
+    }
+    const bridge = Page.createChooserBridge(document)
+    const located = await Page.attachLocalImage(doc, file, { bridge, timeout: 500 })
+    assert.strictEqual(located.assigned, true)
+    assert.strictEqual(located.via, 'chooser')
+    assert.strictEqual(entry.clicked, 1)
+    assert.strictEqual(item.clicked, 1)
+    assert.strictEqual(HTMLInputElement.nativePickers, 0, '应拦住 showPicker，不打开系统文件框')
+    assert.strictEqual(item.picked.length, 1)
+    assert.strictEqual(item.picked[0].name, 'src.png')
+    assert.strictEqual(item.picked[0].type, 'image/png')
+    const got = new Uint8Array(await item.picked[0].arrayBuffer())
+    assert.deepStrictEqual(Array.from(got), Array.from(bytes))
+    assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser-armed'), '0')
+    assert.strictEqual(document.getElementById('xbs-qianwen-file-slot'), null)
+  }
+
+  {
+    const bridge = Page.createChooserBridge(document)
+    assert.strictEqual(await bridge.arm(file), true)
+    const before = HTMLInputElement.nativePickers
+    const pdf = new HTMLInputElement()
+    pdf.type = 'file'
+    pdf.accept = '.pdf,.doc,application/pdf'
+    pdf.showPicker()
+    assert.strictEqual(HTMLInputElement.nativePickers, before + 1, '文档选择框仍走系统文件框')
+    assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser-result') || '', '')
+    const img = new HTMLInputElement()
+    img.type = 'file'
+    img.accept = 'image/png'
+    let got = 0
+    img.addEventListener('change', () => { got = img.files.length })
+    img.showPicker()
+    assert.strictEqual(got, 1)
+    assert.strictEqual(HTMLInputElement.nativePickers, before + 1)
+    assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser-result'), 'ok')
+    bridge.disarm()
+  }
+
+  {
+    const doc = makeDoc('www.qianwen.com')
+    const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+    surface.className = 'guidance-input-surface'
+    surface.append(new El('textarea'))
+    const entry = surface.append(new El('button', { 'aria-label': '添加附件' }))
+    const item = doc.body.append(new El('div', { role: 'menuitem' }))
+    item.addText('上传图片')
+    const located = await Page.attachLocalImage(doc, file, {
+      timeout: 40,
+      sleep: () => sleep(5),
+    })
+    assert.strictEqual(located.code, 'E_SELECTOR_MISS')
+    assert.strictEqual(located.error, '未找到输入区的文件选择框（上传入口旁没有 input[type=file]）')
+    assert.strictEqual(entry.clicked || 0, 0, '菜单已经开着时不应再点入口')
+    assert.strictEqual(item.clicked || 0, 0, '没有主世界桥时不应点上传图片')
+  }
+
+  {
+    const doc = makeDoc('www.qianwen.com')
+    const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+    surface.className = 'guidance-input-surface'
+    surface.append(new El('textarea'))
+    surface.append(new El('button', { 'aria-label': '添加附件' }))
+    let disarmed = false
+    const located = await Page.attachLocalImage(doc, file, {
+      bridge: { arm() { return false }, result() { return '' }, disarm() { disarmed = true } },
+    })
+    assert.strictEqual(located.code, 'E_UPLOAD_FAIL')
+    assert.strictEqual(disarmed, false)
+  }
+}
+
+chooserFlow().then(() => {
+  console.log('page.js anchors ok')
+}).catch((err) => {
+  console.error(err)
+  process.exit(1)
+})

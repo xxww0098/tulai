@@ -36,6 +36,22 @@
         "https://*.qwen.ai/*",
         "https://qwen.ai/*"
       ],
+      "js": ["qianwen/chooser.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.tongyi.com/*",
+        "https://*.tongyi.com/*",
+        "https://tongyi.com/*",
+        "https://www.qianwen.com/*",
+        "https://*.qianwen.com/*",
+        "https://qianwen.com/*",
+        "https://chat.qwen.ai/*",
+        "https://*.qwen.ai/*",
+        "https://qwen.ai/*"
+      ],
       "js": ["protocol.js", "qianwen/page.js", "content.js"],
       "run_at": "document_idle"
     },
