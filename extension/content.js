@@ -134,9 +134,13 @@ async function upload(env, payload) {
     part.assigned = true
   }
   const attached = await waitUntil(Number(payload.timeoutMs) || 30000, function () {
+    if (typeof Page.attachmentRejected === 'function' && Page.attachmentRejected(document)) return 'rejected'
     return Page.freshAttachment(document, part.baseline)
   }, 2)
   if (attached === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '上传等待已取消')
+  if (attached === 'rejected') {
+    return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '输入区显示「上传失败」，源图未就绪')
+  }
   if (attached !== true) {
     return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '未确认当前输入区源图附件已就绪')
   }
@@ -217,7 +221,17 @@ async function sendPrompt(env, payload) {
     const prev = sendState.get(key)
     if (prev.promise && prev.phase === 'clicking') return prev.promise
     if (prev.phase === 'ok') return XBS.ack(env, { name: payload.name, ok: true, deduped: true })
-    if (prev.phase === 'uncertain') {
+    if (prev.phase === 'captcha') {
+      const again = Page.detectCaptcha(document)
+      if (again.blocked) return captchaAck(env, again, captchaSendMessage(again))
+      if (prev.clicked) {
+        if (Page.sendAccepted(document, pageMark)) {
+          prev.phase = 'ok'
+          return XBS.ack(env, { name: payload.name, ok: true, deduped: true })
+        }
+        return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, '验证码已消失，但发送状态仍未确认，未再次点击')
+      }
+    } else if (prev.phase === 'uncertain') {
       return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, prev.message || '发送状态未确认，未再次点击')
     }
   }
@@ -234,30 +248,73 @@ async function sendPrompt(env, payload) {
   if (!button) return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '未找到已就绪的发送按钮')
   // 点发送之前记边界，和策略里的 MarkTask 一样，避免把源图回显当成结果。
   pageMark = Page.mark(document, prompt)
-  const rec = { phase: 'clicking', message: '' }
+  const rec = { phase: 'clicking', message: '', clicked: false }
   const job = confirmSend(env, payload, button, rec)
   rec.promise = job
   if (key) sendState.set(key, rec)
   return job
 }
 
+function pressSend(button) {
+  // 千问 page.js 提供 activate：先 pointer 再 click，Radix 发送按钮不会只吃到 click。
+  // 豆包没有这个函数，仍只 click，上传菜单路径也不从这里走。
+  if (button && typeof Page.activate === 'function') return Page.activate(button) !== false
+  try { button.click(); return true } catch (e) { return false }
+}
+
+function captchaSendMessage(found) {
+  if (found && found.baxia) return '发送后出现阿里云滑块验证（Baxia），需要人工处理'
+  return '发送后出现验证码，需要人工处理'
+}
+
 async function confirmSend(env, payload, button, rec) {
-  try { button.click() } catch (err) {
+  const already = Page.detectCaptcha(document)
+  if (already.blocked) {
+    rec.phase = 'captcha'
+    rec.clicked = false
+    rec.promise = null
+    rec.message = captchaSendMessage(already)
+    return captchaAck(env, already, rec.message)
+  }
+  if (!pressSend(button)) {
     rec.phase = 'uncertain'
+    rec.clicked = false
     rec.message = '点击发送失败'
     return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, rec.message)
   }
-  const accepted = await waitUntil(Number(payload.timeoutMs) || 15000, function () {
-    return Page.sendAccepted(document, pageMark)
-  }, 1)
-  if (accepted === true) {
-    rec.phase = 'ok'
+  rec.clicked = true
+  const deadline = Date.now() + (Number(payload.timeoutMs) || 15000)
+  while (Date.now() < deadline) {
+    if (cancelRequested) {
+      rec.phase = 'uncertain'
+      rec.promise = null
+      rec.message = '发送已点击，取消时尚未确认平台接受'
+      return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, rec.message)
+    }
+    const found = Page.detectCaptcha(document)
+    if (found.blocked) {
+      rec.phase = 'captcha'
+      rec.promise = null
+      rec.message = captchaSendMessage(found)
+      return captchaAck(env, found, rec.message)
+    }
+    if (Page.sendAccepted(document, pageMark)) {
+      rec.phase = 'ok'
+      rec.promise = null
+      return XBS.ack(env, { name: payload.name, ok: true })
+    }
+    await delay(300)
+  }
+  const late = Page.detectCaptcha(document)
+  if (late.blocked) {
+    rec.phase = 'captcha'
     rec.promise = null
-    return XBS.ack(env, { name: payload.name, ok: true })
+    rec.message = captchaSendMessage(late)
+    return captchaAck(env, late, rec.message)
   }
   rec.phase = 'uncertain'
   rec.promise = null
-  rec.message = accepted === 'cancel' ? '发送已点击，取消时尚未确认平台接受' : '平台未接受消息：发送后输入仍未清空'
+  rec.message = '平台未接受消息：发送后输入仍未清空'
   return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, rec.message)
 }
 
@@ -372,15 +429,16 @@ function captchaAssist(env) {
   return captchaAck(env, found)
 }
 
-function captchaAck(env, found) {
-  const crop = Page.captchaCrop(found.root)
+function captchaAck(env, found, message) {
+  const crop = Page.captchaCrop(found && found.root)
+  const name = (env && env.payload && env.payload.name) || XBS.commands.captchaAssist
   return XBS.ack(env, {
-    name: XBS.commands.captchaAssist,
+    name,
     ok: false,
     code: XBS.errors.E_CAPTCHA_HUMAN,
-    message: '页面出现验证码，需要人工处理',
+    message: message || '页面出现验证码，需要人工处理',
     captchaBlocked: true,
-    kind: found.kind || 'unknown',
+    kind: (found && found.kind) || 'unknown',
     crop: crop || '',
   })
 }
@@ -396,15 +454,19 @@ async function waitFor(fn, timeout) {
   return null
 }
 
-// needStable 次连续命中才算数，用来躲开附件预览刚插入时的抖动。
+// needStable 次连续命中 true 才算数，用来躲开附件预览刚插入时的抖动。
+// 其它真值（例如「上传失败」）立刻返回，不当成就绪。
 async function waitUntil(timeout, fn, needStable) {
   const deadline = Date.now() + timeout
   let stable = 0
   while (Date.now() < deadline) {
     if (cancelRequested) return 'cancel'
-    if (fn()) {
+    const value = fn()
+    if (value === true) {
       stable++
       if (stable >= needStable) return true
+    } else if (value) {
+      return value
     } else {
       stable = 0
     }

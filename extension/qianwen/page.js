@@ -487,6 +487,78 @@ globalThis.XBSPage = (function () {
     return { error: '无法把文件写入 input[type=file]', code: 'E_UPLOAD_FAIL' }
   }
 
+  // HTMLElement.click() 只有 click，没有 pointerdown。Radix 触发器在 pointerdown 上打开菜单，
+  // 并 preventDefault，真实点击不会再补一次 click。菜单项则相反：pointerdown 只是拦住焦点，真正选中仍在 click。
+  function dispatchUiEvent(el, type) {
+    if (!el || typeof el.dispatchEvent !== 'function') return null
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null
+    const x = rect ? rect.left + rect.width / 2 : 0
+    const y = rect ? rect.top + rect.height / 2 : 0
+    const point = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      button: 0,
+      buttons: type === 'pointerdown' || type === 'mousedown' ? 1 : 0,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+    }
+    const pointer = type === 'pointerdown' || type === 'pointerup'
+    let ev = null
+    try {
+      if (pointer && typeof PointerEvent === 'function') ev = new PointerEvent(type, point)
+    } catch (e) { ev = null }
+    if (!ev) {
+      try {
+        if (typeof MouseEvent === 'function') ev = new MouseEvent(type, point)
+      } catch (e) { ev = null }
+    }
+    if (!ev) {
+      try { ev = new Event(type, { bubbles: true, cancelable: true, composed: true }) } catch (e) { return null }
+    }
+    try { el.dispatchEvent(ev) } catch (e) {}
+    return ev
+  }
+
+  function poke(el) {
+    const down = dispatchUiEvent(el, 'pointerdown')
+    dispatchUiEvent(el, 'mousedown')
+    dispatchUiEvent(el, 'pointerup')
+    dispatchUiEvent(el, 'mouseup')
+    return down
+  }
+
+  // 发送按钮和「上传图片」都要走完 pointer 再 click。pointerdown 若已 preventDefault，click 仍然要发：
+  // Radix 菜单项的选中在 click 上。
+  function activate(el) {
+    if (!el) return false
+    poke(el)
+    try { el.click() } catch (e) { return false }
+    return true
+  }
+
+  // 添加附件是菜单触发器。pointerdown 已经把菜单打开，或已经 preventDefault 时，再 click 会把菜单关掉。
+  function openUploadEntry(doc, entry) {
+    const down = poke(entry)
+    if (uploadImageItem(doc)) return
+    if (down && down.defaultPrevented) return
+    try { entry.click() } catch (e) {}
+  }
+
+  // pointerup 已经把文件交给主世界桥时不要再 click，否则会落到没武装的 showPicker，弹出系统文件框。
+  function activateChooserItem(item, bridge) {
+    poke(item)
+    let status = bridge && bridge.result ? bridge.result() : ''
+    if (status === 'ok' || status === 'fail') return status
+    try { item.click() } catch (e) {}
+    return bridge && bridge.result ? bridge.result() : ''
+  }
+
   // 先走已有 file input（旧千问、以及菜单项里嵌着 input 的情况）。
   // 没有 input、且主世界桥已就绪时，才点「上传图片」，让页面自己创建 input 并调用 showPicker。
   async function attachLocalImage(doc, file, opts) {
@@ -519,9 +591,7 @@ globalThis.XBSPage = (function () {
         }
         if (!armed) return { error: '页面上传桥没有就绪，请刷新千问页面后重试', code: 'E_UPLOAD_FAIL' }
       }
-      if (!uploadImageItem(doc)) {
-        try { entry.click() } catch (e) {}
-      }
+      if (!uploadImageItem(doc)) openUploadEntry(doc, entry)
       const deadline = Date.now() + timeout
       let clickedItem = false
       while (Date.now() < deadline) {
@@ -542,8 +612,7 @@ globalThis.XBSPage = (function () {
         const item = uploadImageItem(doc)
         if (bridge && item && !clickedItem) {
           clickedItem = true
-          try { item.click() } catch (e) {}
-          const immediate = bridge.result ? bridge.result() : ''
+          const immediate = activateChooserItem(item, bridge)
           if (immediate === 'ok') return { assigned: true, via: 'chooser' }
           if (immediate === 'fail') return failedAssign()
           continue
@@ -560,32 +629,120 @@ globalThis.XBSPage = (function () {
     }
   }
 
+  // 千问附件区里的短标签。提示词在输入框的 value 里，不会被这层当成失败。
+  function uploadFailureLabel(scope) {
+    if (!scope) return false
+    const nodes = all(scope, 'span,p,div,button,[role="status"],[role="alert"]')
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i]
+      const bits = [el.innerText, el.getAttribute && el.getAttribute('aria-label'), el.getAttribute && el.getAttribute('title')]
+      for (let j = 0; j < bits.length; j++) {
+        const text = normalize(bits[j] || '')
+        if (!text || text.length > 24) continue
+        if (text === '上传失败' || text.indexOf('上传失败') === 0) return true
+      }
+    }
+    return false
+  }
+
+  function attachmentPreviewHost(url) {
+    if (!/^https:\/\//i.test(url || '')) return false
+    let host = ''
+    try {
+      if (typeof URL === 'function') host = new URL(url).hostname
+    } catch (e) {
+      host = ''
+    }
+    if (!host) {
+      const matched = String(url).match(/^https:\/\/([^/?#]+)/i)
+      host = matched ? matched[1] : ''
+    }
+    return /(^|\.)((qianwen|tongyi)\.com|alicdn\.com)$/i.test(host)
+  }
+
+  function attachmentRejected(doc) {
+    const comp = composer(doc)
+    return uploadFailureLabel(attachmentScope(comp, uploadEntry(doc, comp)))
+  }
+
+  // 解码成功的新预览仍是首选。workspace-zb-cdn.qianwen.com 有时图已挂上但 naturalWidth 停在 0，
+  // 附件还在、页面也没写「上传失败」时算就绪。写了「上传失败」则整块不算就绪。
   function freshAttachment(doc, baseline) {
     const comp = composer(doc)
     const scope = attachmentScope(comp, uploadEntry(doc, comp))
-    if (!scope) return false
-    const fresh = all(scope, 'img').filter(function (img) {
-      return visible(img) && img.complete && img.naturalWidth > 0 && baseline && !baseline.has(img)
+    if (!scope || !baseline) return false
+    if (uploadFailureLabel(scope)) return false
+    const imgs = all(scope, 'img')
+    const decoded = imgs.some(function (img) {
+      return visible(img) && img.complete && img.naturalWidth > 0 && !baseline.has(img)
     })
-    return fresh.length > 0 && !busy(scope)
+    if (decoded) return !busy(scope)
+    const undecoded = imgs.some(function (img) {
+      if (!visible(img) || !img.complete || img.naturalWidth > 0 || baseline.has(img)) return false
+      return attachmentPreviewHost(imageURL(img))
+    })
+    return undecoded && !busy(scope)
+  }
+
+  function documentURL(doc) {
+    if (doc && typeof doc.URL === 'string' && doc.URL) return doc.URL
+    try {
+      if (doc && doc.location && doc.location.href) return String(doc.location.href)
+    } catch (e) {}
+    try { return String(location.href || '') } catch (e) { return '' }
+  }
+
+  // 阿里云 Baxia 滑块：整页或 iframe 会落到 _____tmd_____/punish，或带 baxia / nocaptcha。
+  function isBaxiaURL(url) {
+    const s = String(url || '')
+    if (!s) return false
+    if (s.indexOf('_____tmd_____') !== -1) return true
+    return /\/punish(?:[/?#]|$)/i.test(s) && /baxia|x5secdata|nocaptcha/i.test(s)
+  }
+
+  function elementSrc(el) {
+    if (!el) return ''
+    const attr = el.getAttribute && el.getAttribute('src')
+    return String(attr || el.src || '')
+  }
+
+  function elementIdentity(el) {
+    if (!el) return ''
+    return ((el.className || '') + ' ' + (el.id || '') + ' ' + ((el.getAttribute && el.getAttribute('data-testid')) || '') + ' ' + elementSrc(el)).toString()
+  }
+
+  function looksBaxia(el) {
+    if (!el) return false
+    if (/baxia|nocaptcha|_____tmd_____|nc-container/i.test(elementIdentity(el))) return true
+    return isBaxiaURL(elementSrc(el))
   }
 
   // 检测逻辑缩自 internal/captcha/js/inject.js：验证码语义必须落在可见容器上，不能借整页其它文字。
+  // iframe 仅因路径里有 punish 不够，还要带上 tmd / baxia / x5secdata，避免误伤普通地址。
   function captchaEvidence(el) {
     if (!el) return false
-    const identity = ((el.className || '') + ' ' + (el.id || '') + ' ' + ((el.getAttribute && el.getAttribute('data-testid')) || '')).toString()
-    if (/captcha|geetest|yidun|turing|verification/i.test(identity)) return true
-    if (el.tagName === 'IFRAME') return /captcha|verify|geetest|turing/i.test((el.getAttribute && el.getAttribute('src')) || '')
+    const identity = elementIdentity(el)
+    if (/captcha|geetest|yidun|turing|verification|baxia|nocaptcha|_____tmd_____|nc-container/i.test(identity)) return true
+    if (el.tagName === 'IFRAME') {
+      const src = elementSrc(el)
+      if (/captcha|verify|geetest|turing|baxia|nocaptcha|_____tmd_____/i.test(src)) return true
+      return isBaxiaURL(src)
+    }
     return CAPTCHA_TEXT.test(String(el.innerText || '').slice(0, 1000))
   }
 
   const CAPTCHA_SEL = [
     '#captcha_verify_image',
     'iframe[src*="captcha"]', 'iframe[src*="verify"]', 'iframe[src*="geetest"]',
+    'iframe[src*="baxia"]', 'iframe[src*="_____tmd_____"]', 'iframe[src*="punish"]', 'iframe[src*="nocaptcha"]',
     '[class*="captcha"]', '[class*="geetest"]', '[class*="verification"]',
+    '[class*="baxia"]', '[id*="baxia"]', '[id*="nocaptcha"]', '[class*="nc-container"]',
   ]
 
   function detectCaptcha(doc) {
+    if (isBaxiaURL(documentURL(doc))) {
+      return describeCaptcha(doc.body || doc.documentElement || doc, true)
+    }
     for (let i = 0; i < CAPTCHA_SEL.length; i++) {
       const candidates = all(doc, CAPTCHA_SEL[i])
       for (let j = 0; j < candidates.length; j++) {
@@ -609,12 +766,13 @@ globalThis.XBSPage = (function () {
     return { blocked: false, kind: '', root: null }
   }
 
-  function describeCaptcha(root) {
-    const text = String(root.innerText || '')
+  function describeCaptcha(root, baxia) {
+    const text = String((root && root.innerText) || '')
+    const marked = !!baxia || looksBaxia(root)
     let kind = 'unknown'
-    if (/滑块|滑动|slider/i.test(text) || all(root, '[class*="slider"]').length) kind = 'slider'
-    else if (all(root, 'canvas').length > 1 || /九宫|点选/.test(text)) kind = 'grid'
-    return { blocked: true, kind, root }
+    if (marked || /滑块|滑动|slider/i.test(text) || (root && all(root, '[class*="slider"]').length)) kind = 'slider'
+    else if (root && (all(root, 'canvas').length > 1 || /九宫|点选/.test(text))) kind = 'grid'
+    return { blocked: true, kind, root, baxia: marked }
   }
 
   function captchaCrop(root) {
@@ -663,9 +821,11 @@ globalThis.XBSPage = (function () {
     composerCleared,
     sendAccepted,
     assignFiles,
+    activate,
     createChooserBridge,
     attachLocalImage,
     freshAttachment,
+    attachmentRejected,
     attachmentScope,
     detectCaptcha,
     captchaCrop,
