@@ -26,21 +26,18 @@ import (
 	"xbs/internal/store"
 )
 
-func TestUseExtensionOnlyForQianwen(t *testing.T) {
+func TestUseExtensionForQianwenAndDoubao(t *testing.T) {
 	st := openTaskStore(t)
 	e := NewEngine(st, nil, nil, t.TempDir())
 	if e.useExtension("千问") || e.useExtension("豆包") {
 		t.Fatal("default backend must stay on ego")
 	}
 	st.Set(extbridge.SettingBrowserBackend, "extension")
-	if !e.useExtension("千问") {
-		t.Fatal("qianwen should use the extension")
-	}
-	if e.useExtension("豆包") {
-		t.Fatal("doubao stays on ego/chrome")
+	if !e.useExtension("千问") || !e.useExtension("豆包") {
+		t.Fatal("qianwen and doubao should use the extension")
 	}
 	st.Set(extbridge.SettingBrowserBackend, "ego")
-	if e.useExtension("千问") {
+	if e.useExtension("千问") || e.useExtension("豆包") {
 		t.Fatal("ego must not select the extension")
 	}
 }
@@ -177,6 +174,122 @@ func TestExtensionSendUncertainDoesNotRetrySend(t *testing.T) {
 	defer mu.Unlock()
 	if sends != 1 {
 		t.Fatalf("send calls=%d", sends)
+	}
+}
+
+func TestExtensionDoubaoHappyPath(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.Set("extBridgePort", port)
+	st.Set("extBridgeToken", "dev-token")
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.png")
+	writeSolidPNG(t, src, 2, 2, color.NRGBA{R: 20, G: 40, A: 255})
+	resultPNG := solidPNG(t, 2, 2, color.NRGBA{B: 90, A: 255})
+
+	var mu sync.Mutex
+	var uploads, sends, waits, downloads int
+	var sawPlatform string
+	go serveFakeExt("127.0.0.1:"+port, "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		mu.Lock()
+		sawPlatform = env.Platform
+		mu.Unlock()
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdUpload:
+			mu.Lock()
+			uploads++
+			mu.Unlock()
+			return ackOK(env, map[string]any{"ok": true})
+		case extbridge.CmdSetPrompt, extbridge.CmdCaptchaAssist:
+			extra := map[string]any{"ok": true, "captchaBlocked": false}
+			return ackOK(env, extra)
+		case extbridge.CmdSend:
+			mu.Lock()
+			sends++
+			mu.Unlock()
+			return ackOK(env, map[string]any{"ok": true})
+		case extbridge.CmdWaitResult:
+			mu.Lock()
+			waits++
+			mu.Unlock()
+			return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": "https://cdn.example/doubao.png"}}})
+		case extbridge.CmdDownload:
+			mu.Lock()
+			downloads++
+			mu.Unlock()
+			return chunkAck(env, resultPNG, len(resultPNG))
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+
+	e := NewEngine(st, nil, nil, dir)
+	defer e.CloseSessions()
+	var last Task
+	err := e.Run(context.Background(), Options{
+		Platforms:         []string{"豆包"},
+		Prompts:           []string{"水彩风格"},
+		Images:            []string{src},
+		Concurrency:       1,
+		RetryCount:        1,
+		WaitResult:        true,
+		WaitResultSeconds: 30,
+		OutputPath:        filepath.Join(dir, "out"),
+		NamingRule:        "原文件名",
+	}, func(task Task) { last = task }, func(Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last.Status != StatusSuccess || len(last.Results) != 1 {
+		t.Fatalf("status=%s err=%s saved=%v", last.Status, last.Error, last.Results)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if sawPlatform != extbridge.PlatformDoubao || uploads != 1 || sends != 1 || waits != 1 || downloads != 1 {
+		t.Fatalf("platform=%s uploads=%d sends=%d waits=%d downloads=%d", sawPlatform, uploads, sends, waits, downloads)
+	}
+}
+
+func TestExtensionDoubaoLoginStopsBatch(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.Set("extBridgePort", port)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.png")
+	writeSolidPNG(t, src, 2, 2, color.NRGBA{R: 9, A: 255})
+	var mu sync.Mutex
+	uploads := 0
+	go serveFakeExt("127.0.0.1:"+port, "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		if name == extbridge.CmdUpload {
+			mu.Lock()
+			uploads++
+			mu.Unlock()
+			return ackFail(env, extbridge.ENotLoggedIn, "页面没有输入框")
+		}
+		return ackOK(env, map[string]any{"ok": true, "captchaBlocked": false})
+	})
+	e := NewEngine(st, nil, nil, dir)
+	defer e.CloseSessions()
+	var last Task
+	_ = e.Run(context.Background(), Options{
+		Platforms:   []string{"豆包"},
+		Prompts:     []string{"水彩风格"},
+		Images:      []string{src},
+		Concurrency: 1,
+		RetryCount:  2,
+		OutputPath:  dir,
+	}, func(task Task) { last = task }, func(Progress) {})
+	if last.Status != StatusFailed || !strings.Contains(last.Error, "豆包页面未登录") {
+		t.Fatalf("status=%s err=%s", last.Status, last.Error)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if uploads != 1 {
+		t.Fatalf("upload retries=%d", uploads)
 	}
 }
 
@@ -369,6 +482,10 @@ func chunkAck(req extbridge.Envelope, data []byte, n int) extbridge.Envelope {
 }
 
 func serveFakeQianwen(addr, token string, fn func(extbridge.Envelope) extbridge.Envelope) {
+	serveFakeExt(addr, token, extbridge.PlatformQianwen, fn)
+}
+
+func serveFakeExt(addr, token, platform string, fn func(extbridge.Envelope) extbridge.Envelope) {
 	var conn net.Conn
 	var br *bufio.Reader
 	var err error
@@ -387,7 +504,7 @@ func serveFakeQianwen(addr, token string, fn func(extbridge.Envelope) extbridge.
 	}
 	defer conn.Close()
 	raw, _ := json.Marshal(map[string]string{"token": token, "version": "0.2.0"})
-	hello := extbridge.Envelope{V: extbridge.Version, ID: "hello-test", Type: extbridge.TypeHello, TS: time.Now().UnixMilli(), Platform: extbridge.PlatformQianwen, Payload: raw}
+	hello := extbridge.Envelope{V: extbridge.Version, ID: "hello-test", Type: extbridge.TypeHello, TS: time.Now().UnixMilli(), Platform: platform, Payload: raw}
 	reader := io.Reader(conn)
 	if br != nil {
 		reader = br

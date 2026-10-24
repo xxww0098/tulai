@@ -1,4 +1,5 @@
-// 内容脚本把主机命令落到千问页面。选择器在 page.js，和 ego.js 的锚点一致。
+// 内容脚本把主机命令落到当前页面。千问加载 qianwen/page.js，豆包加载 doubao/page.js，
+// 两边都提供 XBSPage。选择器在各自的 page 脚本里，和 ego.js 的锚点一致。
 // 发送用 envelope.idempotencyKey 记住已经点过的一次：超时重试只复查结果，不再点发送。
 const XBS = globalThis.XBS
 const Page = globalThis.XBSPage
@@ -62,6 +63,13 @@ async function upload(env, payload) {
   const comp = Page.composer(document)
   if (!comp) return loginOrMiss(env, payload.name, '未找到可写入的输入框')
   if (payload.clean) {
+    if (typeof Page.dismissClientPromo === 'function') {
+      const promo = Page.dismissClientPromo(document, comp)
+      if (promo) {
+        try { promo.click() } catch (e) {}
+        await delay(200)
+      }
+    }
     const buttons = Page.removeButtons(document, comp)
     buttons.forEach((button) => {
       try { button.click() } catch (e) {}
@@ -136,12 +144,15 @@ function concatChunks(part) {
   return out
 }
 
-// 先找隐藏的 file input。没有时才点「添加附件」，并只在菜单项内部已经带着 input 时使用它。
-// 不点击单独的「上传图片」菜单，否则会弹出系统文件框，扩展填不进去。
+// 先找输入区旁的 file input（可以是隐藏的）。菜单已经开着、并且选项里面嵌着 input 时直接用它，
+// 避免再点一次入口把菜单关掉。没有 input 时才点入口（千问「添加附件」，豆包 upload_file_button）。
+// 不点击单独的「上传图片」或「上传文件或图片」菜单项，否则会弹出系统文件框，扩展填不进去。
 async function locateFileInput() {
   const comp = Page.composer(document)
   let input = Page.fileInput(document, comp)
   if (input) return { input }
+  const nestedNow = nestedUploadInput()
+  if (nestedNow) return { input: nestedNow }
   const entry = Page.uploadEntry(document, comp)
   if (!entry) return { error: '未找到当前输入区上传入口', code: XBS.errors.E_SELECTOR_MISS }
   try { entry.click() } catch (e) {}
@@ -150,12 +161,17 @@ async function locateFileInput() {
     if (cancelRequested) return { error: '上传已取消', code: XBS.errors.E_CANCELLED }
     input = Page.fileInput(document, Page.composer(document))
     if (input) return { input }
-    const item = Page.uploadImageItem(document)
-    const nested = item && item.querySelector ? item.querySelector('input[type="file"]') : null
+    const nested = nestedUploadInput()
     if (nested) return { input: nested }
     await delay(100)
   }
-  return { error: '未找到输入区的文件选择框（添加附件 旁没有 input[type=file]）', code: XBS.errors.E_SELECTOR_MISS }
+  return { error: '未找到输入区的文件选择框（上传入口旁没有 input[type=file]）', code: XBS.errors.E_SELECTOR_MISS }
+}
+
+function nestedUploadInput() {
+  const item = Page.uploadImageItem(document)
+  if (!item || typeof item.querySelector !== 'function') return null
+  return item.querySelector('input[type="file"]')
 }
 
 async function setPrompt(env, payload) {

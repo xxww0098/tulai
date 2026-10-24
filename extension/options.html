@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>xbs 千问桥</title>
+  <title>xbs 页面桥</title>
   <style>
     body { font: 15px/1.5 system-ui, sans-serif; margin: 32px auto; max-width: 36rem; color: #1c1b19; }
     h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
@@ -14,8 +14,8 @@
   </style>
 </head>
 <body>
-  <h1>xbs 千问桥</h1>
-  <p>令牌和端口必须与 <code>go run ./cmd/xbs-ext-smoke</code> 打印的一致。保存后服务工作者会重新 hello。</p>
+  <h1>xbs 页面桥</h1>
+  <p>同一份扩展会分别向千问和豆包各发一次 hello。令牌和端口必须与 <code>go run ./cmd/xbs-ext-smoke</code> 打印的一致。保存后服务工作者会重新连接。</p>
   <form id="form">
     <label>令牌
       <input id="token" autocomplete="off" spellcheck="false">

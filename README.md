@@ -30,10 +30,10 @@
 ./build.sh        # 打包（go tool mygo build）
 go test ./...     # 单元测试（CV 求解器 / 配置库）
 go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟测试
-go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问扩展 hello
+go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问和豆包扩展 hello
 ```
 
-千问也可以改由 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，千问任务走本机扩展桥；豆包以及 `ego` 仍用原来的 ego / Chrome。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
+千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥；`ego` 仍用原来的 ego / Chrome。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
 
 默认使用 **ego lite** 的网页：安装并打开 ego lite、完成首次引导，确保 `ego-browser` 命令可用。浏览器页可切换为独立 Chrome；选择 Chrome 时需本机安装 Google Chrome。
 

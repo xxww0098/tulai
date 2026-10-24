@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "xbs 千问桥",
-  "version": "0.2.0",
-  "description": "把本机 xbs 的图生图命令转到通义 / 千问页面：上传、填词、发送、等待和下载。",
+  "name": "xbs 页面桥",
+  "version": "0.3.0",
+  "description": "把本机 xbs 的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
   "permissions": ["storage", "tabs", "alarms", "scripting", "downloads"],
   "host_permissions": [
     "https://www.tongyi.com/*",
@@ -14,6 +14,9 @@
     "https://chat.qwen.ai/*",
     "https://*.qwen.ai/*",
     "https://qwen.ai/*",
+    "https://www.doubao.com/*",
+    "https://*.doubao.com/*",
+    "https://doubao.com/*",
     "http://127.0.0.1/*",
     "ws://127.0.0.1/*"
   ],
@@ -33,7 +36,16 @@
         "https://*.qwen.ai/*",
         "https://qwen.ai/*"
       ],
-      "js": ["protocol.js", "page.js", "content.js"],
+      "js": ["protocol.js", "qianwen/page.js", "content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.doubao.com/*",
+        "https://*.doubao.com/*",
+        "https://doubao.com/*"
+      ],
+      "js": ["protocol.js", "doubao/page.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -42,6 +54,6 @@
     "open_in_tab": true
   },
   "action": {
-    "default_title": "xbs 千问桥"
+    "default_title": "xbs 页面桥"
   }
 }
