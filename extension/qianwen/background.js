@@ -2,7 +2,26 @@ importScripts('protocol.js')
 
 const XBS = globalThis.XBS
 const ALARM = 'xbs-qianwen-reconnect'
-const TAB_URLS = ['https://chat.qwen.ai/*', 'https://*.qwen.ai/*']
+// 桌面端千问首页是 www.tongyi.com，ego.js 也认 qianwen.com。chat.qwen.ai 保留给国际站。
+const TAB_URLS = [
+  'https://www.tongyi.com/*',
+  'https://*.tongyi.com/*',
+  'https://tongyi.com/*',
+  'https://www.qianwen.com/*',
+  'https://*.qianwen.com/*',
+  'https://qianwen.com/*',
+  'https://chat.qwen.ai/*',
+  'https://*.qwen.ai/*',
+  'https://qwen.ai/*',
+]
+
+function isQianwenURL(url) {
+  try {
+    return /(^|\.)((tongyi|qianwen)\.com|qwen\.ai)$/.test(new URL(url).hostname)
+  } catch (err) {
+    return false
+  }
+}
 
 let socket = null
 let opened = false
@@ -170,13 +189,13 @@ async function dispatchCommand(env) {
     sendToHost(XBS.ack(env, { name, ok: true, message: '没有进行中的页面任务' }))
     return
   }
-  if (!XBS.stubCommands.includes(name) && name !== XBS.commands.cancel) {
+  if (!XBS.pageCommands.includes(name) && name !== XBS.commands.cancel) {
     sendToHost(XBS.fail(env, XBS.errors.E_PROTOCOL, '未知命令 ' + name))
     return
   }
   const tab = await pickTab()
   if (!tab) {
-    sendToHost(XBS.fail(env, XBS.errors.E_NO_TAB, '没有 chat.qwen.ai 标签页'))
+    sendToHost(XBS.fail(env, XBS.errors.E_NO_TAB, '没有千问标签页（tongyi.com / qianwen.com / qwen.ai）'))
     return
   }
   markTab(tab.id, 'busy', env.taskId || '', tab.url || '')
@@ -238,8 +257,71 @@ async function pickTab() {
   return idle || found[0] || null
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+function bytesToBase64(bytes) {
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
+// 页面 fetch 被跨域拦住时，后台再用扩展的 cookie 拉一次。太大就不走消息，改让浏览器下载并回传路径。
+async function fetchOrDownload(url) {
+  try {
+    const res = await fetch(url, { credentials: 'include' })
+    if (res.ok) {
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      if (bytes.length > 0 && bytes.length <= 3 * 1024 * 1024) return { bytesBase64: bytesToBase64(bytes) }
+    }
+  } catch (err) {}
+  try {
+    const saved = await downloadToFile(url)
+    if (saved) return { path: saved }
+  } catch (err) {
+    return { error: String(err && err.message || err) }
+  }
+  return { error: '下载没有得到文件' }
+}
+
+function downloadToFile(url) {
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download({ url, saveAs: false, conflictAction: 'uniquify' }, (id) => {
+      if (chrome.runtime.lastError || id == null) {
+        reject(new Error((chrome.runtime.lastError && chrome.runtime.lastError.message) || 'download failed'))
+        return
+      }
+      const timer = setTimeout(() => {
+        chrome.downloads.onChanged.removeListener(onChange)
+        reject(new Error('download timeout'))
+      }, 60000)
+      function onChange(delta) {
+        if (!delta || delta.id !== id) return
+        if (delta.state && delta.state.current === 'complete') {
+          clearTimeout(timer)
+          chrome.downloads.onChanged.removeListener(onChange)
+          chrome.downloads.search({ id }, (items) => {
+            resolve((items && items[0] && items[0].filename) || '')
+          })
+        } else if (delta.error) {
+          clearTimeout(timer)
+          chrome.downloads.onChanged.removeListener(onChange)
+          reject(new Error(delta.error.current || 'download failed'))
+        }
+      }
+      chrome.downloads.onChanged.addListener(onChange)
+    })
+  })
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return
+  if (msg.type === 'FETCH_URL') {
+    fetchOrDownload(msg.url).then(sendResponse).catch((err) => {
+      sendResponse({ error: String(err && err.message || err) })
+    })
+    return true
+  }
   if (msg.type === 'RECONNECT') {
     reconnect()
     return
@@ -254,7 +336,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 })
 
 chrome.tabs.onUpdated.addListener((tabId, _info, tab) => {
-  if (!tab.url || !/https:\/\/([^/]+\.)?qwen\.ai\//.test(tab.url)) return
+  if (!isQianwenURL(tab.url || '')) return
   const current = tabs.get(tabId)
   markTab(tabId, current && current.state === 'busy' ? 'busy' : 'idle', current ? current.taskId : '', tab.url)
 })

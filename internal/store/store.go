@@ -32,8 +32,8 @@ type Store struct {
 	path string
 }
 
-// defaults 是新库的初始设置。除 browserBackend 外，键与原软件 settings 表实测默认值对应。
-// browserBackend 只接受 extension 或 ego，默认 ego；任务引擎尚未读取，当前路径仍看 browser_backend。
+// defaults 是新库的初始设置。除 browserBackend、extBridgePort、extBridgeToken 外，键与原软件 settings 表实测默认值对应。
+// browserBackend 只接受 extension 或 ego，默认 ego。千问任务在 extension 时走扩展桥，其余仍看 browser_backend。
 var defaults = map[string]string{
 	"selected_platforms":     "豆包",
 	"task_type":              "ImageGeneration",
@@ -71,6 +71,8 @@ var defaults = map[string]string{
 	"minimize_browser":       "0",
 	"sent_count_total":       "0",
 	"browserBackend":         "ego",
+	"extBridgePort":          "18765",
+	"extBridgeToken":         "dev-token",
 }
 
 const schema = `
