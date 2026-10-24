@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -138,8 +139,16 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	content := mustRead(t, filepath.Join(root, "extension", "qianwen", "content.js"))
-	if !bytes.Contains(content, []byte("COMMAND_FROM_HOST")) || !bytes.Contains(content, []byte("E_SELECTOR_MISS")) {
-		t.Fatal("content.js does not stub selector misses")
+	for _, needle := range []string{"COMMAND_FROM_HOST", "E_SELECTOR_MISS", "E_SEND_UNCERTAIN", "DataTransfer", "idempotencyKey"} {
+		if !bytes.Contains(content, []byte(needle)) && !bytes.Contains(mustRead(t, filepath.Join(root, "extension", "qianwen", "page.js")), []byte(needle)) {
+			t.Errorf("qianwen extension missing %s", needle)
+		}
+	}
+	page := mustRead(t, filepath.Join(root, "extension", "qianwen", "page.js"))
+	for _, needle := range []string{"添加附件", "上传图片", "DataTransfer", "#qk-markdown-react", "captchaBlocked"} {
+		if !bytes.Contains(page, []byte(needle)) && !bytes.Contains(content, []byte(needle)) {
+			t.Errorf("qianwen page actions missing %s", needle)
+		}
 	}
 	var manifest map[string]any
 	if err := json.Unmarshal(mustRead(t, filepath.Join(root, "extension", "qianwen", "manifest.json")), &manifest); err != nil {
@@ -157,10 +166,27 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		t.Fatalf("missing permissions: %v", need)
 	}
 	hosts, _ := json.Marshal(manifest["host_permissions"])
-	for _, needle := range []string{"chat.qwen.ai", "*.qwen.ai", "127.0.0.1"} {
+	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "*.qwen.ai", "127.0.0.1"} {
 		if !bytes.Contains(hosts, []byte(needle)) {
 			t.Errorf("host_permissions missing %s: %s", needle, hosts)
 		}
+	}
+	scripts, _ := json.Marshal(manifest["content_scripts"])
+	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "page.js", "content.js"} {
+		if !bytes.Contains(scripts, []byte(needle)) {
+			t.Errorf("content_scripts missing %s: %s", needle, scripts)
+		}
+	}
+	if !bytes.Contains(background, []byte("tongyi.com")) || !bytes.Contains(background, []byte("qianwen.com")) {
+		t.Fatal("background tab patterns do not cover tongyi.com and qianwen.com")
+	}
+}
+
+func TestQianwenPageSelectors(t *testing.T) {
+	root := repoRoot(t)
+	out, err := exec.Command("node", filepath.Join(root, "extension", "qianwen", "page_test.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("page_test.js: %v\n%s", err, out)
 	}
 }
 

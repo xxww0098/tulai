@@ -1,12 +1,19 @@
 {
   "manifest_version": 3,
   "name": "xbs 千问桥",
-  "version": "0.1.0",
-  "description": "把本机 xbs 的命令转到千问页面。这一版只接通 WebSocket，页面操作返回 E_SELECTOR_MISS。",
-  "permissions": ["storage", "tabs", "alarms", "scripting"],
+  "version": "0.2.0",
+  "description": "把本机 xbs 的图生图命令转到通义 / 千问页面：上传、填词、发送、等待和下载。",
+  "permissions": ["storage", "tabs", "alarms", "scripting", "downloads"],
   "host_permissions": [
+    "https://www.tongyi.com/*",
+    "https://*.tongyi.com/*",
+    "https://tongyi.com/*",
+    "https://www.qianwen.com/*",
+    "https://*.qianwen.com/*",
+    "https://qianwen.com/*",
     "https://chat.qwen.ai/*",
     "https://*.qwen.ai/*",
+    "https://qwen.ai/*",
     "http://127.0.0.1/*",
     "ws://127.0.0.1/*"
   ],
@@ -15,8 +22,18 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://chat.qwen.ai/*", "https://*.qwen.ai/*"],
-      "js": ["protocol.js", "content.js"],
+      "matches": [
+        "https://www.tongyi.com/*",
+        "https://*.tongyi.com/*",
+        "https://tongyi.com/*",
+        "https://www.qianwen.com/*",
+        "https://*.qianwen.com/*",
+        "https://qianwen.com/*",
+        "https://chat.qwen.ai/*",
+        "https://*.qwen.ai/*",
+        "https://qwen.ai/*"
+      ],
+      "js": ["protocol.js", "page.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

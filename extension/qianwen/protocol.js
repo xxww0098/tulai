@@ -15,7 +15,7 @@ globalThis.XBS = {
     cancel: 'cancel',
     status: 'status',
   },
-  stubCommands: ['upload', 'setPrompt', 'send', 'waitResult', 'download', 'captchaAssist'],
+  pageCommands: ['upload', 'setPrompt', 'send', 'waitResult', 'download', 'captchaAssist'],
   errors: {
     E_NOT_CONNECTED: 'E_NOT_CONNECTED',
     E_NO_TAB: 'E_NO_TAB',
@@ -55,7 +55,7 @@ globalThis.XBS.envelope = function envelope(type, fields) {
 
 globalThis.XBS.hello = function hello(token) {
   return globalThis.XBS.envelope('hello', {
-    payload: { token: token || '', version: '0.1.0' },
+    payload: { token: token || '', version: '0.2.0' },
   })
 }
 

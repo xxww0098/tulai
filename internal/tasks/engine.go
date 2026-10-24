@@ -17,6 +17,7 @@ import (
 	"xbs/internal/browser"
 	"xbs/internal/captcha"
 	"xbs/internal/cdp"
+	"xbs/internal/extbridge"
 	"xbs/internal/images"
 	"xbs/internal/logging"
 	"xbs/internal/store"
@@ -43,6 +44,12 @@ type Engine struct {
 	seenHash  map[string]bool         // 结果 SHA256 去重
 	srcHashes map[string]bool         // 源图哈希（回声过滤）
 	dataRoot  string
+
+	extMu     sync.Mutex
+	extSrv    *extbridge.Server
+	extBatch  string
+	extToken  string
+	extListen string
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。
@@ -127,6 +134,7 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 	e.cancel = cancel
 	e.running = true
 	e.mu.Unlock()
+	e.rotateExtBatch()
 
 	defer func() {
 		cancel()
@@ -292,7 +300,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			}
 			return t
 		}
-		if errors.Is(err, strategy.ErrSubmissionUncertain) {
+		if errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, errQianwenLogin) {
 			if e.cancel != nil {
 				e.cancel()
 			}
@@ -317,6 +325,9 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 
 // attempt 单次尝试：会话准备 → 上传 → 发送 → 等结果 → 保存。
 func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
+	if e.useExtension(t.Platform) {
+		return e.attemptQianwenExtension(ctx, t)
+	}
 	strat := strategy.Factory(t.Platform)
 	if strat == nil {
 		return fmt.Errorf("不支持的平台 %s", t.Platform)
@@ -784,6 +795,7 @@ func watermarkStaticImage(data []byte, format string) bool {
 
 // CloseSessions 关闭全部页面会话。
 func (e *Engine) CloseSessions() {
+	e.closeExtensionBridge()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for k, s := range e.sessions {
