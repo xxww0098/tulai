@@ -62,7 +62,7 @@ UPDATE settings SET value='extension' WHERE key='browserBackend';
 
 点过发送之后，同一条幂等键不会再点第二次。平台没有确认接受时返回 `E_SEND_UNCERTAIN`，整批任务停止，需要你看一眼网页再开新的一批。验证码只检测并尽量把画布裁下来交给主机，不在扩展里自动拖动。出现验证码时任务变成「待验证」。
 
-豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。
+豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。
 
 ## 保活
 

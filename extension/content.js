@@ -59,9 +59,20 @@ function loginOrMiss(env, name, message) {
   return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, message)
 }
 
+async function readyComposer(timeout) {
+  return waitFor(function () {
+    const comp = Page.composer(document)
+    if (comp) return comp
+    if (Page.loginWall(document)) return 'login'
+    return null
+  }, timeout || 8000)
+}
+
 async function upload(env, payload) {
-  const comp = Page.composer(document)
-  if (!comp) return loginOrMiss(env, payload.name, '未找到可写入的输入框')
+  const ready = await readyComposer(8000)
+  if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
+  if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入的输入框')
+  const comp = ready
   if (payload.clean) {
     if (typeof Page.dismissClientPromo === 'function') {
       const promo = Page.dismissClientPromo(document, comp)
@@ -175,8 +186,10 @@ function nestedUploadInput() {
 }
 
 async function setPrompt(env, payload) {
-  const comp = Page.composer(document)
-  if (!comp) return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  const ready = await readyComposer(8000)
+  if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
+  if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  const comp = ready
   const prompt = String(payload.prompt || '')
   if (!Page.setComposer(comp, prompt)) {
     return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
@@ -194,8 +207,10 @@ async function sendPrompt(env, payload) {
       return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, prev.message || '发送状态未确认，未再次点击')
     }
   }
-  const comp = Page.composer(document)
-  if (!comp) return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  const ready = await readyComposer(8000)
+  if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
+  if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  const comp = ready
   const prompt = String(payload.prompt || '')
   if (Page.normalize(Page.readComposer(comp)) !== Page.normalize(prompt)) {
     return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
@@ -242,7 +257,9 @@ async function waitResult(env, payload) {
     if (cancelRequested) return XBS.fail(env, XBS.errors.E_CANCELLED, '等待结果已取消')
     const captcha = Page.detectCaptcha(document)
     if (captcha.blocked) return captchaAck(env, captcha)
-    const images = Page.resultImages(document, pageMark)
+    const images = Page.resultImages(document, pageMark).filter(function (item) {
+      return item && item.url && !(typeof Page.isPlaceholderURL === 'function' && Page.isPlaceholderURL(item.url))
+    })
     const busy = Page.resultsBusy(document, pageMark)
     const urls = images.map(function (item) { return item.url }).join('\n')
     if (!busy && images.length) {
@@ -270,11 +287,18 @@ async function download(env, payload) {
   const offset = Number(payload.offset) || 0
   const limit = Number(payload.limit) || (3 * 1024 * 1024)
   let cached = downloadCache.get(url)
+  if (cached && !XBS.looksLikeRaster(cached)) {
+    downloadCache.delete(url)
+    cached = null
+  }
   if (!cached) {
     const fetched = await fetchImage(url)
     if (fetched.error) return XBS.fail(env, XBS.errors.E_DOWNLOAD_FAIL, fetched.error)
     if (fetched.path) {
       return XBS.ack(env, { name: payload.name, ok: true, path: fetched.path, done: true, total: 0 })
+    }
+    if (!XBS.looksLikeRaster(fetched.bytes)) {
+      return XBS.fail(env, XBS.errors.E_DOWNLOAD_FAIL, '下载内容不是 PNG、JPEG、WebP 或 GIF')
     }
     cached = fetched.bytes
     downloadCache.set(url, cached)
@@ -292,17 +316,25 @@ async function download(env, payload) {
 }
 
 async function fetchImage(url) {
-  try {
-    const res = await fetch(url, { credentials: 'include', cache: 'no-store' })
-    if (res.ok) return { bytes: new Uint8Array(await res.arrayBuffer()) }
-  } catch (e) {}
-  try {
-    const res = await fetch(url, { credentials: 'omit', cache: 'no-store' })
-    if (res.ok) return { bytes: new Uint8Array(await res.arrayBuffer()) }
-  } catch (e) {}
+  let rejectedBody = false
+  const modes = ['include', 'omit']
+  for (let i = 0; i < modes.length; i++) {
+    try {
+      const res = await fetch(url, { credentials: modes[i], cache: 'no-store' })
+      if (!res.ok) continue
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      if (XBS.looksLikeRaster(bytes)) return { bytes }
+      rejectedBody = true
+    } catch (e) {}
+  }
+  if (rejectedBody) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF: ' + safeURL(url) }
   try {
     const saved = await chrome.runtime.sendMessage({ type: 'FETCH_URL', url })
-    if (saved && saved.bytesBase64) return { bytes: Page.base64ToBytes(saved.bytesBase64) }
+    if (saved && saved.bytesBase64) {
+      const bytes = Page.base64ToBytes(saved.bytesBase64)
+      if (!XBS.looksLikeRaster(bytes)) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF: ' + safeURL(url) }
+      return { bytes }
+    }
     if (saved && saved.path) return { path: saved.path }
     if (saved && saved.error) return { error: saved.error }
   } catch (err) {

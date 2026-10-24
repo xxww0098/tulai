@@ -333,7 +333,8 @@ async function fetchOrDownload(url) {
     const res = await fetch(url, { credentials: 'include' })
     if (res.ok) {
       const bytes = new Uint8Array(await res.arrayBuffer())
-      if (bytes.length > 0 && bytes.length <= 3 * 1024 * 1024) return { bytesBase64: bytesToBase64(bytes) }
+      if (!XBS.looksLikeRaster(bytes)) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF' }
+      if (bytes.length <= 3 * 1024 * 1024) return { bytesBase64: bytesToBase64(bytes) }
     }
   } catch (err) {}
   try {
