@@ -300,6 +300,94 @@ function surfaceWithInputs() {
   const plain = makeDoc('www.tongyi.com')
   plain.body.append(new El('textarea'))
   assert.strictEqual(Page.detectCaptcha(plain).blocked, false)
+
+  const punished = makeDoc('www.qianwen.com')
+  punished.URL = 'https://www.qianwen.com/_____tmd_____/punish?x5secdata=abc'
+  punished.body.append(new El('textarea'))
+  const punishHit = Page.detectCaptcha(punished)
+  assert.strictEqual(punishHit.blocked, true)
+  assert.strictEqual(punishHit.baxia, true)
+  assert.strictEqual(punishHit.kind, 'slider')
+  assert.strictEqual(punishHit.root, punished.body)
+
+  const framed = makeDoc('www.qianwen.com')
+  framed.body.append(new El('textarea'))
+  const frame = framed.body.append(new El('iframe', { src: 'https://www.qianwen.com/_____tmd_____/punish?x5secdata=abc' }))
+  frame.rect = { width: 320, height: 180, left: 10, top: 10 }
+  const frameHit = Page.detectCaptcha(framed)
+  assert.strictEqual(frameHit.blocked, true)
+  assert.strictEqual(frameHit.baxia, true)
+  assert.strictEqual(frameHit.kind, 'slider')
+  assert.strictEqual(frameHit.root, frame)
+
+  const dialog = makeDoc('www.qianwen.com')
+  dialog.body.append(new El('textarea'))
+  const baxia = dialog.body.append(new El('div', { id: 'baxia-dialog' }))
+  baxia.id = 'baxia-dialog'
+  baxia.addText('请按住滑块，拖动到最右边')
+  const dialogHit = Page.detectCaptcha(dialog)
+  assert.strictEqual(dialogHit.blocked, true)
+  assert.strictEqual(dialogHit.baxia, true)
+  assert.strictEqual(dialogHit.root, baxia)
+
+  const noise = makeDoc('www.qianwen.com')
+  noise.body.append(new El('textarea'))
+  const ad = noise.body.append(new El('iframe', { src: 'https://example.com/punish?x=1' }))
+  ad.rect = { width: 320, height: 180, left: 0, top: 0 }
+  assert.strictEqual(Page.detectCaptcha(noise).blocked, false)
+}
+
+{
+  const doc = makeDoc('www.qianwen.com')
+  const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+  surface.className = 'guidance-input-surface'
+  surface.append(new El('textarea'))
+  surface.append(new El('button', { 'aria-label': '添加附件' }))
+  const baseline = new Set(doc.querySelectorAll('img'))
+  const preview = surface.append(new El('img'))
+  preview.complete = true
+  preview.naturalWidth = 48
+  preview.src = 'https://workspace-zb-cdn.qianwen.com/preview.png'
+  preview.currentSrc = preview.src
+  assert.strictEqual(Page.freshAttachment(doc, baseline), true)
+  assert.strictEqual(Page.attachmentRejected(doc), false)
+
+  preview.naturalWidth = 0
+  assert.strictEqual(Page.freshAttachment(doc, baseline), true, 'CDN 预览解码失败但附件还在，应视为就绪')
+
+  preview.complete = false
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '还在加载时不能当成解码失败')
+  preview.complete = true
+
+  preview.src = 'https://cdn.example/broken.png'
+  preview.currentSrc = preview.src
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '非千问 CDN 的坏图不能当成附件')
+  preview.src = 'https://workspace-zb-cdn.qianwen.com/preview.png'
+  preview.currentSrc = preview.src
+
+  const fail = surface.append(new El('span'))
+  fail.addText('上传失败')
+  assert.strictEqual(Page.attachmentRejected(doc), true)
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false)
+  preview.naturalWidth = 48
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '页面写了上传失败时，即使预览能解码也不算就绪')
+}
+
+{
+  const doc = makeDoc('www.qianwen.com')
+  const button = doc.body.append(new El('button', { 'aria-label': '发送' }))
+  const order = []
+  button.dispatchEvent = function (ev) {
+    order.push(ev.type)
+    if (ev.type === 'pointerdown' && ev.preventDefault) ev.preventDefault()
+  }
+  button.click = function () {
+    order.push('click')
+    this.clicked = (this.clicked || 0) + 1
+  }
+  assert.strictEqual(Page.activate(button), true)
+  assert.deepStrictEqual(order, ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
+  assert.strictEqual(button.clicked, 1)
 }
 
 {
@@ -514,6 +602,38 @@ async function chooserFlow() {
     })
     assert.strictEqual(located.code, 'E_UPLOAD_FAIL')
     assert.strictEqual(disarmed, false)
+  }
+
+  {
+    const doc = makeDoc('www.qianwen.com')
+    const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+    surface.className = 'guidance-input-surface'
+    surface.append(new El('textarea'))
+    const entry = surface.append(new El('button', { 'aria-label': '添加附件' }))
+    let item = null
+    entry.dispatchEvent = function (ev) {
+      if (ev.type !== 'pointerdown') return
+      if (ev.preventDefault) ev.preventDefault()
+      if (item) return
+      item = doc.body.append(new El('div', { role: 'menuitem' }))
+      item.addText('上传图片')
+      item.dispatchEvent = function (inner) {
+        if (inner.type !== 'pointerup') return
+        const input = new HTMLInputElement()
+        input.type = 'file'
+        input.accept = 'image/png'
+        input.addEventListener('change', () => { item.picked = Array.from(input.files || []) })
+        input.showPicker()
+      }
+      item.click = function () { this.clicked = (this.clicked || 0) + 1 }
+    }
+    entry.click = function () { this.clicked = (this.clicked || 0) + 1 }
+    const bridge = Page.createChooserBridge(document)
+    const located = await Page.attachLocalImage(doc, file, { bridge, timeout: 500 })
+    assert.strictEqual(located.via, 'chooser')
+    assert.strictEqual(entry.clicked || 0, 0, 'pointerdown 已打开菜单时不应再 click 入口')
+    assert.strictEqual(item.clicked || 0, 0, 'pointerup 已经把文件交进去时不应再 click 菜单项')
+    assert.strictEqual(item.picked.length, 1)
   }
 }
 
