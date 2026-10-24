@@ -139,7 +139,7 @@ async function upload(env, payload) {
   }, 2)
   if (attached === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '上传等待已取消')
   if (attached === 'rejected') {
-    return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '输入区显示「上传失败」，源图未就绪')
+    return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '输入区显示上传失败或加载失败，源图未就绪')
   }
   if (attached !== true) {
     return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '未确认当前输入区源图附件已就绪')
@@ -267,6 +267,42 @@ function captchaSendMessage(found) {
   return '发送后出现验证码，需要人工处理'
 }
 
+// 豆包没有这些函数，这里直接放行，发送仍只 click。
+// 千问：失败或未解码的预览不点发送。有可用源图时先进入「AI生图」，再重取发送按钮。
+async function prepareAttachedSend(payload) {
+  if (typeof Page.sendBlockReason !== 'function' && typeof Page.composerHasAttachment !== 'function') return null
+  const reason = typeof Page.sendBlockReason === 'function' ? Page.sendBlockReason(document) : ''
+  if (reason) return { code: XBS.errors.E_UPLOAD_FAIL, message: reason }
+  const hasAttachment = typeof Page.composerHasAttachment === 'function' && Page.composerHasAttachment(document)
+  if (!hasAttachment || typeof Page.ensureImageMode !== 'function') return null
+  const switched = Page.ensureImageMode(document)
+  if (!switched || switched.error) {
+    return {
+      code: (switched && switched.code) || XBS.errors.E_SELECTOR_MISS,
+      message: (switched && switched.error) || '无法切换到「AI生图」，未发送',
+    }
+  }
+  if (typeof Page.imageModeActive === 'function' && !Page.imageModeActive(document)) {
+    const active = await waitUntil(2000, function () { return Page.imageModeActive(document) }, 1)
+    if (active !== true) {
+      return { code: XBS.errors.E_SELECTOR_MISS, message: '点击「AI生图」后模式没有保持选中，未发送' }
+    }
+  }
+  const prompt = String((payload && payload.prompt) || '')
+  const comp = Page.composer(document)
+  if (Page.normalize(Page.readComposer(comp)) !== Page.normalize(prompt)) {
+    return { code: XBS.errors.E_SELECTOR_MISS, message: '切换模式后输入区内容与提示词不一致，未发送' }
+  }
+  if (typeof Page.composerHasAttachment === 'function' && !Page.composerHasAttachment(document)) {
+    return { code: XBS.errors.E_UPLOAD_FAIL, message: '切换模式后源图不在输入区，未发送' }
+  }
+  if (typeof Page.sendBlockReason === 'function') {
+    const again = Page.sendBlockReason(document)
+    if (again) return { code: XBS.errors.E_UPLOAD_FAIL, message: again }
+  }
+  return { retarget: true }
+}
+
 async function confirmSend(env, payload, button, rec) {
   const already = Page.detectCaptcha(document)
   if (already.blocked) {
@@ -276,7 +312,27 @@ async function confirmSend(env, payload, button, rec) {
     rec.message = captchaSendMessage(already)
     return captchaAck(env, already, rec.message)
   }
-  if (!pressSend(button)) {
+  const prepared = await prepareAttachedSend(payload)
+  if (prepared && prepared.message) {
+    // 还没点发送。不能记成 uncertain，否则同一条幂等键会拒绝再点。
+    rec.phase = 'blocked'
+    rec.clicked = false
+    rec.promise = null
+    rec.message = prepared.message
+    return XBS.fail(env, prepared.code || XBS.errors.E_UPLOAD_FAIL, rec.message)
+  }
+  let target = button
+  if (prepared && prepared.retarget) {
+    target = Page.sendButton(document, Page.composer(document))
+    if (!target) {
+      rec.phase = 'blocked'
+      rec.clicked = false
+      rec.promise = null
+      rec.message = '切换模式后未找到已就绪的发送按钮，未发送'
+      return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, rec.message)
+    }
+  }
+  if (!pressSend(target)) {
     rec.phase = 'uncertain'
     rec.clicked = false
     rec.message = '点击发送失败'
