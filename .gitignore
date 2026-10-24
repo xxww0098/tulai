@@ -1,0 +1,14 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+/.agents/
+/.scratch/
+/build/
+/database/
+/数据库/
+/BrowserData/
+/输出结果/
+/xbs
+/xbs.exe

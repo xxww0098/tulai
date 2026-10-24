@@ -1,0 +1,8 @@
+{
+  "name": "xbs",
+  "identifier": "dev.xbs.app",
+  "version": "1.0.0",
+  "out": "build",
+  "main": "./cmd/xbs",
+  "macos": { "minimumSystemVersion": "13.0" }
+}
