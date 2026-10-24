@@ -145,7 +145,7 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	page := mustRead(t, filepath.Join(root, "extension", "qianwen", "page.js"))
-	for _, needle := range []string{"添加附件", "上传图片", "DataTransfer", "#qk-markdown-react", "captchaBlocked", "attachLocalImage"} {
+	for _, needle := range []string{"添加附件", "上传图片", "DataTransfer", "#qk-markdown-react", "captchaBlocked", "attachLocalImage", "AI生图", "加载失败"} {
 		if !bytes.Contains(page, []byte(needle)) && !bytes.Contains(content, []byte(needle)) {
 			t.Errorf("qianwen page actions missing %s", needle)
 		}
@@ -187,8 +187,8 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	doubaoPage := mustRead(t, filepath.Join(root, "extension", "doubao", "page.js"))
-	if bytes.Contains(doubaoPage, []byte("attachLocalImage")) || bytes.Contains(doubaoPage, []byte("createChooserBridge")) {
-		t.Fatal("doubao page should keep assigning an existing file input and not grow the qianwen chooser")
+	if bytes.Contains(doubaoPage, []byte("attachLocalImage")) || bytes.Contains(doubaoPage, []byte("createChooserBridge")) || bytes.Contains(doubaoPage, []byte("ensureImageMode")) || bytes.Contains(doubaoPage, []byte("AI生图")) {
+		t.Fatal("doubao page should keep assigning an existing file input and not grow the qianwen chooser or image mode")
 	}
 	for _, needle := range []string{"upload_file_button", "上传文件或图片", "mdbox_image", "message_image_content", "captchaBlocked", "DataTransfer"} {
 		if !bytes.Contains(doubaoPage, []byte(needle)) && !bytes.Contains(content, []byte(needle)) {

@@ -144,15 +144,19 @@ globalThis.XBSPage = (function () {
     return null
   }
 
+  // 停在输入壳内。壳外对话卡片上的「加载失败」是上一轮回显，不是这次附件。
   function attachmentScope(comp, entry) {
     if (!comp) return null
     const surface = closest(comp, '.guidance-input-surface')
     if (surface && entry && surface.contains(entry)) return surface
     const body = closest(comp, '[data-chat-input-body]')
     if (body && entry && body.contains(entry)) return body
+    const shell = closest(comp, '[data-chat-input-shell="true"]')
     for (let node = comp.parentElement; node && node !== (comp.ownerDocument || {}).body; node = node.parentElement) {
+      if (shell && node === shell) return entry && shell.contains(entry) ? shell : (comp.parentElement || null)
       if (entry && node.contains && node.contains(entry)) return node
     }
+    if (shell && entry && shell.contains(entry)) return shell
     return comp.parentElement || null
   }
 
@@ -629,7 +633,14 @@ globalThis.XBSPage = (function () {
     }
   }
 
-  // 千问附件区里的短标签。提示词在输入框的 value 里，不会被这层当成失败。
+  // 输入区里的短标签。提示词在输入框的 value 里，不会被这层当成失败。
+  // 「加载失败」是预览画不出来；和「上传失败」一样，不能当成源图已经就绪。
+  function isFailureText(text) {
+    const t = normalize(text)
+    if (!t || t.length > 24) return false
+    return /^(?:上传失败|图片上传失败|加载失败|文件预览加载失败|图片加载失败|图片渲染异常)/.test(t)
+  }
+
   function uploadFailureLabel(scope) {
     if (!scope) return false
     const nodes = all(scope, 'span,p,div,button,[role="status"],[role="alert"]')
@@ -637,9 +648,7 @@ globalThis.XBSPage = (function () {
       const el = nodes[i]
       const bits = [el.innerText, el.getAttribute && el.getAttribute('aria-label'), el.getAttribute && el.getAttribute('title')]
       for (let j = 0; j < bits.length; j++) {
-        const text = normalize(bits[j] || '')
-        if (!text || text.length > 24) continue
-        if (text === '上传失败' || text.indexOf('上传失败') === 0) return true
+        if (isFailureText(bits[j])) return true
       }
     }
     return false
@@ -665,8 +674,34 @@ globalThis.XBSPage = (function () {
     return uploadFailureLabel(attachmentScope(comp, uploadEntry(doc, comp)))
   }
 
-  // 解码成功的新预览仍是首选。workspace-zb-cdn.qianwen.com 有时图已挂上但 naturalWidth 停在 0，
-  // 附件还在、页面也没写「上传失败」时算就绪。写了「上传失败」则整块不算就绪。
+  function positiveSize(img) {
+    if (!img || !img.getAttribute) return false
+    const w = Number(img.getAttribute('width'))
+    const h = Number(img.getAttribute('height'))
+    return w > 0 && h > 0
+  }
+
+  // ImageBox 成功图是 <img alt="avatar">，不写 width/height。naturalWidth 为 0 只说明位图没画出来。
+  // 未解码时，要产品 CDN 的 https 地址，并且节点上写了像素宽高，才算页面记下了这张图。
+  function undecodedAccepted(img) {
+    if (!img || !img.complete || img.naturalWidth > 0) return false
+    if (!positiveSize(img)) return false
+    return attachmentPreviewHost(imageURL(img))
+  }
+
+  function isAttachmentPreview(img) {
+    if (!visible(img)) return false
+    if (closest(img, '[data-component="ImageBox"]')) return true
+    const rect = img.getBoundingClientRect ? img.getBoundingClientRect() : { width: 0, height: 0 }
+    return rect.width >= 32 && rect.height >= 32
+  }
+
+  function usablePreview(img) {
+    return !!(img && ((img.complete && img.naturalWidth > 0) || undecodedAccepted(img)))
+  }
+
+  // 新预览必须能解码。失败文案出现时整块不算就绪。
+  // 工具栏小图标不是附件。未解码的大图只有带像素宽高的产品 CDN 才算收下。
   function freshAttachment(doc, baseline) {
     const comp = composer(doc)
     const scope = attachmentScope(comp, uploadEntry(doc, comp))
@@ -677,11 +712,58 @@ globalThis.XBSPage = (function () {
       return visible(img) && img.complete && img.naturalWidth > 0 && !baseline.has(img)
     })
     if (decoded) return !busy(scope)
-    const undecoded = imgs.some(function (img) {
-      if (!visible(img) || !img.complete || img.naturalWidth > 0 || baseline.has(img)) return false
-      return attachmentPreviewHost(imageURL(img))
+    const accepted = imgs.some(function (img) {
+      return !baseline.has(img) && undecodedAccepted(img) && isAttachmentPreview(img)
     })
-    return undecoded && !busy(scope)
+    return accepted && !busy(scope)
+  }
+
+  function previewImages(scope) {
+    return all(scope, 'img').filter(isAttachmentPreview)
+  }
+
+  function sendBlockReason(doc) {
+    const scope = attachmentScope(composer(doc), uploadEntry(doc, composer(doc)))
+    if (!scope) return ''
+    if (uploadFailureLabel(scope)) return '输入区显示上传失败或加载失败，源图未就绪，未发送'
+    const previews = previewImages(scope)
+    if (!previews.length) return ''
+    if (previews.some(usablePreview)) return ''
+    if (previews.some(function (img) { return !img.complete })) return '源图仍在加载，未发送'
+    return '源图预览未能解码，未发送'
+  }
+
+  function composerHasAttachment(doc) {
+    const scope = attachmentScope(composer(doc), uploadEntry(doc, composer(doc)))
+    if (!scope || uploadFailureLabel(scope)) return false
+    return previewImages(scope).some(usablePreview)
+  }
+
+  // 胶囊文案和 aria-label 都是「AI生图」。已按下时再点会退出该模式。
+  function imageModeControl(doc) {
+    return all(doc, 'button,[role="button"]').find(function (el) {
+      if (!visible(el)) return false
+      const aria = el.getAttribute && String(el.getAttribute('aria-label') || '').trim()
+      const text = String(el.innerText || '').trim()
+      return aria === 'AI生图' || text === 'AI生图'
+    }) || null
+  }
+
+  function imageModeActive(doc) {
+    const el = imageModeControl(doc)
+    if (el && el.getAttribute && el.getAttribute('aria-pressed') === 'true') return true
+    const comp = composer(doc)
+    if (!comp || !comp.getAttribute) return false
+    const ph = (comp.getAttribute('placeholder') || '') + ' ' + (comp.getAttribute('aria-placeholder') || '')
+    return /图像生成与编辑/.test(ph)
+  }
+
+  function ensureImageMode(doc) {
+    if (imageModeActive(doc)) return { ok: true, already: true }
+    const el = imageModeControl(doc)
+    if (!el || !enabled(el)) return { error: '未找到可切换的「AI生图」，带图发送会走普通对话', code: 'E_SELECTOR_MISS' }
+    if (!activate(el)) return { error: '无法切换到「AI生图」，未发送', code: 'E_SELECTOR_MISS' }
+    return { ok: true, pending: !imageModeActive(doc) }
   }
 
   function documentURL(doc) {
@@ -827,6 +909,10 @@ globalThis.XBSPage = (function () {
     freshAttachment,
     attachmentRejected,
     attachmentScope,
+    sendBlockReason,
+    composerHasAttachment,
+    imageModeActive,
+    ensureImageMode,
     detectCaptcha,
     captchaCrop,
     bytesToBase64,

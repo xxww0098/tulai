@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "xbs 页面桥",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "把本机 xbs 的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
   "permissions": ["storage", "tabs", "alarms", "scripting", "downloads"],
   "host_permissions": [

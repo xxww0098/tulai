@@ -353,15 +353,34 @@ function surfaceWithInputs() {
   assert.strictEqual(Page.attachmentRejected(doc), false)
 
   preview.naturalWidth = 0
-  assert.strictEqual(Page.freshAttachment(doc, baseline), true, 'CDN 预览解码失败但附件还在，应视为就绪')
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, 'CDN 预览解码失败不能当成源图就绪')
+  assert.strictEqual(Page.attachmentRejected(doc), false)
+  assert.strictEqual(Page.sendBlockReason(doc), '', '默认尺寸的小图标不是附件预览')
 
   preview.complete = false
-  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '还在加载时不能当成解码失败')
+  preview.rect = { width: 64, height: 64, left: 0, top: 0 }
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '还在加载时不能当成已收下')
+  assert.strictEqual(Page.sendBlockReason(doc), '源图仍在加载，未发送')
   preview.complete = true
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '大图未解码、又没有像素宽高，不能发送')
+  assert.strictEqual(Page.sendBlockReason(doc), '源图预览未能解码，未发送')
+  assert.strictEqual(Page.composerHasAttachment(doc), false)
+
+  preview.attrs.width = '120'
+  preview.attrs.height = '80'
+  assert.strictEqual(Page.freshAttachment(doc, baseline), true, '产品 CDN 且写了像素宽高，才把未解码预览当成已收下')
+  assert.strictEqual(Page.composerHasAttachment(doc), true)
+  assert.strictEqual(Page.sendBlockReason(doc), '')
+  delete preview.attrs.height
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '只有宽度没有高度不算收下')
+  preview.attrs.height = '80'
 
   preview.src = 'https://cdn.example/broken.png'
   preview.currentSrc = preview.src
-  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '非千问 CDN 的坏图不能当成附件')
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '非千问 CDN 即使写了宽高也不能当成附件')
+  preview.src = 'blob:https://www.qianwen.com/preview'
+  preview.currentSrc = preview.src
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, 'blob 地址不能代替已解码的源图')
   preview.src = 'https://workspace-zb-cdn.qianwen.com/preview.png'
   preview.currentSrc = preview.src
 
@@ -371,6 +390,106 @@ function surfaceWithInputs() {
   assert.strictEqual(Page.freshAttachment(doc, baseline), false)
   preview.naturalWidth = 48
   assert.strictEqual(Page.freshAttachment(doc, baseline), false, '页面写了上传失败时，即使预览能解码也不算就绪')
+  assert.strictEqual(Page.sendBlockReason(doc), '输入区显示上传失败或加载失败，源图未就绪，未发送')
+}
+
+{
+  const doc = makeDoc('www.qianwen.com')
+  const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+  surface.className = 'guidance-input-surface'
+  surface.append(new El('textarea'))
+  surface.append(new El('button', { 'aria-label': '添加附件' }))
+  const box = surface.append(new El('div', { 'data-component': 'ImageBox' }))
+  const baseline = new Set(doc.querySelectorAll('img'))
+  const preview = box.append(new El('img', { alt: 'avatar' }))
+  preview.complete = true
+  preview.naturalWidth = 48
+  preview.src = 'https://workspace-zb-cdn.qianwen.com/preview.png'
+  preview.currentSrc = preview.src
+  const failed = box.append(new El('div', { 'aria-label': '图片上传失败' }))
+  assert.strictEqual(Page.attachmentRejected(doc), true, '图片上传失败和上传失败一样要拒绝')
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false)
+  failed.attrs['aria-label'] = ''
+  failed.innerText = ''
+  const loadFail = box.append(new El('span'))
+  loadFail.addText('加载失败')
+  assert.strictEqual(Page.attachmentRejected(doc), true)
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '加载失败时，即使预览能解码也不算就绪')
+  assert.strictEqual(Page.composerHasAttachment(doc), false)
+}
+
+{
+  const doc = makeDoc('www.qianwen.com')
+  const chat = doc.body.append(new El('div', { class: 'chat-question-card-wrap' }))
+  chat.className = 'chat-question-card-wrap'
+  const oldFail = chat.append(new El('span'))
+  oldFail.addText('加载失败')
+  const shell = doc.body.append(new El('div', { 'data-chat-input-shell': 'true' }))
+  shell.append(new El('textarea'))
+  shell.append(new El('button', { 'aria-label': '添加附件' }))
+  const baseline = new Set(doc.querySelectorAll('img'))
+  const preview = shell.append(new El('img'))
+  preview.complete = true
+  preview.naturalWidth = 48
+  preview.rect = { width: 64, height: 64, left: 0, top: 0 }
+  preview.src = 'https://workspace-zb-cdn.qianwen.com/preview.png'
+  preview.currentSrc = preview.src
+  assert.strictEqual(Page.attachmentRejected(doc), false, '对话卡片里的加载失败不算输入区')
+  assert.strictEqual(Page.freshAttachment(doc, baseline), true)
+  assert.strictEqual(Page.composerHasAttachment(doc), true)
+  assert.strictEqual(Page.sendBlockReason(doc), '')
+  const fail = shell.append(new El('span'))
+  fail.addText('加载失败')
+  assert.strictEqual(Page.attachmentRejected(doc), true, '输入壳里的加载失败要拒绝')
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false)
+}
+
+{
+  const doc = makeDoc('www.qianwen.com')
+  doc.body.append(new El('textarea'))
+  const missing = Page.ensureImageMode(doc)
+  assert.strictEqual(missing.code, 'E_SELECTOR_MISS')
+  assert.strictEqual(Page.imageModeActive(doc), false)
+
+  const pendingMode = doc.body.append(new El('button', { 'aria-label': 'AI生图' }))
+  const pending = Page.ensureImageMode(doc)
+  assert.strictEqual(pending.ok, true)
+  assert.strictEqual(pending.pending, true, '点击后 aria-pressed 还没变成 true 时要留给页面更新')
+  assert.strictEqual(pendingMode.clicked, 1)
+  assert.strictEqual(Page.imageModeActive(doc), false)
+
+  const docOn = makeDoc('www.qianwen.com')
+  docOn.body.append(new El('textarea'))
+  const mode = docOn.body.append(new El('button', { 'aria-label': 'AI生图' }))
+  mode.click = function () {
+    this.clicked = (this.clicked || 0) + 1
+    this.attrs['aria-pressed'] = 'true'
+  }
+  const on = Page.ensureImageMode(docOn)
+  assert.strictEqual(on.ok, true)
+  assert.strictEqual(on.pending, false)
+  assert.strictEqual(mode.clicked, 1)
+  assert.strictEqual(Page.imageModeActive(docOn), true)
+  const again = Page.ensureImageMode(docOn)
+  assert.strictEqual(again.already, true, '已选中的 AI生图 不能再点，否则会退出模式')
+  assert.strictEqual(mode.clicked, 1)
+
+  const held = makeDoc('www.qianwen.com')
+  const box = held.body.append(new El('textarea', { placeholder: '支持图像生成与编辑，快速实现创意设计' }))
+  box.attrs.placeholder = '支持图像生成与编辑，快速实现创意设计'
+  const idle = held.body.append(new El('button', { 'aria-label': 'AI生图' }))
+  assert.strictEqual(Page.imageModeActive(held), true)
+  const already = Page.ensureImageMode(held)
+  assert.strictEqual(already.already, true)
+  assert.strictEqual(idle.clicked || 0, 0)
+
+  const off = makeDoc('www.qianwen.com')
+  off.body.append(new El('textarea'))
+  const disabled = off.body.append(new El('button', { 'aria-label': 'AI生图' }))
+  disabled.disabled = true
+  const blocked = Page.ensureImageMode(off)
+  assert.strictEqual(blocked.code, 'E_SELECTOR_MISS')
+  assert.strictEqual(disabled.clicked || 0, 0)
 }
 
 {
