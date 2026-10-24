@@ -4,7 +4,9 @@
 // 不是生成结果。发送按钮与千问相同（chat_input_send_button / 发送）。
 // 上传优先找输入区旁边的 input[type=file]（可以是隐藏的），用 DataTransfer 赋值。
 // 不点击单独的「上传文件或图片」，否则会弹出系统文件框。
-// 本文件不碰 chrome.*，方便用 node 对锚点做夹具测试。
+// 生成卡片里常有一张 1536×1536 的空 SVG（data:image/svg+xml 或 blob）占位，complete 且 naturalWidth 已经大于 0。
+// 这层壳不是结果。要等 http(s) 实图，或同一张卡片上的 srcset / data-src / picture / 背景图 / 下载链接。
+// 内容脚本读不到页面的 React fiber。本文件不碰 chrome.*，方便用 node 对锚点做夹具测试。
 globalThis.XBSPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
   const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"]'
@@ -68,6 +70,11 @@ globalThis.XBSPage = (function () {
   }
 
   function composer(doc) {
+    const slots = all(doc, '[data-testid="chat_input_input"],[data-testid="chat_input"]')
+    for (let i = slots.length - 1; i >= 0; i--) {
+      const found = all(slots[i], 'textarea,[contenteditable="true"],input[type="text"]').filter(enabled).pop()
+      if (found) return found
+    }
     return all(doc, 'textarea,[contenteditable="true"],input[type="text"]').filter(enabled).pop() || null
   }
 
@@ -164,15 +171,23 @@ globalThis.XBSPage = (function () {
     })
   }
 
+  function pickFileInput(inputs) {
+    if (!inputs.length) return null
+    for (let i = inputs.length - 1; i >= 0; i--) {
+      if (inputs[i].getAttribute && inputs[i].getAttribute('data-testid') === 'upload-file-input') return inputs[i]
+    }
+    return inputs[inputs.length - 1]
+  }
+
   function fileInput(doc, comp) {
     const entry = uploadEntry(doc, comp)
     const scope = attachmentScope(comp, entry)
-    const scoped = fileInputs(scope)
-    if (scoped.length) return scoped[scoped.length - 1]
+    const scoped = pickFileInput(fileInputs(scope))
+    if (scoped) return scoped
     if (!comp) return null
     for (let node = comp.parentElement; node; node = node.parentElement) {
-      const found = fileInputs(node)
-      if (found.length) return found[found.length - 1]
+      const found = pickFileInput(fileInputs(node))
+      if (found) return found
     }
     return null
   }
@@ -320,8 +335,187 @@ globalThis.XBSPage = (function () {
     return /正在生成|生成中|绘制中|\bGenerating\b/i.test(root.innerText || '')
   }
 
+  function decodeURIComponentSafe(value) {
+    try { return decodeURIComponent(value) } catch (e) { return String(value || '') }
+  }
+
+  // 空 SVG / blob 是豆包懒加载占位，naturalWidth 可以是 1536 但字节不是图片。
+  // http(s) 实图、以及 data:image/(png|jpeg|webp|gif) 才算候选。
+  function isPlaceholderURL(url) {
+    const value = String(url || '').trim()
+    if (!value) return true
+    if (/^blob:/i.test(value)) return true
+    const path = value.toLowerCase().split('#')[0].split('?')[0]
+    if (/\.svg$/.test(path)) return true
+    if (!/^data:/i.test(value)) return false
+    if (/^data:image\/svg/i.test(value)) return true
+    const decoded = decodeURIComponentSafe(value.slice(0, 2000))
+    if (/<svg[\s>]/i.test(decoded)) return true
+    return !/^data:image\/(png|jpe?g|webp|gif)(;|,)/i.test(value)
+  }
+
+  function urlsFromSrcset(value) {
+    const out = []
+    String(value || '').split(',').forEach(function (part) {
+      const bits = part.trim().split(/\s+/)
+      if (!bits[0]) return
+      let width = 0
+      const desc = bits[1] || ''
+      if (/^\d+w$/i.test(desc)) width = parseInt(desc, 10) || 0
+      else if (/^[\d.]+x$/i.test(desc)) width = Math.round((parseFloat(desc) || 0) * 1000)
+      out.push({ url: bits[0], width: width })
+    })
+    return out
+  }
+
+  function pushCandidate(list, url, width) {
+    const value = String(url || '').trim()
+    if (!value) return
+    const size = width > 0 ? width : 0
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].url === value) {
+        if (size > list[i].width) list[i].width = size
+        return
+      }
+    }
+    list.push({ url: value, width: size })
+  }
+
+  function urlsFromCSSValue(value) {
+    const out = []
+    const re = /url\(\s*(['"]?)(.*?)\1\s*\)/g
+    const text = String(value || '')
+    let match
+    while ((match = re.exec(text))) {
+      if (match[2]) out.push(match[2])
+    }
+    return out
+  }
+
+  function backgroundURLs(el) {
+    const out = []
+    function take(value) {
+      urlsFromCSSValue(value).forEach(function (url) {
+        if (out.indexOf(url) === -1) out.push(url)
+      })
+    }
+    if (!el) return out
+    if (el.style) take(el.style.backgroundImage || el.style.background || '')
+    const computed = styleOf(el)
+    take(computed && (computed.backgroundImage || computed.background))
+    if (el.getAttribute) take(el.getAttribute('style'))
+    return out
+  }
+
+  function imageCandidates(img) {
+    const list = []
+    if (!img) return list
+    const displayed = String(img.currentSrc || img.src || (img.getAttribute && img.getAttribute('src')) || '')
+    const natural = img.naturalWidth > 0 ? img.naturalWidth : 0
+    function inherited(url) {
+      if (!url || !(natural > 0) || isPlaceholderURL(url)) return 0
+      if (url === displayed || isPlaceholderURL(displayed)) return natural
+      return 0
+    }
+    function add(url, width) {
+      pushCandidate(list, url, width > 0 ? width : inherited(url))
+    }
+    add(img.currentSrc, 0)
+    add(img.src, 0)
+    if (img.getAttribute) {
+      add(img.getAttribute('src'), 0)
+      urlsFromSrcset(img.getAttribute('srcset')).forEach(function (item) { add(item.url, item.width) })
+      if (img.srcset) urlsFromSrcset(img.srcset).forEach(function (item) { add(item.url, item.width) })
+      urlsFromSrcset(img.getAttribute('data-srcset')).forEach(function (item) { add(item.url, item.width) })
+      ;['data-src', 'data-original', 'data-original-src', 'data-lazy-src', 'data-url', 'data-actualsrc', 'data-image-url', 'data-image'].forEach(function (name) {
+        add(img.getAttribute(name), 0)
+      })
+    }
+    const picture = closest(img, 'picture')
+    if (picture) {
+      all(picture, 'source').forEach(function (source) {
+        urlsFromSrcset(source.getAttribute && source.getAttribute('srcset')).forEach(function (item) {
+          add(item.url, item.width)
+        })
+        add(source.getAttribute && source.getAttribute('src'), 0)
+      })
+    }
+    backgroundURLs(img).forEach(function (url) { add(url, 0) })
+    return list
+  }
+
   function imageURL(img) {
+    const list = imageCandidates(img).filter(function (item) { return !isPlaceholderURL(item.url) })
+    let best = null
+    list.forEach(function (item) {
+      if (!best || urlRank(item) > urlRank(best)) best = item
+    })
+    if (best) return best.url
     return String((img && (img.currentSrc || img.src)) || '')
+  }
+
+  function urlRank(item) {
+    let rank = item.width || 0
+    if (/^https?:/i.test(item.url)) rank += 1000000
+    else if (/^data:image\/(png|jpe?g|webp|gif)/i.test(item.url)) rank += 1000
+    else rank += 10000
+    return rank
+  }
+
+  function isFetchableRasterURL(url) {
+    if (isPlaceholderURL(url)) return false
+    if (!/^https?:\/\//i.test(url || '')) return false
+    if (/\.(png|jpe?g|webp|gif)(?:$|[?#])/i.test(url)) return true
+    return /byteimg\.com|imagex|ocean-cloud-tos/i.test(url)
+  }
+
+  function imgsInCard(card) {
+    const imgs = all(card, 'img')
+    if (card && card.tagName === 'IMG' && imgs.indexOf(card) === -1) imgs.unshift(card)
+    return imgs
+  }
+
+  function cardCandidates(card, state) {
+    const out = []
+    function add(url, width, img) {
+      const value = String(url || '').trim()
+      if (!value || isPlaceholderURL(value)) return
+      if (state && state.sourceURLs && state.sourceURLs.has(value)) return
+      for (let i = 0; i < out.length; i++) {
+        if (out[i].url === value) {
+          if (width > out[i].width) out[i].width = width
+          if (!out[i].img && img) out[i].img = img
+          return
+        }
+      }
+      out.push({ url: value, width: width || 0, img: img || null })
+    }
+    const imgs = imgsInCard(card)
+    imgs.forEach(function (img) {
+      if (state && state.images && state.images.has(img)) return
+      imageCandidates(img).forEach(function (item) { add(item.url, item.width, img) })
+      if (img.parentElement && img.parentElement !== card) {
+        backgroundURLs(img.parentElement).forEach(function (url) { add(url, 0, img) })
+      }
+    })
+    backgroundURLs(card).forEach(function (url) { add(url, 0, imgs[0] || null) })
+    all(card, 'a').forEach(function (el) {
+      const href = el.getAttribute && (el.getAttribute('href') || el.getAttribute('data-href'))
+      if (!isFetchableRasterURL(href)) return
+      const wraps = el.contains && imgs.some(function (img) { return el.contains(img) })
+      const label = ((el.getAttribute && el.getAttribute('aria-label')) || '') + ' ' + (el.innerText || '')
+      const download = (el.getAttribute && el.getAttribute('download') != null) || /下载|原图/.test(label)
+      if (wraps || download) add(href, 0, null)
+    })
+    return out
+  }
+
+  function chooseCardImage(card, state) {
+    let chosen = null
+    cardCandidates(card, state).forEach(function (item) {
+      if (!chosen || urlRank(item) > urlRank(chosen)) chosen = item
+    })
+    return chosen
   }
 
   function mark(doc, prompt) {
@@ -332,7 +526,9 @@ globalThis.XBSPage = (function () {
     const messages = orderedMessages(doc, q.user, q.assistant)
     const images = new Set(all(doc, 'img'))
     const sourceURLs = new Set()
-    if (scope) all(scope, 'img').forEach(function (img) { sourceURLs.add(imageURL(img)) })
+    if (scope) all(scope, 'img').forEach(function (img) {
+      imageCandidates(img).forEach(function (item) { sourceURLs.add(item.url) })
+    })
     return {
       prompt: normalize(prompt),
       q,
@@ -373,24 +569,24 @@ globalThis.XBSPage = (function () {
     return following.filter(function (node) { return matchesQuery(node, q.assistant) })
   }
 
-  // 同一张 mdbox 里的大图和缩略图只留一张，取 naturalWidth 更大的地址。
+  // 同一张 mdbox 里的大图和缩略图只留一张。空 SVG / blob 占位即使 naturalWidth 更大也丢掉，
+  // 改留 http(s) 实图（或 srcset、data-src、picture、背景、下载链接上的地址）。
   // 不在 mdbox 里的图（包括用户消息上的 message_image_content）丢掉。
   function resultImages(doc, state) {
     const messages = newAssistants(doc, state)
     const best = new Map()
     messages.forEach(function (message) {
+      const seenCards = new Set()
+      function take(card) {
+        if (!card || seenCards.has(card) || !message.contains(card)) return
+        seenCards.add(card)
+        const chosen = chooseCardImage(card, state)
+        if (chosen) best.set(card, chosen)
+      }
       all(message, 'img').forEach(function (img) {
-        const card = closest(img, '[data-testid="mdbox_image"]')
-        if (!card || !message.contains(card)) return
-        if (!visible(img) || !img.complete || !(img.naturalWidth > 0)) return
-        if (state.images && state.images.has(img)) return
-        const url = imageURL(img)
-        if (!url) return
-        if (state.sourceURLs && state.sourceURLs.has(url)) return
-        const prev = best.get(card)
-        const width = img.naturalWidth || 0
-        if (!prev || width > prev.width) best.set(card, { url, img, width })
+        take(closest(img, '[data-testid="mdbox_image"]'))
       })
+      all(message, '[data-testid="mdbox_image"]').forEach(take)
     })
     const seen = new Set()
     const images = []
@@ -544,6 +740,7 @@ globalThis.XBSPage = (function () {
     base64ToBytes,
     normalize,
     imageURL,
+    isPlaceholderURL,
     queries,
     USER_Q,
     ASSISTANT_Q,

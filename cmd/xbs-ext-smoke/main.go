@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"xbs/internal/extbridge"
+	"xbs/internal/images"
 	"xbs/internal/tasks"
 )
 
@@ -127,6 +128,9 @@ func liveOnce(ctx context.Context, sess *extbridge.Session) error {
 		return mkErr
 	}
 	for i, result := range out.Results {
+		if !images.IsValidImageBytes(result.Data) {
+			return fmt.Errorf("拒绝保存结果 %d：不是 PNG、JPEG、GIF 或 WebP（%d 字节）", i+1, len(result.Data))
+		}
 		path := filepath.Join(dir, fmt.Sprintf("result-%02d.png", i+1))
 		if werr := os.WriteFile(path, result.Data, 0o644); werr != nil {
 			return werr

@@ -15,6 +15,7 @@ import (
 
 	"xbs/internal/captcha"
 	"xbs/internal/extbridge"
+	"xbs/internal/images"
 	"xbs/internal/logging"
 	"xbs/internal/strategy"
 )
@@ -350,7 +351,7 @@ func extDownload(ctx context.Context, sess *extbridge.Session, taskID, rawURL, p
 			if err != nil {
 				return nil, err
 			}
-			return data, nil
+			return validateExtImage(data)
 		}
 		chunk, err := base64.StdEncoding.DecodeString(body.DataBase64)
 		if err != nil {
@@ -362,12 +363,19 @@ func extDownload(ctx context.Context, sess *extbridge.Session, taskID, rawURL, p
 			if body.Total > 0 && offset != body.Total {
 				return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载分片长度不符"}
 			}
-			return buf, nil
+			return validateExtImage(buf)
 		}
 		if len(chunk) == 0 || offset > extMaxDownload {
 			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载没有推进"}
 		}
 	}
+}
+
+func validateExtImage(data []byte) ([]byte, error) {
+	if !images.IsValidImageBytes(data) {
+		return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载内容不是 PNG、JPEG、GIF 或 WebP"}
+	}
+	return data, nil
 }
 
 func readExtDownload(path string) ([]byte, error) {

@@ -23,6 +23,7 @@ import (
 	"github.com/gobwas/ws/wsutil"
 
 	"xbs/internal/extbridge"
+	"xbs/internal/images"
 	"xbs/internal/store"
 )
 
@@ -389,6 +390,52 @@ func TestRunQianwenDownloadReassembly(t *testing.T) {
 	}
 	if out.Results[0].Src != "extension" {
 		t.Fatal(out.Results[0].Src)
+	}
+}
+
+func TestExtDownloadRejectsSVGPlaceholder(t *testing.T) {
+	svg := []byte("<svg xmlns='http://www.w3.org/2000/svg' version='1.1' width='1536' height='1536'/>")
+	if len(svg) != 82 {
+		t.Fatalf("svg fixture is %d bytes", len(svg))
+	}
+	if images.IsValidImageBytes(svg) {
+		t.Fatal("empty svg shell must not pass image magic")
+	}
+	srv, err := extbridge.Listen(extbridge.Config{Addr: "127.0.0.1:0", Token: "dev-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	go serveFakeExt(srv.Addr(), "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt, extbridge.CmdSend:
+			return ackOK(env, map[string]any{"ok": true})
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": "https://cdn.example/shell.svg"}}})
+		case extbridge.CmdDownload:
+			return chunkAck(env, svg, len(svg))
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sess, err := srv.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := RunDoubaoExtension(ctx, sess, QianwenJob{
+		TaskID:            "live",
+		IdempotencyPrefix: "live",
+		Prompt:            "水彩风格",
+		Wait:              time.Second,
+	})
+	if err == nil || len(out.Results) != 0 {
+		t.Fatalf("err=%v results=%d", err, len(out.Results))
+	}
+	if extbridge.CodeOf(err) != extbridge.EDownloadFail || !strings.Contains(err.Error(), "PNG") {
+		t.Fatal(err)
 	}
 }
 

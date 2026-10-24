@@ -180,8 +180,11 @@ function makeDoc(hostname) {
 }
 
 
+vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'protocol.js'), 'utf8'))
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'page.js'), 'utf8'))
 const Page = globalThis.XBSPage
+const EMPTY_SVG = "<svg xmlns='http://www.w3.org/2000/svg' version='1.1' width='1536' height='1536'/>"
+const EMPTY_SVG_URL = 'data:image/svg+xml,' + EMPTY_SVG
 
 function surface() {
   const doc = makeDoc('www.doubao.com')
@@ -339,6 +342,121 @@ function boxSet(doc, value) {
   assert.strictEqual(Page.loginWall(doc), true)
   doc.body.append(new El('textarea'))
   assert.strictEqual(Page.loginWall(doc), false)
+}
+
+function rasterImg(parent, src, width) {
+  const img = parent.append(new El('img'))
+  img.complete = true
+  img.naturalWidth = width
+  img.src = src
+  img.currentSrc = src
+  return img
+}
+
+function generatedCard(prompt) {
+  const doc = makeDoc('www.doubao.com')
+  const wrap = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+  wrap.className = 'guidance-input-surface'
+  const box = wrap.append(new El('textarea'))
+  box.value = prompt
+  const marked = Page.mark(doc, prompt)
+  message(doc, 'user', prompt)
+  const answer = message(doc, 'assistant', '已转成水彩风格')
+  const card = answer.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  return { doc, marked, card }
+}
+
+{
+  const { doc, hidden } = surface()
+  const named = hidden.parentElement.append(new El('input', { type: 'file', 'data-testid': 'upload-file-input', accept: 'image/*' }))
+  named.rect = { width: 0, height: 0, left: 0, top: 0 }
+  const extra = hidden.parentElement.append(new El('input', { type: 'file', accept: 'image/*' }))
+  extra.rect = { width: 0, height: 0, left: 0, top: 0 }
+  assert.strictEqual(Page.fileInput(doc, Page.composer(doc)), named)
+}
+
+{
+  const doc = makeDoc('www.doubao.com')
+  const decoy = doc.body.append(new El('textarea'))
+  decoy.value = '别写这里'
+  const slot = doc.body.append(new El('div', { 'data-testid': 'chat_input_input' }))
+  const box = slot.append(new El('div', { contenteditable: 'true' }))
+  assert.strictEqual(Page.composer(doc), box)
+  assert.notStrictEqual(Page.composer(doc), decoy)
+}
+
+{
+  assert.strictEqual(EMPTY_SVG.length, 82)
+  assert.strictEqual(Page.isPlaceholderURL(EMPTY_SVG_URL), true)
+  assert.strictEqual(Page.isPlaceholderURL('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(EMPTY_SVG)), true)
+  assert.strictEqual(Page.isPlaceholderURL('blob:https://www.doubao.com/11111111-2222-3333-4444-555555555555'), true)
+  assert.strictEqual(Page.isPlaceholderURL('https://cdn.example/shell.svg'), true)
+  assert.strictEqual(Page.isPlaceholderURL('https://p3-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.jpeg'), false)
+  const shellBytes = Uint8Array.from(EMPTY_SVG, (ch) => ch.charCodeAt(0))
+  assert.strictEqual(globalThis.XBS.looksLikeRaster(shellBytes), false)
+  assert.strictEqual(globalThis.XBS.looksLikeRaster(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true)
+  assert.strictEqual(globalThis.XBS.looksLikeRaster(Uint8Array.from([0xff, 0xd8, 0xff, 0x00])), true)
+  assert.strictEqual(globalThis.XBS.looksLikeRaster(Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])), true)
+  const webp = new Uint8Array(12)
+  webp.set(Uint8Array.from('RIFF', (ch) => ch.charCodeAt(0)), 0)
+  webp.set(Uint8Array.from('WEBP', (ch) => ch.charCodeAt(0)), 8)
+  assert.strictEqual(globalThis.XBS.looksLikeRaster(webp), true)
+}
+
+{
+  const { doc, marked, card } = generatedCard('水彩风格')
+  const shell = rasterImg(card, EMPTY_SVG_URL, 1536)
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), [])
+  shell.src = 'https://cdn.example/watercolor.png'
+  shell.currentSrc = shell.src
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), ['https://cdn.example/watercolor.png'])
+}
+
+{
+  const { doc, marked, card } = generatedCard('水彩风格')
+  rasterImg(card, EMPTY_SVG_URL, 1536)
+  rasterImg(card, 'https://cdn.example/thumb.png', 64)
+  rasterImg(card, 'https://cdn.example/full.png', 1024)
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), ['https://cdn.example/full.png'])
+}
+
+{
+  const { doc, marked, card } = generatedCard('水彩风格')
+  const shell = rasterImg(card, EMPTY_SVG_URL, 1536)
+  shell.attrs['data-src'] = 'https://p3-flow-imagex-sign.byteimg.com/ocean-cloud-tos/watercolor.jpeg'
+  assert.strictEqual(Page.imageURL(shell), shell.attrs['data-src'])
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), [shell.attrs['data-src']])
+}
+
+{
+  const { doc, marked, card } = generatedCard('水彩风格')
+  const shell = rasterImg(card, 'blob:https://www.doubao.com/placeholder', 1536)
+  shell.attrs.srcset = 'https://cdn.example/small.png 480w, https://cdn.example/full.png 1536w'
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), ['https://cdn.example/full.png'])
+}
+
+{
+  const { doc, marked, card } = generatedCard('水彩风格')
+  const picture = card.append(new El('picture'))
+  picture.append(new El('source', { srcset: 'https://cdn.example/full.webp 1536w, https://cdn.example/small.webp 480w' }))
+  rasterImg(picture, EMPTY_SVG_URL, 1536)
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), ['https://cdn.example/full.webp'])
+}
+
+{
+  const { doc, marked, card } = generatedCard('水彩风格')
+  const frame = card.append(new El('div'))
+  frame.style = { backgroundImage: 'url("https://cdn.example/bg.png")' }
+  rasterImg(frame, EMPTY_SVG_URL, 1536)
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), ['https://cdn.example/bg.png'])
+}
+
+{
+  const { doc, marked, card } = generatedCard('水彩风格')
+  const link = card.append(new El('a', { href: 'https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/full.image', download: '' }))
+  link.addText('下载')
+  rasterImg(link, EMPTY_SVG_URL, 1536)
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), ['https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/full.image'])
 }
 
 console.log('doubao page.js anchors ok')

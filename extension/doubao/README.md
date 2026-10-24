@@ -7,7 +7,7 @@
 - 首页 `https://www.doubao.com/chat/`，主机 `doubao.com`（含 `www` 和裸域）
 - 上传入口 `button[data-testid="upload_file_button"]`，二级菜单全文「上传文件或图片」
 - 仍优先写输入区旁边的隐藏 `input[type=file]`，不点击菜单项本身
-- 结果必须在 `[data-testid="mdbox_image"]` 内；`message_image_content` 是用户图
+- 结果必须在 `[data-testid="mdbox_image"]` 内；`message_image_content` 是用户图。空 SVG / blob 占位不算结果
 - 发送按钮与千问相同：`chat_input_send_button` 或「发送」
 - 验证码只检测。客户端推广「立即下载电脑版」旁的「关闭」只在清理附件时点一次
 
