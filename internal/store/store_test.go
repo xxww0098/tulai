@@ -17,6 +17,13 @@ func TestOpenAndDefaults(t *testing.T) {
 	if n := s.GetInt("concurrency"); n != 1 {
 		t.Errorf("默认并发: %d", n)
 	}
+	if got := s.Get("browserBackend"); got != "ego" {
+		t.Errorf("默认控制面: %s", got)
+	}
+	s.Set("browserBackend", "extension")
+	if got := s.Get("browserBackend"); got != "extension" {
+		t.Errorf("写入控制面: %s", got)
+	}
 	s.SetInt("concurrency", 4)
 	if n := s.GetInt("concurrency"); n != 4 {
 		t.Errorf("写入后并发: %d", n)

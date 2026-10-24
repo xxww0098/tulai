@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>xbs 千问桥</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 32px auto; max-width: 36rem; color: #1c1b19; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+    p { color: #5c574e; }
+    label { display: block; margin-top: 16px; font-weight: 600; }
+    input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; font: inherit; }
+    button { margin-top: 16px; padding: 8px 14px; font: inherit; }
+    #status { margin-top: 16px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>xbs 千问桥</h1>
+  <p>令牌和端口必须与 <code>go run ./cmd/xbs-ext-smoke</code> 打印的一致。保存后服务工作者会重新 hello。</p>
+  <form id="form">
+    <label>令牌
+      <input id="token" autocomplete="off" spellcheck="false">
+    </label>
+    <label>端口
+      <input id="port" inputmode="numeric" value="18765">
+    </label>
+    <button type="submit">保存并重连</button>
+  </form>
+  <div id="status"></div>
+  <script src="options.js"></script>
+</body>
+</html>
