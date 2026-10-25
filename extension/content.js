@@ -291,7 +291,10 @@ async function prepareAttachedSend(payload) {
   const prompt = String((payload && payload.prompt) || '')
   const comp = Page.composer(document)
   if (Page.normalize(Page.readComposer(comp)) !== Page.normalize(prompt)) {
-    return { code: XBS.errors.E_SELECTOR_MISS, message: '切换模式后输入区内容与提示词不一致，未发送' }
+    // 切到「AI生图」会重绘输入框。再写一次，让 Slate 的文本状态和箭头按钮一起恢复。
+    if (typeof Page.setComposer !== 'function' || !Page.setComposer(comp, prompt)) {
+      return { code: XBS.errors.E_SELECTOR_MISS, message: '切换模式后输入区内容与提示词不一致，未发送' }
+    }
   }
   if (typeof Page.composerHasAttachment === 'function' && !Page.composerHasAttachment(document)) {
     return { code: XBS.errors.E_UPLOAD_FAIL, message: '切换模式后源图不在输入区，未发送' }
@@ -323,7 +326,15 @@ async function confirmSend(env, payload, button, rec) {
   }
   let target = button
   if (prepared && prepared.retarget) {
-    target = Page.sendButton(document, Page.composer(document))
+    // 胶囊切换后箭头会先灰掉再亮。只看一眼会把还没就绪的按钮当成找不到。
+    target = await waitFor(function () { return Page.sendButton(document, Page.composer(document)) }, 5000)
+    if (target === 'cancel') {
+      rec.phase = 'blocked'
+      rec.clicked = false
+      rec.promise = null
+      rec.message = '发送已取消'
+      return XBS.fail(env, XBS.errors.E_CANCELLED, rec.message)
+    }
     if (!target) {
       rec.phase = 'blocked'
       rec.clicked = false

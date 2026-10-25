@@ -236,6 +236,70 @@ function surfaceWithInputs() {
 }
 
 {
+  const doc = makeDoc('www.qianwen.com')
+  const shell = doc.body.append(new El('div'))
+  const box = shell.append(new El('div', { contenteditable: 'true' }))
+  box.attrs.contenteditable = 'true'
+  const mic = shell.append(new El('button', { 'aria-label': '语音输入' }))
+  const gray = shell.append(new El('button', { 'aria-label': '发送消息', 'data-session-switch-target': 'send-query' }))
+  gray.disabled = true
+  assert.strictEqual(Page.composer(doc), box)
+  assert.strictEqual(Page.sendButton(doc, box), null, '灰色箭头是 disabled，不能当成就绪')
+  gray.disabled = false
+  assert.strictEqual(Page.sendButton(doc, box), gray)
+  assert.notStrictEqual(Page.sendButton(doc, box), mic)
+  const PreviousInputEvent = global.InputEvent
+  global.InputEvent = class InputEvent {
+    constructor(type, init) {
+      this.type = type
+      Object.assign(this, init || {})
+      this.defaultPrevented = false
+    }
+    preventDefault() { this.defaultPrevented = true }
+  }
+  let smashed = false
+  let shown = ''
+  Object.defineProperty(box, 'textContent', {
+    configurable: true,
+    get() { return shown },
+    set(value) { smashed = true; shown = String(value) },
+  })
+  box.addText = function (text) {
+    this.childNodes.push({ nodeType: 3, nodeValue: text })
+    this.innerText += text
+    return this
+  }
+  box.dispatchEvent = function (ev) {
+    if (ev.type !== 'beforeinput') return true
+    ev.preventDefault()
+    this.addText(ev.data)
+    return false
+  }
+  assert.strictEqual(Page.setComposer(box, '把这张图变成水彩'), true)
+  assert.strictEqual(Page.readComposer(box), '把这张图变成水彩')
+  assert.strictEqual(smashed, false, 'Slate 收下 beforeinput 后不能再写 textContent')
+  if (PreviousInputEvent) global.InputEvent = PreviousInputEvent
+  else delete global.InputEvent
+}
+
+{
+  const doc = makeDoc('www.qianwen.com')
+  const welcome = doc.body.append(new El('button', { 'aria-label': 'AI生图' }))
+  const shell = doc.body.append(new El('div'))
+  shell.append(new El('textarea'))
+  const chip = shell.append(new El('button', { 'aria-label': 'AI生图' }))
+  chip.attrs['aria-pressed'] = 'false'
+  const picked = Page.ensureImageMode(doc)
+  assert.strictEqual(picked.ok, true)
+  assert.strictEqual(chip.clicked, 1, '应点输入壳里的 AI生图')
+  assert.strictEqual(welcome.clicked || 0, 0, '页面前部的同名入口会进创意生图，不能点')
+  chip.attrs['aria-pressed'] = 'true'
+  const held = Page.ensureImageMode(doc)
+  assert.strictEqual(held.already, true)
+  assert.strictEqual(chip.clicked, 1)
+}
+
+{
   const doc = makeDoc('www.tongyi.com')
   const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
   surface.className = 'guidance-input-surface'
@@ -627,6 +691,36 @@ async function chooserFlow() {
     assert.strictEqual(located.input, hidden)
     assert.strictEqual(located.assigned, true)
     assert.strictEqual(hidden.files.length, 1)
+  }
+
+  {
+    const doc = makeDoc('www.qianwen.com')
+    const surface = doc.body.append(new El('div', { class: 'guidance-input-surface' }))
+    surface.className = 'guidance-input-surface'
+    surface.append(new El('textarea'))
+    const hidden = surface.append(new El('input', { type: 'file', accept: 'image/*', 'aria-hidden': 'true' }))
+    hidden.attrs['aria-hidden'] = 'true'
+    const entry = surface.append(new El('button', { 'aria-label': '添加附件' }))
+    const menu = doc.body.append(new El('div', { role: 'menu' }))
+    const image = menu.append(new El('div'))
+    image.addText('上传图片')
+    let picked = null
+    image.click = function () {
+      this.clicked = (this.clicked || 0) + 1
+      const input = new HTMLInputElement()
+      input.type = 'file'
+      input.accept = 'image/png'
+      input.addEventListener('change', () => { picked = Array.from(input.files || []) })
+      input.showPicker()
+    }
+    const bridge = Page.createChooserBridge(document)
+    const located = await Page.attachLocalImage(doc, file, { bridge, timeout: 500 })
+    assert.strictEqual(located.via, 'chooser')
+    assert.strictEqual(hidden.files, null, 'aria-hidden 的选择器直接赋值留不住缩略图')
+    assert.strictEqual(entry.clicked || 0, 0, '菜单已经开着时不应再点入口')
+    assert.strictEqual(image.clicked, 1)
+    assert.strictEqual(picked.length, 1)
+    assert.strictEqual(picked[0].name, 'src.png')
   }
 
   {

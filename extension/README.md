@@ -7,7 +7,7 @@
 - `qianwen/page.js`：`添加附件`、`上传图片`、`#qk-markdown-react`
 - `doubao/page.js`：`button[data-testid="upload_file_button"]`、菜单全文「上传文件或图片」、结果必须在 `[data-testid="mdbox_image"]`
 
-两边共用 `content.js`。上传优先写输入区旁边的 `input[type=file]`（可以是隐藏的），不弹系统文件框。千问当前菜单里没有这个 input：`qianwen/chooser.js` 在页面主世界拦住这一次 `showPicker`，点「上传图片」后把源图交进去。豆包仍只给已有的 file input 赋值，不点菜单项。ego / Chrome 路径还在。
+两边共用 `content.js`。豆包和旧千问页面直接写输入区旁边的 `input[type=file]`（可以是隐藏的），不弹系统文件框。当前千问作曲器里的文件框标了 `aria-hidden`，直接赋值留不住缩略图；有主世界桥时点「上传图片」，由 `qianwen/chooser.js` 拦住这一次 `showPicker`。豆包仍只给已有的 file input 赋值，不点菜单项。ego / Chrome 路径还在。
 
 ## 加载（Load unpacked）
 
@@ -70,7 +70,7 @@ UPDATE settings SET value='extension' WHERE key='browserBackend';
 
 点过发送之后，同一条幂等键不会再点第二次。平台没有确认接受时返回 `E_SEND_UNCERTAIN`，整批任务停止，需要你看一眼网页再开新的一批。发送后若页面出现验证码，包括阿里云 Baxia 和地址里的 `_____tmd_____/punish`，返回 `E_CAPTCHA_HUMAN`，任务变成「待验证」，不会记成发送状态未确认。验证码只检测并尽量把画布裁下来交给主机，不在扩展里自动拖动。
 
-千问源图要在输入区解码成功（`naturalWidth` 大于 0）才算就绪。预览来自千问 / 通义 CDN 但解码失败（`naturalWidth` 为 0），或输入区出现「上传失败」「加载失败」，都不算就绪，不发送。未解码时，只有 img 上同时写了大于 0 的像素宽高、并且地址是产品 CDN，才当成已经收下。带可用源图发送前会点「AI生图」；胶囊已经选中就不再点，避免退出该模式。纯文字发送不切换模式。点过发送之后，确认方式不变：输入清空或出现包含提示词的新用户消息才算接受，否则仍是 `E_SEND_UNCERTAIN`。
+千问源图要在输入区解码成功（`naturalWidth` 大于 0）才算就绪。预览来自千问 / 通义 CDN 但解码失败（`naturalWidth` 为 0），或输入区出现「上传失败」「加载失败」，都不算就绪，不发送。未解码时，只有 img 上同时写了大于 0 的像素宽高、并且地址是产品 CDN，才当成已经收下。带可用源图发送前会点输入壳里的「AI生图」；胶囊已经选中就不再点，避免退出该模式。当前页面的发送是箭头按钮，灰色（disabled）时不点；切模式后会等到它重新可点。纯文字发送不切换模式。点过发送之后，确认方式不变：输入清空或出现包含提示词的新用户消息才算接受，否则仍是 `E_SEND_UNCERTAIN`。
 
 豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。
 
