@@ -50,6 +50,14 @@ go run ./cmd/xbs-ext-smoke
 
 可选：`XBS_EXT_WAIT=180`（等待秒数，默认 120），`XBS_EXT_OUT=ext-live-out`（结果目录）。成功时目录里会有 `result-01.png`。这一次会真的点发送。
 
+## 下载与去水印
+
+扩展只把结果地址的字节拿回来，不去改 CDN。主机在 `extDownload`（`internal/tasks/extqianwen.go`）里处理，豆包和千问共用这一条。`cmd/xbs-ext-smoke` 实机保存和 `browserBackend=extension` 的任务落盘都写这里返回的字节。
+
+豆包页面地址如果带 `watermark` 或 `wm=` 查询，主机会先用 `strategy.PreferUnwatermarkedURL` 去掉整段查询再让扩展下载。这和 ego 的 `Doubao.FetchResultBytes` 是同一个函数。这次下载失败才退回页面上的原地址。千问结果地址没有这组参数时保持原样，这里也不另写一套千问专用参数。
+
+字节校验通过之后，豆包和千问都会跑 `images.RemoveWatermark`。算法匹配到已校准的角落水印时，冒烟进程和任务引擎写下的就是去水印 PNG。匹配不到、不是静态方图、是动画，或处理失败时，仍然保存下载到的原字节。任务设置里的「去水印（实验）」仍只控制 ego 路径要不要另存 `_去水印.png`。扩展这条路径命中后直接替换要保存的那张图，不再算第二遍。
+
 用桌面端跑同一条路径时，把配置库写成：
 
 ```sql

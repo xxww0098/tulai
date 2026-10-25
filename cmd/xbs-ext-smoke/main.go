@@ -127,6 +127,9 @@ func liveOnce(ctx context.Context, sess *extbridge.Session) error {
 	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 		return mkErr
 	}
+	if len(out.Results) > 0 {
+		fmt.Println("结果在落盘前已走主机侧去水印：豆包地址若带 watermark 或 wm= 会先去掉查询再下载，失败则用页面原地址；豆包和千问在水印匹配时保存去水印 PNG。")
+	}
 	for i, result := range out.Results {
 		if !images.IsValidImageBytes(result.Data) {
 			return fmt.Errorf("拒绝保存结果 %d：不是 PNG、JPEG、GIF 或 WebP（%d 字节）", i+1, len(result.Data))
