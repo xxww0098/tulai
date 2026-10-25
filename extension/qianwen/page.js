@@ -1,7 +1,9 @@
 // 千问页面动作。选择器沿用 internal/strategy/js/ego.js 里已经对着通义/千问页面验证过的锚点，
-// 不另起一套 class 名。输入区旁边已有 input[type=file]（可以是隐藏的）时直接 DataTransfer 赋值。
-// 当前千问菜单里没有这个 input：「上传图片」会临时创建 input 并调用 showPicker。
-// 主世界 chooser.js 武装之后，点这项把源图交进去，不打开系统文件框。
+// 不另起一套 class 名。当前 www.qianwen.com 输入壳是紧凑条：左侧「添加附件」、右侧麦克风和箭头发送
+// （data-session-switch-target="send-query"，文案仍是「发送消息」）。箭头灰着就是 disabled，
+// 文本没进 Slate 的 textAreaManager 时不会亮。带图时输入壳里的「AI生图」是胶囊，不是整页第一颗同名按钮；
+// 已按下再点会退出该模式。上传用的 input 标了 aria-hidden，页面自己 showPicker 才接文件；
+// 主世界 chooser.js 武装之后，点「上传图片」把源图交进去，不打开系统文件框。
 // 本文件不碰 chrome.*，方便用 node 对锚点做夹具测试。
 globalThis.XBSPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
@@ -109,19 +111,51 @@ globalThis.XBSPage = (function () {
       dispatchInput(comp, text)
       return normalize(readComposer(comp)) === normalize(text)
     }
+    selectContents(comp)
+    // 千问编辑器是 Slate。它在 beforeinput 里 preventDefault，再把 data 写进 textAreaManager.text。
+    // 只改 textContent 时页面上看得到字，箭头仍是 disabled。编辑器收下这次输入后不能再改 DOM。
+    if (commitBeforeInput(comp, text)) {
+      dispatchInput(comp, text)
+      return true
+    }
+    let commanded = false
     try {
-      const sel = (comp.ownerDocument || document).getSelection()
-      const range = (comp.ownerDocument || document).createRange()
+      const doc = comp.ownerDocument || document
+      commanded = !!(doc.execCommand && doc.execCommand('insertText', false, text))
+    } catch (e) {}
+    if (!commanded && normalize(readComposer(comp)) !== normalize(text)) comp.textContent = text
+    dispatchInput(comp, text)
+    return normalize(readComposer(comp)) === normalize(text)
+  }
+
+  function selectContents(comp) {
+    try {
+      const doc = comp.ownerDocument || document
+      const sel = doc.getSelection && doc.getSelection()
+      if (!sel || !doc.createRange) return
+      const range = doc.createRange()
       range.selectNodeContents(comp)
       sel.removeAllRanges()
       sel.addRange(range)
-      const doc = comp.ownerDocument || document
-      if (!doc.execCommand || !doc.execCommand('insertText', false, text)) comp.textContent = text
+    } catch (e) {}
+  }
+
+  function commitBeforeInput(comp, text) {
+    if (!comp || typeof comp.dispatchEvent !== 'function' || typeof InputEvent !== 'function') return false
+    let ev = null
+    try {
+      ev = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text,
+      })
     } catch (e) {
-      comp.textContent = text
+      return false
     }
-    dispatchInput(comp, text)
-    return normalize(readComposer(comp)) === normalize(text)
+    let result = true
+    try { result = comp.dispatchEvent(ev) } catch (e) { return false }
+    return result === false || !!(ev && ev.defaultPrevented)
   }
 
   function dispatchInput(el, text) {
@@ -189,14 +223,46 @@ globalThis.XBSPage = (function () {
     return null
   }
 
+  function isUploadImageLabel(item) {
+    const text = String(item.innerText || '').trim()
+    if (/^上传图片(?:\s|$)/.test(text)) return true
+    return all(item, 'span,p,div').some(function (label) { return String(label.innerText || '').trim() === '上传图片' })
+  }
+
+  function inUploadMenu(el) {
+    return !!closest(el, '[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')
+  }
+
   // ego.js qwenImageItem：菜单项全文以「上传图片」开头，或某个子节点的文本恰好是「上传图片」。
+  // 当前菜单项是 CapsuleMenuItem（div）。外面若仍是 role=menuitem，点那一层；否则点菜单里文本恰好是「上传图片」的节点。
   function uploadImageItem(doc) {
-    return all(doc, '[role="menuitem"]').find(function (item) {
-      if (!enabled(item)) return false
-      const text = String(item.innerText || '').trim()
-      if (/^上传图片(?:\s|$)/.test(text)) return true
-      return all(item, 'span,p,div').some(function (label) { return String(label.innerText || '').trim() === '上传图片' })
-    }) || null
+    const menuItem = all(doc, '[role="menuitem"]').find(function (item) {
+      return enabled(item) && isUploadImageLabel(item)
+    })
+    if (menuItem) return menuItem
+    const nodes = all(doc, 'button,[role="button"],div,span')
+    let leaf = null
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i]
+      if (!enabled(el) || String(el.innerText || '').trim() !== '上传图片') continue
+      if (!inUploadMenu(el)) continue
+      leaf = el
+    }
+    if (!leaf) return null
+    const host = closest(leaf, '[role="menuitem"],button,[role="button"]')
+    return host && enabled(host) ? host : leaf
+  }
+
+  // 当前上传组件里的 input 是 aria-hidden 的选择器，页面在点击「上传图片」时才 showPicker。
+  // 内容脚本直接赋值不会走这条路径，预览留不住。
+  function isPickerInput(input) {
+    return !!(input && input.getAttribute && input.getAttribute('aria-hidden') === 'true')
+  }
+
+  function directFileInput(doc, comp) {
+    const input = fileInput(doc, comp)
+    if (!input || isPickerInput(input)) return null
+    return input
   }
 
   function unsentBlocksUpload(doc, comp) {
@@ -208,18 +274,29 @@ globalThis.XBSPage = (function () {
     return '当前输入区有未发送内容，未操作上传菜单'
   }
 
-  function sendButton(doc, comp) {
+  function isSendControl(el) {
+    if (!el || !el.getAttribute) return false
+    if (el.getAttribute('data-session-switch-target') === 'send-query') return true
+    if (el.getAttribute('data-testid') === 'chat_input_send_button') return true
+    return [el.getAttribute('aria-label'), el.getAttribute('title'), el.innerText].some(function (text) {
+      return /^(发送|发送消息|Send|Send message)$/i.test(String(text || '').trim())
+    })
+  }
+
+  // 灰箭头是 disabled 的发送按钮，不算就绪。语音按钮在它左边，不要当成发送。
+  function sendControl(doc, comp) {
     for (let scope = comp && comp.parentElement; scope && scope !== doc.body; scope = scope.parentElement) {
       const found = all(scope, 'button,[role="button"]').filter(function (el) {
-        if (!enabled(el)) return false
-        if (el.getAttribute && el.getAttribute('data-testid') === 'chat_input_send_button') return true
-        return [el.getAttribute && el.getAttribute('aria-label'), el.getAttribute && el.getAttribute('title'), el.innerText].some(function (text) {
-          return /^(发送|发送消息|Send|Send message)$/i.test(String(text || '').trim())
-        })
+        return visible(el) && isSendControl(el)
       }).pop()
       if (found) return found
     }
     return null
+  }
+
+  function sendButton(doc, comp) {
+    const found = sendControl(doc, comp)
+    return found && enabled(found) ? found : null
   }
 
   function loginWall(doc) {
@@ -572,13 +649,13 @@ globalThis.XBSPage = (function () {
     const timeout = Number(opts.timeout) || 2000
     const bridge = opts.bridge || null
     const comp = composer(doc)
-    const direct = fileInput(doc, comp)
+    const direct = directFileInput(doc, comp)
     if (direct) {
       if (!assignFiles(direct, [file])) return failedAssign()
       return { input: direct, assigned: true }
     }
     const nestedNow = nestedFileInput(doc)
-    if (nestedNow) {
+    if (nestedNow && !isPickerInput(nestedNow)) {
       if (!assignFiles(nestedNow, [file])) return failedAssign()
       return { input: nestedNow, assigned: true }
     }
@@ -603,15 +680,22 @@ globalThis.XBSPage = (function () {
         const status = bridge && bridge.result ? bridge.result() : ''
         if (status === 'ok') return { assigned: true, via: 'chooser' }
         if (status === 'fail') return failedAssign()
-        const input = fileInput(doc, composer(doc))
+        const input = directFileInput(doc, composer(doc))
         if (input) {
           if (!assignFiles(input, [file])) return failedAssign()
           return { input: input, assigned: true }
         }
         const nested = nestedFileInput(doc)
-        if (nested) {
+        if (nested && !isPickerInput(nested)) {
           if (!assignFiles(nested, [file])) return failedAssign()
           return { input: nested, assigned: true }
+        }
+        if (!bridge) {
+          const picker = fileInput(doc, composer(doc))
+          if (picker) {
+            if (!assignFiles(picker, [file])) return failedAssign()
+            return { input: picker, assigned: true }
+          }
         }
         const item = uploadImageItem(doc)
         if (bridge && item && !clickedItem) {
@@ -739,23 +823,57 @@ globalThis.XBSPage = (function () {
     return previewImages(scope).some(usablePreview)
   }
 
-  // 胶囊文案和 aria-label 都是「AI生图」。已按下时再点会退出该模式。
+  function chipLabel(el) {
+    const aria = el.getAttribute && String(el.getAttribute('aria-label') || '').trim()
+    if (aria) return aria
+    return String(el.innerText || '').replace(/\s+/g, ' ').trim()
+  }
+
+  function isImageChip(el) {
+    return visible(el) && chipLabel(el) === 'AI生图'
+  }
+
+  function ancestorDepth(from, target) {
+    let depth = 0
+    for (let node = from; node; node = node.parentElement, depth++) {
+      if (node.contains && node.contains(target)) return depth
+    }
+    return 999
+  }
+
+  // 只认输入框往上最先包住的那颗「AI生图」。整页更早的同名入口会进创意生图，发送箭头保持灰色。
+  // 已按下的胶囊再点会退出模式，所以调用方要先看 imageModeActive。
   function imageModeControl(doc) {
-    return all(doc, 'button,[role="button"]').find(function (el) {
-      if (!visible(el)) return false
-      const aria = el.getAttribute && String(el.getAttribute('aria-label') || '').trim()
-      const text = String(el.innerText || '').trim()
-      return aria === 'AI生图' || text === 'AI生图'
-    }) || null
+    const comp = composer(doc)
+    if (comp) {
+      for (let node = comp.parentElement; node && node !== doc.body && node !== doc.documentElement; node = node.parentElement) {
+        const chips = all(node, 'button,[role="button"]').filter(isImageChip)
+        if (!chips.length) continue
+        let best = chips[0]
+        let bestDepth = ancestorDepth(comp, best)
+        for (let i = 1; i < chips.length; i++) {
+          const depth = ancestorDepth(comp, chips[i])
+          if (depth < bestDepth) {
+            best = chips[i]
+            bestDepth = depth
+          }
+        }
+        return best
+      }
+    }
+    const anywhere = all(doc, 'button,[role="button"]').filter(isImageChip)
+    return anywhere[0] || null
   }
 
   function imageModeActive(doc) {
-    const el = imageModeControl(doc)
-    if (el && el.getAttribute && el.getAttribute('aria-pressed') === 'true') return true
     const comp = composer(doc)
-    if (!comp || !comp.getAttribute) return false
-    const ph = (comp.getAttribute('placeholder') || '') + ' ' + (comp.getAttribute('aria-placeholder') || '')
-    return /图像生成与编辑/.test(ph)
+    if (comp && comp.getAttribute) {
+      const ph = (comp.getAttribute('placeholder') || '') + ' ' + (comp.getAttribute('aria-placeholder') || '')
+      if (/图像生成与编辑/.test(ph)) return true
+    }
+    const el = imageModeControl(doc)
+    if (!el || !el.getAttribute) return false
+    return el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true'
   }
 
   function ensureImageMode(doc) {
