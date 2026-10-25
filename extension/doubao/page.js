@@ -687,16 +687,15 @@ globalThis.XBSPage = (function () {
     const comp = composer(doc)
     const scope = attachmentScope(comp, uploadEntry(doc, comp))
     if (!scope) return false
+    if (busy(scope)) return false
+    // 豆包收下文件后会先挂 attachment-image-card。卡内 blob 预览经常长期 naturalWidth=0，
+    // 不能干等解码；可见的附件卡本身就表示源图已进输入区。
+    const cards = all(scope, '[data-testid="attachment-image-card"]')
+    if (cards.some(visible)) return true
     const fresh = all(scope, 'img').filter(function (img) {
-      if (!visible(img) || !img.complete || !(img.naturalWidth > 0) || !baseline || baseline.has(img)) return false
-      // 结果卡的空 SVG 占位不能当真图；本地附件预览却常常是 blob:，解码后 naturalWidth > 0 就算就绪。
-      const url = String((img.currentSrc || img.src || (img.getAttribute && img.getAttribute('src')) || ''))
-      if (/^blob:/i.test(url)) return true
-      if (/^https?:/i.test(url)) return true
-      if (/^data:image\/(png|jpe?g|webp|gif)(;|,)/i.test(url)) return true
-      return false
+      return visible(img) && img.complete && img.naturalWidth > 0 && baseline && !baseline.has(img)
     })
-    return fresh.length > 0 && !busy(scope)
+    return fresh.length > 0
   }
 
   function captchaEvidence(el) {
