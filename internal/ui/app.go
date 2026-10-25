@@ -111,6 +111,7 @@ type App struct {
 	tab          int
 	splitSz      float32
 	sourceHeight float32
+	updateBusy   bool
 }
 
 type sourceImage struct {
@@ -132,6 +133,7 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		browserSel:   -1,
 	}
 	a.loadSettings()
+	mygo.App.SetMenu(a.installMenu())
 	offQuit := mygo.App.OnQuit(a.saveSettings)
 	defer offQuit()
 	logging.Log.SetSink(func(e logging.Entry) {
@@ -281,7 +283,12 @@ func (a *App) view(c *ui.Context) {
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(14, 20).Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "小帮手").FontSize(22).Bold()
-			ui.Text(c, "豆包 · 千问 / 批量生图工作台").FontSize(13).TextColor(c.Theme().TextMuted)
+			subtitle := "豆包 · 千问 / 批量生图工作台"
+			if v := mygo.App.Version(); v != "" {
+				subtitle += " · " + v
+			}
+			ui.Text(c, subtitle).FontSize(13).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0)
+			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
 		})
 		ui.Divider(c)
 		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {

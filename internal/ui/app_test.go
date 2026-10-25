@@ -16,7 +16,7 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 220}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"任务设置", "浏览器", "验证码", "开始任务", "源图片（0）", "添加图片", "运行日志"} {
+	for _, label := range []string{"任务设置", "浏览器", "验证码", "开始任务", "源图片（0）", "添加图片", "运行日志", "检查更新"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
 	before, _ := tt.Find("文件名后缀")
@@ -150,7 +150,7 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"小帮手", "任务设置", "开始任务", "添加图片", "任务队列", "运行日志", "状态", "结果", "说明", "等待"} {
+				for _, label := range []string{"小帮手", "检查更新", "任务设置", "开始任务", "添加图片", "任务队列", "运行日志", "状态", "结果", "说明", "等待"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})

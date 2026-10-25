@@ -20,7 +20,7 @@
 - pull request 和 `main`：跑 `go test ./... -short`、`go tool mygo vet`、扩展的 node 测试，并打出三个系统的安装包。产物在 Actions 的 artifacts 里，保留 14 天：`xbs-linux`、`xbs-windows`、`xbs-macos`、`xbs-extension`。
 - 标签 `v*`：同一套构建。标签必须等于 `v` 加上 `mygo.json` 的版本，否则一开始就失败，不会发布。通过之后用 `GITHUB_TOKEN` 创建 GitHub Release，并上传安装包、扩展 zip 和 `SHA256SUMS`。
 
-没有自动更新密钥，也没有 Apple / Windows 签名证书。不要在仓库里造这些 secret。`-upload` 也不用：它要配 `updates` 和签名私钥。Release 由 `gh release create` 上传。
+没有自动更新密钥，也没有 Apple / Windows 签名证书。不要在仓库里造这些 secret。`-upload` 也不用：它要配 `updates` 和签名私钥，装好的程序只接受用那把私钥签过的清单。本仓库的桌面端不走这条签名更新，改由程序自己读公开的 GitHub Releases API。Release 仍由 `gh release create` 上传。
 
 macOS 包在 `macos-latest` 上构建，才能做出磁盘映像并做 ad-hoc 签名。Windows 安装器在 Ubuntu 上用 NSIS 交叉制作。Linux 同时打 amd64 和 arm64。这些都是 `CGO_ENABLED=0` 的 `go tool mygo build`，和本机的 `./build.sh` 同一条命令。
 
@@ -60,6 +60,58 @@ git push origin v0.1.0
 - **macOS**：ad-hoc 签名，没有公证。本机打出来的包可以在那台 Mac 上跑；拷到别的 Mac，Gatekeeper 会拦。右键打开，或 `xattr -dr com.apple.quarantine /Applications/xbs.app`。要去掉这个限制，需要 Apple Developer ID 和公证配置，这次没有。
 - **Windows**：没有证书。SmartScreen 会提示未知发布者。安装器仍然是当前用户安装。
 - **Linux**：deb 和压缩包都没有签名。
+
+## 从 GitHub 更新
+
+桌面端自己检查更新，不使用 MyGo 的签名更新（`mygo.Updater` / `updates.publicKey`）。公开仓库的正式版不需要 token，程序也不会读取 `GITHUB_TOKEN` 或 `GH_TOKEN`。
+
+检查地址是：
+
+```text
+GET https://api.github.com/repos/xxww0098/xbs/releases/latest
+```
+
+`User-Agent` 为 `xbs/<当前版本>`。只接受这个 API 和 `github.com` 上 `xxww0098/xbs` 的发布附件；下载时允许 GitHub 跳到它自己的附件域名。草稿和预发布不算。
+
+入口：
+
+| 入口 | 行为 |
+|---|---|
+| 菜单「帮助 → 检查更新…」 | 有新版本时先说明未签名，确认后下载并安装。任务还在跑时只提示，不安装。 |
+| 标题栏「检查更新」 | 同上。 |
+| `xbs update` | 终端里检查并安装。 |
+| `xbs update --check` | 只打印当前版本和最新版本。 |
+| `xbs version` | 打印桌面端版本（`ProductVersion`，打包后与 `mygo.App.Version()` 相同）。 |
+
+版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `xbs-extension-0.3.4.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+
+按当前系统选择附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
+
+| 系统 | 怎么判断 | 下载 | 装到哪里 |
+|---|---|---|---|
+| Linux，普通或 `~/.local` | 不是下面的 deb | `xbs-<版本>-linux-<架构>.tar.gz` | `~/.local/xbs.app`，并在 `~/.local/bin/xbs` 放命令。和 `install.sh` 同一位置。 |
+| Linux，deb | 正在跑 `/usr/bin/xbs` 或 `/opt/xbs/` | `xbs_<版本>_<架构>.deb` | 不申请管理员权限。校验后把 `sudo dpkg -i …` 印出来。 |
+| Windows，安装器或开发运行 | 路径里有 `\Programs\`、`Program Files` 或 `go-build` | `xbs.Setup.<版本>.<架构>.exe`（构建时的名字是 `xbs Setup <版本> <架构>.exe`） | 退出后打开 NSIS 安装器。 |
+| Windows，免安装 exe | 其他路径 | `xbs-<版本>-windows-<架构>.exe` | 退出后用 PowerShell 替换当前 exe 再打开。 |
+| macOS，正在跑 `.app` | `….app/Contents/MacOS/xbs` | `xbs.<版本>.dmg`（通用二进制；构建时的名字是 `xbs <版本>.dmg`） | 换掉当前的 `xbs.app`，并去掉隔离属性。 |
+| macOS，其他 | 开发运行 | 同一个 dmg | 复制到 `~/Applications/xbs.app`。 |
+
+下载后核对两处摘要，对不上就删除文件、不安装：
+
+1. 附件 API 里的 `digest`（`sha256:…`），有的话必须和 `SHA256SUMS` 同一行一致。
+2. 文件本身的 SHA256 必须等于 `SHA256SUMS` 里的记录。`SHA256SUMS` 自己的 `digest` 也会先核对。
+
+没有 `SHA256SUMS` 就拒绝安装。
+
+### 未签名
+
+校验和只能证明文件和这次 Release 相同，不能代替开发者签名。
+
+- **macOS**：ad-hoc 签名，没有公证。更新会执行 `xattr -dr com.apple.quarantine`。别的 Mac 上 Gatekeeper 仍可能拦截，需要在访达里右键打开。
+- **Windows**：没有证书。安装器和替换后的 exe 都可能被 SmartScreen 拦住，需要选择仍要运行。
+- **Linux**：deb 和 tar.gz 都没有签名。用户目录安装不需要 root；deb 必须自己执行印出来的 `sudo dpkg -i`。
+
+下一次打 tag 时，Release 说明里的「检查更新」一段由 `.github/workflows/ci.yml` 写上。0.1.0 的安装包里还没有这个入口，要先手动装一版带「检查更新」的构建。
 
 ## 下一次版本
 
