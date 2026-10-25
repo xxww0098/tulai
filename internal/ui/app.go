@@ -157,7 +157,7 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 	})
 	mygo.App.WhenReady(func() {
 		a.window = mygo.NewWindow(mygo.WindowOptions{
-			Title:   "xbs — 小帮手",
+			Title:   "图来",
 			Width:   1280,
 			Height:  840,
 			Content: ui.View(a.view),
@@ -307,7 +307,7 @@ func (a *App) view(c *ui.Context) {
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(14, 20).Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "xbs").FontSize(22).Bold()
-			subtitle := "小帮手 · 豆包 / 千问"
+			subtitle := "图来 · 豆包 / 千问"
 			if v := mygo.App.Version(); v != "" {
 				subtitle += " · " + v
 			}
@@ -590,7 +590,7 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 	}
 }
 
-const verificationHint = "在Ego小帮手空间完成验证后重新开始任务"
+const verificationHint = "在浏览器中完成验证后重新开始任务"
 
 func taskResultSummary(queue []tasks.Task) string {
 	success, failed, needsUser := 0, 0, 0

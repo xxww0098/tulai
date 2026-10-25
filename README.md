@@ -1,6 +1,6 @@
-# xbs
+# 图来
 
-xbs（窗口标题「小帮手」）是豆包和千问的批量生图桌面应用。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
+图来是豆包和千问的批量生图桌面应用。命令、仓库和安装包里的可执行文件仍叫 `xbs`，窗口标题是「图来」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
 
 本地运行，没有授权激活，也不接远端数据库。已安装的桌面端可以从 GitHub Releases 检查并安装更新。
 
@@ -28,7 +28,7 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟测试
 go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问和豆包扩展 hello
 ```
 
-桌面端产品版本是 **0.1.1**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.1` 上发布，页面扩展 zip 是 **0.3.5**。步骤见下文「发布 0.1.1」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.1**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.1` 上发布，页面扩展 zip 是 **0.3.6**。步骤见下文「发布 0.1.1」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端可以自己更新：菜单 **帮助 → 检查更新…**，标题栏的 **检查更新**，或在终端执行 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/xbs/releases/latest`，不附带 token，按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
 
@@ -173,7 +173,7 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 
 ## 发布 0.1.1
 
-桌面端产品版本是 **0.1.1**：`mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.5**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块版本由 git 标签决定，不写在 `go.mod`。
+桌面端产品版本是 **0.1.1**：`mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.6**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块版本由 git 标签决定，不写在 `go.mod`。
 
 相对已发布的 0.1.0，这一版带上 GitHub Releases 检查更新、只要提示词的文生图、缩短后的开跑步骤，以及应用图标。0.1.0 的安装包里还没有「检查更新」，要先手动装上 0.1.1。
 

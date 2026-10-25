@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "xbs 页面桥",
-  "version": "0.3.5",
-  "description": "把本机 xbs 的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
+  "name": "图来 页面桥",
+  "version": "0.3.6",
+  "description": "把本机图来的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
   "permissions": [
     "storage",
     "tabs",
@@ -93,7 +93,7 @@
     "open_in_tab": true
   },
   "action": {
-    "default_title": "xbs 页面桥",
+    "default_title": "图来 页面桥",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/16.png",

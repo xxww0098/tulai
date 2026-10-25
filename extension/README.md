@@ -1,6 +1,6 @@
-# xbs 页面扩展
+# 图来 页面桥
 
-这个目录是未打包的 Manifest V3 扩展，当前版本 **0.3.5**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.5。发布附件里的 `xbs-extension-0.3.5.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
+这个目录是未打包的 Manifest V3 扩展，显示名是「图来 页面桥」，当前版本 **0.3.6**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.6。发布附件里的 `xbs-extension-0.3.6.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
 
 点工具栏图标会打开 `popup.html`。令牌、端口和桥状态跟选项页是同一组 `chrome.storage.local` 值。
 

@@ -1,6 +1,6 @@
 # 发布 xbs 0.1.1
 
-当前桌面端版本是 **0.1.1**，标签 **`v0.1.1`**。页面桥扩展是 **0.3.5**。扩展编号单独走，不要为了桌面端发布去改它。
+当前桌面端版本是 **0.1.1**，标签 **`v0.1.1`**。页面桥扩展是 **0.3.6**。扩展编号单独走，不要为了桌面端发布去改它。
 
 0.1.0 是第一次对外打安装包。0.1.1 在那之后带上 GitHub Releases 检查更新、只要提示词的文生图、缩短的开跑步骤，以及应用图标。0.1.0 的安装包里还没有「检查更新」，要先手动装上 0.1.1。
 
@@ -10,10 +10,10 @@
 |---|---|---|---|
 | 桌面端 | `0.1.1` | `mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
 | Go 模块 | `v0.1.1` | git 标签，不写在 `go.mod` | 推送标签 `v0.1.1` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.5` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 页面桥扩展 | `0.3.6` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `XBS.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，当前是 0.3.5。桌面端版本和扩展版本各自走。同一份 Release 里会同时放上桌面安装包和 `xbs-extension-0.3.5.zip`。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，当前是 0.3.6。桌面端版本和扩展版本各自走。同一份 Release 里会同时放上桌面安装包和 `xbs-extension-0.3.6.zip`。
 
 ## 流水线
 
@@ -51,7 +51,7 @@ git push origin v0.1.1
 | Windows | `xbs Setup 0.1.1 amd64.exe`、`xbs Setup 0.1.1 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `xbs-0.1.1-windows-amd64.exe` 和 `xbs-0.1.1-windows-arm64.exe`。 |
 | Linux | `xbs_0.1.1_amd64.deb`、`xbs_0.1.1_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
 | Linux | `xbs-0.1.1-linux-amd64.tar.gz`、`xbs-0.1.1-linux-arm64.tar.gz`、`install.sh` | 把脚本和本机架构的压缩包放在同一目录，执行 `sh install.sh`。装到 `~/.local/xbs.app`，并在 `~/.local/bin/xbs` 放命令。 |
-| 扩展 | `xbs-extension-0.3.5.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `xbs-extension` 目录。 |
+| 扩展 | `xbs-extension-0.3.6.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `xbs-extension` 目录。 |
 
 `SHA256SUMS` 覆盖上面这些文件。每个 Actions artifact 里另有一份只覆盖该系统文件的 `SHA256SUMS.txt`。
 
@@ -85,7 +85,7 @@ GET https://api.github.com/repos/xxww0098/xbs/releases/latest
 | `xbs update --check` | 只打印当前版本和最新版本。 |
 | `xbs version` | 打印桌面端版本（`ProductVersion`，打包后与 `mygo.App.Version()` 相同）。 |
 
-版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `xbs-extension-0.3.5.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `xbs-extension-0.3.6.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
 按当前系统选择附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 

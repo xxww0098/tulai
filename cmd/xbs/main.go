@@ -1,4 +1,4 @@
-// xbs 是豆包和千问的批量生图桌面应用（窗口标题「小帮手」）。
+// 图来是豆包和千问的批量生图桌面应用（命令与模块名仍是 xbs，窗口标题「图来」）。
 // 本地工具，不含授权激活。
 package main
 
@@ -45,7 +45,7 @@ func main() {
 	bm := browser.NewManager()
 	engine := tasks.NewEngine(db, bm, nil, dataRoot)
 	// mygo build 会把 mygo.json 的版本链进二进制；go run 没有这段链接信息。
-	logging.Log.Info("小帮手 %s 启动（数据目录: %s）", runningVersion(), dataRoot)
+	logging.Log.Info("图来 %s 启动（数据目录: %s）", runningVersion(), dataRoot)
 	defer bm.StopAll()
 	defer engine.CloseSessions()
 	defer db.Close()
