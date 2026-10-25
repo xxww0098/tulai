@@ -1,9 +1,16 @@
 {
   "manifest_version": 3,
   "name": "xbs 页面桥",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "把本机 xbs 的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
-  "permissions": ["storage", "tabs", "alarms", "scripting", "downloads"],
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "scripting",
+    "downloads",
+    "windows"
+  ],
   "host_permissions": [
     "https://www.tongyi.com/*",
     "https://*.tongyi.com/*",
@@ -36,7 +43,9 @@
         "https://*.qwen.ai/*",
         "https://qwen.ai/*"
       ],
-      "js": ["qianwen/chooser.js"],
+      "js": [
+        "qianwen/chooser.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start"
     },
@@ -52,7 +61,11 @@
         "https://*.qwen.ai/*",
         "https://qwen.ai/*"
       ],
-      "js": ["protocol.js", "qianwen/page.js", "content.js"],
+      "js": [
+        "protocol.js",
+        "qianwen/page.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -61,7 +74,11 @@
         "https://*.doubao.com/*",
         "https://doubao.com/*"
       ],
-      "js": ["protocol.js", "doubao/page.js", "content.js"],
+      "js": [
+        "protocol.js",
+        "doubao/page.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
