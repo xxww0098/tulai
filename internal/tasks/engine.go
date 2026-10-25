@@ -689,7 +689,8 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			t.savedHashes = make(map[string]bool)
 		}
 		t.savedHashes[hash] = true
-		if !e.opts.RemoveWatermark {
+		// 扩展下载已经换成去水印 PNG 时，不再按实验开关另存一份。
+		if !e.opts.RemoveWatermark || r.WatermarkRemoved {
 			continue
 		}
 		if !watermarkStaticImage(data, format) {

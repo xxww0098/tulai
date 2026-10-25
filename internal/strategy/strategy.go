@@ -30,6 +30,9 @@ type Result struct {
 	Src  string `json:"src"` // net/dom/stream 来源
 	TS   int64  `json:"ts"`
 	Data []byte `json:"-"` // Ego 官方下载入口返回的原始文件
+	// WatermarkRemoved 为真表示 Data 已是扩展下载换成的去水印 PNG。
+	// 任务设置里的另存开关不再对这张图算第二遍。
+	WatermarkRemoved bool `json:"-"`
 }
 
 // Strategy 平台策略接口（与原 IPlatformStrategy 对齐并工程化）。

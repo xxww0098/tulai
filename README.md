@@ -73,6 +73,8 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 在任务设置的「保存」中勾选「去水印（实验）」，默认关闭。软件先完整保存网页下载的原图，再在本地识别已校准的角落水印，将处理结果另存为 `原文件名_去水印.png`；原图始终保留，队列每张生成图只显示一个最终结果。处理失败或未匹配时记录警告并使用原图，不会为去水印重新上传、发送或生成。
 
+扩展下载不看这个开关。`browserBackend=extension` 的任务，以及 `cmd/xbs-ext-smoke` 实机保存，都在主机侧先按豆包 CDN 规则去掉 `watermark` / `wm=` 查询（失败再用页面原地址），再对豆包和千问调用同一套 `RemoveWatermark`。匹配成功时写下的就是去水印 PNG。千问地址没有这组参数时不会被改写。细节见 [`extension/README.md`](extension/README.md)。
+
 当前适配 2026-10-22 校准的豆包、千问**正方形网页导出图**，包括千问左上角「AI生成」与右下角标记。通过归一化相关匹配固定字形，再按字形蒙版估算背景并补偿邻近细纹理。没有完整背景的真实值，复杂纹理、线条或主体上的水印可能留下痕迹，不能保证无损还原；平台改变样式后可能不再匹配。非方图、16 位高精度图、动画和超出处理大小限制的图片保留原样。
 
 算法使用纯 Go 在本机运行，不额外上传图片，也不需要 Python、OpenCV、模型权重或新的 API Key。GitHub 调研参考了 [LSJ Watermark Remover](https://github.com/RusianHu/lsj-watermark-remover/tree/9a2f5c0f4d64edaad704fdabfdc3264c5a2b999c) 的固定模板思路，以及 [remove-ai-watermarks](https://github.com/wiltodelta/remove-ai-watermarks/tree/b5021b0f6872b533f009a2cc50af9726f33e2177) 的定位、蒙版、局部修复流程；两者的既有素材与当前网页样式不完全一致。本项目实现与校准模板独立制作，没有引入这两个项目的代码、模板或运行依赖。模板来源见 [`internal/images/watermarks/README.md`](internal/images/watermarks/README.md)。

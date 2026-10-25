@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/png"
 	"io"
 	"net"
@@ -24,7 +25,9 @@ import (
 
 	"xbs/internal/extbridge"
 	"xbs/internal/images"
+	"xbs/internal/logging"
 	"xbs/internal/store"
+	"xbs/internal/strategy"
 )
 
 func TestUseExtensionForQianwenAndDoubao(t *testing.T) {
@@ -437,6 +440,230 @@ func TestExtDownloadRejectsSVGPlaceholder(t *testing.T) {
 	if extbridge.CodeOf(err) != extbridge.EDownloadFail || !strings.Contains(err.Error(), "PNG") {
 		t.Fatal(err)
 	}
+}
+
+func TestExtensionDownloadStripsDoubaoWatermarkAndRepairs(t *testing.T) {
+	pageURL := "https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.png?x-expires=1&watermark=1&wm=2"
+	cleanURL := "https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.png"
+	watermarked := watermarkResultPNG(t, "豆包")
+	want := repairedPNG(t, watermarked, "豆包")
+	var mu sync.Mutex
+	var urls []string
+	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt, extbridge.CmdSend:
+			return ackOK(env, map[string]any{"ok": true})
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": pageURL}}})
+		case extbridge.CmdDownload:
+			var body struct {
+				URL string `json:"url"`
+			}
+			_ = json.Unmarshal(env.Payload, &body)
+			mu.Lock()
+			urls = append(urls, body.URL)
+			mu.Unlock()
+			if strings.Contains(body.URL, "?") {
+				return ackFail(env, extbridge.EDownloadFail, "watermark url rejected")
+			}
+			return chunkAck(env, watermarked, len(watermarked))
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := RunDoubaoExtension(ctx, sess, QianwenJob{
+		TaskID:            "live",
+		IdempotencyPrefix: "live",
+		Prompt:            "水彩",
+		Wait:              time.Second,
+	})
+	if err != nil || len(out.Results) != 1 {
+		t.Fatalf("err=%v results=%d", err, len(out.Results))
+	}
+	mu.Lock()
+	gotURLs := append([]string(nil), urls...)
+	mu.Unlock()
+	if len(gotURLs) != 1 || gotURLs[0] != cleanURL {
+		t.Fatalf("download urls=%v, want only %s", gotURLs, cleanURL)
+	}
+	result := out.Results[0]
+	if result.URL != cleanURL || !result.WatermarkRemoved || !bytes.Equal(result.Data, want) || bytes.Equal(result.Data, watermarked) {
+		t.Fatalf("url=%s removed=%v sameAsWatermarked=%v", result.URL, result.WatermarkRemoved, bytes.Equal(result.Data, watermarked))
+	}
+	for _, enabled := range []bool{false, true} {
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputPath: t.TempDir(), RemoveWatermark: enabled}
+		start := len(logging.Log.Entries())
+		saved, err := e.saveResults(context.Background(), &Task{Platform: "豆包", Images: []string{"source.png"}}, nil, nil, out.Results)
+		if err != nil || len(saved) != 1 || filepath.Base(saved[0]) != "source.png" {
+			t.Fatalf("enabled=%t saved=%v err=%v", enabled, saved, err)
+		}
+		file, err := os.ReadFile(saved[0])
+		if err != nil || !bytes.Equal(file, want) {
+			t.Fatalf("enabled=%t 落盘应是去水印 PNG: %v", enabled, err)
+		}
+		files, err := os.ReadDir(e.opts.OutputPath)
+		if err != nil || len(files) != 1 {
+			t.Fatalf("enabled=%t 不应另存第二份: %v %v", enabled, files, err)
+		}
+		for _, entry := range logging.Log.Entries()[start:] {
+			if strings.Contains(entry.Text, "未匹配") || strings.Contains(entry.Text, "正在计算去水印") {
+				t.Fatalf("enabled=%t 扩展结果不应再算一遍: %s", enabled, entry.Text)
+			}
+		}
+	}
+}
+
+func TestExtensionDownloadQianwenSharesRepairWithoutNewStrip(t *testing.T) {
+	pageURL := "https://img.alicdn.com/out.png?x-oss-process=image/resize,w_1024"
+	watermarked := watermarkResultPNG(t, "千问")
+	want := repairedPNG(t, watermarked, "千问")
+	var mu sync.Mutex
+	var urls []string
+	sess := dialFakeExt(t, extbridge.PlatformQianwen, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt, extbridge.CmdSend:
+			return ackOK(env, map[string]any{"ok": true})
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": pageURL}}})
+		case extbridge.CmdDownload:
+			var body struct {
+				URL string `json:"url"`
+			}
+			_ = json.Unmarshal(env.Payload, &body)
+			mu.Lock()
+			urls = append(urls, body.URL)
+			mu.Unlock()
+			return chunkAck(env, watermarked, len(watermarked))
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := RunQianwenExtension(ctx, sess, QianwenJob{
+		TaskID:            "live",
+		IdempotencyPrefix: "live",
+		Prompt:            "水彩",
+		Wait:              time.Second,
+	})
+	if err != nil || len(out.Results) != 1 {
+		t.Fatalf("err=%v results=%d", err, len(out.Results))
+	}
+	mu.Lock()
+	gotURLs := append([]string(nil), urls...)
+	mu.Unlock()
+	if len(gotURLs) != 1 || gotURLs[0] != pageURL {
+		t.Fatalf("qianwen url without watermark params must stay %s, got %v", pageURL, gotURLs)
+	}
+	result := out.Results[0]
+	if result.URL != pageURL || !result.WatermarkRemoved || !bytes.Equal(result.Data, want) {
+		t.Fatalf("url=%s removed=%v", result.URL, result.WatermarkRemoved)
+	}
+	if strategy.PreferUnwatermarkedURL(pageURL) != pageURL {
+		t.Fatal("qianwen oss process must not be treated as a watermark query")
+	}
+}
+
+func TestExtensionDownloadFallsBackToOriginalURL(t *testing.T) {
+	pageURL := "https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.png?x-expires=1&wm=1"
+	cleanURL := "https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.png"
+	small := solidPNG(t, 2, 2, color.NRGBA{R: 8, G: 9, B: 10, A: 255})
+	var mu sync.Mutex
+	var urls []string
+	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt, extbridge.CmdSend:
+			return ackOK(env, map[string]any{"ok": true})
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": pageURL}}})
+		case extbridge.CmdDownload:
+			var body struct {
+				URL string `json:"url"`
+			}
+			_ = json.Unmarshal(env.Payload, &body)
+			mu.Lock()
+			urls = append(urls, body.URL)
+			mu.Unlock()
+			if !strings.Contains(body.URL, "wm=") {
+				return ackFail(env, extbridge.EDownloadFail, "clean url rejected")
+			}
+			return chunkAck(env, small, len(small))
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := RunDoubaoExtension(ctx, sess, QianwenJob{
+		TaskID:            "live",
+		IdempotencyPrefix: "live",
+		Prompt:            "水彩",
+		Wait:              time.Second,
+	})
+	if err != nil || len(out.Results) != 1 {
+		t.Fatalf("err=%v results=%d", err, len(out.Results))
+	}
+	mu.Lock()
+	gotURLs := append([]string(nil), urls...)
+	mu.Unlock()
+	if len(gotURLs) != 2 || gotURLs[0] != cleanURL || gotURLs[1] != pageURL {
+		t.Fatalf("urls=%v", gotURLs)
+	}
+	if out.Results[0].URL != pageURL || out.Results[0].WatermarkRemoved || !bytes.Equal(out.Results[0].Data, small) {
+		t.Fatalf("url=%s removed=%v", out.Results[0].URL, out.Results[0].WatermarkRemoved)
+	}
+}
+
+func TestDewatermarkExtImageKeepsGIF(t *testing.T) {
+	var animation bytes.Buffer
+	frame := image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black, color.White})
+	if err := gif.EncodeAll(&animation, &gif.GIF{Image: []*image.Paletted{frame, frame}, Delay: []int{1, 1}}); err != nil {
+		t.Fatal(err)
+	}
+	out, removed, err := dewatermarkExtImage(context.Background(), animation.Bytes(), "豆包")
+	if err != nil || removed || !bytes.Equal(out, animation.Bytes()) {
+		t.Fatalf("removed=%v err=%v", removed, err)
+	}
+}
+
+func dialFakeExt(t *testing.T, platform string, fn func(extbridge.Envelope) extbridge.Envelope) *extbridge.Session {
+	t.Helper()
+	srv, err := extbridge.Listen(extbridge.Config{Addr: "127.0.0.1:0", Token: "dev-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	go serveFakeExt(srv.Addr(), "dev-token", platform, fn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sess, err := srv.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sess
+}
+
+func repairedPNG(t *testing.T, data []byte, platform string) []byte {
+	t.Helper()
+	decoded, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repaired, changed, err := images.RemoveWatermark(context.Background(), decoded, platform)
+	if err != nil || !changed {
+		t.Fatalf("fixture must match %s watermark: changed=%v err=%v", platform, changed, err)
+	}
+	out, err := images.EncodePNG(repaired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func openTaskStore(t *testing.T) *store.Store {

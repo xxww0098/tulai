@@ -1,11 +1,13 @@
 package tasks
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"net"
 	"os"
 	"path/filepath"
@@ -276,8 +278,8 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		return out, fmt.Errorf("等待生成结果超时：未得到有效的新图片")
 	}
 	var dlErr error
-	for _, image := range body.Images {
-		data, err := extDownload(ctx, sess, job.TaskID, image.URL, platform)
+	for _, item := range body.Images {
+		data, usedURL, removed, err := extDownload(ctx, sess, job.TaskID, item.URL, platform)
 		if err != nil {
 			dlErr = errors.Join(dlErr, err)
 			continue
@@ -287,10 +289,11 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 			continue
 		}
 		out.Results = append(out.Results, strategy.Result{
-			URL:  image.URL,
-			Src:  "extension",
-			TS:   time.Now().UnixMilli(),
-			Data: data,
+			URL:              usedURL,
+			Src:              "extension",
+			TS:               time.Now().UnixMilli(),
+			Data:             data,
+			WatermarkRemoved: removed,
 		})
 	}
 	return out, dlErr
@@ -331,10 +334,34 @@ func extUpload(ctx context.Context, sess *extbridge.Session, job QianwenJob, pla
 	return nil
 }
 
-func extDownload(ctx context.Context, sess *extbridge.Session, taskID, rawURL, platform string) ([]byte, error) {
+// extDownload 先按豆包 CDN 规则去掉水印查询（失败再退回页面原地址），
+// 字节校验通过后对豆包和千问跑 images.RemoveWatermark。匹配时返回的是去水印 PNG。
+func extDownload(ctx context.Context, sess *extbridge.Session, taskID, rawURL, platform string) ([]byte, string, bool, error) {
 	if strings.TrimSpace(rawURL) == "" {
-		return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "缺少图片地址"}
+		return nil, "", false, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "缺少图片地址"}
 	}
+	clean := strategy.PreferUnwatermarkedURL(rawURL)
+	data, err := extDownloadURL(ctx, sess, taskID, clean, platform)
+	used := clean
+	if err != nil && clean != rawURL && ctx.Err() == nil {
+		logging.Log.Warning("扩展结果去掉水印参数后下载失败，改用页面原地址")
+		data, err = extDownloadURL(ctx, sess, taskID, rawURL, platform)
+		used = rawURL
+	}
+	if err != nil {
+		return nil, "", false, err
+	}
+	if data == nil {
+		return nil, used, false, nil
+	}
+	data, removed, err := dewatermarkExtImage(ctx, data, platform)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return data, used, removed, nil
+}
+
+func extDownloadURL(ctx context.Context, sess *extbridge.Session, taskID, rawURL, platform string) ([]byte, error) {
 	var buf []byte
 	offset := 0
 	for {
@@ -376,6 +403,45 @@ func validateExtImage(data []byte) ([]byte, error) {
 		return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载内容不是 PNG、JPEG、GIF 或 WebP"}
 	}
 	return data, nil
+}
+
+// dewatermarkExtImage 在扩展下载的静态图上复用 images.RemoveWatermark。
+// 未匹配、非方图、动画或处理失败时保留下载字节；取消时不把未处理的图当成成功。
+func dewatermarkExtImage(ctx context.Context, data []byte, platform string) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if platform != "豆包" && platform != "千问" {
+		return data, false, nil
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || !watermarkStaticImage(data, format) {
+		return data, false, nil
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return data, false, nil
+	}
+	repaired, changed, err := images.RemoveWatermark(ctx, decoded, platform)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, false, ctx.Err()
+		}
+		logging.Log.Warning("扩展结果去水印失败，保留下载原图: %s", err)
+		return data, false, nil
+	}
+	if !changed {
+		return data, false, nil
+	}
+	out, err := images.EncodePNG(repaired)
+	if err != nil || !images.IsValidImageBytes(out) {
+		if err != nil {
+			logging.Log.Warning("扩展结果去水印编码失败，保留下载原图: %s", err)
+		}
+		return data, false, nil
+	}
+	logging.Log.Info("扩展下载结果已去掉匹配到的%s水印", platform)
+	return out, true, nil
 }
 
 func readExtDownload(path string) ([]byte, error) {
