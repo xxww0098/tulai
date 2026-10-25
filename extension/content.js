@@ -395,6 +395,10 @@ async function waitResult(env, payload) {
     if (cancelRequested) return XBS.fail(env, XBS.errors.E_CANCELLED, '等待结果已取消')
     const captcha = Page.detectCaptcha(document)
     if (captcha.blocked) return captchaAck(env, captcha)
+    // 千问的生成卡在视口外往往只是灰占位。先滚进画面再取样。豆包没有这个函数，取样逻辑不变。
+    if (typeof Page.revealResults === 'function') {
+      try { Page.revealResults(document, pageMark) } catch (e) {}
+    }
     const images = Page.resultImages(document, pageMark).filter(function (item) {
       return item && item.url && !(typeof Page.isPlaceholderURL === 'function' && Page.isPlaceholderURL(item.url))
     })

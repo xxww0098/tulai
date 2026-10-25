@@ -63,6 +63,7 @@ go test ./internal/extbridge/... ./internal/tasks/ -count=1
 node --check extension/content.js
 node extension/qianwen/page_test.js
 node extension/doubao/page_test.js
+node extension/content_test.js
 go run ./cmd/xbs-ext-smoke
 ```
 
@@ -87,6 +88,7 @@ XBS_EXT_PLATFORM=doubao XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XB
 
 - 千问改版会让 `添加附件`、`上传图片`、`发送` 或 markdown 容器对不上。豆包改版会让 `upload_file_button`、`上传文件或图片` 或 `[data-testid="mdbox_image"]` 对不上。命令返回 `E_SELECTOR_MISS` 或 `E_UPLOAD_FAIL`。锚点写在对应 `page.js` 顶部注释里，对照 `ego.js`，不要换成临时 class。
 - 豆包结果只收本轮助手消息里的 `mdbox_image`。用户消息上的 `message_image_content` 不算结果。空 SVG / blob 占位即使 `naturalWidth` 更大也丢掉，同一张卡片里只留更大的 http(s) 实图（含 srcset、data-src、背景图）。消息角色属性如果对不上，等待会超时，不要猜一套新的卡片 class。
+- 千问生成卡在视口外常常只是灰占位（`alt="loading"`，或 `naturalWidth` 为 0）。等待循环会把这张卡滚进画面再收集；空地址、blob、SVG 和很短的 data 图不是结果。豆包不滚动。
 - 上传要等输入区里出现新的完整预览图。如果站点改成只显示文件名、不插 `img`，会报未就绪。豆包「立即下载电脑版」会在清理附件时尝试点旁边的「关闭」；范围里有输入框或验证码时不点。
 - 结果图先在页面里 `fetch`（带 cookie），跨域失败再让后台下载并回传绝对路径。正文不是 PNG、JPEG、GIF、WebP 时返回 `E_DOWNLOAD_FAIL`，不会把空 SVG 壳存成 `.png`。CDN 不给扩展读正文时，这一步也会是 `E_DOWNLOAD_FAIL`。豆包图片编辑器里的「保存」不由扩展点击，下载用的是 `mdbox_image` 上的图片地址。主机拿到字节后才去水印：豆包地址若带 `watermark` 或 `wm=`，先按 `strategy.PreferUnwatermarkedURL` 去掉查询再下载，失败才用页面原地址；千问共用这条下载，没有这组参数时不改地址，也不另做千问专用剥离。随后豆包和千问都跑 `images.RemoveWatermark`。匹配成功时，冒烟目录里的 `result-01.png` 和扩展任务落盘的那张图就是去水印 PNG。
 - 验证码只报告 `captchaBlocked`，并尽量附上 canvas 的 data URL。没有自动拖动。桌面端把这种情况当成需要人工验证，停掉这一批。

@@ -384,6 +384,21 @@ globalThis.XBSPage = (function () {
     return String((img && (img.currentSrc || img.src)) || '')
   }
 
+  // 灰块、空壳和还没换成实图的 data/blob/SVG。解码前的 1×1 图也算，不能当成水彩结果。
+  function isPlaceholderURL(url) {
+    const value = String(url || '').trim()
+    if (!value || /^about:blank$/i.test(value) || /^blob:/i.test(value)) return true
+    const path = value.toLowerCase().split('#')[0].split('?')[0]
+    if (/\.svg$/.test(path)) return true
+    if (!/^data:/i.test(value)) return false
+    if (/^data:image\/svg/i.test(value)) return true
+    let decoded = value.slice(0, 2000)
+    try { decoded = decodeURIComponent(decoded) } catch (e) {}
+    if (/<svg[\s>]/i.test(decoded)) return true
+    if (/^data:image\/(png|jpe?g|webp|gif)/i.test(value) && value.length < 256) return true
+    return !/^data:image\/(png|jpe?g|webp|gif)(;|,)/i.test(value)
+  }
+
   function mark(doc, prompt) {
     const q = queries(doc)
     const comp = composer(doc)
@@ -448,7 +463,7 @@ globalThis.XBSPage = (function () {
         if (state.images && state.images.has(img)) return
         if (state.sourceURLs && state.sourceURLs.has(imageURL(img))) return
         const url = imageURL(img)
-        if (!url) return
+        if (!url || isPlaceholderURL(url)) return
         images.push({ url, img })
       })
     })
@@ -462,6 +477,106 @@ globalThis.XBSPage = (function () {
 
   function resultsBusy(doc, state) {
     return newAssistants(doc, state).some(busy)
+  }
+
+  function imageSettled(img, state) {
+    if (!visible(img) || !img.complete || !(img.naturalWidth > 0)) return false
+    const url = imageURL(img)
+    if (!url || isPlaceholderURL(url)) return false
+    if (state && state.images && state.images.has(img)) return false
+    if (state && state.sourceURLs && state.sourceURLs.has(url)) return false
+    return true
+  }
+
+  function ignoredResultImage(img, state) {
+    if (!img || !state) return false
+    if (state.images && state.images.has(img)) return true
+    const url = imageURL(img)
+    return !!(url && state.sourceURLs && state.sourceURLs.has(url))
+  }
+
+  // 还没解码的生成卡。同一张卡里多张壳只滚一次。
+  function pendingRevealTargets(doc, state) {
+    const q = (state && state.q) || queries(doc)
+    const out = []
+    const seen = new Set()
+    function add(el) {
+      if (!el || seen.has(el)) return
+      seen.add(el)
+      out.push(el)
+    }
+    newAssistants(doc, state).forEach(function (message) {
+      const imgs = all(message, 'img')
+      let pending = false
+      imgs.forEach(function (img) {
+        if (ignoredResultImage(img, state)) return
+        const card = closest(img, '[id^="card_card_ai_generate_image_"]')
+        const inCard = !!(card && message.contains(card))
+        const markdown = closest(img, '#qk-markdown-react,.markdown-pc-special-class')
+        const inMarkdown = !!(markdown && message.contains(markdown))
+        if (q.qwen && !inCard && !inMarkdown) return
+        if (qwenLoadingImage(img, q.qwen) || !imageSettled(img, state)) {
+          pending = true
+          add(inCard ? card : img)
+        }
+      })
+      if (!pending && !imgs.length) add(message)
+    })
+    return out
+  }
+
+  function scrollIntoView(el) {
+    if (!el || typeof el.scrollIntoView !== 'function') return
+    try {
+      el.scrollIntoView({ block: 'center', inline: 'nearest' })
+    } catch (e) {
+      try { el.scrollIntoView() } catch (err) {}
+    }
+  }
+
+  function nudgeImage(el) {
+    const imgs = el && el.tagName === 'IMG' ? [el] : all(el, 'img')
+    imgs.forEach(function (img) {
+      if (!img) return
+      const lazy = String((img.loading || (img.getAttribute && img.getAttribute('loading')) || '')).toLowerCase()
+      if (lazy === 'lazy') {
+        try {
+          if (typeof img.setAttribute === 'function') img.setAttribute('loading', 'eager')
+        } catch (e) {}
+        try { img.loading = 'eager' } catch (e) {}
+      }
+      const url = imageURL(img)
+      if (!url || isPlaceholderURL(url) || typeof img.decode !== 'function') return
+      try {
+        const job = img.decode()
+        if (job && typeof job.catch === 'function') job.catch(function () {})
+      } catch (e) {}
+    })
+  }
+
+  // 千问先画灰块，滚进视口（或关掉 lazy）之后才换成实图。一次只把一张卡停在画面里，
+  // 免得两张互相挤出视口、谁都解码不完。画出实图就换下一张；这张一直是灰块再过几秒才换。
+  const REVEAL_DWELL_MS = 8000
+  function revealResults(doc, state) {
+    if (!state) return
+    const pending = pendingRevealTargets(doc, state)
+    if (!pending.length) return
+    const now = Date.now()
+    let idx = 0
+    if (state.revealEl && now - (state.revealAt || 0) < REVEAL_DWELL_MS) {
+      const held = pending.indexOf(state.revealEl)
+      if (held !== -1) idx = held
+    } else if (state.revealEl) {
+      const held = pending.indexOf(state.revealEl)
+      if (held !== -1) idx = (held + 1) % pending.length
+    }
+    const target = pending[idx]
+    if (target !== state.revealEl) {
+      state.revealEl = target
+      state.revealAt = now
+    }
+    pending.forEach(nudgeImage)
+    scrollIntoView(target)
   }
 
   function composerCleared(doc) {
@@ -1018,6 +1133,8 @@ globalThis.XBSPage = (function () {
     mark,
     resultImages,
     resultsBusy,
+    revealResults,
+    isPlaceholderURL,
     composerCleared,
     sendAccepted,
     assignFiles,

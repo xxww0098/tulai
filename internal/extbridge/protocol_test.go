@@ -223,6 +223,14 @@ func TestQianwenPageSelectors(t *testing.T) {
 	}
 }
 
+func TestContentResultWait(t *testing.T) {
+	root := repoRoot(t)
+	out, err := exec.Command("node", filepath.Join(root, "extension", "content_test.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("content_test.js: %v\n%s", err, out)
+	}
+}
+
 func TestDoubaoPageSelectors(t *testing.T) {
 	root := repoRoot(t)
 	out, err := exec.Command("node", filepath.Join(root, "extension", "doubao", "page_test.js")).CombinedOutput()
