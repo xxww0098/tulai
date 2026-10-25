@@ -260,6 +260,9 @@ async function dispatchCommand(link, env) {
     sendToHost(link, XBS.fail(env, XBS.errors.E_NO_TAB, SITES[link.platform].noTab))
     return
   }
+  // 豆包在后台标签时，合成 pointer/click 常常点了也不发送（E_SEND_UNCERTAIN）。
+  // 下发页内命令前先把标签页拉到前台。
+  await focusTab(tab)
   markTab(tab.id, 'busy', env.taskId || '', tab.url || '')
   try {
     const response = await chrome.tabs.sendMessage(tab.id, {
@@ -307,6 +310,18 @@ async function snapshotTabs(platform) {
     if (!seen.has(tabId) && siteOf((tabs.get(tabId) || {}).url) === platform) tabs.delete(tabId)
   }
   return out
+}
+
+async function focusTab(tab) {
+  if (!tab || tab.id == null) return
+  try {
+    await chrome.tabs.update(tab.id, { active: true })
+  } catch (e) {}
+  if (tab.windowId != null) {
+    try {
+      await chrome.windows.update(tab.windowId, { focused: true })
+    } catch (e) {}
+  }
 }
 
 async function pickTab(platform) {
