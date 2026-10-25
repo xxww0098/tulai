@@ -28,7 +28,7 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟测试
 go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问和豆包扩展 hello
 ```
 
-桌面端产品版本是 **0.1.1**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.1` 上发布，页面扩展 zip 是 **0.3.6**。步骤见下文「发布 0.1.1」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.2**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.2` 上发布，页面扩展 zip 是 **0.3.6**。步骤见下文「发布 0.1.2」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端可以自己更新：菜单 **帮助 → 检查更新…**，标题栏的 **检查更新**，或在终端执行 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/xbs/releases/latest`，不附带 token，按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
 
@@ -171,19 +171,19 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
-## 发布 0.1.1
+## 发布 0.1.2
 
-桌面端产品版本是 **0.1.1**：`mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.6**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块版本由 git 标签决定，不写在 `go.mod`。
+桌面端产品版本是 **0.1.2**：`mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.6**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块版本由 git 标签决定，不写在 `go.mod`。
 
-相对已发布的 0.1.0，这一版带上 GitHub Releases 检查更新、只要提示词的文生图、缩短后的开跑步骤，以及应用图标。0.1.0 的安装包里还没有「检查更新」，要先手动装上 0.1.1。
+相对已发布的 0.1.1：用户界面名改为「图来」（技术 id 和可执行文件仍是 xbs）；网页方式去掉 ego lite，改为 Chrome 和 Edge；页面桥扩展加上 popup。扩展版本仍是 0.3.6。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
 
 `.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet`，并上传 macOS、Windows、Linux 的安装包。合并进 `main` 之后，推送和 `mygo.json` 一致的标签，用 `GITHUB_TOKEN` 创建 GitHub Release。没有配置 Apple 公证或 Windows 代码签名。
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。

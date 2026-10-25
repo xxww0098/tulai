@@ -153,7 +153,7 @@ jobs:
           ext=$(unzip -p release/xbs-extension-*.zip xbs-extension/manifest.json | jq -r .version)
           notes=$(mktemp)
           {
-            echo "# xbs ${version}"
+            echo "# 图来 ${version}"
             echo
             echo "桌面端 ${version}（mygo.json，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（xbs-extension-${ext}.zip），编号独立，不跟着桌面端走。"
             echo
@@ -164,7 +164,7 @@ jobs:
             echo
             echo "说明见 docs/RELEASING.md。"
           } >"$notes"
-          args=(--title "xbs ${version}" --notes-file "$notes")
+          args=(--title "图来 ${version}" --notes-file "$notes")
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             args+=(--prerelease)
           fi
