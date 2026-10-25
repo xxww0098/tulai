@@ -29,3 +29,26 @@ func TestParentFrameOffsetSingleIframeFallback(t *testing.T) {
 		t.Fatalf("fallback id=%s x=%v y=%v ok=%v", id, x, y, ok)
 	}
 }
+
+func TestCaptchaFrameURL(t *testing.T) {
+	if !captchaFrameURL("https://chat2.qianwen.com/api/v2/chat/_____tmd_____/punish?x=1") {
+		t.Fatal("punish")
+	}
+	if captchaFrameURL("https://www.qianwen.com/chat/abc") {
+		t.Fatal("plain chat should not match")
+	}
+}
+
+func TestChildFrameOffsetUsesListedIframe(t *testing.T) {
+	page := sliderPage{
+		id: "p",
+		probe: sliderProbe{Iframes: []sliderFrame{{
+			Src: "https://chat2.qianwen.com/api/v2/chat/_____tmd_____/punish?x=1",
+			X:   10, Y: 20,
+		}}},
+	}
+	x, y := childFrameOffset("https://chat2.qianwen.com/api/v2/chat/_____tmd_____/punish?x=1", page)
+	if x != 10 || y != 20 {
+		t.Fatalf("got %v %v", x, y)
+	}
+}

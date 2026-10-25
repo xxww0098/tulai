@@ -100,8 +100,16 @@ func SolveQianwenSliderAt(ctx context.Context, endpoint string) error {
 	if err != nil {
 		return err
 	}
-	logging.Log.Info("千问滑块 %s，CDP 拖动 %.1fpx", kind, dx)
-	if err := conn.Play(ctx, hit.TargetID, events); err != nil {
+	logging.Log.Info("千问滑块 %s，计划拖动 %.1fpx", kind, dx)
+	if x11DragEnabled() {
+		logging.Log.Info("千问滑块改用 X11/xdotool 拖动")
+		if err := playSliderX11(ctx, conn, hit, events); err != nil {
+			logging.Log.Warning("X11 拖动失败，回退 CDP: %v", err)
+			if err := conn.Play(ctx, hit.TargetID, events); err != nil {
+				return err
+			}
+		}
+	} else if err := conn.Play(ctx, hit.TargetID, events); err != nil {
 		return err
 	}
 	deadline = time.Now().Add(5 * time.Second)
