@@ -689,9 +689,12 @@ globalThis.XBSPage = (function () {
     if (!scope) return false
     const fresh = all(scope, 'img').filter(function (img) {
       if (!visible(img) || !img.complete || !(img.naturalWidth > 0) || !baseline || baseline.has(img)) return false
-      // 豆包附件卡常先画空 SVG / blob 占位，naturalWidth 已经大于 0。不能当成源图就绪。
+      // 结果卡的空 SVG 占位不能当真图；本地附件预览却常常是 blob:，解码后 naturalWidth > 0 就算就绪。
       const url = String((img.currentSrc || img.src || (img.getAttribute && img.getAttribute('src')) || ''))
-      return !isPlaceholderURL(url)
+      if (/^blob:/i.test(url)) return true
+      if (/^https?:/i.test(url)) return true
+      if (/^data:image\/(png|jpe?g|webp|gif)(;|,)/i.test(url)) return true
+      return false
     })
     return fresh.length > 0 && !busy(scope)
   }

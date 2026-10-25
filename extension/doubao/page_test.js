@@ -492,17 +492,17 @@ console.log('doubao page.js anchors ok')
   svg.src = 'data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27/%3e'
   svg.currentSrc = svg.src
   assert.strictEqual(Page.freshAttachment(doc, baseline), false)
+  const pending = wrap.append(new El('img'))
+  pending.complete = false
+  pending.naturalWidth = 0
+  pending.src = 'blob:https://www.doubao.com/pending'
+  pending.currentSrc = pending.src
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false)
   const blob = wrap.append(new El('img'))
   blob.complete = true
   blob.naturalWidth = 40
   blob.src = 'blob:https://www.doubao.com/abc'
   blob.currentSrc = blob.src
-  assert.strictEqual(Page.freshAttachment(doc, baseline), false)
-  const real = wrap.append(new El('img'))
-  real.complete = true
-  real.naturalWidth = 64
-  real.src = 'https://cdn.example/source.png'
-  real.currentSrc = real.src
   assert.strictEqual(Page.freshAttachment(doc, baseline), true)
   void entry
 }
