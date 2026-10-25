@@ -56,7 +56,7 @@ globalThis.XBS.envelope = function envelope(type, fields) {
 // platform 省略时仍是千问，和原先单个套接字的 hello 一样。豆包套接字传入 'doubao'。
 globalThis.XBS.hello = function hello(token, platform) {
   const env = globalThis.XBS.envelope('hello', {
-    payload: { token: token || '', version: '0.3.4' },
+    payload: { token: token || '', version: '0.3.5' },
   })
   if (platform) env.platform = platform
   return env

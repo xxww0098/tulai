@@ -1,6 +1,8 @@
 # xbs 页面扩展
 
-这个目录是未打包的 Manifest V3 扩展，当前版本 **0.3.4**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.4。发布附件里的 `xbs-extension-0.3.4.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
+这个目录是未打包的 Manifest V3 扩展，当前版本 **0.3.5**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.5。发布附件里的 `xbs-extension-0.3.5.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
+
+点工具栏图标会打开 `popup.html`。令牌、端口和桥状态跟选项页是同一组 `chrome.storage.local` 值。
 
 加载一次即可同时驱动通义 / 千问和豆包。后台开两条 WebSocket：一条 hello `qianwen`，一条 hello `doubao`。命令只发给对应站点的标签页。
 
@@ -22,12 +24,12 @@
    默认 `127.0.0.1:18765`，令牌 `dev-token`。要和桌面端一起跑时，不要再开冒烟进程，两边会抢同一个端口。桌面端在 `browserBackend=extension` 时自己听 `extBridgePort` / `extBridgeToken`（新库默认同样是 `18765` 和 `dev-token`）。
 
 2. 打开 `chrome://extensions`，打开开发者模式，加载已解压的扩展程序，指向本目录 `extension`。不要指向 `extension/qianwen` 或 `extension/doubao`，那两个目录没有清单。
-3. 打开扩展选项，填入和桥相同的令牌、端口，保存。徽章变成 `ON` 表示至少一条 hello 已经成功。冒烟进程会先后打印 `platform=qianwen` 和 `platform=doubao`。
+3. 点工具栏上的扩展图标，填入和桥相同的令牌、端口，保存。选项页改的是同一组值。徽章变成 `ON` 表示至少一条 hello 已经成功。弹出页跟着 `bridgeStatus` 显示已连接、未连接或连接失败。认证失败时徽章是 `ERR`，弹出页另显示 `lastError`。冒烟进程会先后打印 `platform=qianwen` 和 `platform=doubao`。
 4. 用同一个 Chrome 配置打开要跑的页面，手动登录。扩展不会替你登录。
    - 千问：`https://www.tongyi.com/`（也认 `qianwen.com`、`chat.qwen.ai`）
    - 豆包：`https://www.doubao.com/chat/`
 
-服务工作者日志在扩展卡片的 Service worker 里。认证失败时徽章是 `ERR`。
+服务工作者日志在扩展卡片的 Service worker 里。
 
 ## 跑一次真实生成
 
@@ -65,7 +67,7 @@ go run ./cmd/xbs-ext-smoke
 UPDATE settings SET value='extension' WHERE key='browserBackend';
 ```
 
-`extBridgeToken`、`extBridgePort` 要和扩展选项一致。然后勾千问或豆包，写上提示词。要图生图再放源图；只要提示词就留空源图。界面上的「ego lite / Chrome」下拉框是另一个键 `browser_backend`，不要改它来切换扩展。
+`extBridgeToken`、`extBridgePort` 要和扩展弹出页里的令牌、端口一致（选项页是同一组值）。然后勾千问或豆包，写上提示词。要图生图再放源图；只要提示词就留空源图。界面上的「ego lite / Chrome」下拉框是另一个键 `browser_backend`，不要改它来切换扩展。
 
 ## 发送和验证码
 

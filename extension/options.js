@@ -2,18 +2,39 @@ const tokenInput = document.querySelector('#token')
 const portInput = document.querySelector('#port')
 const status = document.querySelector('#status')
 
-function render(stored) {
-  tokenInput.value = stored.token || ''
-  portInput.value = String(stored.port || 18765)
-  const lines = ['状态: ' + (stored.bridgeStatus || 'off')]
+const defaults = { token: '', port: 18765, lastError: '', bridgeStatus: 'off' }
+const statusLabel = { on: '已连接', off: '未连接', error: '连接失败' }
+
+function showStatus(stored) {
+  const raw = stored.bridgeStatus || 'off'
+  const label = Object.prototype.hasOwnProperty.call(statusLabel, raw) ? statusLabel[raw] : raw
+  const lines = ['状态: ' + label]
   if (stored.lastError) lines.push('最近一次错误: ' + stored.lastError)
   status.textContent = lines.join('\n')
+  status.dataset.state = raw
 }
 
-chrome.storage.local.get({ token: '', port: 18765, lastError: '', bridgeStatus: 'off' }).then(render)
+function showFields(stored) {
+  tokenInput.value = stored.token || ''
+  portInput.value = String(stored.port || 18765)
+}
+
+chrome.storage.local.get(defaults).then((stored) => {
+  showFields(stored)
+  showStatus(stored)
+})
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return
-  chrome.storage.local.get({ token: '', port: 18765, lastError: '', bridgeStatus: 'off' }).then(render)
+  if (Object.prototype.hasOwnProperty.call(changes, 'token')) {
+    tokenInput.value = changes.token.newValue || ''
+  }
+  if (Object.prototype.hasOwnProperty.call(changes, 'port')) {
+    portInput.value = String(changes.port.newValue || 18765)
+  }
+  if (changes.bridgeStatus || changes.lastError) {
+    chrome.storage.local.get(defaults).then(showStatus)
+  }
 })
 
 document.querySelector('#form').addEventListener('submit', (event) => {
@@ -21,9 +42,11 @@ document.querySelector('#form').addEventListener('submit', (event) => {
   const port = Number(portInput.value)
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     status.textContent = '端口需要是 1 到 65535 的整数'
+    delete status.dataset.state
     return
   }
   chrome.storage.local.set({ token: tokenInput.value, port }).then(() => {
-    chrome.runtime.sendMessage({ type: 'RECONNECT' })
+    const sent = chrome.runtime.sendMessage({ type: 'RECONNECT' })
+    if (sent && typeof sent.catch === 'function') sent.catch(() => {})
   })
 })

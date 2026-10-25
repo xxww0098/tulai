@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "xbs 页面桥",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "把本机 xbs 的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
   "permissions": [
     "storage",
@@ -27,6 +27,12 @@
     "http://127.0.0.1/*",
     "ws://127.0.0.1/*"
   ],
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -87,6 +93,12 @@
     "open_in_tab": true
   },
   "action": {
-    "default_title": "xbs 页面桥"
+    "default_title": "xbs 页面桥",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png"
+    }
   }
 }
