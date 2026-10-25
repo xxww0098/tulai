@@ -2,7 +2,7 @@
 
 桌面端继续负责界面、任务队列、SQLite、验证码求解和落盘。千问和豆包的页面操作都可以由同一个 MV3 扩展执行。两边用只绑定在 `127.0.0.1` 的 WebSocket 通信，hello 时校验令牌。一条连接只登记一个 `platform`。扩展会同时 hello `qianwen` 和 `doubao`。命令按上传、填词、发送、等待、下载拆开。
 
-`internal/cdp` 和 ego 都还在。`browser_backend` 仍是 `ego lite` 或 `Chrome`。另一个键 `browserBackend=extension` 让千问和豆包改走扩展。
+`internal/cdp` 里的 ego Page SDK 仍供测试使用。桌面网页方式是 `Chrome` 或 `Edge`。另一个键 `browserBackend=extension` 让千问和豆包改走扩展。
 
 ## 这一期包含什么
 
@@ -83,7 +83,7 @@ XBS_EXT_PLATFORM=doubao XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XB
 
 ## browserBackend
 
-新库的 `settings.browserBackend` 默认是 `ego`。写成 `extension` 之后，千问和豆包任务不再打开 ego / Chrome，改为等对应平台的扩展 hello，再按上传、填词、发送、等待、下载调用 `Session.Call`。浏览器页的下拉框仍然只切换 `browser_backend`，避免把未在界面上露出的扩展选项塞进现有的 ego lite / Chrome 选择。
+新库的 `settings.browserBackend` 默认是 `ego`。写成 `extension` 之后，千问和豆包任务不再打开 Chrome / Edge，改为等对应平台的扩展 hello，再按上传、填词、发送、等待、下载调用 `Session.Call`。浏览器页的下拉框只切换 `browser_backend`（Chrome 或 Edge），不要用它来切换扩展。
 
 发送的幂等键是「这一批 + 任务序号 + send」。成功和 `E_SEND_UNCERTAIN` 会被桥缓存，同一批里不会再发第二次 send。调用超时不进缓存；内容脚本自己记住已经点过的键，超时重试只复查输入框是否清空，不再点击。`E_SEND_UNCERTAIN` 会停掉整批，和 ego 路径的「发送状态未确认」一样。
 

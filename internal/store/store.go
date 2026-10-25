@@ -33,7 +33,9 @@ type Store struct {
 }
 
 // defaults 是新库的初始设置。除 browserBackend、extBridgePort、extBridgeToken 外，键与原软件 settings 表实测默认值对应。
-// browserBackend 只接受 extension 或 ego，默认 ego。千问任务在 extension 时走扩展桥，其余仍看 browser_backend。
+// browserBackend 只接受 extension 或 ego，默认 ego。
+// extension 时千问和豆包走扩展桥，不要求本机浏览器实例。
+// ego 表示不走扩展，页面由 browser_backend（Chrome 或 Edge）打开。
 var defaults = map[string]string{
 	"selected_platforms":     "豆包",
 	"task_type":              "ImageGeneration",

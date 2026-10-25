@@ -23,6 +23,7 @@ import (
 
 	"xbs/internal/captcha"
 	"xbs/internal/cdp"
+	"xbs/internal/extbridge"
 	"xbs/internal/images"
 	"xbs/internal/logging"
 	"xbs/internal/store"
@@ -176,6 +177,7 @@ func TestRunTextOnlySkipsUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	addBrowsers(t, st, "豆包", "千问")
 	e := NewEngine(st, nil, nil, "")
 	strat := &submitStrategy{}
 	err = e.run(context.Background(), Options{
@@ -220,6 +222,7 @@ func TestRunRejectsEmptyImagesAndPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	addBrowsers(t, st, "豆包")
 	e := NewEngine(st, nil, nil, "")
 	err = e.Run(context.Background(), Options{Platforms: []string{"豆包"}}, func(Task) {
 		t.Fatal("空队列不应开始任务")
@@ -229,8 +232,8 @@ func TestRunRejectsEmptyImagesAndPrompts(t *testing.T) {
 	}
 }
 
-func TestRunEgoWithoutConfiguredBrowsers(t *testing.T) {
-	for _, backend := range []string{"", "ego lite"} {
+func TestRunChromeAndEdgeRequireBrowsers(t *testing.T) {
+	for _, backend := range []string{"", "Chrome", "Edge", "ego lite"} {
 		t.Run(backend, func(t *testing.T) {
 			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 			if err != nil {
@@ -239,41 +242,66 @@ func TestRunEgoWithoutConfiguredBrowsers(t *testing.T) {
 			defer st.Close()
 			st.Set("browser_backend", backend)
 			e := NewEngine(st, nil, nil, "")
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			opts := Options{Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, StartBrowserIndex: 9, Concurrency: 4}
-			if err := e.Run(ctx, opts, func(Task) { t.Error("已取消的任务不应开始") }, func(Progress) {}); err != nil {
-				t.Fatal(err)
-			}
-			queue := e.View().Snapshot()
-			if len(queue) != 4 {
-				t.Fatalf("任务数 = %d, want 4", len(queue))
-			}
-			for i, want := range []int64{-1, -2, -1, -2} {
-				if queue[i].BrowserID != want {
-					t.Errorf("任务 %d 浏览器ID = %d, want %d", i+1, queue[i].BrowserID, want)
-				}
-			}
-			if len(st.Browsers()) != 0 {
-				t.Fatal("ego模式不应创建Chrome浏览器记录")
+			err = e.Run(context.Background(), Options{Platforms: []string{"千问"}, Prompts: []string{"画一只猫"}}, func(Task) {
+				t.Fatal("没有浏览器实例时不应开始任务")
+			}, func(Progress) {})
+			if err == nil || err.Error() != "平台[千问]没有配置浏览器，请先在浏览器管理中添加" {
+				t.Fatalf("err = %v", err)
 			}
 		})
 	}
 }
 
-func TestSessionCacheSeparatesBackends(t *testing.T) {
-	e := NewEngine(nil, nil, nil, "")
-	chrome, ego := &cdp.Session{}, &cdp.Session{}
-	e.sessions["Chrome:豆包:1"] = chrome
-	e.sessions["ego lite:豆包:-1"] = ego
-	for _, tc := range []struct {
-		id   int64
-		want *cdp.Session
-	}{{1, chrome}, {-1, ego}} {
-		got, err := e.session(context.Background(), "豆包", tc.id, nil)
-		if err != nil || got != tc.want {
-			t.Errorf("后端会话 %d = %p, %v, want %p", tc.id, got, err, tc.want)
+func TestRunExtensionWithoutConfiguredBrowsers(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	e := NewEngine(st, nil, nil, "")
+	err = e.run(context.Background(), Options{Platforms: []string{"豆包", "千问"}, Prompts: []string{"画一只猫"}}, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := e.View().Snapshot()
+	if len(queue) != 2 || queue[0].BrowserID != -1 || queue[1].BrowserID != -2 {
+		t.Fatalf("扩展调度占位: %+v", queue)
+	}
+	if len(st.Browsers()) != 0 {
+		t.Fatal("扩展路径不应要求本机浏览器记录")
+	}
+}
+
+func addBrowsers(t *testing.T, st *store.Store, platforms ...string) {
+	t.Helper()
+	for _, platform := range platforms {
+		if _, err := st.AddBrowser(platform, platform, ""); err != nil {
+			t.Fatal(err)
 		}
+	}
+}
+
+func TestSessionCacheSeparatesBackends(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	e := NewEngine(st, nil, nil, "")
+	chrome, edge := &cdp.Session{}, &cdp.Session{}
+	e.sessions["Chrome:豆包:1"] = chrome
+	e.sessions["Edge:豆包:1"] = edge
+	st.Set("browser_backend", "Chrome")
+	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != chrome {
+		t.Fatalf("chrome session = %p, %v", got, err)
+	}
+	st.Set("browser_backend", "Edge")
+	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != edge {
+		t.Fatalf("edge session = %p, %v", got, err)
 	}
 }
 
@@ -371,7 +399,7 @@ func TestRunConcurrentProgress(t *testing.T) {
 }
 
 func TestRunSerializesEachBrowser(t *testing.T) {
-	for _, backend := range []string{"Chrome", "ego lite"} {
+	for _, backend := range []string{"Chrome", "Edge"} {
 		t.Run(backend, func(t *testing.T) {
 			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 			if err != nil {
@@ -380,15 +408,10 @@ func TestRunSerializesEachBrowser(t *testing.T) {
 			defer st.Close()
 			st.Set("browser_backend", backend)
 			opts := Options{Platforms: []string{"豆包"}, Images: make([]string, 4), Concurrency: 4}
-			if backend == "Chrome" {
-				for range 2 {
-					if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
-						t.Fatal(err)
-					}
+			for range 2 {
+				if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
+					t.Fatal(err)
 				}
-			} else {
-				opts.Platforms = []string{"豆包", "千问"}
-				opts.Images = make([]string, 2)
 			}
 			e := NewEngine(st, nil, nil, "")
 			ctx, cancel := context.WithCancel(context.Background())
@@ -418,16 +441,12 @@ func TestRunSerializesEachBrowser(t *testing.T) {
 					t.Error("取消后等待中的任务仍进入了运行状态")
 				}
 			}()
-			parallel := 2
-			if backend == "ego lite" {
-				parallel = 1
-			}
-			running := make([]Task, parallel)
+			running := make([]Task, 2)
 			for i := range running {
 				select {
 				case running[i] = <-started:
 				case <-time.After(time.Second):
-					t.Fatalf("应有 %d 个独立执行空间进入运行状态", parallel)
+					t.Fatal("应有 2 个独立执行空间进入运行状态")
 				}
 			}
 			if len(running) == 2 && running[0].BrowserID == running[1].BrowserID {
@@ -502,9 +521,10 @@ func TestRunVerificationStopsBatchWithoutResend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	addBrowsers(t, st, "豆包")
 	e := NewEngine(st, nil, nil, "")
 	strat := &submitStrategy{cleanErr: captcha.ErrVerificationRequired}
-	opts := Options{Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, Concurrency: 4, RetryCount: 3}
+	opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png", "d.png"}, Concurrency: 4, RetryCount: 3}
 	var attempts int
 	err = e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
 		attempts++
@@ -533,6 +553,7 @@ func TestRunVerificationRetainsSavedPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	addBrowsers(t, st, "千问")
 	e := NewEngine(st, nil, nil, "")
 	data := resultPNG(t, 21)
 	strat := &resultSequenceStrategy{rounds: [][]strategy.Result{{{Src: "download", Data: data}}}, waitErr: errors.Join(captcha.ErrVerificationRequired, errors.New("after first download"))}
