@@ -256,8 +256,8 @@ async function sendPrompt(env, payload) {
 }
 
 function pressSend(button) {
-  // 千问 page.js 提供 activate：先 pointer 再 click，Radix 发送按钮不会只吃到 click。
-  // 豆包没有这个函数，仍只 click，上传菜单路径也不从这里走。
+  // 千问 / 豆包 page.js 都提供 activate：先 pointer 再 click。只 click 时豆包常常不收下发送。
+  // 上传菜单路径不从这里走。
   if (button && typeof Page.activate === 'function') return Page.activate(button) !== false
   try { button.click(); return true } catch (e) { return false }
 }
