@@ -58,6 +58,7 @@ type extAck struct {
 	Message        string `json:"message"`
 	CaptchaBlocked bool   `json:"captchaBlocked"`
 	Kind           string `json:"kind"`
+	Baxia          bool   `json:"baxia"`
 	Crop           string `json:"crop"`
 	Images         []struct {
 		URL string `json:"url"`
@@ -459,7 +460,31 @@ func readExtDownload(path string) ([]byte, error) {
 	return data, nil
 }
 
+// solveQianwenBaxia 在千问验证码挡住发送或等待时，用已打开的 Chrome 调试端口做一次信任拖动。
+// 测试替换这个函数。豆包不调用它。
+var solveQianwenBaxia = captcha.SolveQianwenSlider
+
 func extCall(ctx context.Context, sess *extbridge.Session, name, taskID, idem string, fields map[string]any, timeout time.Duration, platform string) (extAck, error) {
+	body, err := extCallOnce(ctx, sess, name, taskID, idem, fields, timeout, platform)
+	if platform != "千问" || !qianwenSliderBlock(err, body) {
+		return body, err
+	}
+	if sErr := solveQianwenBaxia(ctx); sErr != nil {
+		logging.Log.Warning("千问滑块未自动通过，仍需人工验证: %v", sErr)
+		return body, err
+	}
+	logging.Log.Success("千问滑块已通过，继续当前步骤")
+	return extCallOnce(ctx, sess, name, taskID, idem, fields, timeout, platform)
+}
+
+func qianwenSliderBlock(err error, body extAck) bool {
+	if !(body.CaptchaBlocked || extbridge.CodeOf(err) == extbridge.ECaptchaHuman) {
+		return false
+	}
+	return body.Kind != "grid"
+}
+
+func extCallOnce(ctx context.Context, sess *extbridge.Session, name, taskID, idem string, fields map[string]any, timeout time.Duration, platform string) (extAck, error) {
 	cmd, err := extbridge.Command(name, fields)
 	if err != nil {
 		return extAck{}, err
@@ -481,10 +506,13 @@ func extCall(ctx context.Context, sess *extbridge.Session, name, taskID, idem st
 
 func mapExtErr(err error, body extAck, platform string) error {
 	if body.CaptchaBlocked || extbridge.CodeOf(err) == extbridge.ECaptchaHuman {
-		if body.Crop != "" {
-			logging.Log.Info("%s验证码已拦截，已带回画面 %d 字符（未自动求解）", platform, len(body.Crop))
-		} else {
-			logging.Log.Info("%s验证码已拦截，页面没有可回传的画布", platform)
+		// 千问滑块交给 extCall 再试一次 CDP。这里只对不会自动拖的情况记一笔。
+		if platform != "千问" || body.Kind == "grid" {
+			if body.Crop != "" {
+				logging.Log.Info("%s验证码已拦截，已带回画面 %d 字符（未自动求解）", platform, len(body.Crop))
+			} else {
+				logging.Log.Info("%s验证码已拦截，页面没有可回传的画布", platform)
+			}
 		}
 		if err != nil {
 			return fmt.Errorf("%w: %s", captcha.ErrVerificationRequired, err.Error())

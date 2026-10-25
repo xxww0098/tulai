@@ -510,6 +510,7 @@ function captchaAck(env, found, message) {
     message: message || '页面出现验证码，需要人工处理',
     captchaBlocked: true,
     kind: (found && found.kind) || 'unknown',
+    baxia: !!(found && found.baxia),
     crop: crop || '',
   })
 }
