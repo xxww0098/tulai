@@ -1,8 +1,14 @@
 {
   "name": "xbs",
   "identifier": "dev.xbs.app",
-  "version": "1.0.0",
+  "version": "0.1.0",
+  "copyright": "Copyright (c) 2026 xxww0098",
   "out": "build",
   "main": "./cmd/xbs",
-  "macos": { "minimumSystemVersion": "13.0" }
+  "macos": { "minimumSystemVersion": "13.0" },
+  "linux": {
+    "comment": "批量图生图（豆包 / 千问）",
+    "command": "xbs",
+    "webview": false
+  }
 }

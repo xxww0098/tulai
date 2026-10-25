@@ -33,6 +33,8 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟测试
 go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问和豆包扩展 hello
 ```
 
+桌面端产品版本是 **0.1.0**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.0` 上发布，页面扩展 zip 仍是 **0.3.4**。步骤见下文「发布 0.1.0」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+
 千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥；`ego` 仍用原来的 ego / Chrome。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
 
 默认使用 **ego lite** 的网页：安装并打开 ego lite、完成首次引导，确保 `ego-browser` 命令可用。浏览器页可切换为独立 Chrome；选择 Chrome 时需本机安装 Google Chrome。
@@ -55,7 +57,7 @@ macOS 打包版将配置库、Chrome 的 `BrowserData/` 和默认输出保存到
 CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 ```
 
-产物位于 `build/windows-amd64/` 与 `build/windows-arm64/`。安装了 NSIS 时，MyGo 会同时生成安装器；Windows 上缺少 NSIS 时，MyGo 会自动下载校验过的构建工具，macOS/Linux 缺少 NSIS 时保留独立 EXE。网页方式的要求与上文相同；Windows 真机的窗口、文件对话框、ego lite 和真实生成流程仍需实机验收，交叉构建通过仅证明可编译打包。
+产物位于 `build/windows-amd64/` 与 `build/windows-arm64/`。安装了 NSIS 时，MyGo 会同时生成安装器；Windows 上缺少 NSIS 时，MyGo 会自动下载校验过的构建工具，macOS/Linux 缺少 NSIS 时保留独立 EXE。GitHub Actions 在 Ubuntu 上安装 NSIS 后打出同样的安装器，见 [`docs/RELEASING.md`](docs/RELEASING.md)。网页方式的要求与上文相同；Windows 真机的窗口、文件对话框、ego lite 和真实生成流程仍需实机验收，交叉构建通过仅证明可编译打包。
 
 ## 使用流程
 
@@ -159,6 +161,21 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 - 平台页面（豆包/千问）DOM 会变化。Ego 的当前编辑器与本轮消息识别位于 `internal/strategy/js/ego.js`，所有上传、输入、点击和下载动作交给官方 SDK；Chrome 保留独立的 composer/结果截获脚本。验证码脚本位于 `internal/captcha/js/`。
 - 「1:1」指功能与工作流对齐；UI 为 mygo 原生重绘，非像素级复刻 DotNetBar 皮肤。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
+
+## 发布 0.1.0
+
+桌面端产品版本是 **0.1.0**：`mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展保持 **0.3.4**（`extension/manifest.json` 和 hello 的 `payload.version`），不降到 0.1.0。协议信封仍是 `v: 1`。Go 模块版本由 git 标签决定，不写在 `go.mod`。
+
+`.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet`，并上传 macOS、Windows、Linux 的安装包。推送和 `mygo.json` 一致的标签后，用 `GITHUB_TOKEN` 创建 GitHub Release。没有配置 Apple 公证或 Windows 代码签名。
+
+```sh
+git checkout main
+git pull origin main
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 ## 许可证
 

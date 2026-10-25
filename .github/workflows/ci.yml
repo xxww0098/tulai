@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches the desktop version
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(jq -r .version mygo.json)
+          test "$GITHUB_REF_NAME" = "v${version}"
+
+  test:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test ./... -short
+      - name: Vet
+        run: go tool mygo vet
+      - name: Extension tests
+        run: |
+          node extension/content_test.js
+          node extension/qianwen/page_test.js
+          node extension/doubao/page_test.js
+      - name: Pack the page-bridge extension
+        run: |
+          ver=$(jq -r .version extension/manifest.json)
+          rm -rf dist-extension
+          mkdir -p dist-extension/xbs-extension
+          cp -a extension/. dist-extension/xbs-extension/
+          find dist-extension -name .DS_Store -delete
+          (cd dist-extension && zip -r "xbs-extension-${ver}.zip" xbs-extension)
+          (cd dist-extension && sha256sum "xbs-extension-${ver}.zip" > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: xbs-extension
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist-extension/*.zip
+            dist-extension/SHA256SUMS.txt
+
+  package:
+    needs: guard
+    name: package ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            platform: linux/amd64,linux/arm64
+          - name: windows
+            os: ubuntu-latest
+            platform: windows/amd64,windows/arm64
+          - name: macos
+            os: macos-latest
+            platform: darwin/universal
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install NSIS
+        if: matrix.name == 'windows'
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Package
+        env:
+          CGO_ENABLED: "0"
+        run: go tool mygo build -platform "${{ matrix.platform }}"
+      - name: Collect distributable files
+        run: scripts/collect-dist.sh "${{ matrix.name }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: xbs-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 14
+          path: dist/*
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [test, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: xbs-*
+          path: artifacts
+      - name: Stage release assets
+        run: |
+          mkdir -p release
+          while IFS= read -r -d '' file; do
+            base=$(basename "$file")
+            if [[ "$base" == "SHA256SUMS.txt" ]]; then
+              continue
+            fi
+            dest="release/$base"
+            if [[ -e "$dest" ]]; then
+              if ! cmp -s "$file" "$dest"; then
+                echo "asset name collision: $base" >&2
+                exit 1
+              fi
+              continue
+            fi
+            cp "$file" "$dest"
+          done < <(find artifacts -type f -print0)
+          (
+            cd release
+            files=()
+            while IFS= read -r line; do
+              files+=("$line")
+            done < <(find . -maxdepth 1 -type f -print | sed 's|^\./||' | LC_ALL=C sort)
+            if [[ ${#files[@]} -eq 0 ]]; then
+              echo "no release assets" >&2
+              exit 1
+            fi
+            sha256sum "${files[@]}" > SHA256SUMS
+          )
+          find release -type f -print | LC_ALL=C sort
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          ext=$(unzip -p release/xbs-extension-*.zip xbs-extension/manifest.json | jq -r .version)
+          notes=$(mktemp)
+          {
+            echo "# xbs ${version}"
+            echo
+            echo "桌面端 ${version}（mygo.json，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（xbs-extension-${ext}.zip），编号独立，不跟着桌面端走。"
+            echo
+            echo "- macOS 磁盘映像只做了 ad-hoc 签名，没有公证。别的 Mac 上 Gatekeeper 会拦截。在访达里右键打开，或对应用执行 xattr -dr com.apple.quarantine。仓库里没有 Apple Developer ID。"
+            echo "- Windows 安装器和 exe 没有代码签名，SmartScreen 可能报警。"
+            echo "- Linux 的 deb 和 tar.gz 没有签名。把 install.sh 和对应架构的 .tar.gz 放在同一目录再执行，会安装到当前用户。"
+            echo
+            echo "说明见 docs/RELEASING.md。"
+          } >"$notes"
+          args=(--title "xbs ${version}" --notes-file "$notes")
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          files=()
+          while IFS= read -r -d '' file; do
+            files+=("$file")
+          done < <(find release -maxdepth 1 -type f -print0)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${args[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag "${args[@]}"
+          fi

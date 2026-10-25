@@ -1,6 +1,8 @@
 # xbs 页面扩展
 
-这个目录是未打包的 Manifest V3 扩展。加载一次即可同时驱动通义 / 千问和豆包。后台开两条 WebSocket：一条 hello `qianwen`，一条 hello `doubao`。命令只发给对应站点的标签页。
+这个目录是未打包的 Manifest V3 扩展，当前版本 **0.3.4**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.4。发布附件里的 `xbs-extension-0.3.4.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
+
+加载一次即可同时驱动通义 / 千问和豆包。后台开两条 WebSocket：一条 hello `qianwen`，一条 hello `doubao`。命令只发给对应站点的标签页。
 
 页面动作分开放：
 
