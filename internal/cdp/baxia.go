@@ -227,6 +227,16 @@ func (c *SliderConn) Look(ctx context.Context) (SliderLook, error) {
 		}
 		return SliderLook{Found: true, Hit: hitFromProbe(item.id, item.probe)}, nil
 	}
+	// 跨域 punish / captcha iframe 常常没有独立 CDP target，只能从父页 frame tree 建隔离世界再探测。
+	for _, item := range pages {
+		look, err := c.lookInChildFrames(ctx, item)
+		if err != nil {
+			continue
+		}
+		if look.Found || look.Passed {
+			return look, nil
+		}
+	}
 	return SliderLook{}, nil
 }
 
@@ -269,6 +279,44 @@ func (c *SliderConn) Play(ctx context.Context, targetID string, events []SliderE
 		}
 	}
 	return nil
+}
+
+
+// EvalJSON 在目标页主世界执行 expression，把返回值解到 dest。
+func (c *SliderConn) EvalJSON(ctx context.Context, targetID, expression string, dest any) error {
+	session, err := c.session(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	var eval struct {
+		Result struct {
+			Type  string          `json:"type"`
+			Value json.RawMessage `json:"value"`
+		} `json:"result"`
+		ExceptionDetails json.RawMessage `json:"exceptionDetails"`
+	}
+	params := map[string]any{
+		"expression":    expression,
+		"returnByValue": true,
+	}
+	if err := c.call(ctx, session, "Runtime.evaluate", params, &eval); err != nil {
+		return err
+	}
+	if len(eval.ExceptionDetails) > 0 && string(eval.ExceptionDetails) != "null" {
+		return fmt.Errorf("页面脚本异常")
+	}
+	raw := eval.Result.Value
+	if eval.Result.Type == "string" {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return err
+		}
+		raw = []byte(s)
+	}
+	if dest == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, dest)
 }
 
 func (c *SliderConn) probeTarget(ctx context.Context, id string) (sliderProbe, error) {
@@ -532,6 +580,134 @@ func browserWebsocket(ctx context.Context, endpoint string) (string, error) {
 		return "", fmt.Errorf("CDP 没有 webSocketDebuggerUrl")
 	}
 	return body.WS, nil
+}
+
+
+func (c *SliderConn) lookInChildFrames(ctx context.Context, page sliderPage) (SliderLook, error) {
+	session, err := c.session(ctx, page.id)
+	if err != nil {
+		return SliderLook{}, err
+	}
+	var tree struct {
+		FrameTree frameTreeNode `json:"frameTree"`
+	}
+	if err := c.call(ctx, session, "Page.getFrameTree", map[string]any{}, &tree); err != nil {
+		return SliderLook{}, err
+	}
+	for _, fr := range flattenFrameTree(tree.FrameTree) {
+		if fr.ID == "" || !captchaFrameURL(fr.URL) {
+			continue
+		}
+		var world struct {
+			ExecutionContextID int `json:"executionContextId"`
+		}
+		if err := c.call(ctx, session, "Page.createIsolatedWorld", map[string]any{
+			"frameId":              fr.ID,
+			"worldName":            "xbs-baxia",
+			"grantUniversalAccess": true,
+		}, &world); err != nil || world.ExecutionContextID == 0 {
+			continue
+		}
+		probe, err := c.probeContext(ctx, session, world.ExecutionContextID)
+		if err != nil {
+			continue
+		}
+		if probe.Passed {
+			return SliderLook{Passed: true}, nil
+		}
+		if !probe.Found {
+			continue
+		}
+		ox, oy := childFrameOffset(fr.URL, page)
+		shiftProbe(&probe, ox, oy)
+		return SliderLook{Found: true, Hit: hitFromProbe(page.id, probe)}, nil
+	}
+	return SliderLook{}, nil
+}
+
+type frameTreeNode struct {
+	Frame       frameInfo       `json:"frame"`
+	ChildFrames []frameTreeNode `json:"childFrames"`
+}
+
+type frameInfo struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+func flattenFrameTree(root frameTreeNode) []frameInfo {
+	out := []frameInfo{}
+	var walk func(frameTreeNode)
+	walk = func(n frameTreeNode) {
+		if n.Frame.ID != "" {
+			out = append(out, n.Frame)
+		}
+		for _, c := range n.ChildFrames {
+			walk(c)
+		}
+	}
+	walk(root)
+	return out
+}
+
+func captchaFrameURL(raw string) bool {
+	s := strings.ToLower(raw)
+	return strings.Contains(s, "punish") ||
+		strings.Contains(s, "_____tmd_____") ||
+		strings.Contains(s, "nocaptcha") ||
+		strings.Contains(s, "baxia") ||
+		strings.Contains(s, "captcha") ||
+		strings.Contains(s, "aliyun")
+}
+
+func childFrameOffset(frameURL string, page sliderPage) (float64, float64) {
+	if _, x, y, ok := parentFrameOffset(frameURL, []sliderPage{page}); ok {
+		return x, y
+	}
+	for _, listed := range page.probe.Iframes {
+		if frameURLMatch(frameURL, listed.Src) || captchaFrameURL(listed.Src) {
+			return listed.X, listed.Y
+		}
+	}
+	if len(page.probe.Iframes) == 1 {
+		return page.probe.Iframes[0].X, page.probe.Iframes[0].Y
+	}
+	return 0, 0
+}
+
+func (c *SliderConn) probeContext(ctx context.Context, session string, contextID int) (sliderProbe, error) {
+	var eval struct {
+		Result struct {
+			Type  string          `json:"type"`
+			Value json.RawMessage `json:"value"`
+		} `json:"result"`
+		ExceptionDetails json.RawMessage `json:"exceptionDetails"`
+	}
+	expr := "(" + sliderProbeSource + ")()"
+	params := map[string]any{
+		"expression":    expr,
+		"returnByValue": true,
+		"contextId":     contextID,
+	}
+	if err := c.call(ctx, session, "Runtime.evaluate", params, &eval); err != nil {
+		return sliderProbe{}, err
+	}
+	if len(eval.ExceptionDetails) > 0 && string(eval.ExceptionDetails) != "null" {
+		return sliderProbe{}, fmt.Errorf("探测脚本异常")
+	}
+	raw := eval.Result.Value
+	if eval.Result.Type == "string" {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return sliderProbe{}, err
+		}
+		raw = []byte(s)
+	}
+	var probe sliderProbe
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return sliderProbe{}, err
+	}
+	return probe, nil
 }
 
 // 下面这个函数补上 Look 里跨域 iframe 的偏移。pages 用具体类型，避免和 Look 的局部类型缠在一起。
