@@ -24,13 +24,13 @@ const (
 	StatusNeedsUser Status = "待验证"
 )
 
-// Task 一条批量任务：一个平台 × 一组源图 × 一条提示词。
+// Task 一条批量任务：一个平台 × 一条提示词。图生图另带一张源图；文生图 Images 为空。
 type Task struct {
 	Index     int      // 序号（从 1 起）
 	Platform  string   // 豆包 / 千问
 	BrowserID int64    // 执行用的浏览器（构建后分配）
 	Prompt    string   // 提示词（已拼后缀）
-	Images    []string // 源图路径
+	Images    []string // 源图路径；文生图为空，执行时不上传
 	Status    Status
 	Attempts  int // 已尝试次数
 	Error     string
@@ -67,7 +67,19 @@ type Options struct {
 	RemoveWatermark    bool // 另存计算去水印版本，始终保留原图
 }
 
-// BuildQueue 顺序循环策略：每张源图一个任务，提示词按顺序循环使用。
+// queueUnit 是队列的一行原料。图生图带一张源图并循环提示词；文生图固定一条提示词且没有源图。
+type queueUnit struct {
+	image    string
+	hasImage bool
+	prompt   string
+	fixed    bool
+}
+
+// BuildQueue 生成批量队列。
+//
+// 图生图：Images 非空时，每张源图 × 每个平台一个任务，提示词按任务序号顺序循环，可以为空。
+// 文生图：Images 为空且 Prompts 含非空白条目时，每条提示词 × 每个平台一个任务，不附带源图。
+// 两条都空时返回空队列。
 func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 	var out []Task
 	idx := 0
@@ -77,21 +89,39 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 			browserIdx[platform] = (opts.StartBrowserIndex - 1) % len(ids)
 		}
 	}
-	for _, img := range opts.Images {
+	var units []queueUnit
+	if len(opts.Images) > 0 {
+		for _, img := range opts.Images {
+			units = append(units, queueUnit{image: img, hasImage: true})
+		}
+	} else {
+		for _, prompt := range opts.Prompts {
+			prompt = strings.TrimSpace(prompt)
+			if prompt == "" {
+				continue
+			}
+			units = append(units, queueUnit{prompt: prompt, fixed: true})
+		}
+	}
+	for _, unit := range units {
 		for _, platform := range opts.Platforms {
 			idx++
-			prompt := ""
-			if len(opts.Prompts) > 0 {
+			prompt := unit.prompt
+			if !unit.fixed && len(opts.Prompts) > 0 {
 				prompt = opts.Prompts[(idx-1)%len(opts.Prompts)]
 			}
 			if opts.UseSuffix && opts.PromptSuffix != "" {
 				prompt = strings.TrimSpace(prompt + "\n" + opts.PromptSuffix)
 			}
+			var images []string
+			if unit.hasImage {
+				images = []string{unit.image}
+			}
 			t := Task{
 				Index:    idx,
 				Platform: platform,
 				Prompt:   prompt,
-				Images:   []string{img},
+				Images:   images,
 				Status:   StatusPending,
 			}
 			// 分配浏览器（按平台轮转）
@@ -104,6 +134,47 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 		}
 	}
 	return out
+}
+
+// resultSource 是命名和分文件夹用的路径。文生图没有源图，用提示词第一行造一个文件名。
+func resultSource(t *Task) string {
+	if t != nil && len(t.Images) > 0 {
+		return t.Images[0]
+	}
+	prompt := ""
+	if t != nil {
+		prompt = t.Prompt
+	}
+	return promptFileName(prompt)
+}
+
+// promptFileName 把提示词收成可用的文件名。只取第一行，去掉路径非法字符，过长则截断。
+func promptFileName(prompt string) string {
+	line := strings.TrimSpace(prompt)
+	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	var b strings.Builder
+	for _, r := range line {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
+			b.WriteByte('_')
+		default:
+			if r < 32 {
+				b.WriteByte('_')
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	name := strings.Trim(b.String(), " .")
+	if rs := []rune(name); len(rs) > 40 {
+		name = strings.Trim(string(rs[:40]), " .")
+	}
+	if name == "" || name == "." || name == ".." {
+		name = "文生图"
+	}
+	return name + ".png"
 }
 
 // NameFor 结果文件名：按命名规则 + 前后缀。

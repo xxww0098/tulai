@@ -37,7 +37,7 @@ func (a *App) taskPane(c *ui.Context) {
 				})
 			}).Gap(8).Margin(8, 0, 0, 0)
 			ui.Fieldset(c, "提示词", func() {
-				ui.TextArea(c, &a.prompts).Height(84).Label("提示词").Placeholder("每行一条提示词")
+				ui.TextArea(c, &a.prompts).Height(84).Label("提示词").Placeholder("每行一条。不选源图则每条文生图")
 				ui.Field(c, "后缀", func() {
 					ui.TextInput(c, &a.promptSuffix)
 				})
@@ -223,7 +223,7 @@ func (a *App) bottomView(c *ui.Context) {
 		if len(items) == 0 {
 			ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
 				ui.Text(c, "任务将在这里显示").Bold()
-				ui.Text(c, "导入源图并开始任务后，可查看每张图片的生成状态与结果").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "开始任务后，可查看每条提示词或每张源图的生成状态与结果").FontSize(12).TextColor(c.Theme().TextMuted)
 			})
 			return
 		}

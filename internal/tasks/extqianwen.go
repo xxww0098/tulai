@@ -35,7 +35,7 @@ const (
 var errQianwenLogin = errors.New("千问页面未登录，请在扩展打开的网页登录后再开始任务")
 var errDoubaoLogin = errors.New("豆包页面未登录，请在扩展打开的网页登录后再开始任务")
 
-// QianwenJob 是一次扩展图生图。IdempotencyPrefix 在同一批次内稳定，换一批就换掉，避免发送键撞车。
+// QianwenJob 是一次扩展生图。Images 为空时不上传，只填词并发送。IdempotencyPrefix 在同一批次内稳定，换一批就换掉，避免发送键撞车。
 type QianwenJob struct {
 	TaskID            string
 	IdempotencyPrefix string

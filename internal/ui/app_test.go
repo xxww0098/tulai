@@ -55,6 +55,55 @@ func TestWorkspaceSplitKeepsDraggedHeight(t *testing.T) {
 	assertVisible(t, tt, "运行日志", 1280, 840)
 }
 
+func TestTextOnlyStartWithoutSources(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{
+		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
+		splitSz: 380, sourceHeight: 210, browserBackend: "Chrome",
+		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
+	}
+	if !a.startDisabled() {
+		t.Fatal("未选平台时不应允许开始")
+	}
+	if _, _, _, problem := a.collectTaskInput(); problem != "请至少选择一个平台" {
+		t.Fatalf("未选平台: %q", problem)
+	}
+	tt := ui.NewTester(a.view, 1280, 840)
+	for _, label := range []string{"源图可选", "每条提示词单独文生图", "待选平台"} {
+		if !tt.HasText(label) {
+			t.Fatalf("缺少文生图说明 %q", label)
+		}
+	}
+	if tt.HasText("待导入") {
+		t.Fatal("已有提示词时不应要求先导入源图")
+	}
+	if err := tt.Click("开始任务"); err != nil {
+		t.Fatal(err)
+	}
+	if a.running || a.progText != "" {
+		t.Fatal("未选平台时开始按钮仍可触发任务")
+	}
+	a.platDoubao = true
+	tt.Frame()
+	if a.startDisabled() || !tt.HasText("文生图 · 2 条提示词") {
+		t.Fatal("只有提示词时应可以开始文生图")
+	}
+	plats, prompts, paths, problem := a.collectTaskInput()
+	if problem != "" || len(plats) != 1 || plats[0] != "豆包" || len(prompts) != 2 || len(paths) != 0 {
+		t.Fatalf("文生图输入: plats=%v prompts=%v paths=%v problem=%q", plats, prompts, paths, problem)
+	}
+	if err := tt.Click("开始任务"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.running || a.progText != "" {
+		t.Fatalf("只有提示词时开始被拦住: running=%v text=%q", a.running, a.progText)
+	}
+}
+
 func TestAppendSourcesDeduplicatesAcrossImports(t *testing.T) {
 	a := &App{sources: []sourceImage{{Path: "first.png", Hash: "same"}}}
 	if added := a.appendSources([]sourceImage{

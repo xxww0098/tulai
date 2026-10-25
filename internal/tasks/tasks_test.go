@@ -97,6 +97,112 @@ func TestBuildQueueStartBrowserIndex(t *testing.T) {
 	}
 }
 
+func TestBuildQueueTextOnlyOneTaskPerPrompt(t *testing.T) {
+	opts := Options{
+		Platforms:         []string{"豆包", "千问"},
+		Prompts:           []string{" 画一只猫 ", "", "画一条鱼"},
+		PromptSuffix:      "高清",
+		UseSuffix:         true,
+		StartBrowserIndex: 2,
+	}
+	q := BuildQueue(opts, map[string][]int64{"豆包": {1, 2, 3}, "千问": {4}})
+	if len(q) != 4 {
+		t.Fatalf("任务数 %d, want 4", len(q))
+	}
+	wantPrompt := []string{"画一只猫\n高清", "画一只猫\n高清", "画一条鱼\n高清", "画一条鱼\n高清"}
+	wantPlat := []string{"豆包", "千问", "豆包", "千问"}
+	wantBrowser := []int64{2, 4, 3, 4}
+	for i, task := range q {
+		if task.Prompt != wantPrompt[i] || task.Platform != wantPlat[i] || task.BrowserID != wantBrowser[i] || task.Images != nil || task.Index != i+1 {
+			t.Fatalf("#%d plat=%s prompt=%q browser=%d images=%v index=%d", i, task.Platform, task.Prompt, task.BrowserID, task.Images, task.Index)
+		}
+	}
+}
+
+func TestBuildQueueTextOnlyBlankPrompts(t *testing.T) {
+	q := BuildQueue(Options{Platforms: []string{"豆包"}, Prompts: []string{" ", "\n"}}, map[string][]int64{"豆包": {1}})
+	if len(q) != 0 {
+		t.Fatalf("空白提示词不应建任务: %+v", q)
+	}
+}
+
+func TestBuildQueueImagesStillCycleWhenPresent(t *testing.T) {
+	opts := Options{
+		Platforms: []string{"豆包"},
+		Prompts:   []string{"画一只猫", "画一条鱼"},
+		Images:    []string{"a.png", "b.png", "c.png"},
+	}
+	q := BuildQueue(opts, map[string][]int64{"豆包": {1}})
+	if len(q) != 3 {
+		t.Fatalf("任务数 %d", len(q))
+	}
+	want := []string{"画一只猫", "画一条鱼", "画一只猫"}
+	for i, task := range q {
+		if task.Prompt != want[i] || len(task.Images) != 1 || task.Images[0] != opts.Images[i] {
+			t.Fatalf("#%d prompt=%q images=%v", i, task.Prompt, task.Images)
+		}
+	}
+}
+
+func TestRunTextOnlySkipsUpload(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	e := NewEngine(st, nil, nil, "")
+	strat := &submitStrategy{}
+	err = e.run(context.Background(), Options{
+		Platforms:   []string{"豆包", "千问"},
+		Prompts:     []string{"画一只猫", "画一条鱼"},
+		Concurrency: 1,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		if len(task.Images) != 0 {
+			return fmt.Errorf("文生图任务带了源图: %v", task.Images)
+		}
+		return e.submitTask(task, strat, nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(strat.calls, ","), "upload") {
+		t.Fatalf("文生图不应上传: %v", strat.calls)
+	}
+	if strings.Join(strat.calls, ",") != "clean,mark,send,clean,mark,send,clean,mark,send,clean,mark,send" {
+		t.Fatalf("调用序列: %s", strings.Join(strat.calls, ","))
+	}
+	snap := e.View().Snapshot()
+	want := []struct{ plat, prompt string }{
+		{"豆包", "画一只猫"},
+		{"千问", "画一只猫"},
+		{"豆包", "画一条鱼"},
+		{"千问", "画一条鱼"},
+	}
+	if len(snap) != len(want) {
+		t.Fatalf("任务数 %d", len(snap))
+	}
+	for i, task := range snap {
+		if task.Platform != want[i].plat || task.Prompt != want[i].prompt || len(task.Images) != 0 || task.Status != StatusSuccess {
+			t.Fatalf("#%d plat=%s prompt=%q images=%v status=%s err=%s", i, task.Platform, task.Prompt, task.Images, task.Status, task.Error)
+		}
+	}
+}
+
+func TestRunRejectsEmptyImagesAndPrompts(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	e := NewEngine(st, nil, nil, "")
+	err = e.Run(context.Background(), Options{Platforms: []string{"豆包"}}, func(Task) {
+		t.Fatal("空队列不应开始任务")
+	}, func(Progress) {})
+	if err == nil || err.Error() != "任务队列为空：请添加提示词，或添加源图片" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestRunEgoWithoutConfiguredBrowsers(t *testing.T) {
 	for _, backend := range []string{"", "ego lite"} {
 		t.Run(backend, func(t *testing.T) {
@@ -339,6 +445,14 @@ func (s *submitStrategy) MarkTask(*cdp.Session) error {
 func (s *submitStrategy) SendPrompt(*cdp.Session, string) error {
 	s.calls = append(s.calls, "send")
 	return nil
+}
+
+func TestSubmitTaskSkipsUploadWithoutImages(t *testing.T) {
+	strat := &submitStrategy{}
+	err := (&Engine{}).submitTask(&Task{Prompt: "画一只猫"}, strat, nil)
+	if err != nil || strings.Join(strat.calls, ",") != "clean,mark,send" {
+		t.Fatalf("err=%v calls=%v", err, strat.calls)
+	}
 }
 
 func TestSubmitTaskStopsAfterCleanFailure(t *testing.T) {
@@ -1196,6 +1310,46 @@ func TestNameFor(t *testing.T) {
 	opts2 := Options{NamingRule: "时间戳"}
 	if got := opts2.NameFor("x.png", 1, 1); !strings.HasSuffix(got, ".png") || filepath.Base(got) == "x.png" {
 		t.Errorf("时间戳命名: %s", got)
+	}
+}
+
+func TestTextOnlyResultName(t *testing.T) {
+	opts := Options{NamingRule: "原文件名", SaveMode: "按源图片分文件夹", OutputPath: "/out"}
+	src := resultSource(&Task{Prompt: "画一只猫\n高清 4K"})
+	if got := opts.NameFor(src, 1, 1); got != "画一只猫.png" {
+		t.Fatalf("文生图文件名: %s", got)
+	}
+	if got := opts.ResultDir(src); got != filepath.Join("/out", "画一只猫") {
+		t.Fatalf("文生图目录: %s", got)
+	}
+	src = resultSource(&Task{Prompt: "a/b:c*?"})
+	if got := opts.NameFor(src, 1, 1); got != "a_b_c__.png" {
+		t.Fatalf("非法字符文件名: %s", got)
+	}
+	long := strings.Repeat("猫", 50)
+	src = resultSource(&Task{Prompt: long})
+	if got := opts.NameFor(src, 1, 1); got != strings.Repeat("猫", 40)+".png" {
+		t.Fatalf("过长提示词文件名: %s", got)
+	}
+	if got := opts.NameFor(resultSource(&Task{}), 1, 1); got != "文生图.png" {
+		t.Fatalf("空提示词文件名: %s", got)
+	}
+	if got := resultSource(&Task{Images: []string{"a/cat.png"}, Prompt: "忽略"}); got != "a/cat.png" {
+		t.Fatalf("图生图仍用源图命名: %s", got)
+	}
+}
+
+func TestSaveResultsTextOnlyUsesPromptName(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{OutputPath: dir, NamingRule: "原文件名", SaveMode: "按源图片分文件夹"}
+	saved, err := e.saveResults(context.Background(), &Task{Prompt: "画一只猫"}, nil, nil, []strategy.Result{{Data: resultPNG(t, 9)}})
+	if err != nil || len(saved) != 1 {
+		t.Fatalf("保存文生图结果: %v, %v", saved, err)
+	}
+	want := filepath.Join(dir, "画一只猫", "画一只猫.png")
+	if saved[0] != want {
+		t.Fatalf("路径 = %s, want %s", saved[0], want)
 	}
 }
 

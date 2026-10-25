@@ -128,6 +128,64 @@ func TestExtensionQianwenHappyPathRetriesWaitWithoutResend(t *testing.T) {
 	}
 }
 
+func TestExtensionTextOnlySkipsUpload(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.Set("extBridgePort", port)
+	st.Set("extBridgeToken", "dev-token")
+	var mu sync.Mutex
+	uploads, sends := 0, 0
+	go serveFakeQianwen("127.0.0.1:"+port, "dev-token", func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdUpload:
+			mu.Lock()
+			uploads++
+			mu.Unlock()
+			return ackOK(env, map[string]any{"ok": true})
+		case extbridge.CmdSetPrompt, extbridge.CmdCaptchaAssist:
+			extra := map[string]any{"ok": true}
+			if name == extbridge.CmdCaptchaAssist {
+				extra["captchaBlocked"] = false
+			}
+			return ackOK(env, extra)
+		case extbridge.CmdSend:
+			mu.Lock()
+			sends++
+			mu.Unlock()
+			return ackOK(env, map[string]any{"ok": true})
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	e := NewEngine(st, nil, nil, t.TempDir())
+	defer e.CloseSessions()
+	err := e.Run(context.Background(), Options{
+		Platforms:   []string{"千问"},
+		Prompts:     []string{"画一只猫", "画一条鱼"},
+		Concurrency: 1,
+		OutputPath:  t.TempDir(),
+	}, func(Task) {}, func(Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := e.View().Snapshot()
+	if len(snap) != 2 || snap[0].Prompt != "画一只猫" || snap[1].Prompt != "画一条鱼" {
+		t.Fatalf("队列: %+v", snap)
+	}
+	for _, task := range snap {
+		if len(task.Images) != 0 || task.Status != StatusSuccess {
+			t.Fatalf("任务: %+v", task)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if uploads != 0 || sends != 2 {
+		t.Fatalf("uploads=%d sends=%d", uploads, sends)
+	}
+}
+
 func TestQianwenSliderSolveRetriesSendAndWait(t *testing.T) {
 	prev := solveQianwenBaxia
 	t.Cleanup(func() { solveQianwenBaxia = prev })

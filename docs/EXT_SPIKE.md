@@ -71,9 +71,10 @@ go run ./cmd/xbs-ext-smoke
 
 然后按 [`extension/README.md`](../extension/README.md) 加载未打包扩展。会看到两条 hello（`qianwen` 和 `doubao`）以及各自的 `ping/pong`。`status` 只列出这一条连接对应的标签页。
 
-实机图生图（需要已登录的页面，CI 做不到）：
+实机生成（需要已登录的页面，CI 做不到）。不设 `XBS_EXT_IMAGE` 时只发提示词，不上传：
 
 ```sh
+XBS_EXT_LIVE=1 XBS_EXT_PROMPT='画一只坐在窗边的猫' go run ./cmd/xbs-ext-smoke
 XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XBS_EXT_PROMPT='水彩风格' go run ./cmd/xbs-ext-smoke
 XBS_EXT_PLATFORM=doubao XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XBS_EXT_PROMPT='水彩风格' go run ./cmd/xbs-ext-smoke
 ```
