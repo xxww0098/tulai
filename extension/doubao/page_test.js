@@ -496,3 +496,37 @@ console.log('doubao page.js anchors ok')
   assert.strictEqual(Page.freshAttachment(doc, baseline), true)
   void entry
 }
+
+{
+  const doc = makeDoc('www.doubao.com')
+  const marked = Page.mark(doc, '水彩风格')
+  message(doc, 'user', '水彩风格')
+  const answer = message(doc, 'assistant', '')
+  const card = answer.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  const shell = card.append(new El('img'))
+  shell.complete = true
+  shell.naturalWidth = 1536
+  shell.src = 'data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27/%3e'
+  shell.currentSrc = shell.src
+  let scrolled = 0
+  card.scrollIntoView = function () { scrolled += 1 }
+  Page.revealResults(doc, marked)
+  assert.ok(scrolled >= 1)
+  const real = card.append(new El('img'))
+  real.complete = true
+  real.naturalWidth = 384
+  real.loading = 'lazy'
+  real.src = 'https://p6-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/x.jpeg~tplv-a9rns2rl98-cthumb_lwm3.png'
+  real.currentSrc = real.src
+  const chosen = Page.resultImages(doc, marked)
+  assert.strictEqual(chosen.length, 1)
+  assert.ok(/byteimg/.test(chosen[0].url))
+  const full = card.append(new El('img'))
+  full.complete = true
+  full.naturalWidth = 1024
+  full.src = 'https://p26-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/x.jpeg~tplv-a9rns2rl98-cgen_lwm3.png'
+  full.currentSrc = full.src
+  const prefer = Page.resultImages(doc, marked)
+  assert.strictEqual(prefer.length, 1)
+  assert.ok(/cgen_lwm/.test(prefer[0].url))
+}

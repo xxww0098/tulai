@@ -459,6 +459,9 @@ globalThis.XBSPage = (function () {
     if (/^https?:/i.test(item.url)) rank += 1000000
     else if (/^data:image\/(png|jpe?g|webp|gif)/i.test(item.url)) rank += 1000
     else rank += 10000
+    // 豆包缩略图 cthumb_lwm3 不如原图模板 cgen_lwm3。
+    if (/cgen_lwm/i.test(item.url || '')) rank += 50000
+    if (/cthumb_lwm/i.test(item.url || '')) rank -= 20000
     return rank
   }
 
@@ -600,6 +603,74 @@ globalThis.XBSPage = (function () {
 
   function resultsBusy(doc, state) {
     return newAssistants(doc, state).some(busy)
+  }
+
+  function scrollIntoView(el) {
+    if (!el || typeof el.scrollIntoView !== 'function') return
+    try {
+      el.scrollIntoView({ block: 'center', inline: 'nearest' })
+    } catch (e) {
+      try { el.scrollIntoView() } catch (err) {}
+    }
+  }
+
+  function nudgeImage(el) {
+    const imgs = el && el.tagName === 'IMG' ? [el] : all(el, 'img')
+    imgs.forEach(function (img) {
+      if (!img) return
+      const lazy = String((img.loading || (img.getAttribute && img.getAttribute('loading')) || '')).toLowerCase()
+      if (lazy === 'lazy') {
+        try {
+          if (typeof img.setAttribute === 'function') img.setAttribute('loading', 'eager')
+        } catch (e) {}
+        try { img.loading = 'eager' } catch (e) {}
+      }
+      const url = imageURL(img)
+      if (!url || isPlaceholderURL(url) || typeof img.decode !== 'function') return
+      try {
+        const job = img.decode()
+        if (job && typeof job.catch === 'function') job.catch(function () {})
+      } catch (e) {}
+    })
+  }
+
+  // 豆包生成卡常先挂 1536 SVG 壳，真图 img 标着 loading=lazy。滚进视口并改成 eager 后才换成 http(s)。
+  const REVEAL_DWELL_MS = 8000
+  function pendingRevealTargets(doc, state) {
+    const out = []
+    const seen = new Set()
+    newAssistants(doc, state).forEach(function (message) {
+      all(message, '[data-testid="mdbox_image"]').forEach(function (card) {
+        if (!message.contains(card) || seen.has(card)) return
+        const chosen = chooseCardImage(card, state)
+        if (chosen && chosen.url && !isPlaceholderURL(chosen.url) && isFetchableRasterURL(chosen.url)) return
+        seen.add(card)
+        out.push(card)
+      })
+    })
+    return out
+  }
+
+  function revealResults(doc, state) {
+    if (!state) return
+    const pending = pendingRevealTargets(doc, state)
+    if (!pending.length) return
+    const now = Date.now()
+    let idx = 0
+    if (state.revealEl && now - (state.revealAt || 0) < REVEAL_DWELL_MS) {
+      const held = pending.indexOf(state.revealEl)
+      if (held !== -1) idx = held
+    } else if (state.revealEl) {
+      const held = pending.indexOf(state.revealEl)
+      if (held !== -1) idx = (held + 1) % pending.length
+    }
+    const target = pending[idx]
+    if (target !== state.revealEl) {
+      state.revealEl = target
+      state.revealAt = now
+    }
+    pending.forEach(nudgeImage)
+    scrollIntoView(target)
   }
 
   function composerCleared(doc) {
@@ -788,6 +859,7 @@ globalThis.XBSPage = (function () {
     dismissClientPromo,
     mark,
     resultImages,
+    revealResults,
     resultsBusy,
     composerCleared,
     sendAccepted,
