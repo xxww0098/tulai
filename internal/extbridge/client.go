@@ -2,6 +2,7 @@ package extbridge
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 )
 
@@ -218,6 +219,15 @@ func (c *idempCache) complete(key string, env Envelope) {
 		return
 	}
 	sl := e.slot
+	// 滑块可能在这次应答之后被 CDP 拖掉。记住 E_CAPTCHA_HUMAN 会让同一次发送无法再确认。
+	if captchaHumanAck(env) {
+		delete(c.items, key)
+		c.mu.Unlock()
+		if sl != nil {
+			sl.fulfill(env, nil)
+		}
+		return
+	}
 	e.done = true
 	e.env = env
 	e.slot = nil
@@ -226,6 +236,19 @@ func (c *idempCache) complete(key string, env Envelope) {
 	if sl != nil {
 		sl.fulfill(env, nil)
 	}
+}
+
+func captchaHumanAck(env Envelope) bool {
+	if env.Type != TypeAck || len(env.Payload) == 0 {
+		return false
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(env.Payload, &body); err != nil {
+		return false
+	}
+	return body.Code == ECaptchaHuman
 }
 
 func (c *idempCache) fail(key string, err error) {

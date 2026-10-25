@@ -68,7 +68,18 @@ UPDATE settings SET value='extension' WHERE key='browserBackend';
 
 ## 发送和验证码
 
-点过发送之后，同一条幂等键不会再点第二次。平台没有确认接受时返回 `E_SEND_UNCERTAIN`，整批任务停止，需要你看一眼网页再开新的一批。发送后若页面出现验证码，包括阿里云 Baxia 和地址里的 `_____tmd_____/punish`，返回 `E_CAPTCHA_HUMAN`，任务变成「待验证」，不会记成发送状态未确认。验证码只检测并尽量把画布裁下来交给主机，不在扩展里自动拖动。
+点过发送之后，同一条幂等键不会再点第二次。平台没有确认接受时返回 `E_SEND_UNCERTAIN`，整批任务停止，需要你看一眼网页再开新的一批。发送后若页面出现验证码，包括阿里云 Baxia 和地址里的 `_____tmd_____/punish`，内容脚本仍返回 `E_CAPTCHA_HUMAN`，不会记成发送状态未确认。千问滑块不会停在这一步：主机连到本机 Chrome 的远程调试端口，用 `Input.dispatchMouseEvent` 做一次信任拖动（页面里合成的 `MouseEvent` 是 `isTrusted=false`，阿里云经常因此失败）。有拼图背景和拼图块时，在本机用形状匹配找缺口，再按轨道和图片的可移动距离线性换算鼠标行程；没有拼图图时，把滑块拖到轨道尽头。只拖一次，不连拖修正。拖完后同一条命令再问一次页面。滑块消失就继续等图；对不上、端口没开，或拖完还在，任务仍是「待验证」。豆包不走这条拖动。
+
+实机要让载着扩展的 Chrome 开着调试端口。冒烟常用：
+
+```sh
+google-chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/tmp/xbs-chrome-profile \
+  --remote-allow-origins=*
+```
+
+然后按上面的方式加载扩展、登录，再跑 `XBS_EXT_LIVE=1`。默认会试 `XBS_CDP_URL`、`XBS_CDP_PORT`、`XBS_CHROME_PROFILE/DevToolsActivePort`、`/tmp/xbs-chrome-profile/DevToolsActivePort`，最后是 `127.0.0.1:9222`。`XBS_BAXIA_SOLVE=0` 关掉自动拖动。调试连接只 detach，不关千问标签页。缺口匹配是纯 Go，不调用付费验证码接口。
 
 千问源图要在输入区解码成功（`naturalWidth` 大于 0）才算就绪。预览来自千问 / 通义 CDN 但解码失败（`naturalWidth` 为 0），或输入区出现「上传失败」「加载失败」，都不算就绪，不发送。未解码时，只有 img 上同时写了大于 0 的像素宽高、并且地址是产品 CDN，才当成已经收下。带可用源图发送前会点输入壳里的「AI生图」；胶囊已经选中就不再点，避免退出该模式。当前页面的发送是箭头按钮，灰色（disabled）时不点；切模式后会等到它重新可点。纯文字发送不切换模式。点过发送之后，确认方式不变：输入清空或出现包含提示词的新用户消息才算接受，否则仍是 `E_SEND_UNCERTAIN`。
 

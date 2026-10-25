@@ -517,6 +517,29 @@ function paint(img, url) {
   const ad = noise.body.append(new El('iframe', { src: 'https://example.com/punish?x=1' }))
   ad.rect = { width: 320, height: 180, left: 0, top: 0 }
   assert.strictEqual(Page.detectCaptcha(noise).blocked, false)
+
+  const popup = makeDoc('www.qianwen.com')
+  popup.body.append(new El('textarea'))
+  const ali = popup.body.append(new El('div', { id: 'aliyunCaptcha-window-popup' }))
+  ali.id = 'aliyunCaptcha-window-popup'
+  ali.rect = { width: 280, height: 200, left: 40, top: 40 }
+  ali.addText('Please drag the slider to verify')
+  const aliHit = Page.detectCaptcha(popup)
+  assert.strictEqual(aliHit.blocked, true)
+  assert.strictEqual(aliHit.baxia, true)
+  assert.strictEqual(aliHit.kind, 'slider')
+  assert.strictEqual(aliHit.root, ali)
+
+  const scratch = makeDoc('www.qianwen.com')
+  scratch.body.append(new El('textarea'))
+  const box = scratch.body.append(new El('div', { id: 'scratch-captcha-container' }))
+  box.id = 'scratch-captcha-container'
+  box.rect = { width: 300, height: 220, left: 0, top: 0 }
+  box.addText('请按住滑块，拖动到最右边')
+  const scratchHit = Page.detectCaptcha(scratch)
+  assert.strictEqual(scratchHit.blocked, true)
+  assert.strictEqual(scratchHit.baxia, true)
+  assert.strictEqual(scratchHit.kind, 'slider')
 }
 
 {

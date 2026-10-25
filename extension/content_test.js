@@ -106,6 +106,18 @@ async function main() {
   assert.strictEqual(doubaoResult.waited.payload.ok, true, JSON.stringify(doubaoResult.waited.payload))
   assert.deepStrictEqual(doubaoResult.waited.payload.images.map((item) => item.url), ['https://cdn.example/full.png'])
   assert.ok(doubaoResult.elapsed >= 350, '豆包仍要两次稳定取样，用时 ' + doubaoResult.elapsed)
+
+  const blocked = composerPage({
+    detectCaptcha() { return { blocked: true, kind: 'slider', baxia: true, root: {} } },
+    captchaCrop() { return '' },
+  })
+  const captchaCall = load(blocked)
+  const captchaSent = await captchaCall({ name: 'send', prompt: '水彩风格', timeoutMs: 2000 })
+  assert.strictEqual(captchaSent.payload.ok, false)
+  assert.strictEqual(captchaSent.payload.code, 'E_CAPTCHA_HUMAN')
+  assert.strictEqual(captchaSent.payload.kind, 'slider')
+  assert.strictEqual(captchaSent.payload.baxia, true)
+  assert.strictEqual(captchaSent.payload.captchaBlocked, true)
   console.log('content wait ok')
 }
 

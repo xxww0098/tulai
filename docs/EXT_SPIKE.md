@@ -11,7 +11,7 @@
 - `cmd/xbs-ext-smoke`：手动加载扩展时使用的桥。`XBS_EXT_LIVE=1` 时跑一次图生图。`XBS_EXT_PLATFORM=doubao` 时打到豆包那条 hello。
 - 配置键 `browserBackend`，取值 `extension` 或 `ego`，默认 `ego`。千问和豆包任务都会读它。另外两个键 `extBridgePort`（默认 `18765`）和 `extBridgeToken`（默认 `dev-token`）要和扩展选项一致。
 
-不删除 CDP。验证码只检测并把画布交回主机，扩展里不自动求解。
+不删除 CDP。扩展里只检测验证码并把画布交回主机，不在页面脚本里求解。千问滑块由主机用 CDP 信任拖动，见下方风险。
 
 ## 连接
 
@@ -91,6 +91,6 @@ XBS_EXT_PLATFORM=doubao XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XB
 - 千问生成卡在视口外常常只是灰占位（`alt="loading"`，或 `naturalWidth` 为 0）。等待循环会把这张卡滚进画面再收集；空地址、blob、SVG 和很短的 data 图不是结果。豆包不滚动。
 - 上传要等输入区里出现新的完整预览图。如果站点改成只显示文件名、不插 `img`，会报未就绪。豆包「立即下载电脑版」会在清理附件时尝试点旁边的「关闭」；范围里有输入框或验证码时不点。
 - 结果图先在页面里 `fetch`（带 cookie），跨域失败再让后台下载并回传绝对路径。正文不是 PNG、JPEG、GIF、WebP 时返回 `E_DOWNLOAD_FAIL`，不会把空 SVG 壳存成 `.png`。CDN 不给扩展读正文时，这一步也会是 `E_DOWNLOAD_FAIL`。豆包图片编辑器里的「保存」不由扩展点击，下载用的是 `mdbox_image` 上的图片地址。主机拿到字节后才去水印：豆包地址若带 `watermark` 或 `wm=`，先按 `strategy.PreferUnwatermarkedURL` 去掉查询再下载，失败才用页面原地址；千问共用这条下载，没有这组参数时不改地址，也不另做千问专用剥离。随后豆包和千问都跑 `images.RemoveWatermark`。匹配成功时，冒烟目录里的 `result-01.png` 和扩展任务落盘的那张图就是去水印 PNG。
-- 验证码只报告 `captchaBlocked`，并尽量附上 canvas 的 data URL。没有自动拖动。桌面端把这种情况当成需要人工验证，停掉这一批。
+- 千问滑块（Baxia / `aliyunCaptcha` / `scratch-captcha` / `nc_*_n1z`，含 `_____tmd_____/punish` iframe）在 `E_CAPTCHA_HUMAN` 之后会试一次本机 CDP 信任拖动。拼图在本地找缺口；没有拼图图就拖到轨道尽头。通过后发送和等待会再问一次页面，`E_CAPTCHA_HUMAN` 不写入发送幂等缓存。Chrome 要开远程调试（冒烟默认 `127.0.0.1:9222`，也认 `XBS_CDP_URL` 和 profile 里的 `DevToolsActivePort`）。对不上或端口没开时仍是人工验证。`XBS_BAXIA_SOLVE=0` 关闭。豆包不拖。内容脚本不合成点击。
 - `qwen.ai` 沿用通义的卡片 class 兜底。国际站如果结构不同，要拿一次真实 DOM 再改选择器，不要猜。
 - 豆包页面目前只匹配 `doubao.com`。聊天和出图都在 `https://www.doubao.com/chat/`，没有单独的图片站主机。

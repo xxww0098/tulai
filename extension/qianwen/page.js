@@ -8,7 +8,7 @@
 globalThis.XBSPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
   const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"]'
-  const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|verify (?:that )?you are human|human verification|security verification/i
+  const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请按住滑块|拖动到最右边|向右滑动|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|please drag the slider|verify (?:that )?you are human|human verification|security verification/i
 
   function hostOf(doc) {
     if (doc && doc.hostname) return String(doc.hostname)
@@ -1028,7 +1028,7 @@ globalThis.XBSPage = (function () {
 
   function looksBaxia(el) {
     if (!el) return false
-    if (/baxia|nocaptcha|_____tmd_____|nc-container/i.test(elementIdentity(el))) return true
+    if (/baxia|nocaptcha|_____tmd_____|nc-container|aliyuncaptcha|scratch-captcha|btn_slide/i.test(elementIdentity(el))) return true
     return isBaxiaURL(elementSrc(el))
   }
 
@@ -1037,7 +1037,7 @@ globalThis.XBSPage = (function () {
   function captchaEvidence(el) {
     if (!el) return false
     const identity = elementIdentity(el)
-    if (/captcha|geetest|yidun|turing|verification|baxia|nocaptcha|_____tmd_____|nc-container/i.test(identity)) return true
+    if (/captcha|geetest|yidun|turing|verification|baxia|nocaptcha|_____tmd_____|nc-container|aliyuncaptcha|scratch-captcha|btn_slide/i.test(identity)) return true
     if (el.tagName === 'IFRAME') {
       const src = elementSrc(el)
       if (/captcha|verify|geetest|turing|baxia|nocaptcha|_____tmd_____/i.test(src)) return true
@@ -1048,10 +1048,13 @@ globalThis.XBSPage = (function () {
 
   const CAPTCHA_SEL = [
     '#captcha_verify_image',
+    '#aliyunCaptcha-window-popup', '#aliyunCaptcha-window-embed', '#aliyunCaptcha-sliding-wrapper',
+    '#scratch-captcha-container', '#baxia-dialog-content',
     'iframe[src*="captcha"]', 'iframe[src*="verify"]', 'iframe[src*="geetest"]',
     'iframe[src*="baxia"]', 'iframe[src*="_____tmd_____"]', 'iframe[src*="punish"]', 'iframe[src*="nocaptcha"]',
     '[class*="captcha"]', '[class*="geetest"]', '[class*="verification"]',
     '[class*="baxia"]', '[id*="baxia"]', '[id*="nocaptcha"]', '[class*="nc-container"]',
+    '[id*="aliyunCaptcha"]', '[id*="scratch-captcha"]',
   ]
 
   function detectCaptcha(doc) {

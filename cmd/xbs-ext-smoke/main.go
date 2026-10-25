@@ -1,6 +1,7 @@
 // ext-smoke 启动本机扩展桥，等待扩展 hello，并做一次 ping 与 status。
 // 设置 XBS_EXT_LIVE=1 时，在已登录的页面上再跑一次图生图。
 // XBS_EXT_PLATFORM 默认 qianwen，豆包实机设为 doubao。步骤见 extension/README.md。
+// 千问若弹出阿里云滑块，会连本机 Chrome 调试端口（默认 127.0.0.1:9222）做信任拖动，再继续等图。
 package main
 
 import (

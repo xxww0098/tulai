@@ -239,6 +239,47 @@ func TestIdempotencyDedupesInFlight(t *testing.T) {
 	}
 }
 
+func TestCaptchaHumanAckIsNotCached(t *testing.T) {
+	srv := startServer(t, Config{})
+	p := dialPeer(t, srv.Addr())
+	p.hello(t, "test-token", PlatformQianwen)
+	sess := mustSession(t, srv, PlatformQianwen)
+	cmds := make(chan Envelope, 4)
+	stop := p.serve(func(env Envelope) error {
+		if env.Type == TypeCmd {
+			cmds <- env
+		}
+		return nil
+	})
+	defer stop()
+	cmd, err := Command(CmdSend, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.IdempotencyKey = "send-captcha"
+	for i := 0; i < 2; i++ {
+		got := make(chan error, 1)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, callErr := sess.Call(ctx, cmd)
+			got <- callErr
+		}()
+		var req Envelope
+		select {
+		case req = <-cmds:
+		case <-time.After(time.Second):
+			t.Fatalf("captcha ack cached the send, attempt %d", i)
+		}
+		if err := p.writeEnv(nil, ackFor(req, false, ECaptchaHuman, "滑块")); err != nil {
+			t.Fatal(err)
+		}
+		if CodeOf(<-got) != ECaptchaHuman {
+			t.Fatalf("attempt %d did not surface captcha", i)
+		}
+	}
+}
+
 func TestIdempotencyEvictsOldest(t *testing.T) {
 	srv := startServer(t, Config{IdempotencyLimit: 2})
 	p := dialPeer(t, srv.Addr())
