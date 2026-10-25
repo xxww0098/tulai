@@ -72,7 +72,7 @@ UPDATE settings SET value='extension' WHERE key='browserBackend';
 
 千问源图要在输入区解码成功（`naturalWidth` 大于 0）才算就绪。预览来自千问 / 通义 CDN 但解码失败（`naturalWidth` 为 0），或输入区出现「上传失败」「加载失败」，都不算就绪，不发送。未解码时，只有 img 上同时写了大于 0 的像素宽高、并且地址是产品 CDN，才当成已经收下。带可用源图发送前会点输入壳里的「AI生图」；胶囊已经选中就不再点，避免退出该模式。当前页面的发送是箭头按钮，灰色（disabled）时不点；切模式后会等到它重新可点。纯文字发送不切换模式。点过发送之后，确认方式不变：输入清空或出现包含提示词的新用户消息才算接受，否则仍是 `E_SEND_UNCERTAIN`。
 
-豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。
+豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。千问等待结果时会把还没解码的生成卡滚进视口；灰占位、blob、SVG 和很小的 data 图不算结果。豆包没有这一步。
 
 ## 保活
 

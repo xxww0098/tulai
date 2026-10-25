@@ -77,6 +77,15 @@ class El {
   focus() {}
   dispatchEvent() {}
   click() { this.clicked = (this.clicked || 0) + 1 }
+  setAttribute(name, value) {
+    this.attrs[name] = String(value)
+    if (name === 'id') this.id = value
+    if (name === 'class') this.className = value
+  }
+  scrollIntoView(opts) {
+    this.scrolled = (this.scrolled || 0) + 1
+    this.scrollOpts = opts || null
+  }
 }
 
 function descendants(root) {
@@ -347,6 +356,115 @@ function surfaceWithInputs() {
   const found = Page.resultImages(doc, markedAgain)
   assert.deepStrictEqual(found.map((item) => item.url), ['https://cdn.example/out.png'])
   assert.strictEqual(Page.resultsBusy(doc, markedAgain), true)
+}
+
+const GRAY_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+function paint(img, url) {
+  img.attrs.alt = ''
+  img.complete = true
+  img.naturalWidth = 1440
+  img.src = url
+  img.currentSrc = url
+}
+
+{
+  assert.strictEqual(Page.isPlaceholderURL(''), true)
+  assert.strictEqual(Page.isPlaceholderURL(GRAY_GIF), true)
+  assert.strictEqual(Page.isPlaceholderURL('blob:https://www.qianwen.com/gray'), true)
+  assert.strictEqual(Page.isPlaceholderURL('https://cdn.example/shell.svg'), true)
+  assert.strictEqual(Page.isPlaceholderURL('data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect fill="gray"/></svg>')), true)
+  assert.strictEqual(Page.isPlaceholderURL('https://cdn.example/watercolor.png'), false)
+
+  const doc = makeDoc('www.qianwen.com')
+  doc.body.append(new El('textarea'))
+  const marked = Page.mark(doc, '水彩风格')
+  const user = doc.body.append(new El('div', { 'data-role': 'user' }))
+  user.addText('水彩风格')
+  const answer = doc.body.append(new El('div', { 'data-role': 'assistant' }))
+  const markdown = answer.append(new El('div', { id: 'qk-markdown-react' }))
+  markdown.id = 'qk-markdown-react'
+  const icon = answer.append(new El('img'))
+  icon.complete = false
+  icon.naturalWidth = 0
+  icon.src = 'https://cdn.example/toolbar.png'
+  icon.currentSrc = icon.src
+
+  function lazyCard(id, url) {
+    const card = markdown.append(new El('div', { id }))
+    card.id = id
+    const img = card.append(new El('img', { alt: 'loading', loading: 'lazy' }))
+    img.loading = 'lazy'
+    img.complete = false
+    img.naturalWidth = 0
+    img.src = GRAY_GIF
+    img.currentSrc = GRAY_GIF
+    return { card, img, url }
+  }
+  const first = lazyCard('card_card_ai_generate_image_1', 'https://cdn.example/watercolor-a.png')
+  const second = lazyCard('card_card_ai_generate_image_2', 'https://cdn.example/watercolor-b.png')
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), [])
+  assert.strictEqual(Page.resultsBusy(doc, marked), true, '视口外的 loading 灰块要继续等')
+
+  const realNow = Date.now
+  let now = 1000000
+  Date.now = () => now
+  try {
+    Page.revealResults(doc, marked)
+    assert.strictEqual(first.card.scrolled, 1, '先把第一张生成卡滚进视口')
+    assert.strictEqual(first.card.scrollOpts.block, 'center')
+    assert.strictEqual(second.card.scrolled || 0, 0, '一次只停一张，避免两张互相挤出画面')
+    assert.strictEqual(first.img.loading, 'eager')
+    assert.strictEqual(second.img.loading, 'eager', '另一张也取消 lazy，滚动到位后才能解码')
+    assert.strictEqual(icon.scrolled || 0, 0, '正文外的工具栏图标不用滚')
+    now += 400
+    Page.revealResults(doc, marked)
+    assert.strictEqual(first.card.scrolled, 2)
+    assert.strictEqual(second.card.scrolled || 0, 0, '还没到换卡时间时继续盯着这一张')
+    now += 8000
+    Page.revealResults(doc, marked)
+    assert.strictEqual(second.card.scrolled, 1, '第一张一直是灰块时，过几秒改看下一张')
+    paint(first.img, first.url)
+    Page.revealResults(doc, marked)
+    assert.strictEqual(second.card.scrolled, 2, '第二张还没解码时继续停在它上面')
+    assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), [first.url])
+    assert.strictEqual(Page.resultsBusy(doc, marked), true, '另一张还是 loading 时整轮仍算忙，等待循环不会提前返回')
+    paint(second.img, second.url)
+    const held = second.card.scrolled
+    Page.revealResults(doc, marked)
+    assert.strictEqual(second.card.scrolled, held, '两张都解码后不再滚动')
+    assert.deepStrictEqual(Page.resultImages(doc, marked).map((item) => item.url), [first.url, second.url])
+    assert.strictEqual(Page.resultsBusy(doc, marked), false)
+  } finally {
+    Date.now = realNow
+  }
+
+  const shell = makeDoc('www.qianwen.com')
+  shell.body.append(new El('textarea'))
+  const shellMark = Page.mark(shell, '水彩风格')
+  const shellUser = shell.body.append(new El('div', { 'data-role': 'user' }))
+  shellUser.addText('水彩风格')
+  const shellAnswer = shell.body.append(new El('div', { 'data-role': 'assistant' }))
+  const shellMarkdown = shellAnswer.append(new El('div', { id: 'qk-markdown-react' }))
+  shellMarkdown.id = 'qk-markdown-react'
+  const gray = shellMarkdown.append(new El('img'))
+  gray.complete = true
+  gray.naturalWidth = 64
+  gray.src = GRAY_GIF
+  gray.currentSrc = GRAY_GIF
+  assert.deepStrictEqual(Page.resultImages(shell, shellMark).map((item) => item.url), [], '解码了的灰块 data URL 仍不是结果')
+  assert.strictEqual(Page.resultsBusy(shell, shellMark), false)
+  Page.revealResults(shell, shellMark)
+  assert.strictEqual(gray.scrolled, 1)
+
+  gray.src = 'https://cdn.example/watercolor.png'
+  gray.currentSrc = gray.src
+  gray.complete = false
+  gray.naturalWidth = 0
+  assert.deepStrictEqual(Page.resultImages(shell, shellMark).map((item) => item.url), [], '地址已经是实图但还没解码时继续等')
+  gray.complete = true
+  gray.naturalWidth = 1440
+  assert.deepStrictEqual(Page.resultImages(shell, shellMark).map((item) => item.url), ['https://cdn.example/watercolor.png'])
 }
 
 {
