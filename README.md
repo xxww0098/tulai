@@ -8,9 +8,9 @@ xbs（窗口标题「小帮手」）是豆包和千问的批量生图桌面应�
 
 | 包 | 作用 |
 |---|---|
-| `internal/cdp` | ego lite 官方 Page SDK / Chrome CDP 会话、上传、下载和页面桥 |
-| `internal/browser` | 查找 Chrome、按 profile 启动、独立 CDP 端口（9333+）、`BrowserData/` |
-| `internal/strategy` | Ego 模式操作当前编辑器与本轮回复，从网页下载；Chrome 保留结果截获流程 |
+| `internal/cdp` | Chrome / Edge 的 CDP 会话、上传、下载和页面桥。包内仍保留 ego lite Page SDK，只给既有测试用，桌面任务不再调用 |
+| `internal/browser` | 查找 Chrome 与 Edge、按 profile 启动、独立 CDP 端口（9333+）。Chrome 用 `BrowserData/<名称>`，Edge 用 `BrowserData/Edge/<名称>` |
+| `internal/strategy` | 在 Chrome / Edge 页面操作编辑器并截获结果；扩展模式另走页面桥 |
 | `internal/captcha` | 三后端：free（纯 Go CV）/ custom（视觉大模型）/ ikunocr（接码） |
 | `internal/tasks` | 顺序循环、并发、重试、定时切浏览器、SHA256 去重、命名规则保存 |
 | `internal/store` | SQLite `database/config.db`（`browsers` / `settings` / `prompts`）。已有同结构的库可以直接打开 |
@@ -34,21 +34,21 @@ go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问
 
 应用图标是仓库根目录的 `resources/icon.png`（1024×1024）。`mygo.json` 的 `icon` 指向它。`mygo build` 会把它做成 macOS `.icns`（Dock）、Windows 可执行文件图标和 NSIS 安装器图标，以及 Linux 桌面项图标。应用没有托盘菜单，因此不另做托盘图；启动时同一张 PNG 也会设到窗口（Windows / Linux）和 Dock（macOS）。
 
-千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥；`ego` 仍用原来的 ego / Chrome。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
+千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥，不必再添加 Chrome 或 Edge 实例。键值 `ego` 表示不走扩展，页面由网页方式里的 Chrome 或 Edge 打开。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
 
-默认使用 **ego lite** 的网页：安装并打开 ego lite、完成首次引导，确保 `ego-browser` 命令可用。浏览器页可切换为独立 Chrome；选择 Chrome 时需本机安装 Google Chrome。
+网页方式只有 **Chrome** 和 **Edge**，默认 Chrome。以前保存的 `ego lite` 会在打开软件时改成 Chrome。请先安装要用的浏览器，到「浏览器」页为豆包、千问添加实例，启动并登录。Chrome 的 profile 在 `BrowserData/<名称>`，Edge 在 `BrowserData/Edge/<名称>`，两套登录态不会写到一起。
 
-Ego 模式由软件启动官方 `ego-browser nodejs`，使用 Page SDK 的上传、填写、点击和浏览器下载接口。生成结果通过网页实际下载入口保存，先写入任务临时目录，再完整解码、校验和去重，以独占文件名提交到输出目录。该模式不安装全局图片结果截获 hook，也不依赖网页会员之外的生图 API Key。官方 SDK 底层仍使用 CDP。
+Windows 查找 `chrome.exe` 和 `msedge.exe`（Program Files、Program Files (x86)、LocalAppData）。macOS 查找 `/Applications` 里的 Google Chrome 和 Microsoft Edge。Linux 在 PATH、`/usr/bin` 和 `/opt/microsoft/msedge` 中查找 `google-chrome` 与 `microsoft-edge`。
 
-macOS 打包版将配置库、Chrome 的 `BrowserData/` 和默认输出保存到 `~/Library/Application Support/xbs/`，可直接双击启动。macOS 的 `./dev.sh` / `go run` 仍使用项目工作目录。ego lite 模式的网页和登录态由 ego lite 保留；Chrome 模式的手动启动与任务执行共用同一个 profile 目录。
+macOS 打包版将配置库、`BrowserData/` 和默认输出保存到 `~/Library/Application Support/xbs/`，可直接双击启动。macOS 的 `./dev.sh` / `go run` 仍使用项目工作目录。手动启动和任务执行共用同一个 profile 目录。
 
 配置库位于数据目录下的 `database/config.db`。已有配置使用旧目录名时，请先退出应用，再将 `数据库/` 重命名为 `database/`。
 
 ### Windows 支持
 
-支持 Windows 10/11，提供 amd64 与 arm64 原生 GUI 构建。运行对应架构的安装器，或直接双击 `xbs.exe`；配置库、Chrome 的 `BrowserData/` 和默认输出均保存在 `%APPDATA%\xbs\`，不依赖启动位置，也不会写入安装目录。Windows 的开发运行同样使用该用户数据目录。
+支持 Windows 10/11，提供 amd64 与 arm64 原生 GUI 构建。运行对应架构的安装器，或直接双击 `xbs.exe`；配置库、`BrowserData/` 和默认输出均保存在 `%APPDATA%\xbs\`，不依赖启动位置，也不会写入安装目录。Windows 的开发运行同样使用该用户数据目录。
 
-在 Windows 安装 ego lite 并完成首次引导后，确认 `ego-browser` 已在 PATH 中可用；调整 PATH 后需重启小帮手。软件优先查找 `ego-browser.exe`，也提供 `.cmd` 启动器接入。控制脚本采用 UTF-8 文件，中文用户名、空格与特殊字符路径已加入回归用例；Windows 启动器的实际运行仍待真机验证。Ego 官方目前明确提供 Windows x64 安装器，小帮手的 arm64 构建不代表 Ego 浏览器已有原生 ARM64 支持。
+安装 Google Chrome 或 Microsoft Edge，在「浏览器」页添加实例、启动并登录后再开始任务。Windows 上的可执行文件位置见上一节。
 
 在已安装 Go 的 Windows 开发环境执行 `build-windows.cmd`，或在 macOS/Linux 交叉构建：
 
@@ -56,16 +56,16 @@ macOS 打包版将配置库、Chrome 的 `BrowserData/` 和默认输出保存到
 CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 ```
 
-产物位于 `build/windows-amd64/` 与 `build/windows-arm64/`。安装了 NSIS 时，MyGo 会同时生成安装器；Windows 上缺少 NSIS 时，MyGo 会自动下载校验过的构建工具，macOS/Linux 缺少 NSIS 时保留独立 EXE。GitHub Actions 在 Ubuntu 上安装 NSIS 后打出同样的安装器，见 [`docs/RELEASING.md`](docs/RELEASING.md)。网页方式的要求与上文相同；Windows 真机的窗口、文件对话框、ego lite 和真实生成流程仍需实机验收，交叉构建通过仅证明可编译打包。
+产物位于 `build/windows-amd64/` 与 `build/windows-arm64/`。安装了 NSIS 时，MyGo 会同时生成安装器；Windows 上缺少 NSIS 时，MyGo 会自动下载校验过的构建工具，macOS/Linux 缺少 NSIS 时保留独立 EXE。GitHub Actions 在 Ubuntu 上安装 NSIS 后打出同样的安装器，见 [`docs/RELEASING.md`](docs/RELEASING.md)。网页方式的要求与上文相同；Windows 真机的窗口、文件对话框和真实生成流程仍需实机验收，交叉构建通过仅证明可编译打包。
 
 ## 使用流程
 
-启动后右侧就是开跑的地方。平台、模式、提示词、打开网页和开始在同一屏，不必先翻设置。
+启动后右侧就是开跑的地方。平台、模式、提示词、管理浏览器和开始在同一屏，不必先翻设置。
 
 1. 选 **文生图** 或 **图生图**。新配置没有源图时默认文生图；已经导入过源图、又没手动选过模式时，打开就是图生图。选择会随设置保存。
 2. 勾选豆包、千问（新配置默认豆包）。提示词在开始按钮上方，每行一条。
 3. 图生图再点「添加图片」（SHA256 去重、缩略图预览）。文生图不上传源图，列表里留着的旧图也不会带上。
-4. 点「打开网页」：ego lite 会打开已勾选的平台，登录后回来点「开始任务」。网页方式是 Chrome 时，这个按钮是「管理浏览器」，切到浏览器页去添加、启动并登录。
+4. 点「管理浏览器」：选择 Chrome 或 Edge，为已勾选的平台添加实例，启动并登录。还没有对应实例时「开始任务」不可用，工作台会提示先到浏览器管理添加。
 5. **开始任务**。文生图是每条提示词 × 每个平台。图生图是每张源图 × 每个平台，提示词按顺序循环。然后自动发提示词（图生图先上传）→等结果→校验→落盘。输出目录空着时，写到数据目录下的「输出结果」。
 
 命名、前后缀、并发、重试、等待和「去水印（实验）」在左侧「任务设置 → 更多设置」，默认折叠。不改也能开跑。
@@ -76,7 +76,7 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 重试按阶段处理：确认发送成功后，等待或保存失败只继续获取原任务结果，不重新上传、标记或发送；已保存的部分图片保留且不重复落盘。发送动作已尝试但无法确认平台是否接受时，停止整批任务并显示错误，请先检查网页再决定是否重新开始。该恢复状态仅在当前批次内有效，不跨软件重启保存。
 
-调度优先分派空闲浏览器，同一 Chrome 实例内串行，Ego 两个平台共用一个串行执行空间。「发送间隔」在同一执行空间的连续任务之间生效，冷却不会占用其他浏览器的并发名额，最后一项完成后不再等待。停止任务会取消本地执行、重试和间隔等待，并保留已保存结果；平台已接收的远端生成无法由本地停止操作撤回。
+调度优先分派空闲浏览器，同一个 Chrome 或 Edge 实例内串行。「发送间隔」在同一实例的连续任务之间生效，冷却不会占用其他浏览器的并发名额，最后一项完成后不再等待。停止任务会取消本地执行、重试和间隔等待，并保留已保存结果；平台已接收的远端生成无法由本地停止操作撤回。
 
 ### 可选去水印（实验）
 
@@ -167,7 +167,7 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 
 ## 边界说明
 
-- 平台页面（豆包/千问）DOM 会变化。Ego 的当前编辑器与本轮消息识别位于 `internal/strategy/js/ego.js`，所有上传、输入、点击和下载动作交给官方 SDK；Chrome 使用独立的 composer/结果截获脚本。验证码脚本位于 `internal/captcha/js/`。
+- 平台页面（豆包/千问）DOM 会变化。Chrome / Edge 使用 composer 和结果截获脚本。`internal/strategy/js/ego.js` 只留给不再作为桌面默认路径的 Page SDK 测试。验证码脚本位于 `internal/captcha/js/`。
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 

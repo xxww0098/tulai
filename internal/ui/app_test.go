@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -13,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"xbs/internal/browser"
+	"xbs/internal/extbridge"
 	"xbs/internal/store"
 	"xbs/internal/tasks"
 )
@@ -20,7 +20,7 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 220}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"任务设置", "浏览器", "验证码", "开始任务", "文生图", "图生图", "提示词", "打开网页", "运行日志", "检查更新"} {
+	for _, label := range []string{"任务设置", "浏览器", "验证码", "开始任务", "文生图", "图生图", "提示词", "管理浏览器", "运行日志", "检查更新"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
 	if tt.HasText("添加图片") {
@@ -79,6 +79,9 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
 		splitSz: 380, sourceHeight: 210, browserBackend: "Chrome",
 		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
+	}
+	if _, err := st.AddBrowser("豆包", "工作", ""); err != nil {
+		t.Fatal(err)
 	}
 	if a.canStart() {
 		t.Fatal("未选平台时不应允许开始")
@@ -297,16 +300,6 @@ func TestWorkspaceActionsRespectRunningState(t *testing.T) {
 		}
 	}
 	a.running = false
-	a.egoOpening = true
-	tt.Frame()
-	if err := tt.Click("开始任务"); err != nil {
-		t.Fatal(err)
-	}
-	if tt.Focused("开始任务") || a.running {
-		t.Fatal("start is enabled while an ego lite page is opening")
-	}
-	a.startTasks()
-	a.egoOpening = false
 	tt.Frame()
 	if err := tt.Click("移除选中"); err != nil {
 		t.Fatal(err)
@@ -382,57 +375,54 @@ func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	st.Set("browser_backend", "ego lite")
 	a := &App{store: st, manager: browser.NewManager(), engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210, tab: 1}
 	a.loadSettings()
-	if a.browserBackend != "ego lite" || st.Get("browser_backend") != "ego lite" {
-		t.Fatalf("default browser backend = %q", a.browserBackend)
+	if a.browserBackend != "Chrome" || st.Get("browser_backend") != "Chrome" {
+		t.Fatalf("ego lite should migrate to Chrome, got %q", a.browserBackend)
 	}
 	tt := ui.NewTester(a.view, 1000, 720)
-	for _, label := range []string{"网页方式", "已启用 ego lite", "打开豆包网页", "打开千问网页"} {
+	for _, label := range []string{"网页方式", "浏览器实例", "启动选中"} {
 		assertVisible(t, tt, label, 1000, 720)
 	}
-	_, chromeInstancesVisible := tt.Find("浏览器实例")
-	if tt.HasText("启动选中") || chromeInstancesVisible {
-		t.Fatal("ego lite mode shows Chrome instance controls")
+	if !tt.HasText("豆包还没有浏览器，请先在浏览器管理中添加") {
+		t.Fatal("empty browser list has no add hint")
 	}
-	if err := tt.Click("ego lite"); err != nil {
-		t.Fatal(err)
+	if tt.HasText("打开豆包网页") || tt.HasText("已启用 ego lite") {
+		t.Fatal("ego lite controls are still on the browser page")
 	}
 	if err := tt.Click("Chrome"); err != nil {
 		t.Fatal(err)
 	}
-	if a.browserBackend != "Chrome" || st.Get("browser_backend") != "Chrome" || !tt.HasText("启动选中") {
-		t.Fatal("selecting Chrome did not update the UI and saved backend")
+	if err := tt.Click("Edge"); err != nil {
+		t.Fatal(err)
+	}
+	if a.browserBackend != "Edge" || st.Get("browser_backend") != "Edge" || !tt.HasText("启动选中") {
+		t.Fatal("selecting Edge did not update the UI and saved backend")
 	}
 	a.running = true
 	tt.Frame()
-	if err := tt.Click("Chrome"); err != nil {
+	if err := tt.Click("Edge"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Key(0, ui.KeyHome)
 	tt.Key(0, ui.KeyEnter)
-	if a.browserBackend != "Chrome" || st.Get("browser_backend") != "Chrome" {
+	if a.browserBackend != "Edge" || st.Get("browser_backend") != "Edge" {
 		t.Fatal("browser backend changed during a task")
 	}
 	a.running = false
 	tt.Frame()
-	if err := tt.Click("Chrome"); err != nil {
+	if err := tt.Click("Edge"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("ego lite"); err != nil {
+	if err := tt.Click("Chrome"); err != nil {
 		t.Fatal(err)
 	}
 	a.saveSettings()
 	restored := &App{store: st, manager: browser.NewManager()}
 	restored.loadSettings()
-	if restored.browserBackend != "ego lite" || tt.HasText("启动选中") {
-		t.Fatal("ego lite backend was not restored or Chrome controls remained visible")
-	}
-	a.egoOpening = true
-	a.reportEgoOpen("豆包", errors.New("ego lite 未运行"))
-	tt.Frame()
-	if a.egoOpening || !tt.HasText("打开豆包失败：ego lite 未运行") {
-		t.Fatal("the actual ego lite connection failure is not shown")
+	if restored.browserBackend != "Chrome" || !tt.HasText("启动选中") {
+		t.Fatal("Chrome backend was not restored")
 	}
 }
 
@@ -497,16 +487,74 @@ func TestBatchModeInfersAndPersists(t *testing.T) {
 	}
 }
 
-func TestOpenSelectedPagesSwitchesChromeTab(t *testing.T) {
-	a := &App{browserBackend: "Chrome", platDoubao: true}
-	a.openSelectedPages()
-	if a.tab != 1 || a.egoOpening {
-		t.Fatalf("chrome open: tab=%d opening=%v", a.tab, a.egoOpening)
+func TestOpenSelectedPagesSwitchesBrowserTab(t *testing.T) {
+	for _, backend := range []string{"Chrome", "Edge"} {
+		a := &App{browserBackend: backend, platDoubao: true}
+		a.openSelectedPages()
+		if a.tab != 1 {
+			t.Fatalf("%s open: tab=%d", backend, a.tab)
+		}
 	}
-	ego := &App{browserBackend: "ego lite"}
-	ego.openSelectedPages()
-	if ego.egoOpening || ego.egoMessage == "" {
-		t.Fatal("ego open ran without a selected platform")
+}
+
+func TestChromeQianwenWithoutBrowserCannotStart(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{
+		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
+		splitSz: 380, sourceHeight: 210, browserBackend: "Chrome",
+		platQianwen: true, prompts: "画一只猫", outputPath: t.TempDir(),
+	}
+	tt := ui.NewTester(a.view, 1280, 840)
+	const hint = "千问还没有浏览器，请先在浏览器管理中添加"
+	if a.canStart() || !tt.HasText(hint) || !tt.HasText("待添加浏览器") {
+		t.Fatalf("empty chrome qianwen canStart=%v", a.canStart())
+	}
+	if err := tt.Click("开始任务"); err != nil {
+		t.Fatal(err)
+	}
+	if a.running || tt.Focused("开始任务") {
+		t.Fatal("start stayed enabled without a qianwen browser")
+	}
+	if err := tt.Click("管理浏览器"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.tab != 1 || !tt.HasText(hint) {
+		t.Fatal("browser tab did not show the empty-state hint")
+	}
+
+	a.newBrowserPlat = "千问"
+	a.addBrowser()
+	tt.Frame()
+	if !a.canStart() || tt.HasText("待添加浏览器") {
+		t.Fatal("adding a qianwen browser did not allow start")
+	}
+
+	a.browserBackend = "Edge"
+	a.browserRows = nil
+	st.Set("browser_backend", "Edge")
+	st.DeleteBrowser(a.configuredBrowsers()[0].ID)
+	tt.Frame()
+	if a.canStart() || !tt.HasText(hint) {
+		t.Fatal("edge without a qianwen browser can still start")
+	}
+	if _, err := st.AddBrowser("千问", "edge", ""); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !a.canStart() {
+		t.Fatal("edge can start once a qianwen browser exists")
+	}
+
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.DeleteBrowser(a.configuredBrowsers()[0].ID)
+	tt.Frame()
+	if !a.canStart() || tt.HasText("待添加浏览器") {
+		t.Fatal("extension path still requires a local browser instance")
 	}
 }
 

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -105,42 +104,26 @@ func (a *App) taskPane(c *ui.Context) {
 	})
 }
 
-// browserPane 浏览器管理。
+// browserPane 浏览器管理。网页方式只有 Chrome 和 Edge。
 func (a *App) browserPane(c *ui.Context) {
 	ui.Field(c, "网页方式", func() {
-		ui.Select(c.Key("browser-backend"), &a.browserBackend, []string{"ego lite", "Chrome"}).Disabled(a.running || a.egoOpening).OnChange(func() {
+		ui.Select(c.Key("browser-backend"), &a.browserBackend, []string{"Chrome", "Edge"}).Disabled(a.running).OnChange(func() {
 			a.store.Set("browser_backend", a.browserBackend)
-			a.egoMessage = ""
 		})
 	})
-	if a.browserBackend != "Chrome" {
-		ui.Column(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
-			ui.Row(c).Children(func() { ui.Badge(c, "已启用 ego lite") })
-			ui.Text(c, "复用 ego lite 中的豆包、千问网页和现有登录状态，无需创建独立浏览器实例。").FontSize(12).TextColor(c.Theme().TextMuted)
-			ui.Button(c, "打开豆包网页").Disabled(a.running || a.egoOpening).OnClick(func() { a.openEgoPlatform("豆包") })
-			ui.Button(c, "打开千问网页").Disabled(a.running || a.egoOpening).OnClick(func() { a.openEgoPlatform("千问") })
-			ui.Text(c, "请保持 ego lite 运行，在网页中登录后返回工作台开始任务。").FontSize(12).TextColor(c.Theme().TextMuted)
-			ui.Scroll(c.Key("ego-status")).Grow(1).MinHeight(0).Children(func() {
-				message := a.egoMessage
-				if message == "" {
-					message = "已保存当前方式；连接会在打开网页或开始任务时建立。"
-				}
-				ui.Text(c, message).FontSize(12)
-			})
-		})
-		return
-	}
 	ui.Column(c).Grow(1).MinHeight(0).Gap(8).Children(func() {
 		ui.Text(c, "浏览器实例").Bold()
-		ui.Text(c, "每个实例独立保存登录状态").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "每个实例单独保存登录状态，两种网页方式的配置目录互不影响。").FontSize(12).TextColor(c.Theme().TextMuted)
 		// 新增行
 		ui.Row(c).Gap(6).Children(func() {
 			ui.Select(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(80).Label("浏览器平台")
 			ui.TextInput(c, &a.newBrowserName).Grow(1).MinWidth(0).Placeholder("名称（可选）").Label("浏览器名称")
 			ui.Button(c, "添加").Disabled(a.running).OnClick(func() { a.addBrowser() })
 		})
-		if len(a.browserRows) == 0 {
-			ui.Text(c, "尚无浏览器，添加后启动并登录平台").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
+		if hint := missingBrowserHint(a.missingBrowserNames()); hint != "" {
+			ui.Text(c, hint).Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
+		} else if len(a.browserRows) == 0 {
+			ui.Text(c, "尚无浏览器。添加豆包或千问实例，启动并登录后再开始任务。").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
 		// 列表
 		a.browserList.Key = func(i int) any { return a.browserRows[i].ID }
@@ -301,91 +284,12 @@ func (a *App) bottomView(c *ui.Context) {
 
 // ---- 浏览器操作 ----
 
-// openSelectedPages 从工作台打开已选平台。ego lite 直接开网页；Chrome 切到浏览器页。
+// openSelectedPages 从工作台切到浏览器页，方便添加或启动实例。
 func (a *App) openSelectedPages() {
-	if a.running || a.egoOpening {
+	if a.running {
 		return
 	}
-	if a.browserBackend == "Chrome" {
-		a.tab = 1
-		return
-	}
-	var names []string
-	if a.platDoubao {
-		names = append(names, "豆包")
-	}
-	if a.platQianwen {
-		names = append(names, "千问")
-	}
-	if len(names) == 0 {
-		a.egoMessage = "请先勾选豆包或千问"
-		return
-	}
-	a.egoOpening = true
-	a.egoMessage = "正在通过 ego lite 打开网页…"
-	window := a.window
-	go func() {
-		var failed string
-		var openErr error
-		var opened []string
-		for _, name := range names {
-			platform := strategy.Factory(name)
-			if platform == nil {
-				continue
-			}
-			if err := cdp.OpenEgoURL(platform.HomeURL()); err != nil {
-				if openErr == nil {
-					openErr = err
-					failed = name
-				}
-				continue
-			}
-			opened = append(opened, name)
-		}
-		if window == nil {
-			return
-		}
-		window.Update(func() {
-			a.egoOpening = false
-			switch {
-			case openErr != nil && len(opened) == 0:
-				a.egoMessage = fmt.Sprintf("打开%s失败：%v", failed, openErr)
-				logging.Log.Errorf("在 ego lite 打开%s失败: %v", failed, openErr)
-			case openErr != nil:
-				a.egoMessage = fmt.Sprintf("已打开%s；打开%s失败：%v", strings.Join(opened, "、"), failed, openErr)
-				logging.Log.Errorf("在 ego lite 打开%s失败: %v", failed, openErr)
-			default:
-				a.egoMessage = fmt.Sprintf("已在 ego lite 打开%s网页，请在网页中确认登录状态。", strings.Join(opened, "、"))
-				logging.Log.Success("已在 ego lite 打开%s网页", strings.Join(opened, "、"))
-			}
-		})
-	}()
-}
-
-func (a *App) openEgoPlatform(name string) {
-	platform := strategy.Factory(name)
-	if platform == nil {
-		logging.Log.Errorf("无法识别平台: %s", name)
-		return
-	}
-	a.egoOpening = true
-	a.egoMessage = fmt.Sprintf("正在通过 ego lite 打开%s网页…", name)
-	window := a.window
-	go func() {
-		err := cdp.OpenEgoURL(platform.HomeURL())
-		window.Update(func() { a.reportEgoOpen(name, err) })
-	}()
-}
-
-func (a *App) reportEgoOpen(name string, err error) {
-	a.egoOpening = false
-	if err != nil {
-		a.egoMessage = fmt.Sprintf("打开%s失败：%v", name, err)
-		logging.Log.Errorf("在 ego lite 打开%s失败: %v", name, err)
-		return
-	}
-	a.egoMessage = fmt.Sprintf("已在 ego lite 打开%s网页，请在网页中确认登录状态。", name)
-	logging.Log.Success("已在 ego lite 打开%s网页", name)
+	a.tab = 1
 }
 
 func (a *App) refreshBrowsers() {
@@ -428,7 +332,7 @@ func (a *App) launchBrowser() {
 		return
 	}
 	go func() {
-		ws, err := a.manager.Start(b, a.dataRoot, false)
+		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, false)
 		if err != nil {
 			logging.Log.Errorf("启动失败: %v", err)
 			return

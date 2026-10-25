@@ -67,7 +67,7 @@ func TestRunDispatchesIdleBrowserPastBusyTask(t *testing.T) {
 }
 
 func TestRunSendWaitPerResourceWithoutTrailingDelay(t *testing.T) {
-	for _, backend := range []string{"Chrome", "ego lite"} {
+	for _, backend := range []string{"Chrome", "Edge"} {
 		t.Run(backend, func(t *testing.T) {
 			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 			if err != nil {
@@ -76,12 +76,8 @@ func TestRunSendWaitPerResourceWithoutTrailingDelay(t *testing.T) {
 			defer st.Close()
 			st.Set("browser_backend", backend)
 			opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 4, SendWait: 10}
-			if backend == "Chrome" {
-				if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				opts.Platforms, opts.Images = []string{"豆包", "千问"}, []string{"a.png"}
+			if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
+				t.Fatal(err)
 			}
 			synctest.Test(t, func(t *testing.T) {
 				start := time.Now()
@@ -139,6 +135,7 @@ func TestRunStopDuringResourceCooldown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	addBrowsers(t, st, "豆包")
 	synctest.Test(t, func(t *testing.T) {
 		e := NewEngine(st, nil, nil, "")
 		opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png"}, Concurrency: 4, SendWait: 60}
@@ -162,9 +159,10 @@ func TestRunStopCancelsActiveTaskAndPreservesResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	addBrowsers(t, st, "豆包")
 	synctest.Test(t, func(t *testing.T) {
 		e := NewEngine(st, nil, nil, "")
-		opts := Options{Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, Concurrency: 4, RetryCount: 3}
+		opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 4, RetryCount: 3}
 		finished := make(chan error, 1)
 		calls := 0
 		go func() {
@@ -228,8 +226,9 @@ func TestRunUncertainSubmissionStopsWithoutResend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	addBrowsers(t, st, "豆包")
 	e := NewEngine(st, nil, nil, "")
-	opts := Options{Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, Concurrency: 4, RetryCount: 3}
+	opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png", "d.png"}, Concurrency: 4, RetryCount: 3}
 	strat := &resumeStrategy{failure: "send", err: strategy.ErrSubmissionUncertain}
 	calls := 0
 	err = e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {

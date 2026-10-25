@@ -20,8 +20,8 @@ const Version = 1
 const DefaultAddr = "127.0.0.1:18765"
 
 // SettingBrowserBackend 是配置库里的控制面开关，取值 extension 或 ego。
-// 它和现有 browser_backend（ego lite | Chrome）不是同一个键。
-// 任务引擎在千问或豆包且该值为 extension 时走扩展；ego 仍走原来的页面会话。
+// 它和 browser_backend（Chrome | Edge）不是同一个键。
+// 任务引擎在千问或豆包且该值为 extension 时走扩展；否则打开 Chrome 或 Edge 实例。
 const SettingBrowserBackend = "browserBackend"
 
 // MaxMessageBytes 是单条 WebSocket 消息的上限。图片以分片 base64 传递，单片必须小于这个值。

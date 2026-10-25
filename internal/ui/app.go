@@ -15,6 +15,7 @@ import (
 
 	"xbs/internal/browser"
 	"xbs/internal/captcha"
+	"xbs/internal/extbridge"
 	"xbs/internal/images"
 	"xbs/internal/logging"
 	"xbs/internal/store"
@@ -56,8 +57,6 @@ type App struct {
 	window         *mygo.Window
 	dataRoot       string
 	browserBackend string
-	egoOpening     bool
-	egoMessage     string
 
 	// 任务设置（与 settings 表一一对应）
 	platDoubao      bool
@@ -173,7 +172,7 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 // loadSettings 从配置库读入 UI 状态。
 func (a *App) loadSettings() {
 	s := a.store
-	a.browserBackend = pickStr(s.Get("browser_backend"), "ego lite", []string{"ego lite", "Chrome"})
+	a.browserBackend = pickStr(s.Get("browser_backend"), "Chrome", []string{"Chrome", "Edge"})
 	s.Set("browser_backend", a.browserBackend)
 	a.platDoubao = containsStr(s.Platforms(), "豆包")
 	a.platQianwen = containsStr(s.Platforms(), "千问")
@@ -349,11 +348,10 @@ func (a *App) workspace(c *ui.Context) {
 		ready = "文生图 · " + ready
 	}
 	status, hint := "待开始", ready
+	missingBrowsers := a.missingBrowserNames()
 	switch {
 	case a.running:
 		status = "进行中"
-	case a.egoOpening:
-		status, hint = "打开网页中", "请等待网页打开后再开始任务"
 	case a.progress > 0 || a.engine.View() != nil:
 		status = "已结束"
 	case !a.platDoubao && !a.platQianwen:
@@ -362,8 +360,10 @@ func (a *App) workspace(c *ui.Context) {
 		status, hint = "待导入", "添加源图，或切回文生图"
 	case a.batchMode == batchText && len(prompts) == 0:
 		status, hint = "待写提示词", "写下提示词即可开始，不用源图"
+	case len(missingBrowsers) > 0:
+		status, hint = "待添加浏览器", missingBrowserHint(missingBrowsers)
 	}
-	if a.progText != "" {
+	if a.progText != "" && status != "待添加浏览器" {
 		hint = a.progText
 	}
 	if needsUser {
@@ -381,11 +381,7 @@ func (a *App) workspace(c *ui.Context) {
 	})
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(hint)
-		openLabel := "打开网页"
-		if a.browserBackend == "Chrome" {
-			openLabel = "管理浏览器"
-		}
-		ui.Button(c, openLabel).Disabled(a.running || a.egoOpening).OnClick(func() { a.openSelectedPages() })
+		ui.Button(c, "管理浏览器").Disabled(a.running).OnClick(func() { a.openSelectedPages() })
 		if a.running {
 			ui.Button(c, "停止任务").OnClick(func() { a.stopTasks() })
 		} else {
@@ -450,13 +446,48 @@ func (a *App) bottomPane(c *ui.Context) { a.bottomView(c) }
 
 // canStart 是当前模式下「开始任务」是否可点。
 func (a *App) canStart() bool {
-	if a.running || a.egoOpening || (!a.platDoubao && !a.platQianwen) {
+	if a.running || (!a.platDoubao && !a.platQianwen) || len(a.missingBrowserNames()) > 0 {
 		return false
 	}
 	if a.batchMode == batchImage {
 		return len(a.sources) > 0
 	}
 	return len(splitLines(a.prompts)) > 0
+}
+
+// missingBrowserNames 是已勾选、但还没有浏览器实例的平台。
+// 扩展桥不使用本机实例。未选择 Chrome/Edge（测试里的空值）也不在这里拦截。
+func (a *App) missingBrowserNames() []string {
+	if a.extensionTasks() || (a.browserBackend != "Chrome" && a.browserBackend != "Edge") {
+		return nil
+	}
+	have := map[string]bool{}
+	for _, b := range a.configuredBrowsers() {
+		have[b.Platform] = true
+	}
+	var missing []string
+	if a.platDoubao && !have["豆包"] {
+		missing = append(missing, "豆包")
+	}
+	if a.platQianwen && !have["千问"] {
+		missing = append(missing, "千问")
+	}
+	return missing
+}
+
+func missingBrowserHint(names []string) string {
+	return strings.Join(names, "、") + "还没有浏览器，请先在浏览器管理中添加"
+}
+
+func (a *App) extensionTasks() bool {
+	return a.store != nil && extbridge.NormalizeBrowserBackend(a.store.Get(extbridge.SettingBrowserBackend)) == "extension"
+}
+
+func (a *App) configuredBrowsers() []store.Browser {
+	if a.store != nil {
+		return a.store.Browsers()
+	}
+	return a.browserRows
 }
 
 // batchImages 是这次要上传的源图。文生图不上传，即使列表里还留着上次的图。

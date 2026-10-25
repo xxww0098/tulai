@@ -102,14 +102,8 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 			delete(e.sessions, key)
 		}
 	}
-	// 浏览器映射：平台 → 可用浏览器 ID
-	browsersOf := map[string][]int64{"豆包": {-1}, "千问": {-2}}
-	if e.store.Get("browser_backend") == "Chrome" {
-		browsersOf = map[string][]int64{}
-		for _, b := range e.store.Browsers() {
-			browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
-		}
-	}
+	// 浏览器映射：平台 → 可用浏览器 ID。Chrome 与 Edge 都用已添加的实例。
+	browsersOf := e.browsersOfPlatforms()
 	for _, p := range opts.Platforms {
 		if len(browsersOf[p]) == 0 {
 			e.mu.Unlock()
@@ -150,7 +144,7 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 	workers := min(max(opts.Concurrency, 1), total)
 	jobs := make(chan Task)
 	completed := make(chan Task, workers)
-	// Ego 的两个平台共用执行空间 0，Chrome 按浏览器 ID 隔离。
+	// 按浏览器 ID 隔离。扩展桥的占位 ID 为负数，调度时归到同一个执行空间。
 	busy := map[int64]bool{}
 	readyAt := map[int64]time.Time{}
 	var wg sync.WaitGroup
@@ -464,12 +458,32 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 	return fmt.Errorf("等待生成结果超时：未得到有效的新图片")
 }
 
+// browsersOfPlatforms 返回每个平台可用的浏览器。
+// browserBackend=extension 时不读本机实例：扩展自己驱动已打开的页面，占位 ID 只参与调度。
+func (e *Engine) browsersOfPlatforms() map[string][]int64 {
+	if e.useExtension("千问") {
+		return map[string][]int64{"豆包": {-1}, "千问": {-2}}
+	}
+	browsersOf := map[string][]int64{}
+	if e.store == nil {
+		return browsersOf
+	}
+	for _, b := range e.store.Browsers() {
+		browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
+	}
+	return browsersOf
+}
+
+func (e *Engine) pageBackend() string {
+	if e.store != nil && e.store.Get("browser_backend") == "Edge" {
+		return "Edge"
+	}
+	return "Chrome"
+}
+
 // session 取/建平台会话（同一浏览器+平台复用一个标签页，SharedSession 语义）。
 func (e *Engine) session(ctx context.Context, platform string, browserID int64, strat strategy.Strategy) (*cdp.Session, error) {
-	backend := "Chrome"
-	if browserID < 0 {
-		backend = "ego lite"
-	}
+	backend := e.pageBackend()
 	key := fmt.Sprintf("%s:%s:%d", backend, platform, browserID)
 	e.mu.Lock()
 	if s, ok := e.sessions[key]; ok {
@@ -479,45 +493,39 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	solver := e.solver
 	e.mu.Unlock()
 
+	if e.store == nil || e.browsers == nil {
+		return nil, fmt.Errorf("浏览器 %d 不存在", browserID)
+	}
+	var b store.Browser
+	found := false
+	for _, cand := range e.store.Browsers() {
+		if cand.ID == browserID {
+			b, found = cand, true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("浏览器 %d 不存在", browserID)
+	}
 	onLog := func(line string) {
 		if len(line) > 0 && len(line) < 400 {
 			logging.Log.Debugf("[页面] %s", line)
 		}
 	}
-	var sess *cdp.Session
-	var err error
-	if backend == "ego lite" {
-		sess, err = cdp.NewEgoSession(ctx, strat.HomeURL(), onLog)
-	} else {
-		var b store.Browser
-		found := false
-		for _, cand := range e.store.Browsers() {
-			if cand.ID == browserID {
-				b, found = cand, true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("浏览器 %d 不存在", browserID)
-		}
-		ws, startErr := e.browsers.Start(b, e.dataRoot, false)
-		if startErr != nil {
-			return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
-		}
-		client, clientErr := cdp.NewClient(ws)
-		if clientErr != nil {
-			return nil, clientErr
-		}
-		sess, err = client.NewSession(strat.HomeURL(), onLog)
-		if err != nil {
-			client.Close()
-		} else {
-			context.AfterFunc(sess.Ctx(), client.Close)
-		}
+	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, false)
+	if startErr != nil {
+		return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
 	}
+	client, clientErr := cdp.NewClient(ws)
+	if clientErr != nil {
+		return nil, clientErr
+	}
+	sess, err := client.NewSession(strat.HomeURL(), onLog)
 	if err != nil {
+		client.Close()
 		return nil, fmt.Errorf("打开页面: %w", err)
 	}
+	context.AfterFunc(sess.Ctx(), client.Close)
 	if err := captcha.PreparePage(sess); err != nil {
 		return nil, closeFailedSession(ctx, sess, err)
 	}
@@ -526,10 +534,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 		return nil, closeFailedSession(ctx, sess, err)
 	}
 	captcha.Attach(sess, solver, e.store.GetBool("captcha_enabled"), func() {
-		// 登录掉线：标记浏览器未登录
-		if backend == "Chrome" {
-			e.store.UpdateBrowser(browserID, true, false)
-		}
+		e.store.UpdateBrowser(browserID, true, false)
 	})
 	sess.KeepAlive(ctx, 30*time.Second)
 
@@ -542,9 +547,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	}
 	e.sessions[key] = sess
 	e.mu.Unlock()
-	if backend == "Chrome" {
-		e.store.UpdateBrowser(browserID, true, true)
-	}
+	e.store.UpdateBrowser(browserID, true, true)
 	return sess, nil
 }
 
