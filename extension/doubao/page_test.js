@@ -463,3 +463,46 @@ assert.strictEqual(Page.attachLocalImage, undefined)
 assert.strictEqual(Page.createChooserBridge, undefined)
 
 console.log('doubao page.js anchors ok')
+
+{
+  const doc = makeDoc('www.doubao.com')
+  const button = doc.body.append(new El('button', { 'aria-label': '发送' }))
+  const order = []
+  button.dispatchEvent = function (ev) {
+    order.push(ev.type)
+    if (ev.type === 'pointerdown' && ev.preventDefault) ev.preventDefault()
+  }
+  button.click = function () {
+    order.push('click')
+    this.clicked = (this.clicked || 0) + 1
+  }
+  assert.strictEqual(Page.activate(button), true)
+  assert.deepStrictEqual(order, ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
+  assert.strictEqual(button.clicked, 1)
+}
+
+{
+  const { doc, box } = surface()
+  const wrap = box.parentElement
+  const entry = wrap.append(new El('button', { 'data-testid': 'upload_file_button' }))
+  const baseline = new Set()
+  const svg = wrap.append(new El('img'))
+  svg.complete = true
+  svg.naturalWidth = 54
+  svg.src = 'data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27/%3e'
+  svg.currentSrc = svg.src
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false)
+  const blob = wrap.append(new El('img'))
+  blob.complete = true
+  blob.naturalWidth = 40
+  blob.src = 'blob:https://www.doubao.com/abc'
+  blob.currentSrc = blob.src
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false)
+  const real = wrap.append(new El('img'))
+  real.complete = true
+  real.naturalWidth = 64
+  real.src = 'https://cdn.example/source.png'
+  real.currentSrc = real.src
+  assert.strictEqual(Page.freshAttachment(doc, baseline), true)
+  void entry
+}

@@ -617,6 +617,60 @@ globalThis.XBSPage = (function () {
     return matches.length > oldMatches
   }
 
+
+  // HTMLElement.click() 只有 click，没有 pointerdown。豆包发送按钮和千问一样，需要走完 pointer 再 click，
+  // 否则页面常常不收下这次发送，输入框也不清空。
+  function dispatchUiEvent(el, type) {
+    if (!el || typeof el.dispatchEvent !== 'function') return null
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null
+    const x = rect ? rect.left + rect.width / 2 : 0
+    const y = rect ? rect.top + rect.height / 2 : 0
+    const point = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      button: 0,
+      buttons: type === 'pointerdown' || type === 'mousedown' ? 1 : 0,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+    }
+    const pointer = type === 'pointerdown' || type === 'pointerup'
+    let ev = null
+    try {
+      if (pointer && typeof PointerEvent === 'function') ev = new PointerEvent(type, point)
+    } catch (e) { ev = null }
+    if (!ev) {
+      try {
+        if (typeof MouseEvent === 'function') ev = new MouseEvent(type, point)
+      } catch (e) { ev = null }
+    }
+    if (!ev) {
+      try { ev = new Event(type, { bubbles: true, cancelable: true, composed: true }) } catch (e) { return null }
+    }
+    try { el.dispatchEvent(ev) } catch (e) {}
+    return ev
+  }
+
+  function poke(el) {
+    const down = dispatchUiEvent(el, 'pointerdown')
+    dispatchUiEvent(el, 'mousedown')
+    dispatchUiEvent(el, 'pointerup')
+    dispatchUiEvent(el, 'mouseup')
+    return down
+  }
+
+  function activate(el) {
+    if (!el) return false
+    poke(el)
+    try { el.click() } catch (e) { return false }
+    return true
+  }
+
   function assignFiles(input, files) {
     if (!input || typeof DataTransfer === 'undefined') return false
     const dt = new DataTransfer()
@@ -634,7 +688,10 @@ globalThis.XBSPage = (function () {
     const scope = attachmentScope(comp, uploadEntry(doc, comp))
     if (!scope) return false
     const fresh = all(scope, 'img').filter(function (img) {
-      return visible(img) && img.complete && img.naturalWidth > 0 && baseline && !baseline.has(img)
+      if (!visible(img) || !img.complete || !(img.naturalWidth > 0) || !baseline || baseline.has(img)) return false
+      // 豆包附件卡常先画空 SVG / blob 占位，naturalWidth 已经大于 0。不能当成源图就绪。
+      const url = String((img.currentSrc || img.src || (img.getAttribute && img.getAttribute('src')) || ''))
+      return !isPlaceholderURL(url)
     })
     return fresh.length > 0 && !busy(scope)
   }
@@ -723,6 +780,7 @@ globalThis.XBSPage = (function () {
     uploadImageItem,
     unsentBlocksUpload,
     sendButton,
+    activate,
     loginWall,
     removeButtons,
     dismissClientPromo,
