@@ -74,7 +74,7 @@ UPDATE settings SET value='extension' WHERE key='browserBackend';
 
 豆包发送按钮和千问一样要先 pointer 再 click（`Page.activate`）；只调用 `HTMLElement.click()` 时页面常常不收下。附件就绪看输入区是否出现可见的 `attachment-image-card`（卡内 blob 预览经常长期不解码，不能干等 `naturalWidth`）。
 
-豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。千问等待结果时会把还没解码的生成卡滚进视口；灰占位、blob、SVG 和很小的 data 图不算结果。豆包没有这一步。
+豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。千问和豆包等待结果时都会把还没换成 http(s) 实图的生成卡滚进视口并改掉 `loading=lazy`；灰占位、blob、SVG 和很小的 data 图不算结果。
 
 ## 保活
 
