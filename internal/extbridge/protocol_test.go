@@ -157,6 +157,14 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 	if manifest["manifest_version"] != float64(3) {
 		t.Fatalf("manifest: %#v", manifest["manifest_version"])
 	}
+	action, _ := manifest["action"].(map[string]any)
+	if action["default_popup"] != "popup.html" {
+		t.Fatalf("action.default_popup = %#v", action["default_popup"])
+	}
+	options, _ := manifest["options_ui"].(map[string]any)
+	if options["page"] != "options.html" {
+		t.Fatalf("options_ui.page = %#v", options["page"])
+	}
 	perms, _ := manifest["permissions"].([]any)
 	need := map[string]bool{"storage": true, "tabs": true, "alarms": true, "scripting": true}
 	for _, item := range perms {
