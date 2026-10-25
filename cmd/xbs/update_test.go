@@ -42,7 +42,7 @@ func TestUpdateCheckCommand(t *testing.T) {
 		t.Fatalf("exit %d stderr %s", code, stderr.String())
 	}
 	text := stdout.String()
-	if !strings.Contains(text, "当前版本: 0.1.0") || !strings.Contains(text, "最新版本: 0.2.0") || !strings.Contains(text, "有新版本") {
+	if !strings.Contains(text, "当前版本: "+ProductVersion) || !strings.Contains(text, "最新版本: 0.2.0") || !strings.Contains(text, "有新版本") {
 		t.Fatalf("stdout:\n%s", text)
 	}
 	if strings.Contains(stderr.String(), "安装") {
