@@ -21,7 +21,8 @@
 | `LogHelper` | `internal/logging` | Info/Success/Warning/Error/Debug 环形日志 |
 | `MainForm` UI | `internal/ui` | mygo 原生窗口：设置/浏览器管理/源图缩略图/队列表格/日志 |
 | 授权激活（AuthorizationHelper） | **不复刻** | 本地工具，无授权系统 |
-| 自动更新 / 远端 MySQL | **不复刻** | 无对应需求 |
+| 从 GitHub Releases 更新 | 菜单「帮助 → 检查更新…」、标题栏「检查更新」、`xbs update` | 公开 API，不需要 token。页面桥扩展不跟着桌面端更新 |
+| 远端 MySQL | **不复刻** | 无对应需求 |
 
 ## 运行
 
@@ -34,6 +35,8 @@ go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问
 ```
 
 桌面端产品版本是 **0.1.0**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.0` 上发布，页面扩展 zip 仍是 **0.3.4**。步骤见下文「发布 0.1.0」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+
+已安装的桌面端可以自己更新：菜单 **帮助 → 检查更新…**，标题栏的 **检查更新**，或在终端执行 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/xbs/releases/latest`，不附带 token，按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
 
 千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥；`ego` 仍用原来的 ego / Chrome。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
 

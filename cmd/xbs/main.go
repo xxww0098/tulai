@@ -9,8 +9,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/egoist/mygo"
-
 	"xbs/internal/browser"
 	"xbs/internal/logging"
 	"xbs/internal/store"
@@ -19,6 +17,9 @@ import (
 )
 
 func main() {
+	if handleCommand(os.Args) {
+		return
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		log.Fatalf("定位应用失败: %v", err)
@@ -44,10 +45,7 @@ func main() {
 	bm := browser.NewManager()
 	engine := tasks.NewEngine(db, bm, nil, dataRoot)
 	// mygo build 会把 mygo.json 的版本链进二进制；go run 没有这段链接信息。
-	if mygo.App.Version() == "" {
-		mygo.App.SetVersion(ProductVersion)
-	}
-	logging.Log.Info("小帮手 %s 启动（数据目录: %s）", mygo.App.Version(), dataRoot)
+	logging.Log.Info("小帮手 %s 启动（数据目录: %s）", runningVersion(), dataRoot)
 	defer bm.StopAll()
 	defer engine.CloseSessions()
 	defer db.Close()
