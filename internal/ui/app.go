@@ -281,7 +281,7 @@ func (a *App) view(c *ui.Context) {
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(14, 20).Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "小帮手").FontSize(22).Bold()
-			ui.Text(c, "豆包 · 千问 / 批量图生图工作台").FontSize(13).TextColor(c.Theme().TextMuted)
+			ui.Text(c, "豆包 · 千问 / 批量生图工作台").FontSize(13).TextColor(c.Theme().TextMuted)
 		})
 		ui.Divider(c)
 		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
@@ -309,7 +309,11 @@ func (a *App) workspace(c *ui.Context) {
 			break
 		}
 	}
-	status, hint := "待开始", fmt.Sprintf("%d 张源图 · %d 条提示词", len(a.sources), len(splitLines(a.prompts)))
+	promptCount := len(splitLines(a.prompts))
+	status, hint := "待开始", fmt.Sprintf("%d 张源图 · %d 条提示词", len(a.sources), promptCount)
+	if len(a.sources) == 0 && promptCount > 0 {
+		hint = fmt.Sprintf("文生图 · %d 条提示词", promptCount)
+	}
 	switch {
 	case a.running:
 		status = "进行中"
@@ -317,8 +321,8 @@ func (a *App) workspace(c *ui.Context) {
 		status, hint = "打开网页中", "请等待 ego lite 网页打开后再开始任务"
 	case a.progress > 0 || a.engine.View() != nil:
 		status = "已结束"
-	case len(a.sources) == 0:
-		status, hint = "待导入", "添加源图片，设置提示词后开始生成"
+	case len(a.sources) == 0 && promptCount == 0:
+		status, hint = "待导入", "添加提示词即可文生图，或再添加源图片"
 	case !a.platDoubao && !a.platQianwen:
 		status, hint = "待选平台", "在左侧选择豆包或千问"
 	}
@@ -334,7 +338,7 @@ func (a *App) workspace(c *ui.Context) {
 		if a.running {
 			ui.Button(c, "停止任务").OnClick(func() { a.stopTasks() })
 		} else {
-			ui.PrimaryButton(c, "开始任务").Disabled(a.egoOpening || len(a.sources) == 0 || (!a.platDoubao && !a.platQianwen)).OnClick(func() { a.startTasks() })
+			ui.PrimaryButton(c, "开始任务").Disabled(a.egoOpening || a.startDisabled()).OnClick(func() { a.startTasks() })
 		}
 	})
 	if needsUser {
@@ -364,8 +368,8 @@ func (a *App) sourcesPane(c *ui.Context) {
 		})
 		if len(a.sources) == 0 {
 			ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
-				ui.Text(c, "从源图片开始").FontSize(16).Bold()
-				ui.Text(c, "点击上方「添加图片」可多选导入，重复图片会自动过滤").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "源图可选").FontSize(16).Bold()
+				ui.Text(c, "不添加图片时，每条提示词单独文生图。添加图片则按源图做图生图，重复图片会自动过滤").FontSize(12).TextColor(c.Theme().TextMuted)
 			})
 			return
 		}
@@ -388,25 +392,25 @@ func (a *App) sourcesPane(c *ui.Context) {
 // bottomPane 队列 + 日志（见 views.go）。
 func (a *App) bottomPane(c *ui.Context) { a.bottomView(c) }
 
-// startTasks 启动批量任务。
-func (a *App) startTasks() {
-	if a.running || a.egoOpening {
-		return
+// startDisabled 在未选平台，或提示词和源图都空时禁用开始。只有提示词也可以文生图。
+func (a *App) startDisabled() bool {
+	if !a.platDoubao && !a.platQianwen {
+		return true
 	}
-	a.saveSettings()
-	var prompts []string
+	return len(a.sources) == 0 && len(splitLines(a.prompts)) == 0
+}
+
+// collectTaskInput 组装平台、提示词和源图。文生图允许源图为空。
+func (a *App) collectTaskInput() (plats, prompts, paths []string, problem string) {
 	for _, p := range splitLines(a.prompts) {
 		prompts = append(prompts, p)
 	}
-	var srcPaths []string
 	for _, si := range a.sources {
-		srcPaths = append(srcPaths, si.Path)
+		paths = append(paths, si.Path)
 	}
-	if len(srcPaths) == 0 {
-		a.progText = "请先添加源图片"
-		return
+	if len(paths) == 0 && len(prompts) == 0 {
+		return nil, nil, nil, "请添加提示词，或添加源图片"
 	}
-	var plats []string
 	if a.platDoubao {
 		plats = append(plats, "豆包")
 	}
@@ -414,9 +418,22 @@ func (a *App) startTasks() {
 		plats = append(plats, "千问")
 	}
 	if len(plats) == 0 {
-		a.progText = "请至少选择一个平台"
+		return nil, nil, nil, "请至少选择一个平台"
+	}
+	return plats, prompts, paths, ""
+}
+
+// startTasks 启动批量任务。
+func (a *App) startTasks() {
+	if a.running || a.egoOpening {
 		return
 	}
+	plats, prompts, srcPaths, problem := a.collectTaskInput()
+	if problem != "" {
+		a.progText = problem
+		return
+	}
+	a.saveSettings()
 	opts := a.taskOptions(plats, prompts, srcPaths)
 	if opts.OutputPath == "" {
 		opts.OutputPath = filepath.Join(mustWd(), "输出结果")
@@ -429,17 +446,17 @@ func (a *App) startTasks() {
 	go func() {
 		err := a.engine.Run(context.Background(), opts,
 			func(t tasks.Task) {
-				a.window.Update(func() {})
+				a.syncUI(func() {})
 			},
 			func(p tasks.Progress) {
-				a.window.Update(func() {
+				a.syncUI(func() {
 					if p.Total > 0 {
 						a.progress = float64(p.Done) / float64(p.Total)
 					}
 					a.progText = fmt.Sprintf("%d / %d", p.Done, p.Total)
 				})
 			})
-		a.window.Update(func() {
+		a.syncUI(func() {
 			a.running = false
 			if err != nil {
 				a.progText = "失败: " + err.Error()
@@ -449,6 +466,14 @@ func (a *App) startTasks() {
 			}
 		})
 	}()
+}
+
+// syncUI 把界面更新送回窗口线程。
+func (a *App) syncUI(fn func()) {
+	if fn == nil || a.window == nil {
+		return
+	}
+	a.window.Update(fn)
 }
 
 func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {

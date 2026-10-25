@@ -76,7 +76,7 @@ func main() {
 			return
 		}
 		fmt.Println("等待扩展断开或下一次 hello。Ctrl+C 退出。")
-		fmt.Println("要在已登录页面上跑一次图生图，另开进程并设置 XBS_EXT_LIVE=1、XBS_EXT_IMAGE、XBS_EXT_PROMPT。豆包再加 XBS_EXT_PLATFORM=doubao。")
+		fmt.Println("要在已登录页面上跑一次生成，另开进程并设置 XBS_EXT_LIVE=1、XBS_EXT_PROMPT。图生图再加 XBS_EXT_IMAGE。豆包再加 XBS_EXT_PLATFORM=doubao。")
 	}
 }
 
@@ -91,8 +91,8 @@ func livePlatform() string {
 func liveOnce(ctx context.Context, sess *extbridge.Session) error {
 	image := os.Getenv("XBS_EXT_IMAGE")
 	prompt := os.Getenv("XBS_EXT_PROMPT")
-	if image == "" || prompt == "" {
-		return fmt.Errorf("实机生成需要 XBS_EXT_IMAGE 和 XBS_EXT_PROMPT")
+	if prompt == "" {
+		return fmt.Errorf("实机生成需要 XBS_EXT_PROMPT；图生图再设置 XBS_EXT_IMAGE")
 	}
 	wait := 120 * time.Second
 	if raw := os.Getenv("XBS_EXT_WAIT"); raw != "" {
@@ -102,20 +102,26 @@ func liveOnce(ctx context.Context, sess *extbridge.Session) error {
 		}
 		wait = time.Duration(seconds) * time.Second
 	}
+	var sourceImages []string
+	mode := "文生图"
+	if image != "" {
+		sourceImages = []string{image}
+		mode = "图生图"
+	}
 	job := tasks.QianwenJob{
 		TaskID:            "live",
 		IdempotencyPrefix: "live",
 		Prompt:            prompt,
-		Images:            []string{image},
+		Images:            sourceImages,
 		Wait:              wait,
 	}
 	var out tasks.QianwenRun
 	var err error
 	if sess.Platform() == extbridge.PlatformDoubao {
-		fmt.Println("开始一次实机图生图。请确认豆包页 https://www.doubao.com/chat/ 已经打开并登录。")
+		fmt.Printf("开始一次实机%s。请确认豆包页 https://www.doubao.com/chat/ 已经打开并登录。\n", mode)
 		out, err = tasks.RunDoubaoExtension(ctx, sess, job)
 	} else {
-		fmt.Println("开始一次实机图生图。请确认通义/千问页已经打开并登录。")
+		fmt.Printf("开始一次实机%s。请确认通义/千问页已经打开并登录。\n", mode)
 		out, err = tasks.RunQianwenExtension(ctx, sess, job)
 	}
 	if out.Submitted {

@@ -29,18 +29,17 @@
 
 服务工作者日志在扩展卡片的 Service worker 里。认证失败时徽章是 `ERR`。
 
-## 跑一次真实图生图
+## 跑一次真实生成
 
-先完成上面的加载和登录，然后在仓库根目录。千问：
+先完成上面的加载和登录，然后在仓库根目录。不设 `XBS_EXT_IMAGE` 就是文生图，只发送提示词、不上传。千问：
 
 ```sh
 XBS_EXT_LIVE=1 \
-XBS_EXT_IMAGE=/绝对路径/源图.png \
-XBS_EXT_PROMPT='把这张图变成水彩' \
+XBS_EXT_PROMPT='画一只坐在窗边的猫' \
 go run ./cmd/xbs-ext-smoke
 ```
 
-豆包加上平台：
+图生图再加上源图。豆包再加平台：
 
 ```sh
 XBS_EXT_PLATFORM=doubao \
@@ -66,7 +65,7 @@ go run ./cmd/xbs-ext-smoke
 UPDATE settings SET value='extension' WHERE key='browserBackend';
 ```
 
-`extBridgeToken`、`extBridgePort` 要和扩展选项一致。然后勾千问或豆包、放一张源图，开始任务。界面上的「ego lite / Chrome」下拉框是另一个键 `browser_backend`，不要改它来切换扩展。
+`extBridgeToken`、`extBridgePort` 要和扩展选项一致。然后勾千问或豆包，写上提示词。要图生图再放源图；只要提示词就留空源图。界面上的「ego lite / Chrome」下拉框是另一个键 `browser_backend`，不要改它来切换扩展。
 
 ## 发送和验证码
 

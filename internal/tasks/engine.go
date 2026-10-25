@@ -119,7 +119,7 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 	queue := BuildQueue(opts, browsersOf)
 	if len(queue) == 0 {
 		e.mu.Unlock()
-		return fmt.Errorf("任务队列为空：请添加源图片与提示词")
+		return fmt.Errorf("任务队列为空：请添加提示词，或添加源图片")
 	}
 	e.opts = opts
 	e.view = NewQueueView(queue)
@@ -661,10 +661,7 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			logging.Log.Debugf("候选图 #%d 与源图或已保存结果重复", i+1)
 			continue
 		}
-		src := ""
-		if len(t.Images) > 0 {
-			src = t.Images[0]
-		}
+		src := resultSource(t)
 		dir := e.opts.ResultDir(src)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			e.mu.Lock()
