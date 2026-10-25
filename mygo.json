@@ -1,7 +1,7 @@
 {
   "name": "xbs",
   "identifier": "dev.xbs.app",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "copyright": "Copyright (c) 2026 xxww0098",
   "out": "build",
   "main": "./cmd/xbs",
