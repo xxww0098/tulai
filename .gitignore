@@ -6,6 +6,7 @@
 /.agents/
 /.scratch/
 /build/
+/dist/
 /database/
 /数据库/
 /BrowserData/

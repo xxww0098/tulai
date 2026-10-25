@@ -1,10 +1,53 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestProductVersionMatchesConfig(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "mygo.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != ProductVersion {
+		t.Fatalf("mygo.json version = %q, ProductVersion = %q", cfg.Version, ProductVersion)
+	}
+}
+
+func TestExtensionHelloVersionMatchesManifest(t *testing.T) {
+	root := filepath.Join("..", "..")
+	data, err := os.ReadFile(filepath.Join(root, "extension", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version == "" {
+		t.Fatal("extension manifest has no version")
+	}
+	src, err := os.ReadFile(filepath.Join(root, "extension", "protocol.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	needle := "version: '" + manifest.Version + "'"
+	if !strings.Contains(string(src), needle) {
+		t.Fatalf("extension/protocol.js hello payload has no %s", needle)
+	}
+}
 
 func TestPackagedDataDir(t *testing.T) {
 	configDir, err := os.UserConfigDir()
