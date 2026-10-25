@@ -5,9 +5,10 @@
   "copyright": "Copyright (c) 2026 xxww0098",
   "out": "build",
   "main": "./cmd/xbs",
+  "icon": "resources/icon.png",
   "macos": { "minimumSystemVersion": "13.0" },
   "linux": {
-    "comment": "批量图生图（豆包 / 千问）",
+    "comment": "批量生图（豆包 / 千问）",
     "command": "xbs",
     "webview": false
   }

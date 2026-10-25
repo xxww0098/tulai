@@ -75,6 +75,32 @@ func TestBuildQueueSuffix(t *testing.T) {
 	}
 }
 
+func TestBuildQueueTextOnly(t *testing.T) {
+	opts := Options{
+		Platforms:    []string{"豆包", "千问"},
+		Prompts:      []string{"画一只猫", "  ", "画一条鱼"},
+		PromptSuffix: "高清",
+		UseSuffix:    true,
+		Images:       nil,
+	}
+	q := BuildQueue(opts, map[string][]int64{"豆包": {1, 2}, "千问": {3}})
+	if len(q) != 4 {
+		t.Fatalf("文生图任务数: %d", len(q))
+	}
+	want := []string{"画一只猫", "画一只猫", "画一条鱼", "画一条鱼"}
+	for i, task := range q {
+		if task.Prompt != want[i]+"\n高清" {
+			t.Fatalf("#%d prompt = %q", task.Index, task.Prompt)
+		}
+		if len(task.Images) != 0 {
+			t.Fatalf("#%d unexpectedly uploads %v", task.Index, task.Images)
+		}
+	}
+	if q[0].Platform != "豆包" || q[1].Platform != "千问" || q[0].BrowserID != 1 || q[2].BrowserID != 2 || q[1].BrowserID != 3 {
+		t.Fatalf("platform rotation: %+v", q)
+	}
+}
+
 func TestBuildQueueStartBrowserIndex(t *testing.T) {
 	for _, tc := range []struct {
 		start int

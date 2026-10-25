@@ -3,8 +3,12 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -16,15 +20,25 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 220}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"任务设置", "浏览器", "验证码", "开始任务", "源图片（0）", "添加图片", "运行日志", "检查更新"} {
+	for _, label := range []string{"任务设置", "浏览器", "验证码", "开始任务", "文生图", "图生图", "提示词", "打开网页", "运行日志", "检查更新"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
+	if tt.HasText("添加图片") {
+		t.Fatal("text mode shows the image importer")
+	}
+	if err := tt.Click("更多设置"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
 	before, _ := tt.Find("文件名后缀")
 	tt.Scroll(200, 500, 0, 2000)
 	assertVisible(t, tt, "文件名后缀", 1280, 840)
 	after, _ := tt.Find("文件名后缀")
 	if after.Y >= before.Y {
 		t.Fatal("task settings did not scroll")
+	}
+	if err := tt.Click("图生图"); err != nil {
+		t.Fatal(err)
 	}
 	for _, tab := range []string{"浏览器", "验证码", "任务设置"} {
 		if err := tt.Click(tab); err != nil {
@@ -36,7 +50,7 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 }
 
 func TestWorkspaceSplitKeepsDraggedHeight(t *testing.T) {
-	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 220}
+	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 220, batchMode: batchImage}
 	tt := ui.NewTester(a.view, 1280, 840)
 	r := assertVisible(t, tt, "Divider", 1280, 840)
 	x, y := r.X+r.W/2, r.Y+r.H/2
@@ -66,20 +80,17 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 		splitSz: 380, sourceHeight: 210, browserBackend: "Chrome",
 		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
 	}
-	if !a.startDisabled() {
+	if a.canStart() {
 		t.Fatal("未选平台时不应允许开始")
 	}
-	if _, _, _, problem := a.collectTaskInput(); problem != "请至少选择一个平台" {
-		t.Fatalf("未选平台: %q", problem)
-	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"源图可选", "每条提示词单独文生图", "待选平台"} {
+	for _, label := range []string{"文生图", "待选平台", "检查更新"} {
 		if !tt.HasText(label) {
 			t.Fatalf("缺少文生图说明 %q", label)
 		}
 	}
-	if tt.HasText("待导入") {
-		t.Fatal("已有提示词时不应要求先导入源图")
+	if tt.HasText("待导入") || tt.HasText("添加图片") {
+		t.Fatal("已有提示词的文生图不应要求先导入源图")
 	}
 	if err := tt.Click("开始任务"); err != nil {
 		t.Fatal(err)
@@ -89,12 +100,11 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 	}
 	a.platDoubao = true
 	tt.Frame()
-	if a.startDisabled() || !tt.HasText("文生图 · 2 条提示词") {
+	if !a.canStart() || !tt.HasText("文生图 · 2 条提示词") {
 		t.Fatal("只有提示词时应可以开始文生图")
 	}
-	plats, prompts, paths, problem := a.collectTaskInput()
-	if problem != "" || len(plats) != 1 || plats[0] != "豆包" || len(prompts) != 2 || len(paths) != 0 {
-		t.Fatalf("文生图输入: plats=%v prompts=%v paths=%v problem=%q", plats, prompts, paths, problem)
+	if len(a.batchImages()) != 0 || len(splitLines(a.prompts)) != 2 {
+		t.Fatalf("文生图输入: prompts=%q images=%v", a.prompts, a.batchImages())
 	}
 	if err := tt.Click("开始任务"); err != nil {
 		t.Fatal(err)
@@ -144,13 +154,13 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 			t.Run(fmt.Sprintf("width=%d/dark=%v", width, dark), func(t *testing.T) {
 				a := &App{
 					engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
-					platDoubao: true, prompts: "保持构图，改为水彩风格", srcSel: 0,
+					platDoubao: true, batchMode: batchImage, prompts: "保持构图，改为水彩风格", srcSel: 0,
 					sources: []sourceImage{{Path: "风景.png", Hash: "source"}},
 					queue:   []tasks.Task{{Index: 1, Platform: "豆包", Status: tasks.StatusPending, Images: []string{"风景.png"}, Prompt: "保持构图，改为水彩风格"}},
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"小帮手", "检查更新", "任务设置", "开始任务", "添加图片", "任务队列", "运行日志", "状态", "结果", "说明", "等待"} {
+				for _, label := range []string{"xbs", "检查更新", "任务设置", "开始任务", "添加图片", "任务队列", "运行日志", "状态", "结果", "说明", "等待"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})
@@ -232,6 +242,10 @@ func TestWatermarkOptionDefaultsPersistsAndReachesTask(t *testing.T) {
 		t.Fatal("watermark repair must be disabled until explicitly enabled")
 	}
 	tt := ui.NewTester(a.taskPane, 380, 1400)
+	if err := tt.Click("更多设置"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
 	assertVisible(t, tt, "去水印（实验）", 380, 1400)
 	if !tt.HasText("已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。") {
 		t.Fatal("watermark repair does not explain output preservation and limitations")
@@ -271,7 +285,7 @@ func TestWatermarkOptionDefaultsPersistsAndReachesTask(t *testing.T) {
 func TestWorkspaceActionsRespectRunningState(t *testing.T) {
 	a := &App{
 		engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
-		platDoubao: true, sources: []sourceImage{{Path: "source.png", Hash: "source"}}, srcSel: 0, running: true,
+		platDoubao: true, batchMode: batchImage, sources: []sourceImage{{Path: "source.png", Hash: "source"}}, srcSel: 0, running: true,
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
 	for _, label := range []string{"清空", "移除选中"} {
@@ -419,6 +433,92 @@ func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
 	tt.Frame()
 	if a.egoOpening || !tt.HasText("打开豆包失败：ego lite 未运行") {
 		t.Fatal("the actual ego lite connection failure is not shown")
+	}
+}
+
+func TestTextBatchStartsFromPromptAlone(t *testing.T) {
+	a := &App{
+		engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
+		platDoubao: true, batchMode: batchText,
+		sources: []sourceImage{{Path: "kept.png", Hash: "kept"}},
+	}
+	if a.canStart() {
+		t.Fatal("text mode is ready before a prompt")
+	}
+	tt := ui.NewTester(a.view, 1280, 840)
+	if tt.HasText("添加图片") {
+		t.Fatal("saved sources are shown while text mode is selected")
+	}
+	if err := tt.Click("提示词"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("画一只灯笼")
+	if a.prompts != "画一只灯笼" || !a.canStart() || len(a.batchImages()) != 0 {
+		t.Fatalf("text batch prompt=%q canStart=%v images=%v", a.prompts, a.canStart(), a.batchImages())
+	}
+	if err := tt.Click("图生图"); err != nil {
+		t.Fatal(err)
+	}
+	if a.batchMode != batchImage || !a.canStart() {
+		t.Fatal("image mode dropped the source that was already imported")
+	}
+	assertVisible(t, tt, "添加图片", 1280, 840)
+	if got := a.batchImages(); len(got) != 1 || got[0] != "kept.png" {
+		t.Fatalf("image mode images = %v", got)
+	}
+}
+
+func TestBatchModeInfersAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "src.png")
+	writeTinyPNG(t, path)
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	fresh := &App{store: st, manager: browser.NewManager()}
+	fresh.loadSettings()
+	if fresh.batchMode != batchText {
+		t.Fatal("a new config should open in text mode")
+	}
+	st.Set("source_images", path)
+	withSources := &App{store: st, manager: browser.NewManager()}
+	withSources.loadSettings()
+	if withSources.batchMode != batchImage || len(withSources.sources) != 1 {
+		t.Fatalf("sources should open as image mode: mode=%d sources=%d", withSources.batchMode, len(withSources.sources))
+	}
+	withSources.batchMode = batchText
+	withSources.saveSettings()
+	restored := &App{store: st, manager: browser.NewManager()}
+	restored.loadSettings()
+	if restored.batchMode != batchText || len(restored.sources) != 1 {
+		t.Fatal("an explicit text mode was inferred away, or sources were dropped")
+	}
+}
+
+func TestOpenSelectedPagesSwitchesChromeTab(t *testing.T) {
+	a := &App{browserBackend: "Chrome", platDoubao: true}
+	a.openSelectedPages()
+	if a.tab != 1 || a.egoOpening {
+		t.Fatalf("chrome open: tab=%d opening=%v", a.tab, a.egoOpening)
+	}
+	ego := &App{browserBackend: "ego lite"}
+	ego.openSelectedPages()
+	if ego.egoOpening || ego.egoMessage == "" {
+		t.Fatal("ego open ran without a selected platform")
+	}
+}
+
+func writeTinyPNG(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, image.NewNRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
 	}
 }
 

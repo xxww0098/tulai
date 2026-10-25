@@ -1,5 +1,5 @@
-// Package ui mygo 原生界面：主窗体 = 左侧设置（任务/浏览器/验证码三页签）
-// + 右侧源图缩略图 / 任务队列 / 日志 / 开始停止控制。对应原软件 MainForm 布局。
+// Package ui mygo 原生界面：左侧是任务设置、浏览器和验证码，
+// 右侧是模式、提示词、源图、队列、日志和开始停止。
 package ui
 
 import (
@@ -41,6 +41,11 @@ func mustWd() string {
 	return wd
 }
 
+const (
+	batchText = iota
+	batchImage
+)
+
 // App 应用状态。
 type App struct {
 	mu sync.Mutex
@@ -78,6 +83,8 @@ type App struct {
 	prompts         string
 	promptSuffix    string
 	useSuffix       bool
+	batchMode       int // batchText 文生图 / batchImage 图生图
+	moreSettings    bool
 
 	// 验证码设置
 	captchaEnabled bool
@@ -151,11 +158,12 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 	})
 	mygo.App.WhenReady(func() {
 		a.window = mygo.NewWindow(mygo.WindowOptions{
-			Title:   "小帮手 — 图像工作台",
+			Title:   "xbs — 小帮手",
 			Width:   1280,
 			Height:  840,
 			Content: ui.View(a.view),
 		})
+		applyAppIcon(a.window)
 	})
 	if err := mygo.App.Run(); err != nil {
 		panic(err)
@@ -214,6 +222,18 @@ func (a *App) loadSettings() {
 		}
 		a.sources = append(a.sources, sourceImage{Path: p, Thumb: bmp, Hash: images.SHA256(data)})
 	}
+	switch s.Get("batch_mode") {
+	case "image":
+		a.batchMode = batchImage
+	case "text":
+		a.batchMode = batchText
+	default:
+		if len(a.sources) > 0 {
+			a.batchMode = batchImage
+		} else {
+			a.batchMode = batchText
+		}
+	}
 }
 
 // saveSettings 写回配置库。
@@ -249,6 +269,11 @@ func (a *App) saveSettings() {
 	s.Set("prompts", a.prompts)
 	s.Set("prompt_suffix", a.promptSuffix)
 	s.SetInt("use_suffix", boolInt(a.useSuffix))
+	if a.batchMode == batchImage {
+		s.Set("batch_mode", "image")
+	} else {
+		s.Set("batch_mode", "text")
+	}
 	s.SetInt("captcha_enabled", boolInt(a.captchaEnabled))
 	s.Set("captcha_backend", a.captchaBackend)
 	s.Set("captcha_custom_url", a.customURL)
@@ -282,8 +307,8 @@ func (a *App) view(c *ui.Context) {
 	sidebarWidth := min(a.splitSz, max(300, width*0.32))
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(14, 20).Gap(14).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "小帮手").FontSize(22).Bold()
-			subtitle := "豆包 · 千问 / 批量生图工作台"
+			ui.Text(c, "xbs").FontSize(22).Bold()
+			subtitle := "小帮手 · 豆包 / 千问"
 			if v := mygo.App.Version(); v != "" {
 				subtitle += " · " + v
 			}
@@ -316,22 +341,27 @@ func (a *App) workspace(c *ui.Context) {
 			break
 		}
 	}
-	promptCount := len(splitLines(a.prompts))
-	status, hint := "待开始", fmt.Sprintf("%d 张源图 · %d 条提示词", len(a.sources), promptCount)
-	if len(a.sources) == 0 && promptCount > 0 {
-		hint = fmt.Sprintf("文生图 · %d 条提示词", promptCount)
+	prompts := splitLines(a.prompts)
+	ready := fmt.Sprintf("%d 条提示词", len(prompts))
+	if a.batchMode == batchImage {
+		ready = fmt.Sprintf("%d 张源图 · %d 条提示词", len(a.sources), len(prompts))
+	} else {
+		ready = "文生图 · " + ready
 	}
+	status, hint := "待开始", ready
 	switch {
 	case a.running:
 		status = "进行中"
 	case a.egoOpening:
-		status, hint = "打开网页中", "请等待 ego lite 网页打开后再开始任务"
+		status, hint = "打开网页中", "请等待网页打开后再开始任务"
 	case a.progress > 0 || a.engine.View() != nil:
 		status = "已结束"
-	case len(a.sources) == 0 && promptCount == 0:
-		status, hint = "待导入", "添加提示词即可文生图，或再添加源图片"
 	case !a.platDoubao && !a.platQianwen:
-		status, hint = "待选平台", "在左侧选择豆包或千问"
+		status, hint = "待选平台", "勾选豆包或千问"
+	case a.batchMode == batchImage && len(a.sources) == 0:
+		status, hint = "待导入", "添加源图，或切回文生图"
+	case a.batchMode == batchText && len(prompts) == 0:
+		status, hint = "待写提示词", "写下提示词即可开始，不用源图"
 	}
 	if a.progText != "" {
 		hint = a.progText
@@ -339,20 +369,39 @@ func (a *App) workspace(c *ui.Context) {
 	if needsUser {
 		status, hint = string(tasks.StatusNeedsUser), taskResultSummary(items)
 	}
-	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Segmented(c, &a.batchMode, "文生图", "图生图").Disabled(a.running).OnChange(func() {
+			if !a.running && a.progress == 0 {
+				a.progText = ""
+			}
+		})
+		ui.Checkbox(c, &a.platDoubao, "豆包").Disabled(a.running)
+		ui.Checkbox(c, &a.platQianwen, "千问").Disabled(a.running)
 		ui.Badge(c, status)
+	})
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(hint)
+		openLabel := "打开网页"
+		if a.browserBackend == "Chrome" {
+			openLabel = "管理浏览器"
+		}
+		ui.Button(c, openLabel).Disabled(a.running || a.egoOpening).OnClick(func() { a.openSelectedPages() })
 		if a.running {
 			ui.Button(c, "停止任务").OnClick(func() { a.stopTasks() })
 		} else {
-			ui.PrimaryButton(c, "开始任务").Disabled(a.egoOpening || a.startDisabled()).OnClick(func() { a.startTasks() })
+			ui.PrimaryButton(c, "开始任务").Disabled(!a.canStart()).OnClick(func() { a.startTasks() })
 		}
 	})
+	ui.TextArea(c, &a.prompts).Height(64).Label("提示词").Placeholder("每行一条提示词")
 	if needsUser {
 		ui.Text(c, verificationHint).FontSize(12).TextColor(c.Theme().Warning)
 	}
 	if a.running || a.progress > 0 {
 		ui.Progress(c, a.progress).FillWidth().Height(4)
+	}
+	if a.batchMode != batchImage {
+		ui.Column(c).Grow(1).MinHeight(0).Padding(12, 0, 0, 0).Gap(12).Children(func() { a.bottomPane(c) })
+		return
 	}
 	ui.SplitVertical(c, &a.sourceHeight, func() {
 		a.sourcesPane(c)
@@ -375,8 +424,8 @@ func (a *App) sourcesPane(c *ui.Context) {
 		})
 		if len(a.sources) == 0 {
 			ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
-				ui.Text(c, "源图可选").FontSize(16).Bold()
-				ui.Text(c, "不添加图片时，每条提示词单独文生图。添加图片则按源图做图生图，重复图片会自动过滤").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "还没有源图").FontSize(16).Bold()
+				ui.Text(c, "点「添加图片」可多选导入，重复图片会自动过滤").FontSize(12).TextColor(c.Theme().TextMuted)
 			})
 			return
 		}
@@ -399,25 +448,37 @@ func (a *App) sourcesPane(c *ui.Context) {
 // bottomPane 队列 + 日志（见 views.go）。
 func (a *App) bottomPane(c *ui.Context) { a.bottomView(c) }
 
-// startDisabled 在未选平台，或提示词和源图都空时禁用开始。只有提示词也可以文生图。
-func (a *App) startDisabled() bool {
-	if !a.platDoubao && !a.platQianwen {
-		return true
+// canStart 是当前模式下「开始任务」是否可点。
+func (a *App) canStart() bool {
+	if a.running || a.egoOpening || (!a.platDoubao && !a.platQianwen) {
+		return false
 	}
-	return len(a.sources) == 0 && len(splitLines(a.prompts)) == 0
+	if a.batchMode == batchImage {
+		return len(a.sources) > 0
+	}
+	return len(splitLines(a.prompts)) > 0
 }
 
-// collectTaskInput 组装平台、提示词和源图。文生图允许源图为空。
-func (a *App) collectTaskInput() (plats, prompts, paths []string, problem string) {
-	for _, p := range splitLines(a.prompts) {
-		prompts = append(prompts, p)
+// batchImages 是这次要上传的源图。文生图不上传，即使列表里还留着上次的图。
+func (a *App) batchImages() []string {
+	if a.batchMode != batchImage {
+		return nil
 	}
+	paths := make([]string, 0, len(a.sources))
 	for _, si := range a.sources {
 		paths = append(paths, si.Path)
 	}
-	if len(paths) == 0 && len(prompts) == 0 {
-		return nil, nil, nil, "请添加提示词，或添加源图片"
+	return paths
+}
+
+// startTasks 按当前模式建队：文生图只提交提示词，图生图再上传源图。
+func (a *App) startTasks() {
+	if !a.canStart() {
+		return
 	}
+	prompts := splitLines(a.prompts)
+	srcPaths := a.batchImages()
+	var plats []string
 	if a.platDoubao {
 		plats = append(plats, "豆包")
 	}
@@ -425,19 +486,7 @@ func (a *App) collectTaskInput() (plats, prompts, paths []string, problem string
 		plats = append(plats, "千问")
 	}
 	if len(plats) == 0 {
-		return nil, nil, nil, "请至少选择一个平台"
-	}
-	return plats, prompts, paths, ""
-}
-
-// startTasks 启动批量任务。
-func (a *App) startTasks() {
-	if a.running || a.egoOpening {
-		return
-	}
-	plats, prompts, srcPaths, problem := a.collectTaskInput()
-	if problem != "" {
-		a.progText = problem
+		a.progText = "请至少选择一个平台"
 		return
 	}
 	a.saveSettings()
@@ -593,4 +642,26 @@ func (a *App) removeSelected() {
 		a.sources = append(a.sources[:a.srcSel], a.sources[a.srcSel+1:]...)
 		a.srcSel = -1
 	}
+}
+
+// applyAppIcon 把 resources/icon.png 用到窗口、任务栏和 Dock。
+// 打包时同一张图还是 macOS icns、Windows 安装器和 Linux 桌面项的图标。
+func applyAppIcon(w *mygo.Window) {
+	data, err := readAppIcon()
+	if err != nil || len(data) == 0 {
+		return
+	}
+	_ = mygo.App.Dock.SetIcon(data)
+	if w != nil {
+		_ = w.SetIcon(data)
+	}
+}
+
+func readAppIcon() ([]byte, error) {
+	if dir, err := mygo.App.Path(mygo.PathResources); err == nil {
+		if data, err := os.ReadFile(filepath.Join(dir, "icon.png")); err == nil && len(data) > 0 {
+			return data, nil
+		}
+	}
+	return os.ReadFile(filepath.Join("resources", "icon.png"))
 }

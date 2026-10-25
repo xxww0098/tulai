@@ -1,28 +1,22 @@
-# xbs — 小帮手 Go 复刻版
+# xbs
 
-对原 Windows 商业软件「小帮手」（.NET 4.8 WinForms，豆包/千问批量图生图工具）的
-**功能复刻**，使用 [mygo](https://github.com/egoist/mygo)（原生 UI）+ Golang 实现，
-跨平台（macOS / Windows / Linux），纯 Go 无 CGO。
+xbs（窗口标题「小帮手」）是豆包和千问的批量生图桌面应用。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
 
-> 复刻依据：对原软件的静态逆向分析（类型/方法地图）+ 其随包明文资产
-> （验证码注入脚本、Python 求解器、config.db）所还原的**行为规范**。
-> 本项目为独立实现的行为重建，不含原软件代码。
+本地运行，没有授权激活，也不接远端数据库。已安装的桌面端可以从 GitHub Releases 检查并安装更新。
 
-## 与原软件的对应关系
+## 模块
 
-| 原软件模块 | 本项目 | 说明 |
-|---|---|---|
-| `CdpClient`（20 个方法） | `internal/cdp` | ego lite 官方 Page SDK / Chrome CDP 会话、上传、下载和页面桥 |
-| `BrowserManager` / `BrowserInfo` | `internal/browser` | 查找 Chrome、按 profile 启动、独立 CDP 端口（9333+）、`BrowserData/` |
-| `DoubaoStrategy` / `QianwenStrategy` | `internal/strategy` | Ego 模式操作当前编辑器与本轮回复，从网页下载；Chrome 保留原结果截获流程 |
-| `CaptchaSolver` + `Captcha/` | `internal/captcha` | 三后端：free（纯 Go CV，替代原 Python+OpenCV）/ custom（视觉大模型）/ ikunocr（接码） |
-| `MainForm` 任务队列 | `internal/tasks` | 顺序循环、并发、重试、定时切浏览器、SHA256 去重、命名规则保存 |
-| `DatabaseManager` / `DBHelper` | `internal/store` | SQLite `database/config.db`，**表结构与原软件完全兼容**（可直读原库） |
-| `LogHelper` | `internal/logging` | Info/Success/Warning/Error/Debug 环形日志 |
-| `MainForm` UI | `internal/ui` | mygo 原生窗口：设置/浏览器管理/源图缩略图/队列表格/日志 |
-| 授权激活（AuthorizationHelper） | **不复刻** | 本地工具，无授权系统 |
-| 从 GitHub Releases 更新 | 菜单「帮助 → 检查更新…」、标题栏「检查更新」、`xbs update` | 公开 API，不需要 token。页面桥扩展不跟着桌面端更新 |
-| 远端 MySQL | **不复刻** | 无对应需求 |
+| 包 | 作用 |
+|---|---|
+| `internal/cdp` | ego lite 官方 Page SDK / Chrome CDP 会话、上传、下载和页面桥 |
+| `internal/browser` | 查找 Chrome、按 profile 启动、独立 CDP 端口（9333+）、`BrowserData/` |
+| `internal/strategy` | Ego 模式操作当前编辑器与本轮回复，从网页下载；Chrome 保留结果截获流程 |
+| `internal/captcha` | 三后端：free（纯 Go CV）/ custom（视觉大模型）/ ikunocr（接码） |
+| `internal/tasks` | 顺序循环、并发、重试、定时切浏览器、SHA256 去重、命名规则保存 |
+| `internal/store` | SQLite `database/config.db`（`browsers` / `settings` / `prompts`）。已有同结构的库可以直接打开 |
+| `internal/logging` | Info/Success/Warning/Error/Debug 环形日志 |
+| `internal/ui` | mygo 原生窗口：工作台、任务设置、浏览器、验证码、源图缩略图、队列表格、日志 |
+| `internal/update` | 菜单「帮助 → 检查更新…」、标题栏「检查更新」、`xbs update`。走公开 GitHub API，不需要 token。页面桥扩展不跟着桌面端更新 |
 
 ## 运行
 
@@ -37,6 +31,8 @@ go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问
 桌面端产品版本是 **0.1.0**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.0` 上发布，页面扩展 zip 仍是 **0.3.4**。步骤见下文「发布 0.1.0」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端可以自己更新：菜单 **帮助 → 检查更新…**，标题栏的 **检查更新**，或在终端执行 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/xbs/releases/latest`，不附带 token，按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
+
+应用图标是仓库根目录的 `resources/icon.png`（1024×1024）。`mygo.json` 的 `icon` 指向它。`mygo build` 会把它做成 macOS `.icns`（Dock）、Windows 可执行文件图标和 NSIS 安装器图标，以及 Linux 桌面项图标。应用没有托盘菜单，因此不另做托盘图；启动时同一张 PNG 也会设到窗口（Windows / Linux）和 Dock（macOS）。
 
 千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥；`ego` 仍用原来的 ego / Chrome。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
 
@@ -64,13 +60,17 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 ## 使用流程
 
-1. **浏览器**页签：默认显示「已启用 ego lite」，选择会立即保存；点「打开豆包网页」或「打开千问网页」，再在 ego lite 中确认登录。若切换为 Chrome，则添加浏览器、启动并登录。
-2. **任务设置**页签：选平台、并发/重试/等待参数、提示词（每行一条）、输出目录与命名规则。
-3. 右侧**添加图片**可选。源图按 SHA256 去重并显示缩略图。不添加源图就是文生图。
-4. **开始任务**后发提示词、等结果、校验并落盘。
-   - **文生图**：没有源图、有提示词。每条提示词 × 每个平台一个任务，不上传。ego / Chrome 与扩展桥都跳过上传。
-   - **图生图**：有源图。每张源图 × 每个平台一个任务，提示词按顺序循环，先上传再发送。
-   开启自动求解时使用配置的验证码后端；需要人工验证时显示“待验证”，停止本批任务并交还原网页。手动完成后可重新开始任务。
+启动后右侧就是开跑的地方。平台、模式、提示词、打开网页和开始在同一屏，不必先翻设置。
+
+1. 选 **文生图** 或 **图生图**。新配置没有源图时默认文生图；已经导入过源图、又没手动选过模式时，打开就是图生图。选择会随设置保存。
+2. 勾选豆包、千问（新配置默认豆包）。提示词在开始按钮上方，每行一条。
+3. 图生图再点「添加图片」（SHA256 去重、缩略图预览）。文生图不上传源图，列表里留着的旧图也不会带上。
+4. 点「打开网页」：ego lite 会打开已勾选的平台，登录后回来点「开始任务」。网页方式是 Chrome 时，这个按钮是「管理浏览器」，切到浏览器页去添加、启动并登录。
+5. **开始任务**。文生图是每条提示词 × 每个平台。图生图是每张源图 × 每个平台，提示词按顺序循环。然后自动发提示词（图生图先上传）→等结果→校验→落盘。输出目录空着时，写到数据目录下的「输出结果」。
+
+命名、前后缀、并发、重试、等待和「去水印（实验）」在左侧「任务设置 → 更多设置」，默认折叠。不改也能开跑。
+
+开启自动求解时使用配置的验证码后端；需要人工验证时显示“待验证”，停止本批任务并交还网页。手动完成后可重新开始任务。
 
 文生图结果在命名规则为「原文件名」时，用提示词第一行做文件名，去掉 `\ / : * ? " < > |` 和不可见字符，最长 40 个字符；收成空串时用「文生图」。「按源图片分文件夹」用同一段文字做子目录。提示词和源图都空时不能开始，引擎返回「任务队列为空：请添加提示词，或添加源图片」。扩展实机冒烟同样可以不设 `XBS_EXT_IMAGE`，只设 `XBS_EXT_PROMPT`。
 
@@ -80,7 +80,7 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 ### 可选去水印（实验）
 
-在任务设置的「保存」中勾选「去水印（实验）」，默认关闭。软件先完整保存网页下载的原图，再在本地识别已校准的角落水印，将处理结果另存为 `原文件名_去水印.png`；原图始终保留，队列每张生成图只显示一个最终结果。处理失败或未匹配时记录警告并使用原图，不会为去水印重新上传、发送或生成。
+在「任务设置 → 更多设置」里勾选「去水印（实验）」，默认关闭。软件先完整保存网页下载的原图，再在本地识别已校准的角落水印，将处理结果另存为 `原文件名_去水印.png`；原图始终保留，队列每张生成图只显示一个最终结果。处理失败或未匹配时记录警告并使用原图，不会为去水印重新上传、发送或生成。
 
 扩展下载不看这个开关。`browserBackend=extension` 的任务，以及 `cmd/xbs-ext-smoke` 实机保存，都在主机侧先按豆包 CDN 规则去掉 `watermark` / `wm=` 查询（失败再用页面原地址），再对豆包和千问调用同一套 `RemoveWatermark`。匹配成功时写下的就是去水印 PNG。千问地址没有这组参数时不会被改写。细节见 [`extension/README.md`](extension/README.md)。
 
@@ -160,14 +160,15 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 22. **千问图片编辑页**：按“回到对话”、图片列表及编辑工具共同识别无 dialog 标记的编辑器，只点击侧栏外唯一的“下载”文字控件。关闭时先发送 Escape，仍未关闭时最多点击一次该编辑器明确的“关闭”按钮，再确认预览消失。
 23. **可选本地去水印**：增加默认关闭且随设置保存的开关，原图完整落盘后才匹配已校准字形并另存 PNG；未匹配、处理或另存失败时保留原图并记录警告，不重发生成。覆盖取消、动画、并发防覆盖、文件名过长及真实下载样图；细纹理补偿减轻局部插值的平滑字形痕迹。
 24. **按阶段重试与空闲浏览器调度**：参考 [chatgpt2api 的续轮询实现](https://github.com/basketikun/chatgpt2api/blob/dc105e51bd486bd75c8ef4f74be4bc4724bdfc33/services/image_task_service.py#L438-L508)，在现有浏览器任务边界内继续获取结果；发送状态不确定时停止，避免自动重发。修复忙碌浏览器阻塞空闲浏览器、并发绕过发送间隔，以及最后一次失败额外等待的问题。未引入新依赖。
-25. **只要提示词**：源图留空时按每条提示词 × 每个平台建任务，ego / Chrome 和扩展都不上传。有源图时仍是图生图顺序循环。
+25. **只要提示词**：源图留空时按每条提示词 × 每个平台建任务，ego / Chrome 和扩展都不上传。有源图时仍是图生图顺序循环。文生图结果文件名取提示词第一行。
+26. **开跑步骤与图标**：主界面直接选文生图或图生图。文生图只需要提示词；图生图再添加源图。平台、打开网页和开始在同一区域。命名、调度和去水印收进默认折叠的「更多设置」。`resources/icon.png` 供窗口、Dock、Windows 安装器和 Linux 桌面项使用。
 
 2026-10-23 调度与重试回归：开启 `XBS_EGO_E2E=1` 和本地已下载水印样图后运行完整测试，290 项通过、1 项失败、无测试跳过；失败项为 `TestEgoSessionLocalPage` 的截图超时。该问题独跑可复现，脱离项目后在全新本地页面调用 Ego 官方截图及原生 `Page.captureScreenshot` 也超时，页面读取正常，浏览器内部原因尚未确定，本轮未修改截图实现。另补的磁盘保存失败恢复测试通过，确认重试只有一次上传、任务标记和发送。Race 短测试、Go vet、编译通过；官方 SDK 的上传、下载中途取消、取消后重试及临时目录清理验收通过。未调用真实平台生图。
 
 ## 边界说明
 
-- 平台页面（豆包/千问）DOM 会变化。Ego 的当前编辑器与本轮消息识别位于 `internal/strategy/js/ego.js`，所有上传、输入、点击和下载动作交给官方 SDK；Chrome 保留独立的 composer/结果截获脚本。验证码脚本位于 `internal/captcha/js/`。
-- 「1:1」指功能与工作流对齐；UI 为 mygo 原生重绘，非像素级复刻 DotNetBar 皮肤。
+- 平台页面（豆包/千问）DOM 会变化。Ego 的当前编辑器与本轮消息识别位于 `internal/strategy/js/ego.js`，所有上传、输入、点击和下载动作交给官方 SDK；Chrome 使用独立的 composer/结果截获脚本。验证码脚本位于 `internal/captcha/js/`。
+- 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
 ## 发布 0.1.0

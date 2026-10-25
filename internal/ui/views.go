@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -26,30 +27,20 @@ func (a *App) settingsPane(c *ui.Context) {
 	}
 }
 
-// taskPane 任务设置表单。
+// taskPane 保存位置和默认折叠的调度选项。平台和提示词在右侧工作区。
 func (a *App) taskPane(c *ui.Context) {
 	ui.Scroll(c.Key("task-settings")).Grow(1).MinHeight(0).Children(func() {
 		ui.Form(c, func() {
-			ui.Fieldset(c, "平台", func() {
-				ui.Row(c).Gap(12).Children(func() {
-					ui.Checkbox(c, &a.platDoubao, "豆包")
-					ui.Checkbox(c, &a.platQianwen, "千问")
-				})
-			}).Gap(8).Margin(8, 0, 0, 0)
-			ui.Fieldset(c, "提示词", func() {
-				ui.TextArea(c, &a.prompts).Height(84).Label("提示词").Placeholder("每行一条。不选源图则每条文生图")
-				ui.Field(c, "后缀", func() {
-					ui.TextInput(c, &a.promptSuffix)
-				})
-				ui.Checkbox(c, &a.useSuffix, "附加提示词后缀")
-			}).Gap(8).Margin(8, 0, 0, 0)
+			ui.Text(c, "平台和提示词在右侧，填好即可开始。").FontSize(12).TextColor(c.Theme().TextMuted)
 			ui.Fieldset(c, "保存", func() {
 				ui.Field(c, "输出目录", func() {
 					ui.Row(c).Gap(6).Children(func() {
-						ui.TextInput(c, &a.outputPath).Grow(1).MinWidth(0)
+						ui.TextInput(c, &a.outputPath).Grow(1).MinWidth(0).Placeholder("留空则保存到输出结果")
 						ui.Button(c, "选择…").OnClick(func() { a.pickOutputDir() })
 					})
 				})
+			}).Gap(8).Margin(8, 0, 0, 0)
+			ui.Collapsible(c, "更多设置", &a.moreSettings, func() {
 				ui.Field(c, "保存方式", func() {
 					ui.Select(c, &a.saveMode, []string{"单文件夹汇总", "按源图片分文件夹"})
 				})
@@ -68,10 +59,13 @@ func (a *App) taskPane(c *ui.Context) {
 						ui.Checkbox(c, &a.suffixOn, "启用")
 					})
 				})
+				ui.Field(c, "后缀", func() {
+					ui.TextInput(c, &a.promptSuffix)
+				})
+				ui.Checkbox(c, &a.useSuffix, "附加提示词后缀")
 				ui.Checkbox(c, &a.removeWatermark, "去水印（实验）").Disabled(a.running)
 				ui.Text(c, "已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。").FontSize(12).TextColor(c.Theme().TextMuted)
-			}).Gap(8).Margin(8, 0, 0, 0)
-			ui.Fieldset(c, "调度与等待", func() {
+				ui.Text(c, "调度与等待").Bold().Margin(8, 0, 0, 0)
 				ui.Field(c, "发送策略", func() {
 					ui.Select(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
 				})
@@ -106,7 +100,7 @@ func (a *App) taskPane(c *ui.Context) {
 				ui.Field(c, "起始浏览器序号", func() {
 					ui.NumberInput(c, &a.startBrowserIdx, 1, 999, 1)
 				})
-			}).Gap(8).Margin(8, 0, 0, 0)
+			})
 		}).FillWidth().Gap(8)
 	})
 }
@@ -221,9 +215,13 @@ func (a *App) bottomView(c *ui.Context) {
 			ui.Badge(c, fmt.Sprintf("%d 项", len(items)))
 		})
 		if len(items) == 0 {
+			empty := "写下提示词并开始后，每条的状态会显示在这里"
+			if a.batchMode == batchImage {
+				empty = "添加源图并开始后，每张图片的状态会显示在这里"
+			}
 			ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
-				ui.Text(c, "任务将在这里显示").Bold()
-				ui.Text(c, "开始任务后，可查看每条提示词或每张源图的生成状态与结果").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "任务会显示在这里").Bold()
+				ui.Text(c, empty).FontSize(12).TextColor(c.Theme().TextMuted)
 			})
 			return
 		}
@@ -302,6 +300,67 @@ func (a *App) bottomView(c *ui.Context) {
 }
 
 // ---- 浏览器操作 ----
+
+// openSelectedPages 从工作台打开已选平台。ego lite 直接开网页；Chrome 切到浏览器页。
+func (a *App) openSelectedPages() {
+	if a.running || a.egoOpening {
+		return
+	}
+	if a.browserBackend == "Chrome" {
+		a.tab = 1
+		return
+	}
+	var names []string
+	if a.platDoubao {
+		names = append(names, "豆包")
+	}
+	if a.platQianwen {
+		names = append(names, "千问")
+	}
+	if len(names) == 0 {
+		a.egoMessage = "请先勾选豆包或千问"
+		return
+	}
+	a.egoOpening = true
+	a.egoMessage = "正在通过 ego lite 打开网页…"
+	window := a.window
+	go func() {
+		var failed string
+		var openErr error
+		var opened []string
+		for _, name := range names {
+			platform := strategy.Factory(name)
+			if platform == nil {
+				continue
+			}
+			if err := cdp.OpenEgoURL(platform.HomeURL()); err != nil {
+				if openErr == nil {
+					openErr = err
+					failed = name
+				}
+				continue
+			}
+			opened = append(opened, name)
+		}
+		if window == nil {
+			return
+		}
+		window.Update(func() {
+			a.egoOpening = false
+			switch {
+			case openErr != nil && len(opened) == 0:
+				a.egoMessage = fmt.Sprintf("打开%s失败：%v", failed, openErr)
+				logging.Log.Errorf("在 ego lite 打开%s失败: %v", failed, openErr)
+			case openErr != nil:
+				a.egoMessage = fmt.Sprintf("已打开%s；打开%s失败：%v", strings.Join(opened, "、"), failed, openErr)
+				logging.Log.Errorf("在 ego lite 打开%s失败: %v", failed, openErr)
+			default:
+				a.egoMessage = fmt.Sprintf("已在 ego lite 打开%s网页，请在网页中确认登录状态。", strings.Join(opened, "、"))
+				logging.Log.Success("已在 ego lite 打开%s网页", strings.Join(opened, "、"))
+			}
+		})
+	}()
+}
 
 func (a *App) openEgoPlatform(name string) {
 	platform := strategy.Factory(name)
