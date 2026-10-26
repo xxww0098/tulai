@@ -146,8 +146,39 @@ jobs:
               exit 1
             fi
             # SHA256SUMS is required. The desktop updater refuses a release without it.
+            # Names match internal/update.AssetName. Spaces stay here; GitHub
+            # stores those uploads with dots, and the updater normalizes both.
+            # AppImage is optional: Select falls back to the linux tar.gz.
             sha256sum "${files[@]}" > SHA256SUMS
             test -s SHA256SUMS
+            version=${GITHUB_REF_NAME#v}
+            required=(
+              "xbs ${version}.dmg"
+              "xbs Setup ${version} amd64.exe"
+              "xbs Setup ${version} arm64.exe"
+              "xbs-${version}-windows-amd64.exe"
+              "xbs-${version}-windows-arm64.exe"
+              "xbs-${version}-linux-amd64.tar.gz"
+              "xbs-${version}-linux-arm64.tar.gz"
+              "xbs_${version}_amd64.deb"
+              "xbs_${version}_arm64.deb"
+            )
+            shopt -s nullglob
+            extzips=(xbs-extension-*.zip)
+            if [[ ${#extzips[@]} -ne 1 ]]; then
+              echo "expected one xbs-extension zip, found ${#extzips[@]}" >&2
+              exit 1
+            fi
+            for name in "${required[@]}"; do
+              if [[ ! -f "$name" ]]; then
+                echo "updater asset missing: $name" >&2
+                exit 1
+              fi
+              if ! awk -v name="$name" 'substr($0, 67) == name { found=1 } END { exit found ? 0 : 1 }' SHA256SUMS; then
+                echo "SHA256SUMS missing ${name}" >&2
+                exit 1
+              fi
+            done
           )
           find release -type f -print | LC_ALL=C sort
       - name: Publish the GitHub release

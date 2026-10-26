@@ -1,6 +1,6 @@
 # tulai 页面桥
 
-这个目录是未打包的 Manifest V3 扩展，显示名是「tulai 页面桥」，当前版本 **0.3.6**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.6。发布附件里的 `xbs-extension-0.3.6.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
+这个目录是未打包的 Manifest V3 扩展，显示名是「tulai 页面桥」，当前版本 **0.3.7**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.7。发布附件里的 `xbs-extension-0.3.7.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。0.3.6 是桌面端 0.1.2 一起发布的扩展；那之后扩展有自动配对、心跳重连和额度信号，所以升到 0.3.7。
 
 点工具栏图标会打开 `popup.html`。令牌、端口和桥状态跟选项页是同一组 `chrome.storage.local` 值。
 

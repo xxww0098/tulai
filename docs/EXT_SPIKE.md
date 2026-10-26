@@ -36,10 +36,10 @@ internal/extbridge               extension/
 第一条消息必须是 hello：
 
 ```json
-{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.6","account":"可选的配置文件 id"}}
+{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.7","account":"可选的配置文件 id"}}
 ```
 
-`payload.version` 是扩展清单的版本（现在是 0.3.6），不是桌面端的 0.1.2。信封字段 `v` 仍是协议版本 1。
+`payload.version` 是扩展清单的版本（现在是 0.3.7），不是桌面端的 0.1.3。信封字段 `v` 仍是协议版本 1。
 
 令牌正确时主机回 `type=ack`，`payload.name` 为 `helloAck`，并带上 `sessionId`。令牌错误、或 hello 之前发送了别的消息，主机回 `E_AUTH` 并关闭连接。令牌放在 payload 里，不放在 URL 上。
 
