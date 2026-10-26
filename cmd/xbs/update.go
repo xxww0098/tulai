@@ -14,7 +14,8 @@ import (
 	"xbs/internal/update"
 )
 
-const updateUsage = `用法:
+const updateUsage = `图来
+用法:
   xbs                 打开工作台
   xbs update          检查 GitHub Releases 并安装更新
   xbs update --check  只检查，不下载

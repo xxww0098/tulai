@@ -131,6 +131,8 @@ type sourceImage struct {
 
 // Run 启动应用（主 goroutine）。
 func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot string) {
+	// 菜单「关于 / 退出」用这个名字。可执行文件和 mygo.json 的 name 仍是 xbs。
+	mygo.App.SetName("图来")
 	a := &App{
 		store:        st,
 		manager:      bm,
@@ -315,8 +317,8 @@ func (a *App) view(c *ui.Context) {
 	sidebarWidth := min(a.splitSz, max(300, width*0.32))
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(14, 20).Gap(14).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "xbs").FontSize(22).Bold()
-			subtitle := "图来 · 豆包 / 千问"
+			ui.Text(c, "图来").FontSize(22).Bold()
+			subtitle := "豆包 / 千问"
 			if v := mygo.App.Version(); v != "" {
 				subtitle += " · " + v
 			}
