@@ -1416,6 +1416,25 @@ func TestResultDir(t *testing.T) {
 	}
 }
 
+func TestRebuildRetryDropsSuccessAndAccount(t *testing.T) {
+	items := []Task{
+		{Index: 1, Platform: "豆包", Prompt: "猫", Images: []string{"a.png"}, Status: StatusSuccess, BrowserID: 4, Attempts: 2},
+		{Index: 2, Platform: "千问", Prompt: "猫\n后缀", Images: []string{"a.png"}, Status: StatusFailed, Error: "额度", BrowserID: 9, Attempts: 3},
+		{Index: 3, Platform: "豆包", Prompt: "只是词", Status: StatusNeedsUser, Attempts: 1},
+	}
+	got := RebuildRetry(items)
+	if len(got) != 2 || got[0].Status != StatusPending || got[0].BrowserID != 0 || got[0].Attempts != 0 || got[0].Prompt != "猫\n后缀" || len(got[0].Images) != 1 || got[0].Images[0] != "a.png" {
+		t.Fatalf("first retry = %+v", got)
+	}
+	if got[1].Prompt != "只是词" || len(got[1].Images) != 0 || got[1].Platform != "豆包" {
+		t.Fatalf("second retry = %+v", got[1])
+	}
+	got[0].Images[0] = "changed"
+	if items[1].Images[0] != "a.png" {
+		t.Fatal("retry queue aliases the source image path")
+	}
+}
+
 func TestQueueViewUpdate(t *testing.T) {
 	items := []Task{{Index: 1, Status: StatusPending}, {Index: 2, Status: StatusPending}}
 	v := NewQueueView(items)

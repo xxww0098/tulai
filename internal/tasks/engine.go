@@ -97,19 +97,48 @@ func (e *Engine) Run(ctx context.Context, opts Options, onTask func(Task), onPro
 	return e.run(ctx, opts, onTask, onProgress, e.attempt)
 }
 
-func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
+// Retry 只重跑失败、跳过或待验证的任务。提示词沿用已经拼好的正文。
+func (e *Engine) Retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress)) error {
+	return e.retry(ctx, opts, failed, onTask, onProgress, e.attempt)
+}
+
+func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	e.mu.Lock()
-	if e.running {
+	if err := e.claimRun(); err != nil {
 		e.mu.Unlock()
-		return fmt.Errorf("任务已在执行中")
+		return err
 	}
-	for key, sess := range e.sessions {
-		if sess.Ctx().Err() != nil {
-			delete(e.sessions, key)
+	browsersOf := e.browsersOfPlatforms()
+	queue := RebuildRetry(failed)
+	if len(queue) == 0 {
+		e.mu.Unlock()
+		return fmt.Errorf("任务队列为空：请添加提示词，或添加源图片")
+	}
+	seen := map[string]bool{}
+	for _, task := range queue {
+		if seen[task.Platform] {
+			continue
+		}
+		seen[task.Platform] = true
+		if len(browsersOf[task.Platform]) == 0 {
+			e.mu.Unlock()
+			return fmt.Errorf("平台[%s]没有配置浏览器，请先在浏览器管理中添加", task.Platform)
 		}
 	}
-	// 扩展会话先登记成账号，再按账号建队。同步会听页面桥，不占 e.mu 以外的引擎锁。
-	e.syncExtensionAccounts()
+	opts.UseSuffix = false
+	opts.Images = nil
+	for _, task := range queue {
+		opts.Images = append(opts.Images, task.Images...)
+	}
+	return e.driveLocked(ctx, opts, queue, onTask, onProgress, attempt)
+}
+
+func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
+	e.mu.Lock()
+	if err := e.claimRun(); err != nil {
+		e.mu.Unlock()
+		return err
+	}
 	// 浏览器映射：平台 → 可用浏览器 ID。Chrome 与 Edge 都用已添加的实例。
 	browsersOf := e.browsersOfPlatforms()
 	for _, p := range opts.Platforms {
@@ -123,6 +152,26 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 		e.mu.Unlock()
 		return fmt.Errorf("任务队列为空：请添加提示词，或添加源图片")
 	}
+	return e.driveLocked(ctx, opts, queue, onTask, onProgress, attempt)
+}
+
+// claimRun 在持有 e.mu 时占用引擎。任务已在跑时返回错误，锁仍由调用方释放。
+func (e *Engine) claimRun() error {
+	if e.running {
+		return fmt.Errorf("任务已在执行中")
+	}
+	for key, sess := range e.sessions {
+		if sess.Ctx().Err() != nil {
+			delete(e.sessions, key)
+		}
+	}
+	// 扩展会话先登记成账号，再按账号建队。同步会听页面桥，不占 e.mu 以外的引擎锁。
+	e.syncExtensionAccounts()
+	return nil
+}
+
+// driveLocked 执行已经建好的队列。调用时持有 e.mu。
+func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	e.opts = opts
 	e.view = NewQueueView(queue)
 	// 预计算源图哈希：结果若与源图字节相同（平台回显原图）则跳过

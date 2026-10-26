@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -19,55 +18,34 @@ import (
 )
 
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
-	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 220}
+	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"任务设置", "浏览器", "验证码", "开始任务", "文生图", "图生图", "提示词", "管理浏览器", "运行日志", "检查更新"} {
+	for _, label := range []string{"tulai", "出图", "浏览器", "提示词", "设置", "开始出图", "高级", "把图片拖到这里，或点击选择", "检查更新", "设置向导"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
+	drop := assertVisible(t, tt, "把图片拖到这里，或点击选择", 1280, 840)
+	start := assertVisible(t, tt, "开始出图", 1280, 840)
+	advanced := assertVisible(t, tt, "高级", 1280, 840)
+	if start.Y < drop.Y+drop.H+24 {
+		t.Fatalf("start button crowds the drop zone: drop=%+v start=%+v", drop, start)
+	}
+	if advanced.Y < start.Y+start.H-1 {
+		t.Fatalf("advanced overlaps the start button: start=%+v advanced=%+v", start, advanced)
+	}
 	if tt.HasText("添加图片") {
-		t.Fatal("text mode shows the image importer")
+		t.Fatal("empty drop zone shows the filled-state importer")
 	}
-	if err := tt.Click("更多设置"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Advance(time.Second)
-	before, _ := tt.Find("文件名后缀")
-	tt.Scroll(200, 500, 0, 2000)
-	assertVisible(t, tt, "文件名后缀", 1280, 840)
-	after, _ := tt.Find("文件名后缀")
-	if after.Y >= before.Y {
-		t.Fatal("task settings did not scroll")
-	}
-	if err := tt.Click("图生图"); err != nil {
-		t.Fatal(err)
-	}
-	for _, tab := range []string{"浏览器", "验证码", "任务设置"} {
-		if err := tt.Click(tab); err != nil {
+	for _, tab := range []struct{ label, want string }{
+		{"浏览器", "浏览器实例"},
+		{"提示词", "保存提示词"},
+		{"设置", "自动求解验证码"},
+		{"出图", "开始出图"},
+	} {
+		if err := tt.Click(tab.label); err != nil {
 			t.Fatal(err)
 		}
-		assertVisible(t, tt, "开始任务", 1280, 840)
-		assertVisible(t, tt, "添加图片", 1280, 840)
+		assertVisible(t, tt, tab.want, 1280, 840)
 	}
-}
-
-func TestWorkspaceSplitKeepsDraggedHeight(t *testing.T) {
-	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 220, batchMode: batchImage}
-	tt := ui.NewTester(a.view, 1280, 840)
-	r := assertVisible(t, tt, "Divider", 1280, 840)
-	x, y := r.X+r.W/2, r.Y+r.H/2
-	tt.Press(x, y)
-	tt.Move(x, y+60)
-	tt.Release(x, y+60)
-	height := a.sourceHeight
-	if height < 270 {
-		t.Fatalf("split drag did not resize source pane: %v", height)
-	}
-	tt.Frame()
-	if a.sourceHeight != height {
-		t.Fatalf("source pane height reset after frame: %v, want %v", a.sourceHeight, height)
-	}
-	assertVisible(t, tt, "添加图片", 1280, 840)
-	assertVisible(t, tt, "运行日志", 1280, 840)
 }
 
 func TestTextOnlyStartWithoutSources(t *testing.T) {
@@ -78,43 +56,42 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 	defer st.Close()
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
-		splitSz: 380, sourceHeight: 210, browserBackend: "Chrome",
+		browserBackend: "Chrome", platformAuto: true,
 		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
 	}
-	if _, err := st.AddBrowser("豆包", "工作", ""); err != nil {
-		t.Fatal(err)
-	}
-	if a.canStart() {
-		t.Fatal("未选平台时不应允许开始")
-	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"文生图", "待选平台", "检查更新"} {
+	for _, label := range []string{"开始出图", "把图片拖到这里，或点击选择", "检查更新"} {
 		if !tt.HasText(label) {
 			t.Fatalf("缺少文生图说明 %q", label)
 		}
 	}
-	if tt.HasText("待导入") || tt.HasText("添加图片") {
-		t.Fatal("已有提示词的文生图不应要求先导入源图")
+	if tt.HasText("添加图片") {
+		t.Fatal("没有源图时不应先要求导入")
 	}
-	if err := tt.Click("开始任务"); err != nil {
+	if err := tt.Click("开始出图"); err != nil {
 		t.Fatal(err)
 	}
-	if a.running || a.progText != "" {
-		t.Fatal("未选平台时开始按钮仍可触发任务")
+	if a.running || a.progText != "" || !a.wizardOn {
+		t.Fatal("没有可用账号时应打开设置向导，而不是报错")
 	}
-	a.platDoubao = true
+	a.wizardOn = false
+	row, err := st.AddBrowser("豆包", "工作", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(row.ID, false, true)
 	tt.Frame()
-	if !a.canStart() || !tt.HasText("文生图 · 2 条提示词") {
-		t.Fatal("只有提示词时应可以开始文生图")
+	if !a.canStart() {
+		t.Fatal("只有提示词和已登录账号时应可以出图")
 	}
 	if len(a.batchImages()) != 0 || len(splitLines(a.prompts)) != 2 {
 		t.Fatalf("文生图输入: prompts=%q images=%v", a.prompts, a.batchImages())
 	}
-	if err := tt.Click("开始任务"); err != nil {
+	if err := tt.Click("开始出图"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.running || a.progText != "" {
-		t.Fatalf("只有提示词时开始被拦住: running=%v text=%q", a.running, a.progText)
+	if !a.running || a.progText != "" || a.wizardOn {
+		t.Fatalf("只有提示词时开始被拦住: running=%v text=%q wizard=%v", a.running, a.progText, a.wizardOn)
 	}
 }
 
@@ -164,7 +141,7 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"tulai", "豆包 / 千问", "检查更新", "任务设置", "开始任务", "添加图片", "任务队列", "运行日志", "状态", "结果", "说明", "等待"} {
+				for _, label := range []string{"tulai", "豆包 / 千问", "检查更新", "开始出图", "出图进度", "排队中", "高级", "添加图片"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})
@@ -183,7 +160,7 @@ func TestWorkspaceNeedsUserVisible(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"待验证", verificationHint, "成功 0 · 失败 0 · 待验证 1 · 未完成 0", "开始任务", "任务队列", "运行日志"} {
+				for _, label := range []string{"待验证", verificationHint, "成功 0 · 失败 0 · 待验证 1 · 未完成 0", "开始出图", "出图进度", "重试"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 				if tt.HasText("已结束") || tt.HasText("失败: 验证码需要手动处理") {
@@ -205,7 +182,7 @@ func TestSaveSettingsIncludesLatestBoundInput(t *testing.T) {
 	st.Set("captcha_custom_url", "https://example.test")
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(nil, nil, nil, ""),
-		splitSz: 380, sourceHeight: 210, tab: 2,
+		tab: pageSettings,
 	}
 	a.loadSettings()
 	tt := ui.NewTester(a.view, 1280, 840)
@@ -245,12 +222,8 @@ func TestWatermarkOptionDefaultsPersistsAndReachesTask(t *testing.T) {
 	if a.removeWatermark || a.taskOptions(nil, nil, nil).RemoveWatermark {
 		t.Fatal("watermark repair must be disabled until explicitly enabled")
 	}
-	tt := ui.NewTester(a.taskPane, 380, 1400)
-	if err := tt.Click("更多设置"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Advance(time.Second)
-	assertVisible(t, tt, "去水印（实验）", 380, 1400)
+	tt := ui.NewTester(a.advancedFields, 720, 1400)
+	assertVisible(t, tt, "去水印（实验）", 720, 1400)
 	if !tt.HasText("已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。") {
 		t.Fatal("watermark repair does not explain output preservation and limitations")
 	}
@@ -288,11 +261,11 @@ func TestWatermarkOptionDefaultsPersistsAndReachesTask(t *testing.T) {
 
 func TestWorkspaceActionsRespectRunningState(t *testing.T) {
 	a := &App{
-		engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
-		platDoubao: true, batchMode: batchImage, sources: []sourceImage{{Path: "source.png", Hash: "source"}}, srcSel: 0, running: true,
+		engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true,
+		platDoubao: true, sources: []sourceImage{{Path: "source.png", Hash: "source"}}, srcSel: 0, running: true,
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"清空", "移除选中"} {
+	for _, label := range []string{"清空", "移除"} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}
@@ -302,20 +275,19 @@ func TestWorkspaceActionsRespectRunningState(t *testing.T) {
 	}
 	a.running = false
 	tt.Frame()
-	if err := tt.Click("移除选中"); err != nil {
+	if err := tt.Click("移除"); err != nil {
 		t.Fatal(err)
 	}
-	if len(a.sources) != 0 || a.srcSel != -1 || !tt.HasText("待导入") {
-		t.Fatal("removing the selected source did not restore the empty state")
+	if len(a.sources) != 0 || !tt.HasText("把图片拖到这里，或点击选择") {
+		t.Fatal("removing the source did not restore the empty drop zone")
 	}
-	// The disabled action must not reach startTasks without a source or store.
-	if err := tt.Click("开始任务"); err != nil {
+	if err := tt.Click("开始出图"); err != nil {
 		t.Fatal(err)
 	}
 	a.progress = 1
 	a.progText = "已完成"
 	tt.Frame()
-	if !tt.HasText("已结束") {
+	if !tt.HasText("已完成") {
 		t.Fatal("an idle completed task is shown as waiting to start")
 	}
 }
@@ -448,34 +420,46 @@ func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
 }
 
 func TestTextBatchStartsFromPromptAlone(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	row, err := st.AddBrowser("豆包", "工作", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(row.ID, false, true)
 	a := &App{
-		engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
-		platDoubao: true, batchMode: batchText,
-		sources: []sourceImage{{Path: "kept.png", Hash: "kept"}},
+		store: st, engine: tasks.NewEngine(st, nil, nil, ""), platformAuto: true,
 	}
 	if a.canStart() {
 		t.Fatal("text mode is ready before a prompt")
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
 	if tt.HasText("添加图片") {
-		t.Fatal("saved sources are shown while text mode is selected")
+		t.Fatal("an empty drop zone shows the filled-state importer")
 	}
-	if err := tt.Click("提示词"); err != nil {
+	if err := tt.Click("提示词内容"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Type("画一只灯笼")
 	if a.prompts != "画一只灯笼" || !a.canStart() || len(a.batchImages()) != 0 {
 		t.Fatalf("text batch prompt=%q canStart=%v images=%v", a.prompts, a.canStart(), a.batchImages())
 	}
-	if err := tt.Click("图生图"); err != nil {
-		t.Fatal(err)
-	}
-	if a.batchMode != batchImage || !a.canStart() {
-		t.Fatal("image mode dropped the source that was already imported")
+	a.appendSources([]sourceImage{{Path: "kept.png", Hash: "kept"}})
+	tt.Frame()
+	if !a.canStart() {
+		t.Fatal("adding a source blocked start")
 	}
 	assertVisible(t, tt, "添加图片", 1280, 840)
 	if got := a.batchImages(); len(got) != 1 || got[0] != "kept.png" {
-		t.Fatalf("image mode images = %v", got)
+		t.Fatalf("images = %v", got)
+	}
+	a.sources = nil
+	tt.Frame()
+	if !a.canStart() || len(a.batchImages()) != 0 {
+		t.Fatal("clearing images did not fall back to the prompt")
 	}
 }
 
@@ -601,56 +585,51 @@ func TestChromeQianwenWithoutBrowserCannotStart(t *testing.T) {
 	defer st.Close()
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
-		splitSz: 380, sourceHeight: 210, browserBackend: "Chrome",
+		browserBackend: "Chrome", platformAuto: true,
 		platQianwen: true, prompts: "画一只猫", outputPath: t.TempDir(),
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
 	const hint = "千问还没有浏览器，请先在浏览器管理中添加"
-	if a.canStart() || !tt.HasText(hint) || !tt.HasText("待添加浏览器") {
-		t.Fatalf("empty chrome qianwen canStart=%v", a.canStart())
+	if a.canStart() {
+		t.Fatal("没有登录账号时不应直接出图")
 	}
-	if err := tt.Click("开始任务"); err != nil {
+	if err := tt.Click("开始出图"); err != nil {
 		t.Fatal(err)
 	}
-	if a.running || tt.Focused("开始任务") {
-		t.Fatal("start stayed enabled without a qianwen browser")
+	if a.running || a.progText != "" || !a.wizardOn {
+		t.Fatal("没有可用账号时开始按钮没有打开设置向导")
 	}
-	if err := tt.Click("管理浏览器"); err != nil {
+	a.wizardOn = false
+	tt.Frame()
+	if err := tt.Click("浏览器"); err != nil {
 		t.Fatal(err)
 	}
-	tt.Frame()
-	if a.tab != 1 || !tt.HasText(hint) {
-		t.Fatal("browser tab did not show the empty-state hint")
+	if a.tab != pageBrowser || !tt.HasText(hint) {
+		t.Fatal("browser page did not show the empty-state hint")
 	}
 
-	a.newBrowserPlat = "千问"
-	a.addBrowser()
+	row, err := st.AddBrowser("千问", "网页", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(row.ID, false, true)
+	a.tab = pageHome
 	tt.Frame()
-	if !a.canStart() || tt.HasText("待添加浏览器") {
-		t.Fatal("adding a qianwen browser did not allow start")
+	if !a.canStart() {
+		t.Fatal("登录千问后仍不能出图")
 	}
 
-	a.browserBackend = "Edge"
-	a.browserRows = nil
-	st.Set("browser_backend", "Edge")
-	st.DeleteBrowser(a.configuredBrowsers()[0].ID)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
 	tt.Frame()
-	if a.canStart() || !tt.HasText(hint) {
-		t.Fatal("edge without a qianwen browser can still start")
+	if a.canStart() {
+		t.Fatal("扩展方式仍把本机浏览器当成可用账号")
 	}
-	if _, err := st.AddBrowser("千问", "edge", ""); err != nil {
+	if _, err := st.UpsertExtensionAccount("千问", "profile-1", "扩展千问"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 	if !a.canStart() {
-		t.Fatal("edge can start once a qianwen browser exists")
-	}
-
-	st.Set(extbridge.SettingBrowserBackend, "extension")
-	st.DeleteBrowser(a.configuredBrowsers()[0].ID)
-	tt.Frame()
-	if !a.canStart() || tt.HasText("待添加浏览器") {
-		t.Fatal("extension path still requires a local browser instance")
+		t.Fatal("已连接的扩展账号不能出图")
 	}
 }
 

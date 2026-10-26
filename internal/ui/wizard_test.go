@@ -116,7 +116,7 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	if a.wizardOn || st.Get(wizard.KeyComplete) != wizard.CompleteYes {
 		t.Fatal("finish did not leave the wizard or save the flag")
 	}
-	assertVisible(t, tt, "开始任务", 1280, 900)
+	assertVisible(t, tt, "开始出图", 1280, 900)
 	assertVisible(t, tt, "设置向导", 1280, 900)
 }
 
@@ -141,7 +141,7 @@ func TestWizardSkipsHealthyAccountAndCanReopen(t *testing.T) {
 		t.Fatal("an existing logged-in account should skip and record completion")
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
-	assertVisible(t, tt, "开始任务", 1280, 900)
+	assertVisible(t, tt, "开始出图", 1280, 900)
 	if err := tt.Click("设置向导"); err != nil {
 		t.Fatal(err)
 	}
