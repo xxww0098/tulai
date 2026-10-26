@@ -110,6 +110,8 @@ const (
 	EProtocol         = "E_PROTOCOL"
 	EAuth             = "E_AUTH"
 	ECancelled        = "E_CANCELLED"
+	EQuota            = "E_QUOTA"
+	ERateLimit        = "E_RATE_LIMIT"
 )
 
 // Envelope 是 v1 信封。时间戳 ts 为 Unix 毫秒。
@@ -180,7 +182,7 @@ func ErrorCodes() []string {
 	return []string{
 		ENotConnected, ENoTab, ENotLoggedIn, ESelectorMiss, EUploadFail,
 		ESendUncertain, ETimeout, ECaptchaHuman, ECaptchaSolveFail, EDownloadFail,
-		ESWSleep, EProtocol, EAuth, ECancelled,
+		ESWSleep, EProtocol, EAuth, ECancelled, EQuota, ERateLimit,
 	}
 }
 
@@ -294,6 +296,27 @@ func Command(name string, fields map[string]any) (Envelope, error) {
 		return Envelope{}, err
 	}
 	return Envelope{V: Version, Type: TypeCmd, Payload: raw}, nil
+}
+
+// WeakToken 是空令牌或只该用于本机冒烟的 dev-token。桌面端正式运行会换成随机令牌。
+func WeakToken(v string) bool {
+	v = strings.TrimSpace(v)
+	return v == "" || v == DefaultExtToken
+}
+
+// HelloAccount 读取 hello payload 里的可选账号标识。旧扩展不带这个字段。
+func HelloAccount(e Envelope) (id, name string) {
+	if len(e.Payload) == 0 {
+		return "", ""
+	}
+	var body struct {
+		Account     string `json:"account"`
+		AccountName string `json:"accountName"`
+	}
+	if err := json.Unmarshal(e.Payload, &body); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(body.Account), strings.TrimSpace(body.AccountName)
 }
 
 func helloToken(e Envelope) (string, bool) {

@@ -36,7 +36,11 @@ go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问
 
 千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥，不必再添加 Chrome 或 Edge 实例。键值 `ego` 表示不走扩展，页面由网页方式里的 Chrome 或 Edge 打开。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
 
+桌面端第一次打开会生成页面桥令牌（不再把 `dev-token` 当作正式令牌），并在 `127.0.0.1:18764/xbs-pair` 上给本机扩展读取。扩展弹出页显示「已自动对接」或「需要手动配对」。自动对接失败时，仍可复制令牌手动保存。重新生成后，扩展下一轮重连会自己换上新令牌；弹出页如果选过手动保存，要点「恢复自动对接」。
+
 网页方式只有 **Chrome** 和 **Edge**，默认 Chrome。以前保存的 `ego lite` 会在打开软件时改成 Chrome。请先安装要用的浏览器，到「浏览器」页为豆包、千问添加实例，启动并登录。Chrome 的 profile 在 `BrowserData/<名称>`，Edge 在 `BrowserData/Edge/<名称>`，两套登录态不会写到一起。
+
+同一个平台可以添加多个实例，每个实例登录一个自己的免费账号。任务按顺序分到这些账号上。某个账号出现额度用尽、请求过于频繁、未登录或验证码时，tulai 会把它标成冷却或已用尽，并改用下一个还能用的账号；其它账号还在时，这一批不会整批停掉。已经点过发送、但不确定有没有送出的任务不会换号重发。登录失败要在浏览器里重新登录后，在列表里点「恢复选中」。扩展方式不在这里启动浏览器：每个浏览器配置文件加载扩展并打开 tulai 后，会自动出现成一条扩展账号。
 
 Windows 查找 `chrome.exe` 和 `msedge.exe`（Program Files、Program Files (x86)、LocalAppData）。macOS 查找 `/Applications` 里的 Google Chrome 和 Microsoft Edge。Linux 在 PATH、`/usr/bin` 和 `/opt/microsoft/msedge` 中查找 `google-chrome` 与 `microsoft-edge`。
 

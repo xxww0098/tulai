@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,8 @@ type Config struct {
 	OnEvent func(*Session, Envelope)
 	// OnChange 在连上、断开或 hello 失败后异步调用。可以为空。
 	OnChange func()
+	// OnHello 在会话登记成功后调用。可以为空。
+	OnHello func(*Session)
 }
 
 // Server 只接受 127.0.0.1 或 ::1 上的 WebSocket。
@@ -59,13 +62,15 @@ type Server struct {
 
 // Session 是一个已通过 hello 的扩展连接。
 type Session struct {
-	id       string
-	platform string
-	conn     net.Conn
-	reader   io.Reader
-	srv      *Server
-	idle     time.Duration
-	onEvent  func(*Session, Envelope)
+	id          string
+	platform    string
+	account     string
+	accountName string
+	conn        net.Conn
+	reader      io.Reader
+	srv         *Server
+	idle        time.Duration
+	onEvent     func(*Session, Envelope)
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -203,6 +208,21 @@ func platformLive(list []*Session) bool {
 	return false
 }
 
+// SessionByAccount 返回该平台这个配置文件上仍活着的最近一条连接。
+func (s *Server) SessionByAccount(platform, account string) *Session {
+	account = strings.TrimSpace(account)
+	if s == nil || account == "" {
+		return nil
+	}
+	var found *Session
+	for _, sess := range s.Sessions(platform) {
+		if sess.Account() == account && sess.Alive() {
+			found = sess
+		}
+	}
+	return found
+}
+
 // Next 等待下一次成功的 hello。
 func (s *Server) Next(ctx context.Context) (*Session, error) {
 	for {
@@ -224,6 +244,35 @@ func (s *Session) ID() string { return s.id }
 
 // Platform 是扩展在 hello 里声明的平台。
 func (s *Session) Platform() string { return s.platform }
+
+// Account 是 hello 里可选的配置文件标识。旧扩展为空。
+func (s *Session) Account() string {
+	if s == nil {
+		return ""
+	}
+	return s.account
+}
+
+// AccountName 是扩展上报的账号备注，可以为空。
+func (s *Session) AccountName() string {
+	if s == nil {
+		return ""
+	}
+	return s.accountName
+}
+
+// Alive 在连接还没关掉时为真。
+func (s *Session) Alive() bool {
+	if s == nil {
+		return false
+	}
+	select {
+	case <-s.done:
+		return false
+	default:
+		return true
+	}
+}
 
 // Done 在连接结束时关闭。
 func (s *Session) Done() <-chan struct{} { return s.done }
@@ -273,17 +322,20 @@ func (s *Server) handshake(conn net.Conn, reader *bufio.Reader) {
 		fail(env.ID, EAuth, fmt.Sprintf("令牌不一致（tulai 正在监听 %s）。打开「浏览器」页，把令牌和端口填进扩展弹出页，点「保存并重连」。不用重启 tulai。", s.addr))
 		return
 	}
+	account, accountName := HelloAccount(env)
 	sess := &Session{
-		id:       newID(),
-		platform: env.Platform,
-		conn:     conn,
-		reader:   reader,
-		srv:      s,
-		idle:     s.cfg.IdleTimeout,
-		onEvent:  s.cfg.OnEvent,
-		pending:  map[string]*waiter{},
-		cache:    newIdempCache(s.cfg.IdempotencyLimit),
-		done:     make(chan struct{}),
+		id:          newID(),
+		platform:    env.Platform,
+		account:     account,
+		accountName: accountName,
+		conn:        conn,
+		reader:      reader,
+		srv:         s,
+		idle:        s.cfg.IdleTimeout,
+		onEvent:     s.cfg.OnEvent,
+		pending:     map[string]*waiter{},
+		cache:       newIdempCache(s.cfg.IdempotencyLimit),
+		done:        make(chan struct{}),
 	}
 	// 先读，再写出 helloAck，最后才对外发布会话。
 	// 这样调用方拿到会话时，扩展已经先收到 ack，随后的 ping 不会插到 ack 前面。
@@ -304,6 +356,9 @@ func (s *Server) handshake(conn net.Conn, reader *bufio.Reader) {
 	if !s.register(sess) {
 		sess.shutdown(io.EOF)
 		return
+	}
+	if s.cfg.OnHello != nil {
+		s.cfg.OnHello(sess)
 	}
 	go sess.heartbeat()
 }

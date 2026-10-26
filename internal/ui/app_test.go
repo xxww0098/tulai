@@ -510,12 +510,15 @@ func TestExtensionTokenVisibleCopyAndRegenerate(t *testing.T) {
 		splitSz: 380, sourceHeight: 210, tab: 1,
 	}
 	a.loadSettings()
-	if a.extToken != extbridge.DefaultExtToken || a.extPort != "18766" {
-		t.Fatalf("blank token should show the bridge default, port=%q token=%q", a.extPort, a.extToken)
+	if extbridge.WeakToken(a.extToken) || a.extToken != st.Get(extbridge.SettingExtToken) || len(a.extToken) != 32 || a.extPort != "18766" {
+		t.Fatalf("blank token should be replaced with a strong token, port=%q token=%q", a.extPort, a.extToken)
 	}
 	tt := ui.NewTester(a.view, 1000, 720)
 	for _, label := range []string{"页面桥", "令牌", "复制令牌", "重新生成", "启动选中"} {
 		assertVisible(t, tt, label, 1000, 720)
+	}
+	if !tt.HasText("自动对接未启动，可复制令牌手动填写") {
+		t.Fatal("pair status missing")
 	}
 	if !tt.HasText("端口 18766") {
 		t.Fatal("stored bridge port is not shown")
@@ -523,7 +526,7 @@ func TestExtensionTokenVisibleCopyAndRegenerate(t *testing.T) {
 	if err := tt.Click("复制令牌"); err != nil {
 		t.Fatal(err)
 	}
-	if tt.Clipboard() != extbridge.DefaultExtToken || !tt.HasText("已复制令牌") {
+	if tt.Clipboard() != a.extToken || !tt.HasText("已复制令牌") {
 		t.Fatalf("copy: clipboard=%q", tt.Clipboard())
 	}
 
@@ -548,8 +551,8 @@ func TestExtensionTokenVisibleCopyAndRegenerate(t *testing.T) {
 	if a.extToken == before || a.extToken != st.Get(extbridge.SettingExtToken) || len(a.extToken) != 32 {
 		t.Fatalf("regenerate token=%q stored=%q", a.extToken, st.Get(extbridge.SettingExtToken))
 	}
-	if !tt.HasText("已生成新令牌，请粘贴到扩展弹出页并保存") {
-		t.Fatal("regenerate did not tell the user to update the extension")
+	if !tt.HasText("已生成新令牌。扩展会自动对接；若弹出页仍是手动配对，请复制过去或点「恢复自动对接」") {
+		t.Fatal("regenerate did not explain auto-pair")
 	}
 	if err := tt.Click("复制令牌"); err != nil {
 		t.Fatal(err)

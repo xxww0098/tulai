@@ -69,6 +69,7 @@
       ],
       "js": [
         "protocol.js",
+        "quota.js",
         "qianwen/page.js",
         "content.js"
       ],
@@ -82,6 +83,7 @@
       ],
       "js": [
         "protocol.js",
+        "quota.js",
         "doubao/page.js",
         "content.js"
       ],

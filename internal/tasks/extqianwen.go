@@ -198,8 +198,9 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 		_ = old.Close()
 	}
 	srv, err := extbridge.Listen(extbridge.Config{
-		Addr:  addr,
-		Token: token,
+		Addr:    addr,
+		Token:   token,
+		OnHello: e.noteHello,
 		OnChange: func() {
 			e.fireBridgeChange()
 		},
@@ -222,10 +223,70 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 	return srv, nil
 }
 
-func (e *Engine) extensionSession(ctx context.Context, platform string) (*extbridge.Session, error) {
+func (e *Engine) noteHello(sess *extbridge.Session) {
+	if e == nil || e.store == nil || sess == nil || sess.Account() == "" {
+		return
+	}
+	platform := "千问"
+	if sess.Platform() == extbridge.PlatformDoubao {
+		platform = "豆包"
+	}
+	if _, err := e.store.UpsertExtensionAccount(platform, sess.Account(), sess.AccountName()); err != nil {
+		logging.Log.Warning("登记扩展账号失败: %v", err)
+	}
+}
+
+func (e *Engine) syncExtensionAccounts() {
+	if e == nil || e.store == nil || !e.useExtension("千问") {
+		return
+	}
+	e.extMu.Lock()
+	srv := e.extSrv
+	e.extMu.Unlock()
+	if srv == nil {
+		return
+	}
+	for _, sess := range srv.Sessions("") {
+		e.noteHello(sess)
+	}
+}
+
+func (e *Engine) extensionAccountKey(id int64) string {
+	if e == nil || e.store == nil || id <= 0 {
+		return ""
+	}
+	for _, b := range e.store.Browsers() {
+		if b.ID == id {
+			return b.ExtAccount
+		}
+	}
+	return ""
+}
+
+func (e *Engine) extensionSession(ctx context.Context, platform, account string) (*extbridge.Session, error) {
 	srv, err := e.extensionServer()
 	if err != nil {
 		return nil, err
+	}
+	if account != "" {
+		if sess := srv.SessionByAccount(platform, account); sess != nil {
+			return sess, nil
+		}
+		wait, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		for {
+			sess, err := srv.Next(wait)
+			if err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, errExtOffline
+			}
+			e.noteHello(sess)
+			if sess.Platform() == platform && sess.Account() == account {
+				return sess, nil
+			}
+		}
 	}
 	if sess, err := srv.Session(platform); err == nil {
 		return sess, nil
@@ -278,9 +339,26 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 			return fmt.Errorf("已停止")
 		}
 	}
-	sess, err := e.extensionSession(ctx, protocolPlatform)
+	account := ""
+	if t.BrowserID > 0 {
+		account = e.extensionAccountKey(t.BrowserID)
+	}
+	sess, err := e.extensionSession(ctx, protocolPlatform, account)
 	if err != nil {
 		return err
+	}
+	if sess != nil && sess.Account() != "" && e.store != nil {
+		if row, rowErr := e.store.UpsertExtensionAccount(label, sess.Account(), sess.AccountName()); rowErr == nil {
+			if t.BrowserID <= 0 {
+				t.BrowserID = row.ID
+			}
+			if t.ranOn <= 0 {
+				t.ranOn = row.ID
+			}
+		}
+	}
+	if t.ranOn <= 0 {
+		t.ranOn = t.BrowserID
 	}
 	wait := time.Duration(0)
 	if e.opts.WaitResult {
@@ -620,6 +698,10 @@ func mapExtErr(err error, body extAck, platform string) error {
 	switch extbridge.CodeOf(err) {
 	case extbridge.ESendUncertain:
 		return fmt.Errorf("%w: %s", strategy.ErrSubmissionUncertain, err.Error())
+	case extbridge.EQuota:
+		return fmt.Errorf("%w: %s", strategy.ErrAccountQuota, err.Error())
+	case extbridge.ERateLimit:
+		return fmt.Errorf("%w: %s", strategy.ErrAccountRate, err.Error())
 	case extbridge.ENotLoggedIn:
 		loginErr := errQianwenLogin
 		if platform == "豆包" {

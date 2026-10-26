@@ -44,6 +44,7 @@ type Engine struct {
 	seenHash  map[string]bool         // 结果 SHA256 去重
 	srcHashes map[string]bool         // 源图哈希（回声过滤）
 	dataRoot  string
+	active    map[int64]bool
 
 	extMu       sync.Mutex
 	extSrv      *extbridge.Server
@@ -52,6 +53,8 @@ type Engine struct {
 	extListen   string
 	extErr      string
 	extOnChange func()
+	pair        *extbridge.PairServer
+	pairErr     error
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。
@@ -104,6 +107,8 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 			delete(e.sessions, key)
 		}
 	}
+	// 扩展会话先登记成账号，再按账号建队。同步会听页面桥，不占 e.mu 以外的引擎锁。
+	e.syncExtensionAccounts()
 	// 浏览器映射：平台 → 可用浏览器 ID。Chrome 与 Edge 都用已添加的实例。
 	browsersOf := e.browsersOfPlatforms()
 	for _, p := range opts.Platforms {
@@ -162,10 +167,20 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 					completed <- t
 					continue
 				}
+				t.slot = t.BrowserID
+				if t.BrowserID > 0 {
+					e.setActive(t.BrowserID, true)
+					if e.store != nil {
+						e.store.TouchBrowser(t.BrowserID, time.Now())
+					}
+				}
 				t.Status = StatusRunning
 				e.view.Update(t)
 				onTask(t)
 				t = e.execute(ctx, t, attempt)
+				if t.slot > 0 {
+					e.setActive(t.slot, false)
+				}
 				e.view.Update(t)
 				onTask(t)
 				completed <- t
@@ -186,13 +201,37 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 		var next Task
 		index := -1
 		var earliest time.Time
-		if active < workers {
-			for i, task := range pending {
+		if active < workers && ctx.Err() == nil {
+			now := time.Now()
+			for i := 0; i < len(pending); i++ {
+				task := pending[i]
+				wait, dead := e.prepareAccount(&task, now)
+				pending[i] = task
+				if dead {
+					task.Status = StatusFailed
+					if task.Error == "" {
+						task.Error = "同平台账号都不可用"
+					}
+					e.view.Update(task)
+					onTask(task)
+					done++
+					onProgress(Progress{Done: done, Total: total})
+					logging.Log.Warning("#%d [%s] %s: %s", task.Index, task.Platform, task.Status, task.Error)
+					pending = append(pending[:i], pending[i+1:]...)
+					i--
+					continue
+				}
+				if !wait.IsZero() {
+					if earliest.IsZero() || wait.Before(earliest) {
+						earliest = wait
+					}
+					continue
+				}
 				resource := max(task.BrowserID, 0)
 				if busy[resource] {
 					continue
 				}
-				if ready := readyAt[resource]; time.Now().Before(ready) {
+				if ready := readyAt[resource]; now.Before(ready) {
 					if earliest.IsZero() || ready.Before(earliest) {
 						earliest = ready
 					}
@@ -201,6 +240,9 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 				index, next, dispatch = i, task, jobs
 				break
 			}
+		}
+		if len(pending) == 0 && active == 0 {
+			break
 		}
 		var timer *time.Timer
 		var wake <-chan time.Time
@@ -219,12 +261,29 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 			active++
 		case t := <-completed:
 			active--
-			resource := max(t.BrowserID, 0)
+			resource := t.slot
+			if resource == 0 {
+				resource = t.BrowserID
+			}
+			resource = max(resource, 0)
 			delete(busy, resource)
-			readyAt[resource] = time.Now().Add(time.Duration(opts.SendWait) * time.Second)
+			used := t.ranOn
+			if used == 0 {
+				used = resource
+			}
+			readyAt[max(used, 0)] = time.Now().Add(time.Duration(opts.SendWait) * time.Second)
+			if t.rotated && t.Status == StatusPending {
+				t.rotated = false
+				pending = append(pending, t)
+				if timer != nil {
+					timer.Stop()
+					timer = nil
+				}
+				continue
+			}
 			if t.Status != StatusPending {
 				done++
-				if t.Status == StatusNeedsUser {
+				if t.Status == StatusNeedsUser && ctx.Err() != nil {
 					runErr = captcha.ErrVerificationRequired
 				}
 				onProgress(Progress{Done: done, Total: total})
@@ -288,18 +347,28 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Error = ""
 			return t
 		}
+		if e.maybeRotate(&t, err, time.Now()) {
+			return t
+		}
 		t.Error = err.Error()
+		kind := classifyFault(err)
 		if errors.Is(err, captcha.ErrVerificationRequired) {
 			t.Status = StatusNeedsUser
-			if e.cancel != nil {
+			if !e.hasOtherHealthy(t.Platform, t.ranOnOr(t.BrowserID), time.Now()) && e.cancel != nil {
 				e.cancel()
 			}
 			return t
 		}
 		if errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) {
-			if e.cancel != nil {
-				e.cancel()
+			t.Status = StatusFailed
+			if errors.Is(err, strategy.ErrSubmissionUncertain) || !e.hasOtherHealthy(t.Platform, t.ranOnOr(t.BrowserID), time.Now()) {
+				if e.cancel != nil {
+					e.cancel()
+				}
 			}
+			return t
+		}
+		if kind == faultQuota || kind == faultRate || kind == faultAuth {
 			t.Status = StatusFailed
 			return t
 		}
@@ -330,6 +399,9 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	strat := strategy.Factory(t.Platform)
 	if strat == nil {
 		return fmt.Errorf("不支持的平台 %s", t.Platform)
+	}
+	if t.ranOn <= 0 {
+		t.ranOn = t.BrowserID
 	}
 	e.mu.Lock()
 	cancelRun := e.cancel
@@ -461,16 +533,34 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 }
 
 // browsersOfPlatforms 返回每个平台可用的浏览器。
-// browserBackend=extension 时不读本机实例：扩展自己驱动已打开的页面，占位 ID 只参与调度。
+// browserBackend=extension 时优先用已连上的扩展账号。还没有会话时用占位 ID，跟以前的单连接一样。
 func (e *Engine) browsersOfPlatforms() map[string][]int64 {
 	if e.useExtension("千问") {
-		return map[string][]int64{"豆包": {-1}, "千问": {-2}}
+		browsersOf := map[string][]int64{}
+		if e.store != nil {
+			for _, b := range e.store.Browsers() {
+				if b.ExtAccount == "" {
+					continue
+				}
+				browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
+			}
+		}
+		if len(browsersOf["豆包"]) == 0 {
+			browsersOf["豆包"] = []int64{-1}
+		}
+		if len(browsersOf["千问"]) == 0 {
+			browsersOf["千问"] = []int64{-2}
+		}
+		return browsersOf
 	}
 	browsersOf := map[string][]int64{}
 	if e.store == nil {
 		return browsersOf
 	}
 	for _, b := range e.store.Browsers() {
+		if b.ExtAccount != "" {
+			continue
+		}
 		browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
 	}
 	return browsersOf
@@ -578,6 +668,96 @@ func closeFailedSession(ctx context.Context, sess failedSession, err error) erro
 		return ctxErr
 	}
 	return err
+}
+
+func (e *Engine) setActive(id int64, on bool) {
+	if id <= 0 {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.active == nil {
+		e.active = map[int64]bool{}
+	}
+	if on {
+		e.active[id] = true
+	} else {
+		delete(e.active, id)
+	}
+}
+
+// ActiveAccounts 是当前正在跑任务的账号。
+func (e *Engine) ActiveAccounts() map[int64]bool {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[int64]bool, len(e.active))
+	for id := range e.active {
+		out[id] = true
+	}
+	return out
+}
+
+// PairState 告诉界面自动对接有没有在听、扩展最近有没有来取令牌。
+func (e *Engine) PairState() (listening, paired bool) {
+	if e == nil {
+		return false, false
+	}
+	e.extMu.Lock()
+	p := e.pair
+	e.extMu.Unlock()
+	if p == nil {
+		return false, false
+	}
+	hit := p.LastHit()
+	return true, !hit.IsZero() && time.Since(hit) < 2*time.Minute
+}
+
+// ServeLocal 启动页面桥和固定端口上的令牌发现。桥没听成时仍然尝试发现端口。
+func (e *Engine) ServeLocal() error {
+	if e == nil {
+		return nil
+	}
+	bridgeErr := error(nil)
+	if _, err := e.extensionServer(); err != nil {
+		bridgeErr = err
+		logging.Log.Warning("页面桥未监听: %v", err)
+	}
+	e.extMu.Lock()
+	already := e.pair != nil
+	e.extMu.Unlock()
+	if !already {
+		pair, err := extbridge.StartPair(e.pairInfo)
+		e.extMu.Lock()
+		if err != nil {
+			e.pairErr = err
+		} else {
+			e.pair = pair
+			e.pairErr = nil
+		}
+		e.extMu.Unlock()
+		if err != nil {
+			logging.Log.Warning("自动对接未启动: %v", err)
+			if bridgeErr != nil {
+				return bridgeErr
+			}
+			return err
+		}
+		logging.Log.Info("页面桥自动对接监听 127.0.0.1:%s", extbridge.PairPort)
+	}
+	return bridgeErr
+}
+
+func (e *Engine) pairInfo() extbridge.PairInfo {
+	token := extbridge.DefaultExtToken
+	port := extbridge.DefaultExtPort
+	if e != nil && e.store != nil {
+		token = extbridge.NormalizeExtToken(e.store.Get(extbridge.SettingExtToken))
+		port = extbridge.NormalizeExtPort(e.store.Get(extbridge.SettingExtPort))
+	}
+	return extbridge.PairInfo{Token: token, Port: port}
 }
 
 func (e *Engine) forgetSession(sess *cdp.Session) {

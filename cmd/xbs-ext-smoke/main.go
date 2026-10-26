@@ -27,7 +27,7 @@ func main() {
 	token := os.Getenv("XBS_EXT_TOKEN")
 	if token == "" {
 		token = "dev-token"
-		fmt.Println("未设置 XBS_EXT_TOKEN，使用仅供本机开发的默认令牌 dev-token")
+		fmt.Println("未设置 XBS_EXT_TOKEN，使用仅供本机冒烟的默认令牌 dev-token。桌面端 tulai 会自己生成令牌，扩展打开 tulai 后会自动对接。")
 	}
 	srv, err := extbridge.Listen(extbridge.Config{Addr: addr, Token: token})
 	must(err)

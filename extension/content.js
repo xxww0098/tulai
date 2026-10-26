@@ -52,6 +52,15 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function accountBlocked(env) {
+  if (!globalThis.XBSQuota || !document || typeof document.querySelectorAll !== 'function') return null
+  const found = XBSQuota.accountBlock(document)
+  if (!found) return null
+  const code = found.kind === 'rate' ? XBS.errors.E_RATE_LIMIT : XBS.errors.E_QUOTA
+  const message = found.message || (found.kind === 'rate' ? '账号请求过于频繁' : '账号额度已用尽')
+  return XBS.fail(env, code, message)
+}
+
 function loginOrMiss(env, name, message) {
   if (Page.loginWall(document)) {
     return XBS.fail(env, XBS.errors.E_NOT_LOGGED_IN, '页面没有输入框，看起来还未登录')
@@ -72,6 +81,8 @@ async function upload(env, payload) {
   const ready = await readyComposer(8000)
   if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入的输入框')
+  const blocked = accountBlocked(env)
+  if (blocked) return blocked
   const comp = ready
   if (payload.clean) {
     if (typeof Page.dismissClientPromo === 'function') {
@@ -207,6 +218,8 @@ async function setPrompt(env, payload) {
   const ready = await readyComposer(8000)
   if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  const blockedPrompt = accountBlocked(env)
+  if (blockedPrompt) return blockedPrompt
   const comp = ready
   const prompt = String(payload.prompt || '')
   if (!Page.setComposer(comp, prompt)) {
@@ -238,6 +251,8 @@ async function sendPrompt(env, payload) {
   const ready = await readyComposer(8000)
   if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  const blockedSend = accountBlocked(env)
+  if (blockedSend) return blockedSend
   const comp = ready
   const prompt = String(payload.prompt || '')
   if (Page.normalize(Page.readComposer(comp)) !== Page.normalize(prompt)) {
@@ -395,6 +410,8 @@ async function waitResult(env, payload) {
     if (cancelRequested) return XBS.fail(env, XBS.errors.E_CANCELLED, '等待结果已取消')
     const captcha = Page.detectCaptcha(document)
     if (captcha.blocked) return captchaAck(env, captcha)
+    const blockedWait = accountBlocked(env)
+    if (blockedWait) return blockedWait
     // 千问 / 豆包生成卡在视口外往往只是灰占位或 lazy 壳。有 revealResults 时先滚进画面再取样。
     if (typeof Page.revealResults === 'function') {
       try { Page.revealResults(document, pageMark) } catch (e) {}

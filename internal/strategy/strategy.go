@@ -24,6 +24,12 @@ var composerJS string
 // ErrSubmissionUncertain 表示发送已尝试，重发可能重复生成，需先检查网页。
 var ErrSubmissionUncertain = errors.New("发送状态未确认，请检查网页后再开始任务")
 
+// ErrAccountQuota 表示当前登录账号的免费额度用完了。
+var ErrAccountQuota = errors.New("账号额度已用尽")
+
+// ErrAccountRate 表示当前登录账号被限流。
+var ErrAccountRate = errors.New("账号请求过于频繁")
+
 // Result 一张生成结果。
 type Result struct {
 	URL  string `json:"url"`
@@ -180,6 +186,31 @@ func (b base) UploadFiles(s *cdp.Session, files []string) error {
 	return nil
 }
 
+// pageAccountFault 读取页面提示条里的额度或限流。没有提示时返回 nil。
+func pageAccountFault(s *cdp.Session) error {
+	if s == nil || s.IsEgo() {
+		return nil
+	}
+	out, err := s.Evaluate(`JSON.stringify(window.xbsPageState ? xbsPageState() : {})`)
+	if err != nil {
+		return nil
+	}
+	var state struct {
+		Quota     bool `json:"quota"`
+		RateLimit bool `json:"rateLimit"`
+	}
+	if cdp.ParseJSValue(out, &state) != nil {
+		return nil
+	}
+	if state.RateLimit {
+		return ErrAccountRate
+	}
+	if state.Quota {
+		return ErrAccountQuota
+	}
+	return nil
+}
+
 // SendPrompt 可信输入后点击一次发送，等待平台清空输入确认接收。
 func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if s.IsEgo() {
@@ -217,6 +248,9 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 			}
 		}
 		return fmt.Errorf("输入区内容与本次提示词不一致，未发送")
+	}
+	if err := pageAccountFault(s); err != nil {
+		return err
 	}
 	// 点击与确认之间出错时，不能靠重发判断平台是否已接受消息。
 	uncertain := true
@@ -265,6 +299,9 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 	pendingLogged := false
 	for time.Now().Before(deadline) {
 		if err := s.Ctx().Err(); err != nil {
+			return nil, err
+		}
+		if err := pageAccountFault(s); err != nil {
 			return nil, err
 		}
 		out, err := s.Evaluate(`JSON.stringify({results:window.__xbsResultsSince ? __xbsResultsSince() : [],pending:window.__xbsPendingGeneration ? __xbsPendingGeneration() : 0})`)
