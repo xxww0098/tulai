@@ -98,6 +98,8 @@ GET https://api.github.com/repos/xxww0098/xbs/releases/latest
 | macOS，正在跑 `.app` | `….app/Contents/MacOS/xbs` | `xbs.<版本>.dmg`（通用二进制；构建时的名字是 `xbs <版本>.dmg`） | 换掉当前的 `xbs.app`，并去掉隔离属性。 |
 | macOS，其他 | 开发运行 | 同一个 dmg | 复制到 `~/Applications/xbs.app`。 |
 
+应用内更新和 `xbs update` 装到 `~/.local` 时，把桌面项的 `Name` 写成「图来」。文件名仍是 `xbs.desktop`，启动命令仍是 `xbs`。`install.sh`、deb、NSIS 和 macOS 包名跟 `mygo.json` 的 `name` 走，仍是 xbs。
+
 下载后核对两处摘要，对不上就删除文件、不安装：
 
 1. 附件 API 里的 `digest`（`sha256:…`），有的话必须和 `SHA256SUMS` 同一行一致。
