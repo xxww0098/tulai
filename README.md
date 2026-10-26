@@ -9,13 +9,13 @@ tulai 是豆包和千问的批量生图桌面应用。命令、仓库和安装�
 | 包 | 作用 |
 |---|---|
 | `internal/cdp` | Chrome / Edge 的 CDP 会话、上传、下载和页面桥。包内仍保留 ego lite Page SDK，只给既有测试用，桌面任务不再调用 |
-| `internal/browser` | 查找 Chrome 与 Edge、按 profile 启动、独立 CDP 端口（9333+）。Chrome 用 `BrowserData/<名称>`，Edge 用 `BrowserData/Edge/<名称>` |
+| `internal/browser` | 查找 Chrome、Edge、Chromium，必要时下载内置浏览器，按 profile 启动、独立 CDP 端口（9333+）。Chrome 用 `BrowserData/<名称>`，Edge 用 `BrowserData/Edge/<名称>`，内置浏览器用 `BrowserData/Builtin/<名称>` |
 | `internal/strategy` | 在 Chrome / Edge 页面操作编辑器并截获结果；扩展模式另走页面桥 |
 | `internal/captcha` | 三后端：free（纯 Go CV）/ custom（视觉大模型）/ ikunocr（接码） |
 | `internal/tasks` | 顺序循环、并发、重试、定时切浏览器、SHA256 去重、命名规则保存 |
 | `internal/store` | SQLite `database/config.db`（`browsers` / `settings` / `prompts`）。已有同结构的库可以直接打开 |
 | `internal/logging` | Info/Success/Warning/Error/Debug 环形日志 |
-| `internal/ui` | mygo 原生窗口：工作台、任务设置、浏览器、验证码、源图缩略图、队列表格、日志 |
+| `internal/ui` | mygo 原生窗口：首次设置向导、工作台、任务设置、浏览器、验证码、源图缩略图、队列表格、日志 |
 | `internal/update` | 菜单「帮助 → 检查更新…」、标题栏「检查更新」、`xbs update`。走公开 GitHub API，不需要 token。页面桥扩展不跟着桌面端更新 |
 
 ## 运行
@@ -40,7 +40,9 @@ go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问
 
 桌面端第一次打开会生成页面桥令牌（不再把 `dev-token` 当作正式令牌），并在 `127.0.0.1:18764/xbs-pair` 上给本机扩展读取。扩展弹出页显示「已自动对接」或「需要手动配对」。自动对接失败时，仍可复制令牌手动保存。重新生成后，扩展下一轮重连会自己换上新令牌；弹出页如果选过手动保存，要点「恢复自动对接」。
 
-网页方式只有 **Chrome** 和 **Edge**，默认 Chrome。以前保存的 `ego lite` 会在打开软件时改成 Chrome。请先安装要用的浏览器，到「浏览器」页为豆包、千问添加实例，启动并登录。Chrome 的 profile 在 `BrowserData/<名称>`，Edge 在 `BrowserData/Edge/<名称>`，两套登录态不会写到一起。
+第一次打开，或还没有可用账号时，会先走设置向导：确认浏览器、勾选豆包或千问、弹出登录页。扫码登录后自动进入主界面。完成状态写在配置库里；以后还有健康账号就不再弹出。右上角「设置向导」可以再打开，用来多加一个账号。
+
+网页方式会自动用本机浏览器。Windows 优先系统 Edge，其它系统优先已安装的 Chrome，其次 Edge、Chromium。都没有时，向导里可以一键下载内置浏览器。以前保存的 `ego lite` 会在打开软件时按系统改成默认浏览器。Chrome 与 Chromium 的 profile 在 `BrowserData/<名称>`，Edge 在 `BrowserData/Edge/<名称>`，内置浏览器在 `BrowserData/Builtin/<名称>`。扩展方式不靠这个向导启动浏览器。
 
 同一个平台可以添加多个实例，每个实例登录一个自己的免费账号。任务按顺序分到这些账号上。某个账号出现额度用尽、请求过于频繁、未登录或验证码时，tulai 会把它标成冷却或已用尽，并改用下一个还能用的账号；其它账号还在时，这一批不会整批停掉。已经点过发送、但不确定有没有送出的任务不会换号重发。登录失败要在浏览器里重新登录后，在列表里点「恢复选中」。扩展方式不在这里启动浏览器：每个浏览器配置文件加载扩展并打开 tulai 后，会自动出现成一条扩展账号。
 
@@ -54,7 +56,7 @@ macOS 打包版将配置库、`BrowserData/` 和默认输出保存到 `~/Library
 
 支持 Windows 10/11，提供 amd64 与 arm64 原生 GUI 构建。运行对应架构的安装器，或直接双击 `xbs.exe`；配置库、`BrowserData/` 和默认输出均保存在 `%APPDATA%\xbs\`，不依赖启动位置，也不会写入安装目录。Windows 的开发运行同样使用该用户数据目录。
 
-安装 Google Chrome 或 Microsoft Edge，在「浏览器」页添加实例、启动并登录后再开始任务。Windows 上的可执行文件位置见上一节。
+第一次打开会走设置向导。Windows 上有系统 Edge 时直接用它，不用另装 Chrome。Windows 上的可执行文件位置见上一节。
 
 在已安装 Go 的 Windows 开发环境执行 `build-windows.cmd`，或在 macOS/Linux 交叉构建：
 
@@ -66,12 +68,12 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 ## 使用流程
 
-启动后右侧就是开跑的地方。平台、模式、提示词、管理浏览器和开始在同一屏，不必先翻设置。
+第一次打开先完成设置向导。之后右侧就是开跑的地方。平台、模式、提示词、管理浏览器和开始在同一屏，不必先翻设置。
 
 1. 选 **文生图** 或 **图生图**。新配置没有源图时默认文生图；已经导入过源图、又没手动选过模式时，打开就是图生图。选择会随设置保存。
 2. 勾选豆包、千问（新配置默认豆包）。提示词在开始按钮上方，每行一条。
 3. 图生图再点「添加图片」（SHA256 去重、缩略图预览）。文生图不上传源图，列表里留着的旧图也不会带上。
-4. 点「管理浏览器」：选择 Chrome 或 Edge，为已勾选的平台添加实例，启动并登录。还没有对应实例时「开始任务」不可用，工作台会提示先到浏览器管理添加。
+4. 第一次使用按设置向导登录。之后要再加账号，点右上角「设置向导」，或到「浏览器」页手动添加。还没有对应实例时「开始任务」不可用。
 5. **开始任务**。文生图是每条提示词 × 每个平台。图生图是每张源图 × 每个平台，提示词按顺序循环。然后自动发提示词（图生图先上传）→等结果→校验→落盘。输出目录空着时，写到数据目录下的「输出结果」。
 
 命名、前后缀、并发、重试、等待和「去水印（实验）」在左侧「任务设置 → 更多设置」，默认折叠。不改也能开跑。

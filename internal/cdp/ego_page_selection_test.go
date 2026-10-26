@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestEgoInitPageSelectionNodeFixture(t *testing.T) {
@@ -60,7 +59,7 @@ const readFailure=new Error('candidate unavailable');
 await assert.rejects(check([tab('fallback'),tab('failed',{active:true,error:readFailure})],null,[]),error=>error===readFailure);
 console.log('init page selection fixture passed');
 `
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), nodeFixtureTimeout)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, node, "--input-type=module", "-e", source).CombinedOutput()
 	if err != nil || !strings.Contains(string(output), "init page selection fixture passed") {

@@ -187,7 +187,7 @@ func (a *App) browserPane(c *ui.Context) {
 			ui.Button(c, "恢复选中").Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
 		})
 		ui.Button(c, "删除选中").Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
-		ui.Text(c, "首次使用：选中实例 → 启动 → 登录平台").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "想重新登录或再添加账号，点右上角「设置向导」。").FontSize(12).TextColor(c.Theme().TextMuted)
 	})
 }
 
@@ -514,6 +514,7 @@ func (a *App) downloadBuiltin() {
 			}
 			logging.Log.Success("内置浏览器已就绪")
 			a.refreshDetected()
+			a.refreshWizardPlan()
 		})
 	}()
 }
