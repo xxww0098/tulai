@@ -9,7 +9,7 @@
 - `internal/extbridge`：v1 信封、本机监听、令牌 hello、ping/pong、会话表、带超时和幂等键的 RPC。
 - `extension/`：一份未打包扩展。`qianwen/page.js` 和 `doubao/page.js` 各自实现页面动作，共用 `content.js` 和 `background.js`。找不到节点时仍返回 `E_SELECTOR_MISS`。
 - `cmd/xbs-ext-smoke`：手动加载扩展时使用的桥。`XBS_EXT_LIVE=1` 时跑一次图生图。`XBS_EXT_PLATFORM=doubao` 时打到豆包那条 hello。
-- 配置键 `browserBackend`，取值 `extension` 或 `ego`，默认 `ego`。千问和豆包任务都会读它。另外两个键 `extBridgePort`（默认 `18765`）和 `extBridgeToken`（默认 `dev-token`）要和扩展弹出页（或选项页）一致。桌面端「浏览器」页可以查看、复制和重新生成这组值。
+- 配置键 `browserBackend`，取值 `extension` 或 `ego`，默认 `ego`。千问和豆包任务都会读它。`extBridgePort` 默认 `18765`。`extBridgeToken` 在新库里会由桌面端生成随机值，不再把 `dev-token` 留作正式令牌。扩展启动时向 `http://127.0.0.1:18764/xbs-pair` 读取令牌和端口。桌面端「浏览器」页仍可查看、复制和重新生成。hello 可以额外带 `payload.account`（这个浏览器配置文件的 id），用来区分多条扩展会话；不带时仍是原来的单连接。
 
 不删除 CDP。扩展里只检测验证码并把画布交回主机，不在页面脚本里求解。千问滑块由主机用 CDP 信任拖动，见下方风险。
 
@@ -36,7 +36,7 @@ internal/extbridge               extension/
 第一条消息必须是 hello：
 
 ```json
-{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.6"}}
+{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.6","account":"可选的配置文件 id"}}
 ```
 
 `payload.version` 是扩展清单的版本（现在是 0.3.6），不是桌面端的 0.1.2。信封字段 `v` 仍是协议版本 1。

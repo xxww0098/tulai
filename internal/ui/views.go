@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -115,7 +117,7 @@ func (a *App) browserPane(c *ui.Context) {
 	a.extensionBridgeSection(c)
 	ui.Column(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
 		ui.Text(c, "浏览器实例").FontSize(15).Bold()
-		ui.Text(c, "每个实例单独保存登录状态，两种网页方式的配置目录互不影响。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "每个实例单独登录。同一平台再添加一个并登录后，额度用尽、限流或验证码会自动换号。扩展账号会在对应的浏览器配置文件连上后出现在这里。").FontSize(12).TextColor(c.Theme().TextMuted)
 		// 新增行
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Select(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Label("浏览器平台")
@@ -127,6 +129,22 @@ func (a *App) browserPane(c *ui.Context) {
 		} else if len(a.browserRows) == 0 {
 			ui.Text(c, "尚无浏览器。添加豆包或千问实例，启动并登录后再开始任务。").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
+		active := map[int64]bool{}
+		if a.engine != nil {
+			active = a.engine.ActiveAccounts()
+		}
+		if a.store != nil {
+			rows := a.store.Browsers()
+			for i := range rows {
+				if a.manager != nil {
+					rows[i].IsRunning = a.manager.IsRunning(rows[i].ID)
+				}
+				if active[rows[i].ID] {
+					rows[i].IsRunning = true
+				}
+			}
+			a.browserRows = rows
+		}
 		// 列表
 		a.browserList.Key = func(i int) any { return a.browserRows[i].ID }
 		a.browserList.Selected = &a.browserSel
@@ -135,20 +153,24 @@ func (a *App) browserPane(c *ui.Context) {
 			ui.Column(c).Padding(12, 10).Gap(6).Children(func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, b.Name).Bold().Grow(1).SingleLine()
-					state := "未运行"
-					if b.IsRunning {
-						state = "运行中"
-					}
-					ui.Badge(c, state)
+					ui.Badge(c, accountHealthLabel(b, active[b.ID]))
 				})
-				ui.Text(c, fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)).FontSize(12).TextColor(c.Theme().TextMuted)
+				line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
+				if b.ExtAccount != "" {
+					line = b.Platform + " · 扩展会话"
+				}
+				ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted)
+				if b.LastError != "" && !b.Usable(time.Now()) {
+					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
+				}
 			})
-		}).Grow(1).MinHeight(0).Border(1, c.Theme().Border).Radius(12)
+		}).Grow(1).MinHeight(72).Border(1, c.Theme().Border).Radius(12)
 		selected, hasSelection := a.selectedBrowser()
 		ui.Row(c).Gap(8).Children(func() {
-			ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning).OnClick(func() { a.launchBrowser() })
-			ui.Button(c, "停止选中").Disabled(a.running || !hasSelection || !selected.IsRunning).OnClick(func() { a.stopBrowser() })
+			ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
+			ui.Button(c, "停止选中").Disabled(a.running || !hasSelection || !selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.stopBrowser() })
 			ui.Button(c, "刷新列表").OnClick(func() { a.refreshBrowsers() })
+			ui.Button(c, "恢复选中").Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
 		})
 		ui.Button(c, "删除选中").Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
 		ui.Text(c, "首次使用：选中实例 → 启动 → 登录平台").FontSize(12).TextColor(c.Theme().TextMuted)
@@ -213,6 +235,7 @@ func (a *App) bottomView(c *ui.Context) {
 		cols := []ui.TableColumn{
 			{ID: "idx", Title: "#", Width: 36},
 			{ID: "plat", Title: "平台", Width: 56},
+			{ID: "acct", Title: "账号", Width: 88},
 			{ID: "status", Title: "状态", Width: 68},
 			{ID: "img", Title: "源图", MinWidth: 76},
 			{ID: "prompt", Title: "提示词", MinWidth: 76},
@@ -230,6 +253,8 @@ func (a *App) bottomView(c *ui.Context) {
 				text = fmt.Sprint(t.Index)
 			case "plat":
 				text = t.Platform
+			case "acct":
+				text = a.accountName(t.BrowserID)
 			case "prompt":
 				text = t.Prompt
 			case "img":
@@ -297,6 +322,7 @@ func (a *App) extensionBridgeSection(c *ui.Context) {
 	}
 	ui.Column(c).Gap(8).Children(func() {
 		ui.Text(c, "页面桥").FontSize(15).Bold()
+		ui.Text(c, a.bridgePairLabel()).FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Text(c, status).FontSize(12)
 		if detail != "" {
 			ui.Text(c, detail).FontSize(12).TextColor(detailColor)
@@ -336,7 +362,7 @@ func (a *App) regenerateExtensionToken() {
 			return
 		}
 	}
-	a.extTokenNote = "已生成新令牌，请粘贴到扩展弹出页并保存"
+	a.extTokenNote = "已生成新令牌。扩展会自动对接；若弹出页仍是手动配对，请复制过去或点「恢复自动对接」"
 	logging.Log.Info("已重新生成页面桥令牌")
 }
 
@@ -415,6 +441,71 @@ func (a *App) stopBrowser() {
 	a.store.UpdateBrowser(b.ID, false, false)
 	logging.Log.Info("浏览器[%s] 已停止", b.Name)
 	a.refreshBrowsers()
+}
+
+func (a *App) restoreBrowser() {
+	b, ok := a.selectedBrowser()
+	if !ok || a.store == nil {
+		return
+	}
+	a.store.ResetBrowserHealth(b.ID)
+	logging.Log.Info("已恢复账号 %s", b.Name)
+	a.refreshBrowsers()
+}
+
+func (a *App) accountName(id int64) string {
+	if id <= 0 {
+		return "扩展"
+	}
+	for _, b := range a.browserRows {
+		if b.ID == id && b.Name != "" {
+			return b.Name
+		}
+	}
+	if a.store != nil {
+		for _, b := range a.store.Browsers() {
+			if b.ID == id && b.Name != "" {
+				return b.Name
+			}
+		}
+	}
+	return fmt.Sprintf("%d", id)
+}
+
+func (a *App) bridgePairLabel() string {
+	if a.engine == nil {
+		return "自动对接未启动，可复制令牌手动填写"
+	}
+	listening, paired := a.engine.PairState()
+	if !listening {
+		return "自动对接未启动，可复制令牌手动填写"
+	}
+	if paired {
+		return "已自动对接"
+	}
+	return "等待扩展自动对接，也可复制令牌手动填写"
+}
+
+func accountHealthLabel(b store.Browser, active bool) string {
+	if !b.Usable(time.Now()) {
+		if b.Health == store.HealthCooling {
+			if strings.Contains(b.LastError, "验证") {
+				return "待验证"
+			}
+			return "冷却中"
+		}
+		if strings.Contains(b.LastError, "登录") {
+			return "未登录"
+		}
+		return "已用尽"
+	}
+	if active {
+		return "使用中"
+	}
+	if b.IsRunning && b.ExtAccount == "" {
+		return "运行中"
+	}
+	return "就绪"
 }
 
 func (a *App) deleteBrowser() {

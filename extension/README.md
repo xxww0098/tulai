@@ -21,10 +21,10 @@
    go run ./cmd/xbs-ext-smoke
    ```
 
-   默认 `127.0.0.1:18765`，令牌 `dev-token`。要和桌面端一起跑时，不要再开冒烟进程，两边会抢同一个端口。桌面端在 `browserBackend=extension` 时自己听 `extBridgePort` / `extBridgeToken`（新库默认同样是 `18765` 和 `dev-token`）。
+   默认 `127.0.0.1:18765`，令牌 `dev-token`（只给这个冒烟进程）。要和桌面端一起跑时，不要再开冒烟进程，两边会抢同一个端口。桌面端自己听 `extBridgePort` / `extBridgeToken`，并在 `127.0.0.1:18764/xbs-pair` 把令牌交给扩展。
 
 2. 打开 `chrome://extensions`，打开开发者模式，加载已解压的扩展程序，指向本目录 `extension`。不要指向 `extension/qianwen` 或 `extension/doubao`，那两个目录没有清单。
-3. 点工具栏上的扩展图标，填入和桥相同的令牌、端口，保存。选项页改的是同一组值。徽章变成 `ON` 表示至少一条 hello 已经成功。弹出页跟着 `bridgeStatus` 显示已连接、未连接或连接失败。认证失败时徽章是 `ERR`，弹出页另显示 `lastError`。冒烟进程会先后打印 `platform=qianwen` 和 `platform=doubao`。
+3. 先打开 tulai。扩展会自动读取令牌和端口，弹出页显示「已自动对接」。徽章变成 `ON` 表示至少一条 hello 已经成功。弹出页跟着 `bridgeStatus` 显示已连接、未连接或连接失败。认证失败时徽章是 `ERR`，弹出页另显示 `lastError`。自动对接失败时，弹出页显示「需要手动配对」，把桌面端令牌贴进去保存即可。手动保存后要点「恢复自动对接」才会再跟着桌面端变。冒烟进程不会走这套自动对接，它仍打印自己的令牌。冒烟进程会先后打印 `platform=qianwen` 和 `platform=doubao`。
 4. 用同一个 Chrome 配置打开要跑的页面，手动登录。扩展不会替你登录。
    - 千问：`https://www.tongyi.com/`（也认 `qianwen.com`、`chat.qwen.ai`）
    - 豆包：`https://www.doubao.com/chat/`

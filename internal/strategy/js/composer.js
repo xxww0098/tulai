@@ -312,8 +312,21 @@
       fileCount: fileCount(),
       generating: /生成中|正在生成|绘制中|Drawing|Generating/i.test(body),
       failed: /生成失败|请重试|敏感|违规/i.test(body),
+      quota: accountNotice(document, /额度不足|额度已用|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit/i),
+      rateLimit: accountNotice(document, /过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests/i),
     };
   };
+
+  // 只看提示条和对话框，避免历史对话里的「额度」字样把还可用的账号标掉。
+  // 正则与 extension/quota.js、internal/tasks/fault.go 保持一致。
+  function accountNotice(doc, pattern) {
+    var nodes = doc.querySelectorAll('[role="alert"],[role="dialog"],[class*="toast"],[class*="notice"],[class*="quota"],[class*="limit"]');
+    for (var i = 0; i < nodes.length; i++) {
+      var text = String(nodes[i].innerText || '').replace(/\s+/g, ' ').trim();
+      if (text && text.length <= 240 && pattern.test(text)) return true;
+    }
+    return false;
+  }
 
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 })();

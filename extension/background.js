@@ -1,4 +1,4 @@
-importScripts('protocol.js', 'bridge_logic.js')
+importScripts('protocol.js', 'bridge_logic.js', 'pair.js')
 
 const XBS = globalThis.XBS
 const ALARM = 'xbs-bridge-reconnect'
@@ -76,7 +76,15 @@ const links = {
 const tabs = new Map()
 
 function storageGet() {
-  return chrome.storage.local.get({ token: '', port: 18765, lastError: '', bridgeStatus: 'off' })
+  return chrome.storage.local.get({
+    token: '',
+    port: 18765,
+    lastError: '',
+    bridgeStatus: 'off',
+    pairMode: 'auto',
+    pairState: '',
+    profileId: '',
+  })
 }
 
 function storageSet(values) {
@@ -204,8 +212,15 @@ async function connect(link) {
   link.connecting = true
   link.attempt += 1
   const attempt = link.attempt
-  const cfg = await storageGet()
+  const cfg = await autoPair()
   if (link.attempt !== attempt) return
+  if (!cfg.token) {
+    link.connecting = false
+    link.authError = '还没有令牌。请先打开 tulai，或在弹出页手动填写。'
+    refreshBadge()
+    scheduleReconnect(link)
+    return
+  }
   const port = Number(cfg.port) || 18765
   link.triedPort = port
   let ws
@@ -231,7 +246,7 @@ async function connect(link) {
   ws.onopen = () => {
     clearTimeout(openTimer)
     try {
-      ws.send(JSON.stringify(XBS.hello(cfg.token, link.platform)))
+      ws.send(JSON.stringify(XBS.hello(cfg.token, link.platform, cfg.profileId)))
     } catch (err) {
       link.linkError = XBSBridge.refusedMessage(port)
       try { ws.close() } catch (e) {}
@@ -261,6 +276,24 @@ async function connect(link) {
     }
     refreshBadge()
     scheduleReconnect(link)
+  }
+}
+
+async function autoPair() {
+  const cfg = await storageGet()
+  const ident = await XBSPair.identity(chrome.storage.local)
+  cfg.profileId = ident.profileId
+  if (cfg.pairMode === 'manual') return cfg
+  try {
+    const pair = await XBSPair.pull(function (url, opts) { return fetch(url, opts) })
+    if (cfg.token !== pair.token || Number(cfg.port) !== pair.port || cfg.pairState !== 'paired') {
+      await storageSet({ token: pair.token, port: pair.port, pairMode: 'auto', pairState: 'paired' })
+    }
+    return Object.assign({}, cfg, pair, { pairMode: 'auto', pairState: 'paired', profileId: ident.profileId })
+  } catch (err) {
+    if (cfg.pairState === 'paired' && cfg.token) return cfg
+    await storageSet({ pairState: 'need-manual' })
+    return Object.assign({}, cfg, { pairState: 'need-manual' })
   }
 }
 

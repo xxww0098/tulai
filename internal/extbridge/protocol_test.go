@@ -20,7 +20,7 @@ func TestVocabularyMatchesSpec(t *testing.T) {
 	if strings.Join(Commands(), ",") != "ping,helloAck,upload,setPrompt,send,waitResult,download,captchaAssist,cancel,status" {
 		t.Fatalf("commands: %s", strings.Join(Commands(), ","))
 	}
-	wantCodes := "E_NOT_CONNECTED,E_NO_TAB,E_NOT_LOGGED_IN,E_SELECTOR_MISS,E_UPLOAD_FAIL,E_SEND_UNCERTAIN,E_TIMEOUT,E_CAPTCHA_HUMAN,E_CAPTCHA_SOLVE_FAIL,E_DOWNLOAD_FAIL,E_SW_SLEEP,E_PROTOCOL,E_AUTH,E_CANCELLED"
+	wantCodes := "E_NOT_CONNECTED,E_NO_TAB,E_NOT_LOGGED_IN,E_SELECTOR_MISS,E_UPLOAD_FAIL,E_SEND_UNCERTAIN,E_TIMEOUT,E_CAPTCHA_HUMAN,E_CAPTCHA_SOLVE_FAIL,E_DOWNLOAD_FAIL,E_SW_SLEEP,E_PROTOCOL,E_AUTH,E_CANCELLED,E_QUOTA,E_RATE_LIMIT"
 	if strings.Join(ErrorCodes(), ",") != wantCodes {
 		t.Fatalf("codes: %s", strings.Join(ErrorCodes(), ","))
 	}

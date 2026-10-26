@@ -37,7 +37,7 @@
     p { color: #5c574e; margin: 12px 0 0; }
     label { display: block; margin-top: 12px; font-weight: 600; }
     input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; font: inherit; }
-    button { margin-top: 14px; padding: 8px 14px; font: inherit; }
+    button { margin-top: 14px; margin-right: 8px; padding: 8px 14px; font: inherit; }
   </style>
 </head>
 <body>
@@ -51,8 +51,9 @@
       <input id="port" inputmode="numeric" value="18765">
     </label>
     <button type="submit">保存并重连</button>
+    <button type="button" id="repair">恢复自动对接</button>
   </form>
-  <p>令牌和端口必须与桌面端页面桥一致。</p>
+  <p>tulai 打开后会自动写入令牌和端口。自动对接失败时，再把桌面端的令牌粘贴到这里。</p>
   <script src="options.js"></script>
 </body>
 </html>

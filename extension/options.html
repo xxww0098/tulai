@@ -9,13 +9,13 @@
     p { color: #5c574e; }
     label { display: block; margin-top: 16px; font-weight: 600; }
     input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; font: inherit; }
-    button { margin-top: 16px; padding: 8px 14px; font: inherit; }
+    button { margin-top: 16px; margin-right: 8px; padding: 8px 14px; font: inherit; }
     #status { margin-top: 16px; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <h1>tulai 页面桥</h1>
-  <p>同一份扩展会分别向千问和豆包各发一次 hello。令牌和端口必须与桌面端页面桥一致。保存后服务工作者会重新连接。</p>
+  <p>同一份扩展会分别向千问和豆包各发一次 hello。tulai 打开后会自动写入令牌和端口。保存后服务工作者会重新连接；手动保存会停用自动对接，直到点「恢复自动对接」。</p>
   <form id="form">
     <label>令牌
       <input id="token" autocomplete="off" spellcheck="false">
@@ -24,6 +24,7 @@
       <input id="port" inputmode="numeric" value="18765">
     </label>
     <button type="submit">保存并重连</button>
+    <button type="button" id="repair">恢复自动对接</button>
   </form>
   <div id="status"></div>
   <script src="options.js"></script>

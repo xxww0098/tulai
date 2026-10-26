@@ -45,6 +45,8 @@ jobs:
           node extension/qianwen/page_test.js
           node extension/doubao/page_test.js
           node extension/bridge_test.js
+          node extension/pair_test.js
+          node extension/quota_test.js
       - name: Pack the page-bridge extension
         run: |
           ver=$(jq -r .version extension/manifest.json)

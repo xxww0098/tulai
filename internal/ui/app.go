@@ -150,6 +150,11 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		browserSel:   -1,
 	}
 	a.loadSettings()
+	if a.engine != nil {
+		if err := a.engine.ServeLocal(); err != nil && a.extTokenNote == "" {
+			a.extTokenNote = "自动对接未启动，可复制令牌手动填写"
+		}
+	}
 	mygo.App.SetMenu(a.installMenu())
 	offQuit := mygo.App.OnQuit(a.saveSettings)
 	defer offQuit()
@@ -194,6 +199,12 @@ func (a *App) loadSettings() {
 	a.browserBackend = pickStr(s.Get("browser_backend"), "Chrome", []string{"Chrome", "Edge"})
 	s.Set("browser_backend", a.browserBackend)
 	a.extToken = extbridge.NormalizeExtToken(s.Get(extbridge.SettingExtToken))
+	if extbridge.WeakToken(s.Get(extbridge.SettingExtToken)) {
+		if generated, err := extbridge.NewToken(); err == nil {
+			a.extToken = generated
+			s.Set(extbridge.SettingExtToken, generated)
+		}
+	}
 	a.extPort = extbridge.NormalizeExtPort(s.Get(extbridge.SettingExtPort))
 	a.platDoubao = containsStr(s.Platforms(), "豆包")
 	a.platQianwen = containsStr(s.Platforms(), "千问")
@@ -503,6 +514,9 @@ func (a *App) missingBrowserNames() []string {
 	}
 	have := map[string]bool{}
 	for _, b := range a.configuredBrowsers() {
+		if b.ExtAccount != "" {
+			continue
+		}
 		have[b.Platform] = true
 	}
 	var missing []string
