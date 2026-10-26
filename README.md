@@ -28,6 +28,8 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟测试
 go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问和豆包扩展 hello
 ```
 
+`go.mod` 把 MyGo 工具固定在 **v0.6.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
+
 桌面端产品版本是 **0.1.2**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.2` 上发布，页面扩展 zip 是 **0.3.6**。步骤见下文「发布 0.1.2」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端可以自己更新：菜单 **帮助 → 检查更新…**，标题栏的 **检查更新**，或在终端执行 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/xbs/releases/latest`，不附带 token，按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
