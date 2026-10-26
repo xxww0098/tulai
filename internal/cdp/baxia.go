@@ -281,7 +281,6 @@ func (c *SliderConn) Play(ctx context.Context, targetID string, events []SliderE
 	return nil
 }
 
-
 // EvalJSON 在目标页主世界执行 expression，把返回值解到 dest。
 func (c *SliderConn) EvalJSON(ctx context.Context, targetID, expression string, dest any) error {
 	session, err := c.session(ctx, targetID)
@@ -444,6 +443,14 @@ func (c *SliderConn) session(ctx context.Context, targetID string) (string, erro
 	return out.SessionID, nil
 }
 
+// Activate 把已经打开的标签拉到前面，不创建新页。
+func (c *SliderConn) Activate(ctx context.Context, targetID string) error {
+	if c == nil || targetID == "" {
+		return fmt.Errorf("没有可前置的页面")
+	}
+	return c.call(ctx, "", "Target.activateTarget", map[string]any{"targetId": targetID}, nil)
+}
+
 func (c *SliderConn) call(ctx context.Context, session, method string, params, dest any) error {
 	select {
 	case <-c.closed:
@@ -581,7 +588,6 @@ func browserWebsocket(ctx context.Context, endpoint string) (string, error) {
 	}
 	return body.WS, nil
 }
-
 
 func (c *SliderConn) lookInChildFrames(ctx context.Context, page sliderPage) (SliderLook, error) {
 	session, err := c.session(ctx, page.id)

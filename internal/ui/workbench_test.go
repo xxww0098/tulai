@@ -194,6 +194,12 @@ func TestHumanReason(t *testing.T) {
 		{"同平台账号都不可用", "账号暂时不可用"},
 		{"启动浏览器[工作]: 未找到 Google Chrome，请先安装", "浏览器没有打开"},
 		{"websocket: connection refused", "网络中断，请重试"},
+		{"websocket: close 1006 (abnormal)", "浏览器断开了"},
+		{"target closed", "浏览器断开了"},
+		{"浏览器崩溃，自动重启后仍失败", "浏览器崩溃，自动重启后仍失败"},
+		{"浏览器崩溃了", "浏览器崩溃了"},
+		{"页面长时间没有进展", "页面长时间没有进展"},
+		{"需要安全验证", "需要在网页里完成验证"},
 		{"something broke in the page", "出图失败，请重试"},
 		{"源图是空文件", "源图是空文件"},
 	}

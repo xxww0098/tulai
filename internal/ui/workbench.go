@@ -302,7 +302,16 @@ func HumanReason(raw string) string {
 		return "请求太频繁，请稍后再试"
 	case strings.Contains(s, "未登录") || strings.Contains(s, "请先登录") || strings.Contains(s, "登录已失效") || strings.Contains(s, "登录状态"):
 		return "账号未登录，请先登录"
-	case strings.Contains(s, "验证"):
+	case strings.Contains(s, "浏览器崩溃"):
+		if strings.Contains(s, "仍失败") || strings.Contains(s, "自动重启") {
+			return "浏览器崩溃，自动重启后仍失败"
+		}
+		return "浏览器崩溃了"
+	case strings.Contains(s, "没有进展") || strings.Contains(s, "页面卡住"):
+		return "页面长时间没有进展"
+	case strings.Contains(lower, "target closed") || strings.Contains(s, "连接已断开") || strings.Contains(lower, "websocket: close"):
+		return "浏览器断开了"
+	case strings.Contains(s, "滑块") || strings.Contains(s, "安全验证") || strings.Contains(s, "验证"):
 		return "需要在网页里完成验证"
 	case strings.Contains(s, "扩展") && (strings.Contains(s, "未连接") || strings.Contains(s, "没连")):
 		return "扩展没有连上"

@@ -185,6 +185,12 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 			a.extTokenNote = "自动对接未启动，可复制令牌手动填写"
 		}
 	}
+	a.wireHealing()
+	loginCtx, loginStop := context.WithCancel(context.Background())
+	defer loginStop()
+	if a.engine != nil {
+		go a.engine.WatchLogins(loginCtx)
+	}
 	mygo.App.SetMenu(a.installMenu())
 	offQuit := mygo.App.OnQuit(a.saveSettings)
 	defer offQuit()
