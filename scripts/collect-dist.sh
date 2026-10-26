@@ -80,5 +80,10 @@ esac
   fi
 )
 
+if find dist \( -iname '*chrome-for-testing*' -o -name 'chrome-linux64.zip' -o -name 'chrome-linux-arm64.zip' -o -name 'chrome-mac-arm64.zip' -o -name 'chrome-mac-x64.zip' -o -name 'chrome-win64.zip' \) | grep -q .; then
+  echo "Chrome for Testing must not be bundled in the installer" >&2
+  exit 1
+fi
+
 echo "collected $kind ($version):"
 ls -lh dist

@@ -233,7 +233,7 @@ func TestRunRejectsEmptyImagesAndPrompts(t *testing.T) {
 }
 
 func TestRunChromeAndEdgeRequireBrowsers(t *testing.T) {
-	for _, backend := range []string{"", "Chrome", "Edge", "ego lite"} {
+	for _, backend := range []string{"", "Chrome", "Edge", "Builtin", "ego lite"} {
 		t.Run(backend, func(t *testing.T) {
 			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 			if err != nil {
@@ -292,9 +292,10 @@ func TestSessionCacheSeparatesBackends(t *testing.T) {
 	}
 	defer st.Close()
 	e := NewEngine(st, nil, nil, "")
-	chrome, edge := &cdp.Session{}, &cdp.Session{}
+	chrome, edge, builtin := &cdp.Session{}, &cdp.Session{}, &cdp.Session{}
 	e.sessions["Chrome:豆包:1"] = chrome
 	e.sessions["Edge:豆包:1"] = edge
+	e.sessions["Builtin:豆包:1"] = builtin
 	st.Set("browser_backend", "Chrome")
 	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != chrome {
 		t.Fatalf("chrome session = %p, %v", got, err)
@@ -302,6 +303,10 @@ func TestSessionCacheSeparatesBackends(t *testing.T) {
 	st.Set("browser_backend", "Edge")
 	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != edge {
 		t.Fatalf("edge session = %p, %v", got, err)
+	}
+	st.Set("browser_backend", "Builtin")
+	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != builtin {
+		t.Fatalf("builtin session = %p, %v", got, err)
 	}
 }
 

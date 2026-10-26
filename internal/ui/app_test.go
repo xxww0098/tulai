@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -378,8 +379,9 @@ func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
 	st.Set("browser_backend", "ego lite")
 	a := &App{store: st, manager: browser.NewManager(), engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210, tab: 1}
 	a.loadSettings()
-	if a.browserBackend != "Chrome" || st.Get("browser_backend") != "Chrome" {
-		t.Fatalf("ego lite should migrate to Chrome, got %q", a.browserBackend)
+	want := browser.DefaultBackend(runtime.GOOS)
+	if a.browserBackend != want || st.Get("browser_backend") != want {
+		t.Fatalf("ego lite should migrate to %s, got %q", want, a.browserBackend)
 	}
 	tt := ui.NewTester(a.view, 1000, 720)
 	for _, label := range []string{"网页方式", "浏览器实例", "启动选中"} {
@@ -391,12 +393,25 @@ func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
 	if tt.HasText("打开豆包网页") || tt.HasText("已启用 ego lite") {
 		t.Fatal("ego lite controls are still on the browser page")
 	}
-	if err := tt.Click("Chrome"); err != nil {
-		t.Fatal(err)
+	if !tt.HasText("已检测到") && !tt.HasText("未检测到") {
+		t.Fatalf("detected browsers are not shown: %v", tt.Texts())
 	}
-	if err := tt.Click("Edge"); err != nil {
-		t.Fatal(err)
+	if !tt.HasText("下载内置浏览器") {
+		t.Fatal("builtin download button is missing")
 	}
+	pick := func(label string) {
+		t.Helper()
+		if a.browserChoice == label {
+			return
+		}
+		if err := tt.Click(a.browserChoice); err != nil {
+			t.Fatal(err)
+		}
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pick("Edge")
 	if a.browserBackend != "Edge" || st.Get("browser_backend") != "Edge" || !tt.HasText("启动选中") {
 		t.Fatal("selecting Edge did not update the UI and saved backend")
 	}
@@ -412,17 +427,23 @@ func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
 	}
 	a.running = false
 	tt.Frame()
-	if err := tt.Click("Edge"); err != nil {
-		t.Fatal(err)
+	pick("内置浏览器")
+	if a.browserBackend != browser.KindBuiltin || st.Get("browser_backend") != browser.KindBuiltin {
+		t.Fatalf("builtin choice = %q", a.browserBackend)
 	}
-	if err := tt.Click("Chrome"); err != nil {
-		t.Fatal(err)
-	}
+	pick("Chrome")
 	a.saveSettings()
 	restored := &App{store: st, manager: browser.NewManager()}
 	restored.loadSettings()
 	if restored.browserBackend != "Chrome" || !tt.HasText("启动选中") {
 		t.Fatal("Chrome backend was not restored")
+	}
+	a.cftBusy = true
+	a.cftPercent = 0.4
+	a.cftStatus = "正在下载内置浏览器 40%"
+	tt.Frame()
+	if !tt.HasText("正在下载内置浏览器 40%") {
+		t.Fatal("download progress is not shown")
 	}
 }
 

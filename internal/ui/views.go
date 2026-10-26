@@ -1,13 +1,17 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"xbs/internal/browser"
 	"xbs/internal/cdp"
 	"xbs/internal/extbridge"
 	"xbs/internal/logging"
@@ -107,17 +111,27 @@ func (a *App) taskPane(c *ui.Context) {
 	})
 }
 
-// browserPane 浏览器管理。网页方式只有 Chrome 和 Edge。
+const browserInstanceHint = "每个实例单独登录。同一平台再添加一个并登录后，额度用尽、限流或验证码会自动换号。扩展账号会在对应的浏览器配置文件连上后出现在这里。"
+
+// browserPane 浏览器管理。网页方式是 Chrome、Edge，或下载到本机的内置浏览器。
 func (a *App) browserPane(c *ui.Context) {
+	a.syncBrowserChoice()
+	if a.detectedNote == "" && !a.cftBusy {
+		a.refreshDetected()
+	}
 	ui.Field(c, "网页方式", func() {
-		ui.Select(c.Key("browser-backend"), &a.browserBackend, []string{"Chrome", "Edge"}).Disabled(a.running).OnChange(func() {
-			a.store.Set("browser_backend", a.browserBackend)
+		ui.Select(c.Key("browser-backend"), &a.browserChoice, []string{"Chrome", "Edge", "内置浏览器"}).Disabled(a.running).OnChange(func() {
+			a.browserBackend = browser.CanonicalBackend(a.browserChoice)
+			if a.store != nil {
+				a.store.Set("browser_backend", a.browserBackend)
+			}
 		})
 	})
 	a.extensionBridgeSection(c)
 	ui.Column(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
+		a.builtinBrowserSection(c)
 		ui.Text(c, "浏览器实例").FontSize(15).Bold()
-		ui.Text(c, "每个实例单独登录。同一平台再添加一个并登录后，额度用尽、限流或验证码会自动换号。扩展账号会在对应的浏览器配置文件连上后出现在这里。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, browserInstanceHint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(browserInstanceHint)
 		// 新增行
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Select(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Label("浏览器平台")
@@ -164,7 +178,7 @@ func (a *App) browserPane(c *ui.Context) {
 					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
 				}
 			})
-		}).Grow(1).MinHeight(72).Border(1, c.Theme().Border).Radius(12)
+		}).Grow(1).MinHeight(56).Border(1, c.Theme().Border).Radius(12)
 		selected, hasSelection := a.selectedBrowser()
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
@@ -320,13 +334,17 @@ func (a *App) extensionBridgeSection(c *ui.Context) {
 	if warn {
 		detailColor = c.Theme().Warning
 	}
-	ui.Column(c).Gap(8).Children(func() {
+	summary := a.bridgePairLabel()
+	if status != "" {
+		summary += " · " + status
+	}
+	summary += " · 端口 " + a.extPort
+	if detail == "" {
+		detail = "填进扩展弹出页后保存"
+	}
+	ui.Column(c).Gap(6).Children(func() {
 		ui.Text(c, "页面桥").FontSize(15).Bold()
-		ui.Text(c, a.bridgePairLabel()).FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Text(c, status).FontSize(12)
-		if detail != "" {
-			ui.Text(c, detail).FontSize(12).TextColor(detailColor)
-		}
+		ui.Text(c, summary).FontSize(12).TextColor(detailColor).SingleLine().Tooltip(detail)
 		ui.TextInput(c.Key("ext-bridge-token"), &a.extToken).ReadOnly(true).FontSize(12).Label("令牌")
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Button(c, "复制令牌").OnClick(func() {
@@ -336,9 +354,8 @@ func (a *App) extensionBridgeSection(c *ui.Context) {
 			})
 			ui.Button(c, "重新生成").Disabled(a.running).OnClick(func() { a.regenerateExtensionToken() })
 		})
-		ui.Text(c, "端口 "+a.extPort+"，填进扩展弹出页后保存").FontSize(12).TextColor(c.Theme().TextMuted)
 		if a.extTokenNote != "" {
-			ui.Text(c, a.extTokenNote).FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Text(c, a.extTokenNote).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(a.extTokenNote)
 		}
 	})
 }
@@ -378,11 +395,127 @@ func (a *App) openSelectedPages() {
 
 func (a *App) refreshBrowsers() {
 	a.mu.Lock()
-	a.browserRows = a.store.Browsers()
-	for i := range a.browserRows {
-		a.browserRows[i].IsRunning = a.manager.IsRunning(a.browserRows[i].ID)
+	if a.store != nil {
+		a.browserRows = a.store.Browsers()
+		for i := range a.browserRows {
+			if a.manager != nil {
+				a.browserRows[i].IsRunning = a.manager.IsRunning(a.browserRows[i].ID)
+			}
+		}
 	}
 	a.mu.Unlock()
+	a.refreshDetected()
+}
+
+func (a *App) syncBrowserChoice() {
+	label := browser.ChoiceLabel(a.browserBackend)
+	if a.browserChoice != label {
+		a.browserChoice = label
+	}
+}
+
+func (a *App) refreshDetected() {
+	dir := browser.ConfigDir()
+	a.detectedNote, a.detectedDetail = browser.FormatDetected(browser.Detect(dir))
+	if rt, ok := browser.InstalledBuiltin(dir); ok {
+		a.cftReady = true
+		if a.cftBusy {
+			return
+		}
+		ver := rt.Version
+		if ver == "" {
+			ver = browser.PinnedCfTVersion()
+		}
+		a.cftStatus = "内置浏览器已就绪（" + ver + "）"
+		return
+	}
+	a.cftReady = false
+	if a.cftBusy {
+		return
+	}
+	if !browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH) {
+		a.cftStatus = "当前架构没有可下载的内置浏览器，请使用系统 Edge 或已安装的 Chrome"
+		return
+	}
+	a.cftStatus = "内置浏览器未下载"
+}
+
+func (a *App) builtinBrowserSection(c *ui.Context) {
+	note := a.detectedNote
+	if note == "" {
+		note = "正在检查本机浏览器…"
+	}
+	if a.cftStatus != "" {
+		note += " · " + a.cftStatus
+	}
+	label := "下载内置浏览器"
+	if a.cftReady {
+		label = "重新下载内置浏览器"
+	}
+	supported := browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, note).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(a.detectedDetail)
+		ui.Button(c, label).Disabled(a.running || a.cftBusy || !supported).OnClick(func() { a.downloadBuiltin() })
+	})
+	if a.cftBusy {
+		ui.Progress(c, a.cftPercent).FillWidth().Height(4)
+	}
+}
+
+func (a *App) downloadBuiltin() {
+	if a.cftBusy || a.running {
+		return
+	}
+	if !browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH) {
+		a.cftStatus = "当前架构没有可下载的内置浏览器，请使用系统 Edge 或已安装的 Chrome"
+		return
+	}
+	force := a.cftReady
+	a.cftBusy = true
+	a.cftPercent = 0
+	a.cftStatus = "正在下载内置浏览器…"
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		dir := browser.ConfigDir()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			a.syncUI(func() {
+				a.cftBusy = false
+				a.cftStatus = "下载失败：" + err.Error()
+			})
+			logging.Log.Errorf("下载内置浏览器失败: %v", err)
+			return
+		}
+		var err error
+		progress := func(done, total int64) {
+			a.syncUI(func() {
+				if total > 0 && done >= total {
+					a.cftPercent = 1
+					a.cftStatus = "正在解压内置浏览器…"
+					return
+				}
+				if total > 0 && done > 0 {
+					a.cftPercent = float64(done) / float64(total)
+					a.cftStatus = fmt.Sprintf("正在下载内置浏览器 %d%%", done*100/total)
+				}
+			})
+		}
+		if force {
+			_, err = browser.RedownloadCfT(ctx, dir, nil, progress)
+		} else {
+			_, err = browser.EnsureCfT(ctx, dir, nil, progress)
+		}
+		a.syncUI(func() {
+			a.cftBusy = false
+			if err != nil {
+				a.cftStatus = "下载失败：" + err.Error()
+				logging.Log.Errorf("下载内置浏览器失败: %v", err)
+				return
+			}
+			logging.Log.Success("内置浏览器已就绪")
+			a.refreshDetected()
+		})
+	}()
 }
 
 func (a *App) addBrowser() {

@@ -1,4 +1,5 @@
-// Package browser 负责查找本机 Chrome 或 Edge、按 profile 启动独立调试实例并维护映射。
+// Package browser 负责查找本机 Chrome、Edge 或 Chromium，必要时使用已下载的
+// Chrome for Testing，并按 profile 启动独立调试实例。
 package browser
 
 import (
@@ -23,49 +24,14 @@ var ErrChromeNotFound = errors.New("未找到 Google Chrome，请先安装")
 // ErrEdgeNotFound 本机找不到 Edge。
 var ErrEdgeNotFound = errors.New("未找到 Microsoft Edge，请先安装")
 
-// FindChromePath 在常见安装位置查找 Chrome 可执行文件。
+// FindChromePath 在常见安装位置查找 Chrome，找不到再找 Chromium。
 func FindChromePath() (string, error) {
-	var candidates []string
-	switch runtime.GOOS {
-	case "darwin":
-		candidates = []string{
-			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-			os.ExpandEnv("$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-			"/Applications/Chromium.app/Contents/MacOS/Chromium",
-		}
-	case "windows":
-		candidates = []string{} // Windows 环境变量路径在下方展开处理
-	default:
-		candidates = []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"}
-		if p, err := exec.LookPath(candidates[0]); err == nil {
-			return p, nil
-		}
+	loc := hostLookup(runtime.GOOS, runtime.GOARCH)
+	if path, err := loc.find(chromeLocations(loc.goos, loc.home, loc.env)); err == nil {
+		return path, nil
 	}
-	for _, p := range candidates {
-		if p == "" {
-			continue
-		}
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	// Windows 的环境变量展开手工做一遍（ExpandEnv 不识别 $env 形式）
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"} {
-			base := os.Getenv(name)
-			if base == "" {
-				continue
-			}
-			for _, sub := range []string{
-				`Google\Chrome\Application\chrome.exe`,
-				`Google\Chrome Beta\Application\chrome.exe`,
-			} {
-				p := base + `\` + sub
-				if _, err := os.Stat(p); err == nil {
-					return p, nil
-				}
-			}
-		}
+	if path, err := loc.find(chromiumLocations(loc.goos, loc.home, loc.env)); err == nil {
+		return path, nil
 	}
 	return "", ErrChromeNotFound
 }
@@ -77,12 +43,17 @@ func FindEdgePath() (string, error) {
 	return findOnDisk(look, files, ErrEdgeNotFound)
 }
 
-// ProfileDir 是实例的用户数据目录。Chrome 沿用 BrowserData/<名称>；Edge 使用 BrowserData/Edge/<名称>，避免两套登录态写进同一个 profile。
+// ProfileDir 是实例的用户数据目录。Chrome 与 Chromium 沿用 BrowserData/<名称>；
+// Edge 使用 BrowserData/Edge/<名称>；内置浏览器使用 BrowserData/Builtin/<名称>。
 func ProfileDir(dataRoot, backend, name string) string {
-	if backend == "Edge" {
+	switch pageBackend(backend) {
+	case KindEdge:
 		return filepath.Join(dataRoot, "Edge", name)
+	case KindBuiltin:
+		return filepath.Join(dataRoot, "Builtin", name)
+	default:
+		return filepath.Join(dataRoot, name)
 	}
-	return filepath.Join(dataRoot, name)
 }
 
 func edgeLocations(goos, home string, env func(string) string) (look, files []string) {
@@ -138,10 +109,7 @@ func osJoin(goos string, elem ...string) string {
 }
 
 func pageBackend(backend string) string {
-	if backend == "Edge" {
-		return "Edge"
-	}
-	return "Chrome"
+	return CanonicalBackend(backend)
 }
 
 // Manager 管理浏览器进程。
@@ -152,10 +120,10 @@ type Manager struct {
 // NewManager 创建管理器。
 func NewManager() *Manager { return &Manager{procs: map[int64]*os.Process{}} }
 
-// Start 按 profile 启动 Chrome 或 Edge 调试实例并等待 CDP 端口就绪，返回浏览器 WS 地址。
-// backend 只接受 Chrome 或 Edge，其它值按 Chrome 启动。
+// Start 按 profile 启动调试实例并等待 CDP 端口就绪，返回浏览器 WS 地址。
+// backend 接受 Chrome、Edge、Builtin。选中的浏览器不在时按系统顺序回落，仍使用独立的 --user-data-dir。
 func (m *Manager) Start(b store.Browser, dataRoot, backend string, minimize bool) (string, error) {
-	backend = pageBackend(backend)
+	requested := CanonicalBackend(backend)
 	if p, ok := m.procs[b.ID]; ok {
 		if ws, err := WaitWSURL(b.Port, 3*time.Second); err == nil {
 			return ws, nil
@@ -163,41 +131,46 @@ func (m *Manager) Start(b store.Browser, dataRoot, backend string, minimize bool
 		p.Kill()
 		delete(m.procs, b.ID)
 	}
-	bin, err := FindChromePath()
-	if backend == "Edge" {
-		bin, err = FindEdgePath()
-	}
+	rt, err := Resolve(runtime.GOOS, requested, ConfigDir())
 	if err != nil {
 		return "", err
 	}
+	if pageBackend(rt.Kind) != requested {
+		logging.Log.Info("没有可用的%s，改用%s", ChoiceLabel(requested), ChoiceLabel(rt.Kind))
+	}
 	userData := b.UserDataDir
 	if userData == "" {
-		userData = ProfileDir(dataRoot, backend, b.Name)
+		userData = ProfileDir(dataRoot, rt.Kind, b.Name)
 	}
 	if err := os.MkdirAll(userData, 0o755); err != nil {
 		return "", err
 	}
-	args := []string{
-		fmt.Sprintf("--remote-debugging-port=%d", b.Port),
-		"--user-data-dir=" + userData,
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--disable-features=Translate",
-		"--remote-allow-origins=*",
-		"about:blank",
-	}
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(rt.Path, debugArgs(b.Port, userData)...)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("启动 %s 失败: %w", backend, err)
+		return "", fmt.Errorf("启动%s失败: %w", ChoiceLabel(rt.Kind), err)
 	}
 	m.procs[b.ID] = cmd.Process
-	logging.Log.Info("浏览器[%s] 已启动 (%s, 端口 %d)", b.Name, backend, b.Port)
+	logging.Log.Info("浏览器[%s] 已启动（%s，端口 %d）", b.Name, ChoiceLabel(rt.Kind), b.Port)
 	ws, err := WaitWSURL(b.Port, 20*time.Second)
 	if err != nil {
 		return "", err
 	}
 	return ws, nil
+}
+
+// debugArgs 是现有调试参数，另加 --disable-infobars。不带 --enable-automation，避免 navigator.webdriver 被打开。
+func debugArgs(port int, userData string) []string {
+	return []string{
+		fmt.Sprintf("--remote-debugging-port=%d", port),
+		"--user-data-dir=" + userData,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-features=Translate",
+		"--disable-infobars",
+		"--remote-allow-origins=*",
+		"about:blank",
+	}
 }
 
 // Stop 停止指定浏览器进程。

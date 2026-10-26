@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -58,6 +59,13 @@ type App struct {
 	window         *mygo.Window
 	dataRoot       string
 	browserBackend string
+	browserChoice  string
+	detectedNote   string
+	detectedDetail string
+	cftStatus      string
+	cftBusy        bool
+	cftPercent     float64
+	cftReady       bool
 
 	// 任务设置（与 settings 表一一对应）
 	platDoubao      bool
@@ -196,8 +204,9 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 // loadSettings 从配置库读入 UI 状态。
 func (a *App) loadSettings() {
 	s := a.store
-	a.browserBackend = pickStr(s.Get("browser_backend"), "Chrome", []string{"Chrome", "Edge"})
+	a.browserBackend = browser.NormalizeStoredBackend(runtime.GOOS, s.Get("browser_backend"))
 	s.Set("browser_backend", a.browserBackend)
+	a.browserChoice = browser.ChoiceLabel(a.browserBackend)
 	a.extToken = extbridge.NormalizeExtToken(s.Get(extbridge.SettingExtToken))
 	if extbridge.WeakToken(s.Get(extbridge.SettingExtToken)) {
 		if generated, err := extbridge.NewToken(); err == nil {
@@ -507,9 +516,14 @@ func (a *App) canStart() bool {
 }
 
 // missingBrowserNames 是已勾选、但还没有浏览器实例的平台。
-// 扩展桥不使用本机实例。未选择 Chrome/Edge（测试里的空值）也不在这里拦截。
 func (a *App) missingBrowserNames() []string {
-	if a.extensionTasks() || (a.browserBackend != "Chrome" && a.browserBackend != "Edge") {
+	// 扩展桥不使用本机实例。空的网页方式（部分测试）也不在这里拦截。
+	switch a.browserBackend {
+	case browser.KindChrome, browser.KindEdge, browser.KindBuiltin:
+	default:
+		return nil
+	}
+	if a.extensionTasks() {
 		return nil
 	}
 	have := map[string]bool{}

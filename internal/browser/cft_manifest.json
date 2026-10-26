@@ -1,0 +1,30 @@
+{
+  "version": "156.0.8078.47",
+  "platforms": {
+    "linux64": {
+      "file": "chrome-linux64.zip",
+      "sha256": "e6c94490f0b6b337225aeb2d2a5034858516b7017356980ba94f5176d8774a50",
+      "exe": "chrome-linux64/chrome"
+    },
+    "linux-arm64": {
+      "file": "chrome-linux-arm64.zip",
+      "sha256": "9e37000e3ee2731e45e475a6a2eac587d3c0ee5f8aef7cab5211ecd52cf3fb7b",
+      "exe": "chrome-linux-arm64/chrome"
+    },
+    "mac-arm64": {
+      "file": "chrome-mac-arm64.zip",
+      "sha256": "ad7f2b49a4dc679af286b1b1b386670d93ca7868079f69012d21ba0ac8293df3",
+      "exe": "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+    },
+    "mac-x64": {
+      "file": "chrome-mac-x64.zip",
+      "sha256": "5a38b8e3d621514fff0775dcae678a152ce378890188c88eef79fc97aa59fccd",
+      "exe": "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+    },
+    "win64": {
+      "file": "chrome-win64.zip",
+      "sha256": "a4e0d57245e167e98a9d465af1e3774d2b4ec9f04e483d19bcd97a6f63cf46dd",
+      "exe": "chrome-win64/chrome.exe"
+    }
+  }
+}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -567,10 +568,11 @@ func (e *Engine) browsersOfPlatforms() map[string][]int64 {
 }
 
 func (e *Engine) pageBackend() string {
-	if e.store != nil && e.store.Get("browser_backend") == "Edge" {
-		return "Edge"
+	raw := ""
+	if e.store != nil {
+		raw = e.store.Get("browser_backend")
 	}
-	return "Chrome"
+	return browser.NormalizeStoredBackend(runtime.GOOS, raw)
 }
 
 // session 取/建平台会话（同一浏览器+平台复用一个标签页，SharedSession 语义）。
