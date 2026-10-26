@@ -497,6 +497,78 @@ func TestOpenSelectedPagesSwitchesBrowserTab(t *testing.T) {
 	}
 }
 
+func TestExtensionTokenVisibleCopyAndRegenerate(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set(extbridge.SettingExtToken, "  ")
+	st.Set(extbridge.SettingExtPort, "18766")
+	a := &App{
+		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
+		splitSz: 380, sourceHeight: 210, tab: 1,
+	}
+	a.loadSettings()
+	if a.extToken != extbridge.DefaultExtToken || a.extPort != "18766" {
+		t.Fatalf("blank token should show the bridge default, port=%q token=%q", a.extPort, a.extToken)
+	}
+	tt := ui.NewTester(a.view, 1000, 720)
+	for _, label := range []string{"页面桥", "令牌", "复制令牌", "重新生成", "启动选中"} {
+		assertVisible(t, tt, label, 1000, 720)
+	}
+	if !tt.HasText("端口 18766") {
+		t.Fatal("stored bridge port is not shown")
+	}
+	if err := tt.Click("复制令牌"); err != nil {
+		t.Fatal(err)
+	}
+	if tt.Clipboard() != extbridge.DefaultExtToken || !tt.HasText("已复制令牌") {
+		t.Fatalf("copy: clipboard=%q", tt.Clipboard())
+	}
+
+	st.Set(extbridge.SettingExtToken, "from-desktop")
+	a.loadSettings()
+	tt.Frame()
+	if a.extToken != "from-desktop" {
+		t.Fatalf("stored token was replaced: %q", a.extToken)
+	}
+	if err := tt.Click("复制令牌"); err != nil {
+		t.Fatal(err)
+	}
+	if tt.Clipboard() != "from-desktop" {
+		t.Fatalf("copy stored token: %q", tt.Clipboard())
+	}
+
+	before := a.extToken
+	if err := tt.Click("重新生成"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.extToken == before || a.extToken != st.Get(extbridge.SettingExtToken) || len(a.extToken) != 32 {
+		t.Fatalf("regenerate token=%q stored=%q", a.extToken, st.Get(extbridge.SettingExtToken))
+	}
+	if !tt.HasText("已生成新令牌，请粘贴到扩展弹出页并保存") {
+		t.Fatal("regenerate did not tell the user to update the extension")
+	}
+	if err := tt.Click("复制令牌"); err != nil {
+		t.Fatal(err)
+	}
+	if tt.Clipboard() != a.extToken {
+		t.Fatalf("copy after regenerate: clipboard=%q token=%q", tt.Clipboard(), a.extToken)
+	}
+
+	kept := a.extToken
+	a.running = true
+	tt.Frame()
+	if err := tt.Click("重新生成"); err != nil {
+		t.Fatal(err)
+	}
+	if tt.Focused("重新生成") || a.extToken != kept || st.Get(extbridge.SettingExtToken) != kept {
+		t.Fatal("token changed while a task was running")
+	}
+}
+
 func TestChromeQianwenWithoutBrowserCannotStart(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {

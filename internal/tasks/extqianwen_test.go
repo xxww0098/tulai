@@ -30,6 +30,59 @@ import (
 	"xbs/internal/strategy"
 )
 
+func TestReloadExtensionBridgeUsesSavedToken(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingExtPort, port)
+	st.Set(extbridge.SettingExtToken, "token-a")
+	e := NewEngine(st, nil, nil, t.TempDir())
+	t.Cleanup(func() { e.CloseSessions() })
+	if err := e.ReloadExtensionBridge(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.extensionServer(); err != nil {
+		t.Fatal(err)
+	}
+	if ack := helloBridge(t, "127.0.0.1:"+port, "token-a"); ack.Type != extbridge.TypeAck {
+		t.Fatalf("first hello: %+v", ack)
+	}
+	st.Set(extbridge.SettingExtToken, "token-b")
+	if err := e.ReloadExtensionBridge(); err != nil {
+		t.Fatal(err)
+	}
+	if ack := helloBridge(t, "127.0.0.1:"+port, "token-a"); ack.Type != extbridge.TypeError {
+		t.Fatalf("old token still accepted: %+v", ack)
+	}
+	if ack := helloBridge(t, "127.0.0.1:"+port, "token-b"); ack.Type != extbridge.TypeAck {
+		t.Fatalf("new token: %+v", ack)
+	}
+}
+
+func helloBridge(t *testing.T, addr, token string) extbridge.Envelope {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, br, _, err := ws.Dial(ctx, "ws://"+addr+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	raw, _ := json.Marshal(map[string]string{"token": token, "version": "0.3.6"})
+	hello := extbridge.Envelope{V: extbridge.Version, ID: "hello-reload", Type: extbridge.TypeHello, TS: time.Now().UnixMilli(), Platform: extbridge.PlatformQianwen, Payload: raw}
+	if err := writeClient(conn, hello); err != nil {
+		t.Fatal(err)
+	}
+	reader := io.Reader(conn)
+	if br != nil {
+		reader = br
+	}
+	ack, err := readServer(conn, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ack
+}
+
 func TestUseExtensionForQianwenAndDoubao(t *testing.T) {
 	st := openTaskStore(t)
 	e := NewEngine(st, nil, nil, t.TempDir())

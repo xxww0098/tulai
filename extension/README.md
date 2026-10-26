@@ -67,7 +67,7 @@ go run ./cmd/xbs-ext-smoke
 UPDATE settings SET value='extension' WHERE key='browserBackend';
 ```
 
-`extBridgeToken`、`extBridgePort` 要和扩展弹出页里的令牌、端口一致（选项页是同一组值）。然后勾千问或豆包，写上提示词。要图生图再放源图；只要提示词就留空源图。界面上的「Chrome / Edge」下拉框是另一个键 `browser_backend`，不要改它来切换扩展。`browserBackend=extension` 时不要求先添加浏览器实例。
+桌面端「浏览器」页会显示页面桥令牌和端口，可以复制，也可以重新生成。把同一组值填进扩展弹出页（选项页是同一组值）并保存。配置库键仍是 `extBridgeToken`、`extBridgePort`。然后勾千问或豆包，写上提示词。要图生图再放源图；只要提示词就留空源图。界面上的「Chrome / Edge」下拉框是另一个键 `browser_backend`，不要改它来切换扩展。`browserBackend=extension` 时不要求先添加浏览器实例。
 
 ## 发送和验证码
 

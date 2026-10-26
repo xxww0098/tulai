@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"xbs/internal/cdp"
+	"xbs/internal/extbridge"
 	"xbs/internal/logging"
 	"xbs/internal/store"
 	"xbs/internal/strategy"
@@ -111,6 +112,7 @@ func (a *App) browserPane(c *ui.Context) {
 			a.store.Set("browser_backend", a.browserBackend)
 		})
 	})
+	a.extensionBridgeSection(c)
 	ui.Column(c).Grow(1).MinHeight(0).Gap(8).Children(func() {
 		ui.Text(c, "浏览器实例").Bold()
 		ui.Text(c, "每个实例单独保存登录状态，两种网页方式的配置目录互不影响。").FontSize(12).TextColor(c.Theme().TextMuted)
@@ -280,6 +282,53 @@ func (a *App) bottomView(c *ui.Context) {
 			})
 		}).Grow(1).MinHeight(0)
 	})
+}
+
+// extensionBridgeSection 展示页面桥令牌和端口。扩展弹出页要填同一组值。
+// 令牌单独占一行，避免侧栏里被按钮挤掉，复制时看不清。
+func (a *App) extensionBridgeSection(c *ui.Context) {
+	a.extToken = extbridge.NormalizeExtToken(a.extToken)
+	a.extPort = extbridge.NormalizeExtPort(a.extPort)
+	clip := c.Services()
+	ui.Column(c).Gap(6).Children(func() {
+		ui.Text(c, "页面桥").Bold()
+		ui.TextInput(c.Key("ext-bridge-token"), &a.extToken).ReadOnly(true).FontSize(12).Label("令牌")
+		ui.Row(c).Gap(6).Children(func() {
+			ui.Button(c, "复制令牌").OnClick(func() {
+				a.extToken = extbridge.NormalizeExtToken(a.extToken)
+				clip.WriteClipboard(a.extToken)
+				a.extTokenNote = "已复制令牌"
+			})
+			ui.Button(c, "重新生成").Disabled(a.running).OnClick(func() { a.regenerateExtensionToken() })
+		})
+		ui.Text(c, "端口 "+a.extPort+"，填进扩展弹出页后保存").FontSize(12).TextColor(c.Theme().TextMuted)
+		if a.extTokenNote != "" {
+			ui.Text(c, a.extTokenNote).FontSize(12).TextColor(c.Theme().TextMuted)
+		}
+	})
+}
+
+// regenerateExtensionToken 换一枚令牌并立刻写入配置库。正在跑的任务仍用旧令牌，所以按钮在运行时关掉。
+func (a *App) regenerateExtensionToken() {
+	token, err := extbridge.NewToken()
+	if err != nil {
+		a.extTokenNote = "生成令牌失败"
+		logging.Log.Errorf("生成页面桥令牌失败: %v", err)
+		return
+	}
+	a.extToken = token
+	if a.store != nil {
+		a.store.Set(extbridge.SettingExtToken, token)
+	}
+	if a.engine != nil {
+		if err := a.engine.ReloadExtensionBridge(); err != nil {
+			a.extTokenNote = "已生成新令牌，但桥没有重新监听"
+			logging.Log.Errorf("重新监听页面桥失败: %v", err)
+			return
+		}
+	}
+	a.extTokenNote = "已生成新令牌，请粘贴到扩展弹出页并保存"
+	logging.Log.Info("已重新生成页面桥令牌")
 }
 
 // ---- 浏览器操作 ----
