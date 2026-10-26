@@ -2,16 +2,19 @@ const tokenInput = document.querySelector('#token')
 const portInput = document.querySelector('#port')
 const status = document.querySelector('#status')
 
-const defaults = { token: '', port: 18765, lastError: '', bridgeStatus: 'off' }
-const statusLabel = { on: '已连接', off: '未连接', error: '连接失败' }
+const defaults = { token: '', port: 18765, lastError: '', bridgeStatus: 'off', qianwen: 'off', doubao: 'off' }
+const statusLabel = { on: '已连接', off: '未连接', error: '连接失败', reconnecting: '正在重连' }
+const platformLabel = { on: '已连接', off: '未连接' }
 
 function showStatus(stored) {
   const raw = stored.bridgeStatus || 'off'
   const label = Object.prototype.hasOwnProperty.call(statusLabel, raw) ? statusLabel[raw] : raw
-  const lines = ['状态: ' + label]
-  if (stored.lastError) lines.push('最近一次错误: ' + stored.lastError)
+  const qianwen = platformLabel[stored.qianwen] || '未连接'
+  const doubao = platformLabel[stored.doubao] || '未连接'
+  const lines = ['状态: ' + label, '千问: ' + qianwen, '豆包: ' + doubao]
+  if (stored.lastError) lines.push(stored.lastError)
   status.textContent = lines.join('\n')
-  status.dataset.state = raw
+  status.dataset.state = raw === 'reconnecting' ? 'error' : raw
 }
 
 function showFields(stored) {

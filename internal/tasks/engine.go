@@ -45,11 +45,13 @@ type Engine struct {
 	srcHashes map[string]bool         // 源图哈希（回声过滤）
 	dataRoot  string
 
-	extMu     sync.Mutex
-	extSrv    *extbridge.Server
-	extBatch  string
-	extToken  string
-	extListen string
+	extMu       sync.Mutex
+	extSrv      *extbridge.Server
+	extBatch    string
+	extToken    string
+	extListen   string
+	extErr      string
+	extOnChange func()
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。

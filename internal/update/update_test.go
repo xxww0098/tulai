@@ -319,7 +319,7 @@ func TestInstallLinuxUserArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantExec := `Exec="` + filepath.Join(home, ".local", "xbs.app", "xbs") + `"`
-	if !strings.Contains(string(desktop), wantExec) || !strings.Contains(string(desktop), "Name=图来") || strings.Contains(string(desktop), "Name=xbs") {
+	if !strings.Contains(string(desktop), wantExec) || !strings.Contains(string(desktop), "Name=tulai") || strings.Contains(string(desktop), "Name=xbs") {
 		t.Fatalf("desktop entry:\n%s", desktop)
 	}
 	info, err := os.Stat(filepath.Join(home, ".local", "xbs.app", "xbs"))

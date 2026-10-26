@@ -1,4 +1,4 @@
-importScripts('protocol.js')
+importScripts('protocol.js', 'bridge_logic.js')
 
 const XBS = globalThis.XBS
 const ALARM = 'xbs-bridge-reconnect'
@@ -56,11 +56,16 @@ function newLink(platform) {
     socket: null,
     opened: false,
     sessionId: '',
-    retryMs: 1000,
+    retryMs: XBSBridge.retryMinMs,
     reconnectTimer: null,
     pingTimer: null,
     connecting: false,
+    attempt: 0,
     authError: '',
+    linkError: '',
+    pingAwaiting: false,
+    lastPongAt: 0,
+    triedPort: 18765,
   }
 }
 
@@ -85,19 +90,29 @@ function setBadge(text, color) {
 
 function refreshBadge() {
   const all = Object.values(links)
-  if (all.some((link) => link.opened)) {
+  const openCount = all.filter((link) => link.opened).length
+  const problem = all.map((link) => link.authError || link.linkError).find(Boolean) || ''
+  const platforms = {
+    qianwen: links.qianwen.opened ? 'on' : 'off',
+    doubao: links.doubao.opened ? 'on' : 'off',
+  }
+  if (openCount === all.length) {
     setBadge('ON', '#1b7f3a')
-    remember('on', '')
+    remember('on', '', platforms)
     return
   }
-  const auth = all.map((link) => link.authError).find(Boolean)
-  if (auth) {
-    setBadge('ERR', '#8c2f2f')
-    remember('error', auth)
+  if (problem) {
+    setBadge(openCount ? '…' : 'ERR', openCount ? '#8a6d1d' : '#8c2f2f')
+    remember(openCount ? 'reconnecting' : 'error', problem, platforms)
+    return
+  }
+  if (all.some((link) => link.connecting || link.reconnectTimer)) {
+    setBadge('…', '#8a6d1d')
+    remember('reconnecting', openCount ? '有一条连接已断开，正在重连' : '正在连接 tulai', platforms)
     return
   }
   setBadge('OFF', '#666666')
-  remember('off', '')
+  remember('off', '', platforms)
 }
 
 function stopPing(link) {
@@ -109,11 +124,25 @@ function stopPing(link) {
 
 function startPing(link) {
   stopPing(link)
+  link.pingAwaiting = false
+  link.lastPongAt = Date.now()
   link.pingTimer = setInterval(() => {
     if (!link.opened || !link.socket || link.socket.readyState !== WebSocket.OPEN) return
+    if (XBSBridge.pingTimedOut(link.lastPongAt, link.pingAwaiting, Date.now(), XBS.pingEveryMs)) {
+      link.linkError = '心跳没有回应，正在重连。不用重启 tulai。'
+      link.authError = ''
+      reconnect(link)
+      return
+    }
+    link.pingAwaiting = true
     const env = XBS.envelope('ping')
     env.platform = link.platform
-    link.socket.send(JSON.stringify(env))
+    try {
+      link.socket.send(JSON.stringify(env))
+    } catch (err) {
+      link.linkError = '发送心跳失败，正在重连。'
+      reconnect(link)
+    }
   }, XBS.pingEveryMs)
 }
 
@@ -125,30 +154,43 @@ function sendToHost(link, env) {
   return true
 }
 
-function remember(status, lastError) {
-  return storageSet({ bridgeStatus: status, lastError: lastError || '' })
+function remember(status, lastError, platforms) {
+  return storageSet(Object.assign({
+    bridgeStatus: status,
+    lastError: lastError || '',
+  }, platforms || {}))
 }
 
 function scheduleReconnect(link) {
   if (link.reconnectTimer) return
   const wait = link.retryMs
-  link.retryMs = Math.min(link.retryMs * 2, 15000)
+  link.retryMs = XBSBridge.nextRetryMs(link.retryMs)
   link.reconnectTimer = setTimeout(() => {
     link.reconnectTimer = null
     connect(link)
   }, wait)
+  refreshBadge()
 }
 
 function reconnect(link) {
+  if (link.reconnectTimer) {
+    clearTimeout(link.reconnectTimer)
+    link.reconnectTimer = null
+  }
   const current = link.socket
+  link.attempt += 1
   link.socket = null
   link.connecting = false
   link.opened = false
   link.sessionId = ''
+  link.pingAwaiting = false
   stopPing(link)
   if (current) {
     current.onclose = null
-    current.close()
+    current.onerror = null
+    current.onmessage = null
+    current.onopen = null
+    try { current.close() } catch (err) {}
   }
   connect(link)
 }
@@ -160,14 +202,18 @@ function reconnectAll() {
 async function connect(link) {
   if (link.connecting || (link.socket && link.socket.readyState !== WebSocket.CLOSED)) return
   link.connecting = true
+  link.attempt += 1
+  const attempt = link.attempt
   const cfg = await storageGet()
+  if (link.attempt !== attempt) return
   const port = Number(cfg.port) || 18765
+  link.triedPort = port
   let ws
   try {
     ws = new WebSocket('ws://127.0.0.1:' + port + '/')
   } catch (err) {
     link.connecting = false
-    link.authError = String(err && err.message || err)
+    if (!link.authError) link.linkError = XBSBridge.refusedMessage(port)
     refreshBadge()
     scheduleReconnect(link)
     return
@@ -176,29 +222,60 @@ async function connect(link) {
   link.connecting = false
   link.opened = false
   link.sessionId = ''
+  const openTimer = setTimeout(() => {
+    if (link.socket === ws && !link.opened) {
+      if (!link.authError) link.linkError = XBSBridge.refusedMessage(port)
+      try { ws.close() } catch (err) {}
+    }
+  }, 8000)
   ws.onopen = () => {
-    ws.send(JSON.stringify(XBS.hello(cfg.token, link.platform)))
+    clearTimeout(openTimer)
+    try {
+      ws.send(JSON.stringify(XBS.hello(cfg.token, link.platform)))
+    } catch (err) {
+      link.linkError = XBSBridge.refusedMessage(port)
+      try { ws.close() } catch (e) {}
+    }
   }
   ws.onmessage = (ev) => {
     if (typeof ev.data !== 'string') return
     onHostMessage(link, ws, ev.data)
   }
-  ws.onerror = () => {}
+  ws.onerror = () => {
+    if (!link.authError) link.linkError = XBSBridge.refusedMessage(port)
+  }
   ws.onclose = () => {
+    clearTimeout(openTimer)
     if (link.socket !== ws) return
     const wasOpen = link.opened
     link.socket = null
     link.opened = false
     link.sessionId = ''
+    link.pingAwaiting = false
     stopPing(link)
-    if (wasOpen) link.authError = ''
+    if (wasOpen) {
+      link.authError = ''
+      if (!link.linkError) link.linkError = '连接已断开，正在重连。不用重启 tulai。'
+    } else if (!link.authError && !link.linkError) {
+      link.linkError = XBSBridge.refusedMessage(port)
+    }
     refreshBadge()
     scheduleReconnect(link)
   }
 }
 
 function connectAll() {
-  Object.values(links).forEach(connect)
+  Object.values(links).forEach((link) => {
+    const open = link.opened && link.socket && link.socket.readyState === WebSocket.OPEN
+    if (open && XBSBridge.pingTimedOut(link.lastPongAt, link.pingAwaiting, Date.now(), XBS.pingEveryMs)) {
+      link.linkError = '心跳没有回应，正在重连。不用重启 tulai。'
+      reconnect(link)
+      return
+    }
+    if (open) return
+    if (link.socket && link.socket.readyState === WebSocket.CONNECTING) return
+    connect(link)
+  })
 }
 
 function onHostMessage(link, ws, data) {
@@ -210,9 +287,9 @@ function onHostMessage(link, ws, data) {
   }
   if (!link.opened) {
     if (env.type === 'error') {
-      const code = env.payload && env.payload.code
-      const message = (env.payload && env.payload.message) || code || 'hello 失败'
-      link.authError = message
+      const message = (env.payload && env.payload.message) || (env.payload && env.payload.code) || 'hello 失败'
+      link.authError = XBSBridge.authMessage(message)
+      link.linkError = ''
       refreshBadge()
       ws.close()
       return
@@ -220,8 +297,11 @@ function onHostMessage(link, ws, data) {
     if (env.type === 'ack' && env.payload && env.payload.name === XBS.commands.helloAck) {
       link.opened = true
       link.authError = ''
+      link.linkError = ''
       link.sessionId = env.sessionId || ''
-      link.retryMs = 1000
+      link.retryMs = XBSBridge.retryMinMs
+      link.pingAwaiting = false
+      link.lastPongAt = Date.now()
       startPing(link)
       refreshBadge()
     }
@@ -231,7 +311,13 @@ function onHostMessage(link, ws, data) {
     sendToHost(link, XBS.reply(env, 'pong'))
     return
   }
-  if (env.type === 'pong' || env.type === 'ack' || env.type === 'error') return
+  if (env.type === 'pong') {
+    link.pingAwaiting = false
+    link.lastPongAt = Date.now()
+    if (link.linkError && link.linkError.indexOf('心跳') === 0) link.linkError = ''
+    return
+  }
+  if (env.type === 'ack' || env.type === 'error') return
   if (env.type === 'cmd') {
     dispatchCommand(link, env)
   }

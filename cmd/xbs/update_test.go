@@ -156,7 +156,7 @@ func TestUpdateUsage(t *testing.T) {
 	if code := runUpdateWith([]string{"--bogus"}, updateRun{Stdout: &stdout, Stderr: &stderr}); code != 2 {
 		t.Fatalf("code %d", code)
 	}
-	if !strings.Contains(stderr.String(), "图来") || !strings.Contains(stderr.String(), "xbs update") {
+	if !strings.Contains(stderr.String(), "tulai") || !strings.Contains(stderr.String(), "xbs update") {
 		t.Fatalf("stderr %s", stderr.String())
 	}
 }

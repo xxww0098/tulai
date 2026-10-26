@@ -18,6 +18,7 @@ import (
 	"xbs/internal/extbridge"
 	"xbs/internal/images"
 	"xbs/internal/logging"
+	"xbs/internal/prompts"
 	"xbs/internal/store"
 	"xbs/internal/tasks"
 )
@@ -80,6 +81,11 @@ type App struct {
 	outputPath      string
 	removeWatermark bool
 	prompts         string
+	userPrompts     []prompts.UserPrompt
+	promptPick      string
+	promptChoice    string
+	freeformPrompts string
+	promptNote      string
 	promptSuffix    string
 	useSuffix       bool
 	batchMode       int // batchText 文生图 / batchImage 图生图
@@ -132,7 +138,7 @@ type sourceImage struct {
 // Run 启动应用（主 goroutine）。
 func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot string) {
 	// 菜单「关于 / 退出」用这个名字。可执行文件和 mygo.json 的 name 仍是 xbs。
-	mygo.App.SetName("图来")
+	mygo.App.SetName("tulai")
 	a := &App{
 		store:        st,
 		manager:      bm,
@@ -162,12 +168,20 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 	})
 	mygo.App.WhenReady(func() {
 		a.window = mygo.NewWindow(mygo.WindowOptions{
-			Title:   "图来",
+			Title:   "tulai",
 			Width:   1280,
-			Height:  840,
+			Height:  900,
 			Content: ui.View(a.view),
 		})
 		applyAppIcon(a.window)
+		if a.engine != nil {
+			a.engine.EnsureExtensionBridge(func() {
+				if a.window == nil {
+					return
+				}
+				a.window.Update(func() {})
+			})
+		}
 	})
 	if err := mygo.App.Run(); err != nil {
 		panic(err)
@@ -202,6 +216,13 @@ func (a *App) loadSettings() {
 	a.outputPath = s.Get("output_path")
 	a.removeWatermark = s.GetBool("remove_watermark")
 	a.prompts = s.Get("prompts")
+	a.freeformPrompts = s.Get("prompts_freeform")
+	a.userPrompts = prompts.ParseUser(s.Get("user_prompts"))
+	a.promptPick = prompts.NormalizePick(s.Get("prompt_pick"), a.userPrompts)
+	if a.promptPick == "" {
+		a.freeformPrompts = a.prompts
+	}
+	a.promptChoice = prompts.LabelFor(a.promptPick, a.userPrompts)
 	a.promptSuffix = s.Get("prompt_suffix")
 	a.useSuffix = s.GetBool("use_suffix")
 
@@ -277,6 +298,9 @@ func (a *App) saveSettings() {
 	s.Set("output_path", a.outputPath)
 	s.SetInt("remove_watermark", boolInt(a.removeWatermark))
 	s.Set("prompts", a.prompts)
+	s.Set("prompts_freeform", a.freeformPrompts)
+	s.Set("user_prompts", prompts.FormatUser(a.userPrompts))
+	s.Set("prompt_pick", a.promptPick)
 	s.Set("prompt_suffix", a.promptSuffix)
 	s.SetInt("use_suffix", boolInt(a.useSuffix))
 	if a.batchMode == batchImage {
@@ -316,8 +340,8 @@ func (a *App) view(c *ui.Context) {
 	width, _ := c.Size()
 	sidebarWidth := min(a.splitSz, max(300, width*0.32))
 	ui.Column(c).Fill().Children(func() {
-		ui.Row(c).Padding(14, 20).Gap(14).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "图来").FontSize(22).Bold()
+		ui.Row(c).Padding(16, 24).Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "tulai").FontSize(22).Bold()
 			subtitle := "豆包 / 千问"
 			if v := mygo.App.Version(); v != "" {
 				subtitle += " · " + v
@@ -327,11 +351,11 @@ func (a *App) view(c *ui.Context) {
 		})
 		ui.Divider(c)
 		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-			ui.Column(c).Width(sidebarWidth).FillHeight().MinHeight(0).Shrink(0).Padding(14).Gap(12).Background(c.Theme().Surface).Children(func() {
+			ui.Column(c).Width(sidebarWidth).FillHeight().MinHeight(0).Shrink(0).Padding(18, 16).Gap(16).Background(c.Theme().Surface).Children(func() {
 				a.settingsPane(c)
 			})
 			ui.Divider(c).Width(1).FillHeight()
-			ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Padding(16).Gap(12).Children(func() {
+			ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Padding(16, 22).Gap(12).Children(func() {
 				a.workspace(c)
 			})
 		})
@@ -351,12 +375,13 @@ func (a *App) workspace(c *ui.Context) {
 			break
 		}
 	}
-	prompts := splitLines(a.prompts)
-	ready := fmt.Sprintf("%d 条提示词", len(prompts))
+	promptList := a.taskPromptList()
+	countLabel := prompts.Describe(a.promptPick, a.prompts, a.userPrompts)
+	ready := countLabel
 	if a.batchMode == batchImage {
-		ready = fmt.Sprintf("%d 张源图 · %d 条提示词", len(a.sources), len(prompts))
+		ready = fmt.Sprintf("%d 张源图 · %s", len(a.sources), countLabel)
 	} else {
-		ready = "文生图 · " + ready
+		ready = "文生图 · " + countLabel
 	}
 	status, hint := "待开始", ready
 	missingBrowsers := a.missingBrowserNames()
@@ -369,7 +394,7 @@ func (a *App) workspace(c *ui.Context) {
 		status, hint = "待选平台", "勾选豆包或千问"
 	case a.batchMode == batchImage && len(a.sources) == 0:
 		status, hint = "待导入", "添加源图，或切回文生图"
-	case a.batchMode == batchText && len(prompts) == 0:
+	case a.batchMode == batchText && len(promptList) == 0:
 		status, hint = "待写提示词", "写下提示词即可开始，不用源图"
 	case len(missingBrowsers) > 0:
 		status, hint = "待添加浏览器", missingBrowserHint(missingBrowsers)
@@ -380,7 +405,7 @@ func (a *App) workspace(c *ui.Context) {
 	if needsUser {
 		status, hint = string(tasks.StatusNeedsUser), taskResultSummary(items)
 	}
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 		ui.Segmented(c, &a.batchMode, "文生图", "图生图").Disabled(a.running).OnChange(func() {
 			if !a.running && a.progress == 0 {
 				a.progText = ""
@@ -390,7 +415,7 @@ func (a *App) workspace(c *ui.Context) {
 		ui.Checkbox(c, &a.platQianwen, "千问").Disabled(a.running)
 		ui.Badge(c, status)
 	})
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(hint)
 		ui.Button(c, "管理浏览器").Disabled(a.running).OnClick(func() { a.openSelectedPages() })
 		if a.running {
@@ -399,7 +424,11 @@ func (a *App) workspace(c *ui.Context) {
 			ui.PrimaryButton(c, "开始任务").Disabled(!a.canStart()).OnClick(func() { a.startTasks() })
 		}
 	})
-	ui.TextArea(c, &a.prompts).Height(64).Label("提示词").Placeholder("每行一条提示词")
+	a.promptRow(c)
+	ui.TextArea(c, &a.prompts).Height(56).Label("提示词").Placeholder("每行一条。选了模板后，整段一起发送")
+	if a.promptNote != "" {
+		ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
+	}
 	if needsUser {
 		ui.Text(c, verificationHint).FontSize(12).TextColor(c.Theme().Warning)
 	}
@@ -407,21 +436,21 @@ func (a *App) workspace(c *ui.Context) {
 		ui.Progress(c, a.progress).FillWidth().Height(4)
 	}
 	if a.batchMode != batchImage {
-		ui.Column(c).Grow(1).MinHeight(0).Padding(12, 0, 0, 0).Gap(12).Children(func() { a.bottomPane(c) })
+		ui.Column(c).Grow(1).MinHeight(0).Padding(4, 0, 0, 0).Gap(12).Children(func() { a.bottomPane(c) })
 		return
 	}
 	ui.SplitVertical(c, &a.sourceHeight, func() {
 		a.sourcesPane(c)
 	}, func() {
-		ui.Column(c).Fill().Padding(12, 0, 0, 0).Gap(12).Children(func() { a.bottomPane(c) })
+		ui.Column(c).Fill().Padding(4, 0, 0, 0).Gap(12).Children(func() { a.bottomPane(c) })
 	}).Grow(1).MinHeight(0).FillWidth()
 }
 
 // sourcesPane 源图片管理。
 func (a *App) sourcesPane(c *ui.Context) {
-	ui.Column(c).Fill().Padding(14).Gap(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(10).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, fmt.Sprintf("源图片（%d）", len(a.sources))).Bold().Grow(1)
+	ui.Column(c).Fill().Padding(16).Gap(12).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, fmt.Sprintf("源图片（%d）", len(a.sources))).FontSize(15).Bold().Grow(1)
 			ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
 			ui.Button(c, "移除选中").Disabled(a.running || a.srcSel < 0 || a.srcSel >= len(a.sources)).OnClick(func() { a.removeSelected() })
 			ui.Button(c, "清空").Disabled(a.running || len(a.sources) == 0).OnClick(func() {
@@ -463,7 +492,7 @@ func (a *App) canStart() bool {
 	if a.batchMode == batchImage {
 		return len(a.sources) > 0
 	}
-	return len(splitLines(a.prompts)) > 0
+	return len(a.taskPromptList()) > 0
 }
 
 // missingBrowserNames 是已勾选、但还没有浏览器实例的平台。
@@ -521,7 +550,7 @@ func (a *App) startTasks() {
 	if !a.canStart() {
 		return
 	}
-	prompts := splitLines(a.prompts)
+	prompts := a.taskPromptList()
 	srcPaths := a.batchImages()
 	var plats []string
 	if a.platDoubao {

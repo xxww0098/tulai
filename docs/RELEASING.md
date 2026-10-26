@@ -1,8 +1,8 @@
-# 发布 图来 0.1.2
+# 发布 tulai 0.1.2
 
 当前桌面端版本是 **0.1.2**，标签 **`v0.1.2`**。页面桥扩展是 **0.3.6**。扩展编号单独走，不要为了桌面端发布去改它。
 
-0.1.0 是第一次对外打安装包。0.1.1 带上 GitHub Releases 检查更新、只要提示词的文生图、缩短的开跑步骤，以及应用图标。0.1.2 相对 0.1.1：用户界面名改为「图来」（技术 id 和可执行文件仍是 xbs）；网页方式去掉 ego lite，改为 Chrome 和 Edge；页面桥扩展加上 popup（扩展版本仍是 0.3.6）。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
+0.1.0 是第一次对外打安装包。0.1.1 带上 GitHub Releases 检查更新、只要提示词的文生图、缩短的开跑步骤，以及应用图标。0.1.2 相对 0.1.1：用户界面名改为「tulai」（技术 id 和可执行文件仍是 xbs）；网页方式去掉 ego lite，改为 Chrome 和 Edge；页面桥扩展加上 popup（扩展版本仍是 0.3.6）。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
 
 ## 三个编号
 
@@ -37,7 +37,7 @@ git tag v0.1.2
 git push origin v0.1.2
 ```
 
-推送标签会跑 CI。完成后 Release 页面出现 **图来 0.1.2**。安装包文件名仍以 `xbs` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。
+推送标签会跑 CI。完成后 Release 页面出现 **tulai 0.1.2**。安装包文件名仍以 `xbs` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。
 
 再跑一次同一个标签的 workflow 会覆盖同名附件，不会另开一个 Release。
 
@@ -98,7 +98,7 @@ GET https://api.github.com/repos/xxww0098/xbs/releases/latest
 | macOS，正在跑 `.app` | `….app/Contents/MacOS/xbs` | `xbs.<版本>.dmg`（通用二进制；构建时的名字是 `xbs <版本>.dmg`） | 换掉当前的 `xbs.app`，并去掉隔离属性。 |
 | macOS，其他 | 开发运行 | 同一个 dmg | 复制到 `~/Applications/xbs.app`。 |
 
-应用内更新和 `xbs update` 装到 `~/.local` 时，把桌面项的 `Name` 写成「图来」。文件名仍是 `xbs.desktop`，启动命令仍是 `xbs`。`install.sh`、deb、NSIS 和 macOS 包名跟 `mygo.json` 的 `name` 走，仍是 xbs。
+应用内更新和 `xbs update` 装到 `~/.local` 时，把桌面项的 `Name` 写成「tulai」。文件名仍是 `xbs.desktop`，启动命令仍是 `xbs`。`install.sh`、deb、NSIS 和 macOS 包名跟 `mygo.json` 的 `name` 走，仍是 xbs。
 
 下载后核对两处摘要，对不上就删除文件、不安装：
 

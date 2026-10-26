@@ -436,7 +436,7 @@ func registeredExec(entry string) string {
 }
 
 // RewriteDesktop points Exec and Icon at the installed app, as install.sh does.
-// The launcher label becomes 图来. The command and desktop filename stay the binary name.
+// The launcher label becomes tulai. The command and desktop filename stay the binary name.
 func RewriteDesktop(packaged, dir, name string) string {
 	icon := dir + "/" + name + ".png"
 	_, iconErr := os.Stat(icon)
@@ -447,7 +447,7 @@ func RewriteDesktop(packaged, dir, name string) string {
 		} else if line == "Icon="+name && iconErr == nil {
 			line = "Icon=" + icon
 		} else if line == "Name="+name {
-			line = "Name=图来"
+			line = "Name=tulai"
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')

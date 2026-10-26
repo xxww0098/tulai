@@ -34,12 +34,12 @@ func (a *App) taskPane(c *ui.Context) {
 			ui.Text(c, "平台和提示词在右侧，填好即可开始。").FontSize(12).TextColor(c.Theme().TextMuted)
 			ui.Fieldset(c, "保存", func() {
 				ui.Field(c, "输出目录", func() {
-					ui.Row(c).Gap(6).Children(func() {
+					ui.Row(c).Gap(8).Children(func() {
 						ui.TextInput(c, &a.outputPath).Grow(1).MinWidth(0).Placeholder("留空则保存到输出结果")
 						ui.Button(c, "选择…").OnClick(func() { a.pickOutputDir() })
 					})
 				})
-			}).Gap(8).Margin(8, 0, 0, 0)
+			}).Gap(12).Margin(12, 0, 0, 0)
 			ui.Collapsible(c, "更多设置", &a.moreSettings, func() {
 				ui.Field(c, "保存方式", func() {
 					ui.Select(c, &a.saveMode, []string{"单文件夹汇总", "按源图片分文件夹"})
@@ -48,13 +48,13 @@ func (a *App) taskPane(c *ui.Context) {
 					ui.Select(c, &a.namingRule, []string{"原文件名", "时间戳", "序号"})
 				})
 				ui.Field(c, "文件名前缀", func() {
-					ui.Row(c).Gap(6).Children(func() {
+					ui.Row(c).Gap(8).Children(func() {
 						ui.TextInput(c, &a.filePrefix).Grow(1).MinWidth(0)
 						ui.Checkbox(c, &a.prefixOn, "启用")
 					})
 				})
 				ui.Field(c, "文件名后缀", func() {
-					ui.Row(c).Gap(6).Children(func() {
+					ui.Row(c).Gap(8).Children(func() {
 						ui.TextInput(c, &a.fileSuffix).Grow(1).MinWidth(0)
 						ui.Checkbox(c, &a.suffixOn, "启用")
 					})
@@ -65,7 +65,7 @@ func (a *App) taskPane(c *ui.Context) {
 				ui.Checkbox(c, &a.useSuffix, "附加提示词后缀")
 				ui.Checkbox(c, &a.removeWatermark, "去水印（实验）").Disabled(a.running)
 				ui.Text(c, "已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。").FontSize(12).TextColor(c.Theme().TextMuted)
-				ui.Text(c, "调度与等待").Bold().Margin(8, 0, 0, 0)
+				ui.Text(c, "调度与等待").Bold().Margin(12, 0, 4, 0)
 				ui.Field(c, "发送策略", func() {
 					ui.Select(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
 				})
@@ -101,7 +101,7 @@ func (a *App) taskPane(c *ui.Context) {
 					ui.NumberInput(c, &a.startBrowserIdx, 1, 999, 1)
 				})
 			})
-		}).FillWidth().Gap(8)
+		}).FillWidth().Gap(12)
 	})
 }
 
@@ -113,12 +113,12 @@ func (a *App) browserPane(c *ui.Context) {
 		})
 	})
 	a.extensionBridgeSection(c)
-	ui.Column(c).Grow(1).MinHeight(0).Gap(8).Children(func() {
-		ui.Text(c, "浏览器实例").Bold()
+	ui.Column(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
+		ui.Text(c, "浏览器实例").FontSize(15).Bold()
 		ui.Text(c, "每个实例单独保存登录状态，两种网页方式的配置目录互不影响。").FontSize(12).TextColor(c.Theme().TextMuted)
 		// 新增行
-		ui.Row(c).Gap(6).Children(func() {
-			ui.Select(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(80).Label("浏览器平台")
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Select(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Label("浏览器平台")
 			ui.TextInput(c, &a.newBrowserName).Grow(1).MinWidth(0).Placeholder("名称（可选）").Label("浏览器名称")
 			ui.Button(c, "添加").Disabled(a.running).OnClick(func() { a.addBrowser() })
 		})
@@ -132,7 +132,7 @@ func (a *App) browserPane(c *ui.Context) {
 		a.browserList.Selected = &a.browserSel
 		ui.List(c, &a.browserList, len(a.browserRows), func(i int) {
 			b := a.browserRows[i]
-			ui.Column(c).Padding(10).Gap(5).Children(func() {
+			ui.Column(c).Padding(12, 10).Gap(6).Children(func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, b.Name).Bold().Grow(1).SingleLine()
 					state := "未运行"
@@ -143,9 +143,9 @@ func (a *App) browserPane(c *ui.Context) {
 				})
 				ui.Text(c, fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)).FontSize(12).TextColor(c.Theme().TextMuted)
 			})
-		}).Grow(1).MinHeight(0).Border(1, c.Theme().Border).Radius(8)
+		}).Grow(1).MinHeight(0).Border(1, c.Theme().Border).Radius(12)
 		selected, hasSelection := a.selectedBrowser()
-		ui.Row(c).Gap(6).Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
 			ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning).OnClick(func() { a.launchBrowser() })
 			ui.Button(c, "停止选中").Disabled(a.running || !hasSelection || !selected.IsRunning).OnClick(func() { a.stopBrowser() })
 			ui.Button(c, "刷新列表").OnClick(func() { a.refreshBrowsers() })
@@ -180,7 +180,7 @@ func (a *App) captchaPane(c *ui.Context) {
 					ui.TextInput(c, &a.ikunocrKey).Password()
 				})
 			})
-		})
+		}).Gap(12)
 	})
 }
 
@@ -194,9 +194,9 @@ func (a *App) bottomView(c *ui.Context) {
 	} else {
 		items = a.queue
 	}
-	ui.Column(c).Grow(1).MinHeight(0).Padding(14).Gap(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(10).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "任务队列").Bold()
+	ui.Column(c).Grow(1.6).MinHeight(0).Padding(10, 14).Gap(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "任务队列").FontSize(15).Bold()
 			ui.Badge(c, fmt.Sprintf("%d 项", len(items)))
 		})
 		if len(items) == 0 {
@@ -256,8 +256,8 @@ func (a *App) bottomView(c *ui.Context) {
 			ui.Text(c, text).FontSize(12).TextColor(color).SingleLine().Tooltip(text)
 		}).Grow(1).MinHeight(0)
 	})
-	ui.Column(c).Grow(0.65).MinHeight(0).Padding(14).Gap(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(10).Children(func() {
-		ui.Text(c, "运行日志").Bold()
+	ui.Column(c).Grow(0.42).MinHeight(0).Padding(10, 14).Gap(8).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {
+		ui.Text(c, "运行日志").FontSize(15).Bold()
 		if len(a.logs) == 0 {
 			ui.Text(c, "操作与任务进展会记录在这里").FontSize(12).TextColor(c.Theme().TextMuted)
 			return
@@ -275,7 +275,7 @@ func (a *App) bottomView(c *ui.Context) {
 			case logging.Success:
 				color = c.Theme().Success
 			}
-			ui.Row(c).Gap(8).Padding(3, 0).Children(func() {
+			ui.Row(c).Gap(10).Padding(5, 2).Children(func() {
 				ui.Text(c, e.Time.Format("15:04:05")).FontSize(11).TextColor(c.Theme().TextMuted)
 				ui.Text(c, e.Level.String()).FontSize(12).TextColor(color)
 				ui.Text(c, e.Text).FontSize(12).Grow(1).MinWidth(0).SingleLine().Tooltip(e.Text)
@@ -290,10 +290,19 @@ func (a *App) extensionBridgeSection(c *ui.Context) {
 	a.extToken = extbridge.NormalizeExtToken(a.extToken)
 	a.extPort = extbridge.NormalizeExtPort(a.extPort)
 	clip := c.Services()
-	ui.Column(c).Gap(6).Children(func() {
-		ui.Text(c, "页面桥").Bold()
+	status, detail, warn := a.bridgeStatusLine()
+	detailColor := c.Theme().TextMuted
+	if warn {
+		detailColor = c.Theme().Warning
+	}
+	ui.Column(c).Gap(8).Children(func() {
+		ui.Text(c, "页面桥").FontSize(15).Bold()
+		ui.Text(c, status).FontSize(12)
+		if detail != "" {
+			ui.Text(c, detail).FontSize(12).TextColor(detailColor)
+		}
 		ui.TextInput(c.Key("ext-bridge-token"), &a.extToken).ReadOnly(true).FontSize(12).Label("令牌")
-		ui.Row(c).Gap(6).Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
 			ui.Button(c, "复制令牌").OnClick(func() {
 				a.extToken = extbridge.NormalizeExtToken(a.extToken)
 				clip.WriteClipboard(a.extToken)

@@ -44,6 +44,7 @@ jobs:
           node extension/content_test.js
           node extension/qianwen/page_test.js
           node extension/doubao/page_test.js
+          node extension/bridge_test.js
       - name: Pack the page-bridge extension
         run: |
           ver=$(jq -r .version extension/manifest.json)
@@ -153,7 +154,7 @@ jobs:
           ext=$(unzip -p release/xbs-extension-*.zip xbs-extension/manifest.json | jq -r .version)
           notes=$(mktemp)
           {
-            echo "# 图来 ${version}"
+            echo "# tulai ${version}"
             echo
             echo "桌面端 ${version}（mygo.json，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（xbs-extension-${ext}.zip），编号独立，不跟着桌面端走。"
             echo
@@ -164,7 +165,7 @@ jobs:
             echo
             echo "说明见 docs/RELEASING.md。"
           } >"$notes"
-          args=(--title "图来 ${version}" --notes-file "$notes")
+          args=(--title "tulai ${version}" --notes-file "$notes")
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             args+=(--prerelease)
           fi
