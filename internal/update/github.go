@@ -69,6 +69,10 @@ type Client struct {
 	Version     string
 	HTTP        *http.Client
 	DownloadDir string
+	// Mirrors are ghproxy-style prefixes tried after the official URL fails.
+	Mirrors []string
+	// OnProgress is optional and may be called from the download goroutine.
+	OnProgress func(Progress)
 }
 
 // NewClient returns a client for the public xbs releases.
@@ -141,12 +145,8 @@ func (c *Client) Download(ctx context.Context, rel Release, current string, mode
 		return Prepared{}, err
 	}
 	dest := filepath.Join(dir, asset.Name)
-	if err := c.downloadFile(ctx, rel.Tag, asset, dest); err != nil {
+	if err := c.downloadVerified(ctx, rel.Tag, asset, dest, want, digestHexOrEmpty(asset.Digest)); err != nil {
 		return Prepared{}, err
-	}
-	if err := verifyFile(dest, want, digestHexOrEmpty(asset.Digest)); err != nil {
-		os.Remove(dest)
-		return Prepared{}, fmt.Errorf("%s: %w", asset.Name, err)
 	}
 	return Prepared{Release: rel, Asset: asset, Path: dest}, nil
 }
@@ -172,7 +172,11 @@ func (c *Client) checksums(ctx context.Context, rel Release) (map[string]string,
 		return nil, err
 	}
 	dest := filepath.Join(dir, "SHA256SUMS")
-	if err := c.downloadFile(ctx, rel.Tag, sumsAsset, dest); err != nil {
+	if digest, ok := digestHex(sumsAsset.Digest); ok {
+		if err := c.downloadVerified(ctx, rel.Tag, sumsAsset, dest, digest); err != nil {
+			return nil, fmt.Errorf("SHA256SUMS: %w", err)
+		}
+	} else if err := c.downloadFile(ctx, rel.Tag, sumsAsset, dest); err != nil {
 		return nil, err
 	}
 	defer os.Remove(dest)
@@ -183,102 +187,11 @@ func (c *Client) checksums(ctx context.Context, rel Release) (map[string]string,
 	if info.Size() > maxChecksums {
 		return nil, errors.New("SHA256SUMS 过大")
 	}
-	if digest, ok := digestHex(sumsAsset.Digest); ok {
-		if err := verifyFile(dest, digest); err != nil {
-			return nil, fmt.Errorf("SHA256SUMS: %w", err)
-		}
-	}
 	text, err := os.ReadFile(dest)
 	if err != nil {
 		return nil, err
 	}
 	return ParseChecksums(string(text))
-}
-
-func (c *Client) downloadFile(ctx context.Context, tag string, asset Asset, dest string) error {
-	if asset.Name == "" || asset.Name != filepath.Base(asset.Name) || strings.Contains(asset.Name, "..") {
-		return fmt.Errorf("拒绝的文件名 %q", asset.Name)
-	}
-	if err := c.allowAssetURL(asset.BrowserDownloadURL, tag, asset.Name); err != nil {
-		return err
-	}
-	if asset.Size > maxDownload {
-		return fmt.Errorf("%s 超过大小限制", asset.Name)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.BrowserDownloadURL, nil)
-	if err != nil {
-		return err
-	}
-	c.decorate(req, "application/octet-stream")
-	resp, err := c.http().Do(req)
-	if err != nil {
-		return fmt.Errorf("下载 %s 失败: %w", asset.Name, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载 %s 失败: HTTP %d", asset.Name, resp.StatusCode)
-	}
-	tmp := dest + ".partial"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	n, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxDownload+1))
-	closeErr := f.Close()
-	if copyErr != nil {
-		os.Remove(tmp)
-		return copyErr
-	}
-	if closeErr != nil {
-		os.Remove(tmp)
-		return closeErr
-	}
-	if n > maxDownload {
-		os.Remove(tmp)
-		return fmt.Errorf("%s 超过大小限制", asset.Name)
-	}
-	if asset.Size > 0 && n != asset.Size {
-		os.Remove(tmp)
-		return fmt.Errorf("%s 的大小是 %d，发布记录是 %d", asset.Name, n, asset.Size)
-	}
-	return os.Rename(tmp, dest)
-}
-
-func (c *Client) get(ctx context.Context, endpoint, accept string, limit int64) ([]byte, error) {
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return nil, err
-	}
-	if err := c.allow(u); err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	c.decorate(req, accept)
-	resp, err := c.http().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("请求 GitHub 失败: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(body)) > limit {
-		return nil, errors.New("GitHub 响应过大")
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, errors.New("没有已发布的正式版本")
-	}
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-		return nil, errors.New("GitHub API 拒绝了这次未登录的请求（公开仓库每小时次数有限）")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API 返回 HTTP %d", resp.StatusCode)
-	}
-	return body, nil
 }
 
 func (c *Client) decorate(req *http.Request, accept string) {
@@ -345,6 +258,9 @@ func (c *Client) allow(u *url.URL) error {
 		return fmt.Errorf("拒绝非 HTTPS 地址 %s", u.Host)
 	}
 	if api, err := url.Parse(c.api()); err == nil && strings.EqualFold(api.Hostname(), host) {
+		return nil
+	}
+	if c.allowsMirror(u) {
 		return nil
 	}
 	switch host {

@@ -22,6 +22,7 @@ import (
 	"xbs/internal/prompts"
 	"xbs/internal/store"
 	"xbs/internal/tasks"
+	"xbs/internal/update"
 	"xbs/internal/wizard"
 )
 
@@ -141,6 +142,20 @@ type App struct {
 	sourceHeight float32
 	updateBusy   bool
 
+	autoCheck          bool
+	updateMirror       string
+	updateNotice       string
+	updateNotes        string
+	updateErr          string
+	updateDeferred     bool
+	updatePending      bool
+	updateDownloading  bool
+	updateFraction     float64
+	updateProgressText string
+	updateAsset        string
+	updateStop         chan struct{}
+	updateRel          update.Release
+
 	wizardOn        bool
 	wizardStep      wizard.Step
 	wizardPlan      wizard.BrowserPlan
@@ -192,7 +207,15 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		go a.engine.WatchLogins(loginCtx)
 	}
 	mygo.App.SetMenu(a.installMenu())
-	offQuit := mygo.App.OnQuit(a.saveSettings)
+	a.updateStop = make(chan struct{})
+	offQuit := mygo.App.OnQuit(func() {
+		a.saveSettings()
+		select {
+		case <-a.updateStop:
+		default:
+			close(a.updateStop)
+		}
+	})
 	defer offQuit()
 	logging.Log.SetSink(func(e logging.Entry) {
 		if a.window == nil {
@@ -215,6 +238,7 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 			Content: ui.View(a.view),
 		})
 		applyAppIcon(a.window)
+		a.startUpdateLoop()
 		if a.engine != nil {
 			a.engine.EnsureExtensionBridge(func() {
 				if a.window == nil {
@@ -302,6 +326,8 @@ func (a *App) loadSettings() {
 		}
 		a.sources = append(a.sources, sourceImage{Path: p, Thumb: bmp, Hash: images.SHA256(data)})
 	}
+	a.autoCheck = update.AutoOn(s.Get(update.KeyAutoCheck))
+	a.updateMirror = strings.TrimSpace(s.Get(update.KeyMirror))
 	switch s.Get("batch_mode") {
 	case "image":
 		a.batchMode = batchImage
@@ -374,6 +400,7 @@ func (a *App) saveSettings() {
 		paths = append(paths, si.Path)
 	}
 	s.Set("source_images", joinPaths(paths))
+	a.persistUpdatePrefs()
 }
 
 // captchaConfig 由当前 UI 状态构造求解配置。

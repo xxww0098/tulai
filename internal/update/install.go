@@ -36,6 +36,8 @@ type Outcome struct {
 	Helper        string
 	HelperArgs    []string
 	ManualCommand string
+	// OpenPath is a package the caller should hand to the operating system.
+	OpenPath string
 }
 
 // Install applies a verified asset. Windows replacement is prepared and
@@ -50,6 +52,8 @@ func Install(opts Options) (Outcome, error) {
 	switch opts.Mode {
 	case ModeLinuxUser:
 		return installLinuxUser(opts)
+	case ModeLinuxBinary:
+		return installLinuxBinary(opts)
 	case ModeLinuxDeb:
 		return installLinuxDeb(opts)
 	case ModeWindowsExe:
@@ -96,10 +100,13 @@ func installLinuxUser(opts Options) (Outcome, error) {
 	if err := replaceDir(staging, appDir); err != nil {
 		return Outcome{}, err
 	}
+	installed := filepath.Join(appDir, appName)
 	link := filepath.Join(home, ".local", "bin", appName)
 	linkNote := ensureSymlink(link, filepath.Join(appDir, appName))
 	desktopNote := installDesktop(appDir, dataHome)
-	installed := filepath.Join(appDir, appName)
+	if err := confirmAndKeep(installed); err != nil {
+		return Outcome{}, err
+	}
 	relaunch := runsFrom(opts.Executable, appDir, link)
 	msg := fmt.Sprintf("已安装 %s 到 %s。", opts.Version, appDir)
 	if relaunch {
@@ -114,7 +121,59 @@ func installLinuxUser(opts Options) (Outcome, error) {
 		msg += desktopNote
 	}
 	msg += "\n" + UnsignedWarning
-	return Outcome{Message: msg, InstalledPath: installed, Relaunch: relaunch}, nil
+	out := Outcome{Message: msg, InstalledPath: installed, Relaunch: relaunch}
+	if !relaunch {
+		return out, nil
+	}
+	script, err := writeRestartScript()
+	if err != nil {
+		return Outcome{}, err
+	}
+	out.Relaunch = false
+	out.Quit = true
+	out.Helper = "/bin/sh"
+	out.HelperArgs = restartArgs(script, opts.PID, installed)
+	out.Message += "即将重新打开。"
+	return out, nil
+}
+
+func installLinuxBinary(opts Options) (Outcome, error) {
+	dest := opts.Executable
+	if dest == "" {
+		return Outcome{}, errors.New("找不到当前程序")
+	}
+	src := opts.AssetPath
+	lower := strings.ToLower(src)
+	if strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
+		dir, err := os.MkdirTemp("", "xbs-bin-")
+		if err != nil {
+			return Outcome{}, err
+		}
+		defer os.RemoveAll(dir)
+		if err := extractTarGz(src, dir); err != nil {
+			return Outcome{}, err
+		}
+		src = filepath.Join(dir, appName)
+	}
+	if err := replaceFile(dest, src); err != nil {
+		return Outcome{}, err
+	}
+	if err := confirmAndKeep(dest); err != nil {
+		return Outcome{}, err
+	}
+	msg := fmt.Sprintf("已安装 %s。\n%s", opts.Version, UnsignedWarning)
+	out := Outcome{Message: msg, InstalledPath: dest}
+	if filepath.Clean(opts.Executable) == filepath.Clean(dest) {
+		script, err := writeRestartScript()
+		if err != nil {
+			return Outcome{}, err
+		}
+		out.Quit = true
+		out.Helper = "/bin/sh"
+		out.HelperArgs = restartArgs(script, opts.PID, dest)
+		out.Message = fmt.Sprintf("已安装 %s。即将重新打开。\n%s", opts.Version, UnsignedWarning)
+	}
+	return out, nil
 }
 
 func installLinuxDeb(opts Options) (Outcome, error) {
@@ -133,8 +192,8 @@ func installLinuxDeb(opts Options) (Outcome, error) {
 		}
 	}
 	command := "sudo dpkg -i " + shellQuote(dest)
-	msg := "这是系统安装包，需要管理员权限，程序不会自己申请。请退出后在终端执行：\n" + command + "\n\n" + UnsignedWarning
-	return Outcome{Message: msg, InstalledPath: dest, ManualCommand: command}, nil
+	msg := "这是系统安装包，需要管理员权限，程序不会自己申请。已尝试打开下载的安装包。若没有弹出，请在终端执行：\n" + command + "\n\n" + UnsignedWarning
+	return Outcome{Message: msg, InstalledPath: dest, ManualCommand: command, OpenPath: dest}, nil
 }
 
 func installWindowsExe(opts Options) (Outcome, error) {
@@ -187,8 +246,24 @@ func installMac(opts Options) (Outcome, error) {
 		return Outcome{}, err
 	}
 	installed := filepath.Join(dest, "Contents", "MacOS", appName)
+	if err := confirmAndKeep(installed); err != nil {
+		return Outcome{}, err
+	}
 	msg := fmt.Sprintf("已安装 %s 到 %s。磁盘映像只做了 ad-hoc 签名，没有公证。若 Gatekeeper 拦截，请在访达里右键打开，或执行 xattr -dr com.apple.quarantine %s。\n%s", opts.Version, dest, shellQuote(dest), UnsignedWarning)
-	return Outcome{Message: msg, InstalledPath: installed, Relaunch: inPlace && runsFrom(opts.Executable, dest, "")}, nil
+	out := Outcome{Message: msg, InstalledPath: installed, Relaunch: inPlace && runsFrom(opts.Executable, dest, "")}
+	if !out.Relaunch {
+		return out, nil
+	}
+	script, err := writeRestartScript()
+	if err != nil {
+		return Outcome{}, err
+	}
+	out.Relaunch = false
+	out.Quit = true
+	out.Helper = "/bin/sh"
+	out.HelperArgs = restartArgs(script, opts.PID, installed)
+	out.Message += "即将重新打开。"
+	return out, nil
 }
 
 // MacBundle returns the .app that contains executable.
@@ -364,7 +439,7 @@ func replaceDir(staging, dest string) error {
 		}
 		return err
 	}
-	_ = os.RemoveAll(backup)
+	// Keep dest.previous until the new process starts. CommitPrevious removes it.
 	return nil
 }
 
@@ -536,12 +611,29 @@ func WindowsScript() string {
 		"param([int]$ProcessId, [string]$Source, [string]$Destination, [string]$Installer)",
 		"while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 400 }",
 		"if ($Installer -ne '') {",
-		"  Start-Process -FilePath $Installer",
+		"  $p = Start-Process -FilePath $Installer -ArgumentList '/S' -PassThru -Wait",
+		"  if ($null -ne $p -and $p.ExitCode -ne 0) { Start-Process -FilePath $Installer }",
 		"  exit 0",
 		"}",
+		"$backup = \"$Destination.previous\"",
+		"if (Test-Path -LiteralPath $Destination) {",
+		"  Copy-Item -LiteralPath $Destination -Destination $backup -Force",
+		"}",
 		"Move-Item -LiteralPath $Source -Destination $Destination -Force",
-		"if (-not $?) { exit 1 }",
-		"Start-Process -FilePath $Destination",
+		"if (-not $?) {",
+		"  if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $Destination -Force }",
+		"  exit 1",
+		"}",
+		"$proc = Start-Process -FilePath $Destination -PassThru",
+		"Start-Sleep -Seconds 3",
+		"if ($proc.HasExited) {",
+		"  if (Test-Path -LiteralPath $backup) {",
+		"    Copy-Item -LiteralPath $backup -Destination $Destination -Force",
+		"    Start-Process -FilePath $Destination",
+		"  }",
+		"  exit 1",
+		"}",
+		"if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }",
 		"",
 	}, "\r\n")
 }

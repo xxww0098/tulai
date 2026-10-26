@@ -83,7 +83,10 @@ func (a *App) wizardView(c *ui.Context) {
 		ui.Row(c).AlignItems(ui.Center).Gap(16).Children(func() {
 			ui.Text(c, "tulai").FontSize(22).Bold()
 			ui.Text(c, fmt.Sprintf("第 %d / %d 步", a.wizardStep.Index(), wizard.Count())).FontSize(13).TextColor(c.Theme().TextMuted).Grow(1)
+			ui.Text(c, "当前版本 "+currentVersion()).FontSize(13).TextColor(c.Theme().TextMuted)
+			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
 		})
+		a.updateBanner(c)
 		ui.Scroll(c.Key("wizard-body")).Grow(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().MaxWidth(840).Gap(20).Padding(28, 8, 12, 8).Children(func() {
 				ui.Text(c, a.wizardStep.Title()).FontSize(28).Bold()

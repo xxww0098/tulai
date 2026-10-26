@@ -8,12 +8,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"xbs/internal/browser"
 	"xbs/internal/logging"
 	"xbs/internal/store"
 	"xbs/internal/tasks"
 	"xbs/internal/ui"
+	"xbs/internal/update"
 )
 
 func main() {
@@ -24,6 +26,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("定位应用失败: %v", err)
 	}
+	update.MarkStarted(executable)
+	go func() {
+		time.Sleep(5 * time.Second)
+		update.CommitPrevious(executable)
+	}()
 	dataDir, err := packagedDataDir(runtime.GOOS, executable)
 	if err != nil {
 		log.Fatalf("定位应用数据目录失败: %v", err)

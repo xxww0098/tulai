@@ -31,6 +31,7 @@ func (a *App) chrome(c *ui.Context) {
 			ui.Button(c, "设置向导").Disabled(a.running).OnClick(func() { a.openWizard() })
 			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
 		})
+		a.updateBanner(c)
 		ui.Segmented(c, &a.tab, "出图", "浏览器", "提示词", "设置").Disabled(a.running)
 	})
 }
@@ -377,6 +378,7 @@ func (a *App) settingsPage(c *ui.Context) {
 		ui.Column(c).MaxWidth(760).FillWidth().Gap(16).Padding(16, 8, 24, 8).Children(func() {
 			ui.Text(c, "设置").FontSize(22).Bold()
 			ui.Text(c, "验证码在这里调。平台、并发和输出文件夹在出图页的「高级」里。").FontSize(13).TextColor(c.Theme().TextMuted)
+			a.updateSettings(c)
 			a.captchaFields(c)
 		})
 	})
@@ -770,6 +772,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 			} else if view := a.engine.View(); view != nil {
 				a.progText = taskResultSummary(view.Snapshot())
 			}
+			a.maybeInstallPending()
 		})
 	}()
 }

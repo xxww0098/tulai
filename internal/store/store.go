@@ -89,6 +89,9 @@ var defaults = map[string]string{
 	"browserBackend":          "ego",
 	"extBridgePort":           "18765",
 	"extBridgeToken":          "dev-token",
+	"auto_check_updates":      "1",
+	"update_mirror":           "",
+	"update_skipped_version":  "",
 }
 
 const schema = `
