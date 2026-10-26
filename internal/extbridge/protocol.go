@@ -24,6 +24,42 @@ const DefaultAddr = "127.0.0.1:18765"
 // 任务引擎在千问或豆包且该值为 extension 时走扩展；否则打开 Chrome 或 Edge 实例。
 const SettingBrowserBackend = "browserBackend"
 
+// 页面桥令牌和端口。扩展弹出页必须填写同一组值。
+// 空字符串按默认值处理，和任务引擎启动桥时的回退一致。
+const (
+	SettingExtToken = "extBridgeToken"
+	SettingExtPort  = "extBridgePort"
+	DefaultExtToken = "dev-token"
+	DefaultExtPort  = "18765"
+)
+
+// NormalizeExtToken 去掉空白。空白令牌用默认值，避免界面上是空的、桥却在听另一枚令牌。
+func NormalizeExtToken(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return DefaultExtToken
+	}
+	return v
+}
+
+// NormalizeExtPort 去掉空白。空白端口用默认值。
+func NormalizeExtPort(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return DefaultExtPort
+	}
+	return v
+}
+
+// NewToken 生成一枚页面桥令牌，供桌面端重新生成后交给扩展。
+func NewToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
 // MaxMessageBytes 是单条 WebSocket 消息的上限。图片以分片 base64 传递，单片必须小于这个值。
 const MaxMessageBytes = 8 << 20
 

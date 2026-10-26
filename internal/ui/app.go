@@ -104,6 +104,9 @@ type App struct {
 	browserSel     int
 	newBrowserPlat string
 	newBrowserName string
+	extToken       string
+	extPort        string
+	extTokenNote   string
 
 	// 队列与日志
 	queue    []tasks.Task
@@ -174,6 +177,8 @@ func (a *App) loadSettings() {
 	s := a.store
 	a.browserBackend = pickStr(s.Get("browser_backend"), "Chrome", []string{"Chrome", "Edge"})
 	s.Set("browser_backend", a.browserBackend)
+	a.extToken = extbridge.NormalizeExtToken(s.Get(extbridge.SettingExtToken))
+	a.extPort = extbridge.NormalizeExtPort(s.Get(extbridge.SettingExtPort))
 	a.platDoubao = containsStr(s.Platforms(), "豆包")
 	a.platQianwen = containsStr(s.Platforms(), "千问")
 	a.sendStrategy = pickStr(s.Get("send_strategy"), "顺序循环", []string{"顺序循环", "随机循环"})
@@ -239,6 +244,10 @@ func (a *App) loadSettings() {
 func (a *App) saveSettings() {
 	s := a.store
 	s.Set("browser_backend", a.browserBackend)
+	a.extToken = extbridge.NormalizeExtToken(a.extToken)
+	a.extPort = extbridge.NormalizeExtPort(a.extPort)
+	s.Set(extbridge.SettingExtToken, a.extToken)
+	s.Set(extbridge.SettingExtPort, a.extPort)
 	var plats []string
 	if a.platDoubao {
 		plats = append(plats, "豆包")
@@ -476,6 +485,9 @@ func (a *App) missingBrowserNames() []string {
 }
 
 func missingBrowserHint(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
 	return strings.Join(names, "、") + "还没有浏览器，请先在浏览器管理中添加"
 }
 

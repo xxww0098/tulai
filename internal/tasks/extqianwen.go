@@ -23,8 +23,6 @@ import (
 )
 
 const (
-	settingExtPort  = "extBridgePort"
-	settingExtToken = "extBridgeToken"
 	// 3MiB 原文经 base64 后仍低于 extbridge.MaxMessageBytes。
 	extChunkRaw    = 3 << 20
 	extMaxDownload = 64 << 20
@@ -104,16 +102,28 @@ func (e *Engine) closeExtensionBridge() {
 	}
 }
 
+// ReloadExtensionBridge 在桥已经监听时，按配置库里的令牌和端口重新监听。
+// 令牌没变就不动。还没听过则不主动占端口，等任务开始再听。
+func (e *Engine) ReloadExtensionBridge() error {
+	if e == nil {
+		return nil
+	}
+	e.extMu.Lock()
+	running := e.extSrv != nil
+	e.extMu.Unlock()
+	if !running {
+		return nil
+	}
+	_, err := e.extensionServer()
+	return err
+}
+
 func (e *Engine) extensionServer() (*extbridge.Server, error) {
-	token := "dev-token"
-	port := "18765"
+	token := extbridge.DefaultExtToken
+	port := extbridge.DefaultExtPort
 	if e.store != nil {
-		if got := strings.TrimSpace(e.store.Get(settingExtToken)); got != "" {
-			token = got
-		}
-		if got := strings.TrimSpace(e.store.Get(settingExtPort)); got != "" {
-			port = got
-		}
+		token = extbridge.NormalizeExtToken(e.store.Get(extbridge.SettingExtToken))
+		port = extbridge.NormalizeExtPort(e.store.Get(extbridge.SettingExtPort))
 	}
 	addr := net.JoinHostPort("127.0.0.1", port)
 	e.extMu.Lock()

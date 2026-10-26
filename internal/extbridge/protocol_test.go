@@ -110,6 +110,19 @@ func TestCommandAndErrorHelpers(t *testing.T) {
 	if SettingBrowserBackend != "browserBackend" {
 		t.Fatal(SettingBrowserBackend)
 	}
+	if SettingExtToken != "extBridgeToken" || SettingExtPort != "extBridgePort" {
+		t.Fatal("ext bridge setting keys")
+	}
+	if NormalizeExtToken("  ") != DefaultExtToken || NormalizeExtToken(" secret ") != "secret" {
+		t.Fatal("token normalize")
+	}
+	if NormalizeExtPort("") != DefaultExtPort || NormalizeExtPort(" 18766 ") != "18766" {
+		t.Fatal("port normalize")
+	}
+	token, err := NewToken()
+	if err != nil || len(token) != 32 || token == DefaultExtToken {
+		t.Fatalf("new token: %q %v", token, err)
+	}
 }
 
 func TestClassifyConnErr(t *testing.T) {

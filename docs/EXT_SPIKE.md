@@ -9,7 +9,7 @@
 - `internal/extbridge`：v1 信封、本机监听、令牌 hello、ping/pong、会话表、带超时和幂等键的 RPC。
 - `extension/`：一份未打包扩展。`qianwen/page.js` 和 `doubao/page.js` 各自实现页面动作，共用 `content.js` 和 `background.js`。找不到节点时仍返回 `E_SELECTOR_MISS`。
 - `cmd/xbs-ext-smoke`：手动加载扩展时使用的桥。`XBS_EXT_LIVE=1` 时跑一次图生图。`XBS_EXT_PLATFORM=doubao` 时打到豆包那条 hello。
-- 配置键 `browserBackend`，取值 `extension` 或 `ego`，默认 `ego`。千问和豆包任务都会读它。另外两个键 `extBridgePort`（默认 `18765`）和 `extBridgeToken`（默认 `dev-token`）要和扩展弹出页（或选项页）一致。
+- 配置键 `browserBackend`，取值 `extension` 或 `ego`，默认 `ego`。千问和豆包任务都会读它。另外两个键 `extBridgePort`（默认 `18765`）和 `extBridgeToken`（默认 `dev-token`）要和扩展弹出页（或选项页）一致。桌面端「浏览器」页可以查看、复制和重新生成这组值。
 
 不删除 CDP。扩展里只检测验证码并把画布交回主机，不在页面脚本里求解。千问滑块由主机用 CDP 信任拖动，见下方风险。
 
