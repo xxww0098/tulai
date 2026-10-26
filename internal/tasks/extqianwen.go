@@ -102,8 +102,33 @@ func (e *Engine) closeExtensionBridge() {
 	}
 }
 
+// BridgeStatus 是页面桥当前能不能用。界面用它显示连接，不把令牌带出来。
+type BridgeStatus struct {
+	Listening bool
+	Addr      string
+	Err       string
+	Detail    string
+	Qianwen   bool
+	Doubao    bool
+}
+
+// EnsureExtensionBridge 在应用打开时就开始听，扩展重启后可以自己连回来。
+// onChange 在连上、断开或 hello 失败时调用，用来刷新界面。
+func (e *Engine) EnsureExtensionBridge(onChange func()) {
+	if e == nil {
+		return
+	}
+	e.extMu.Lock()
+	e.extOnChange = onChange
+	e.extMu.Unlock()
+	if _, err := e.extensionServer(); err != nil {
+		logging.Log.Errorf("页面桥: %v", err)
+	}
+	e.fireBridgeChange()
+}
+
 // ReloadExtensionBridge 在桥已经监听时，按配置库里的令牌和端口重新监听。
-// 令牌没变就不动。还没听过则不主动占端口，等任务开始再听。
+// 令牌没变就不动。还没听过则不主动占端口，等任务或界面开始再听。
 func (e *Engine) ReloadExtensionBridge() error {
 	if e == nil {
 		return nil
@@ -115,7 +140,39 @@ func (e *Engine) ReloadExtensionBridge() error {
 		return nil
 	}
 	_, err := e.extensionServer()
+	e.fireBridgeChange()
 	return err
+}
+
+func (e *Engine) fireBridgeChange() {
+	e.extMu.Lock()
+	fn := e.extOnChange
+	e.extMu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// BridgeStatus 读取监听状态。没听过时 Listening 为 false。
+func (e *Engine) BridgeStatus() BridgeStatus {
+	if e == nil {
+		return BridgeStatus{}
+	}
+	e.extMu.Lock()
+	defer e.extMu.Unlock()
+	st := BridgeStatus{Addr: e.extListen, Err: e.extErr}
+	if e.extSrv == nil {
+		return st
+	}
+	st.Listening = true
+	qianwen, doubao, detail, addr := e.extSrv.Snapshot()
+	st.Qianwen = qianwen
+	st.Doubao = doubao
+	st.Detail = detail
+	if addr != "" {
+		st.Addr = addr
+	}
+	return st
 }
 
 func (e *Engine) extensionServer() (*extbridge.Server, error) {
@@ -127,19 +184,38 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 	}
 	addr := net.JoinHostPort("127.0.0.1", port)
 	e.extMu.Lock()
-	defer e.extMu.Unlock()
 	if e.extSrv != nil && e.extToken == token && e.extListen == addr {
-		return e.extSrv, nil
+		srv := e.extSrv
+		e.extMu.Unlock()
+		return srv, nil
+	}
+	old := e.extSrv
+	e.extSrv = nil
+	e.extToken = ""
+	e.extListen = ""
+	e.extMu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	srv, err := extbridge.Listen(extbridge.Config{
+		Addr:  addr,
+		Token: token,
+		OnChange: func() {
+			e.fireBridgeChange()
+		},
+	})
+	e.extMu.Lock()
+	defer e.extMu.Unlock()
+	if err != nil {
+		e.extErr = fmt.Sprintf("页面桥没有在听 %s：%v。若端口被占用，关掉另一个 tulai，或修改 extBridgePort 后重新打开。", addr, err)
+		return nil, errors.New(e.extErr)
 	}
 	if e.extSrv != nil {
-		_ = e.extSrv.Close()
-		e.extSrv = nil
-	}
-	srv, err := extbridge.Listen(extbridge.Config{Addr: addr, Token: token})
-	if err != nil {
-		return nil, fmt.Errorf("启动扩展桥: %w", err)
+		go srv.Close()
+		return e.extSrv, nil
 	}
 	e.extSrv = srv
+	e.extErr = ""
 	e.extToken = token
 	e.extListen = addr
 	logging.Log.Info("扩展桥监听 %s", srv.Addr())
@@ -161,17 +237,26 @@ func (e *Engine) extensionSession(ctx context.Context, platform string) (*extbri
 	wait, cancel := context.WithTimeout(ctx, extHelloWait)
 	defer cancel()
 	for {
+		if sess, err := srv.Session(platform); err == nil {
+			return sess, nil
+		}
 		sess, err := srv.Next(wait)
 		if err != nil {
 			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				return nil, &extbridge.ProtoError{Code: extbridge.ENotConnected, Message: "等待" + label + "扩展 hello 超时，请加载扩展并在选项页保存同一令牌"}
+				return nil, &extbridge.ProtoError{Code: extbridge.ENotConnected, Message: "等待" + label + "扩展 hello 超时。请打开对应网页，确认扩展弹出页的令牌和端口与 tulai「浏览器」页一致。"}
 			}
 			return nil, err
 		}
-		if sess.Platform() == platform {
+		if sess.Platform() != platform {
+			continue
+		}
+		select {
+		case <-sess.Done():
+			continue
+		default:
 			return sess, nil
 		}
 	}

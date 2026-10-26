@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -360,6 +361,40 @@ func TestEventCompletesCallAndCloseWakesWaiter(t *testing.T) {
 	<-entered
 	if CodeOf(err) != ENotConnected {
 		t.Fatalf("close: %v", err)
+	}
+}
+
+func TestTokenMismatchExplainsHowToFix(t *testing.T) {
+	srv := startServer(t, Config{})
+	p := dialPeer(t, srv.Addr())
+	raw, _ := json.Marshal(map[string]string{"token": "nope"})
+	p.writeEnv(t, Envelope{V: Version, ID: "bad", Type: TypeHello, TS: 1, Platform: PlatformQianwen, Payload: raw})
+	env, err := p.readEnvErr()
+	if err != nil || CodeOf(terminalError(env)) != EAuth {
+		t.Fatalf("bad token: %+v %v", env, err)
+	}
+	msg := terminalError(env).Error()
+	if !strings.Contains(msg, "令牌") || !strings.Contains(msg, "保存并重连") || !strings.Contains(msg, srv.Addr()) {
+		t.Fatalf("auth message: %s", msg)
+	}
+	_, _, detail, _ := srv.Snapshot()
+	if detail == "" || !strings.Contains(detail, "令牌") {
+		t.Fatalf("snapshot detail: %q", detail)
+	}
+}
+
+func TestHeartbeatDropsSilentPeer(t *testing.T) {
+	srv := startServer(t, Config{Heartbeat: 40 * time.Millisecond, IdleTimeout: time.Minute})
+	p := dialPeer(t, srv.Addr())
+	p.hello(t, "test-token", PlatformQianwen)
+	sess := mustSession(t, srv, PlatformQianwen)
+	select {
+	case <-sess.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("silent peer stayed connected")
+	}
+	if _, err := srv.Session(PlatformQianwen); err == nil {
+		t.Fatal("dead session still handed out")
 	}
 }
 

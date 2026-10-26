@@ -16,13 +16,16 @@
 ## 连接
 
 ```
-图来 Go                           Chrome MV3
-internal/extbridge                extension/
-  监听 127.0.0.1:18765                background.js（两条 hello）
-  hello 校验 token                    每 15s ping
-  Call(upload/...)  ───────────────►  转 COMMAND_FROM_HOST
-  等待 ack / event / error  ◄───────  content.js + 对应站点的 page.js
+tulai Go                         Chrome MV3
+internal/extbridge               extension/
+  监听 127.0.0.1:18765             background.js（两条 hello）
+  hello 校验 token                 断线后退避重连
+  双方心跳，死连接会关掉            弹出页能看到千问 / 豆包是否连上
+  Call(upload/...)  ────────────►  转 COMMAND_FROM_HOST
+  等待 ack / event / error  ◄────  content.js + 对应站点的 page.js
 ```
+
+令牌或端口不一致时，扩展和桌面端「浏览器」页都会写出要改哪一项。扩展或浏览器重启后会自己重连，不用重启 tulai。
 
 扩展是 WebSocket 客户端。Go 是主机。`Session.Call` 是桌面端发出命令的入口。
 
@@ -65,6 +68,7 @@ go test ./internal/extbridge/... ./internal/tasks/ -count=1
 node --check extension/content.js
 node extension/qianwen/page_test.js
 node extension/doubao/page_test.js
+node extension/bridge_test.js
 node extension/content_test.js
 go run ./cmd/xbs-ext-smoke
 ```

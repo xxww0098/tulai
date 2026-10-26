@@ -32,8 +32,12 @@ type Config struct {
 	IdempotencyLimit int
 	HelloTimeout     time.Duration
 	IdleTimeout      time.Duration
+	// Heartbeat 为 0 时每 15s 发一次协议 ping。负数表示不主动心跳，读超时仍然生效。
+	Heartbeat time.Duration
 	// OnEvent 收到与在途 RPC 无关的 event。可以为空。
 	OnEvent func(*Session, Envelope)
+	// OnChange 在连上、断开或 hello 失败后异步调用。可以为空。
+	OnChange func()
 }
 
 // Server 只接受 127.0.0.1 或 ::1 上的 WebSocket。
@@ -46,10 +50,11 @@ type Server struct {
 	quit      chan struct{}
 	closeOnce sync.Once
 
-	mu       sync.Mutex
-	closed   bool
-	sessions map[string]*Session
-	byPlat   map[string][]*Session
+	mu           sync.Mutex
+	closed       bool
+	lastHelloErr string
+	sessions     map[string]*Session
+	byPlat       map[string][]*Session
 }
 
 // Session 是一个已通过 hello 的扩展连接。
@@ -97,6 +102,9 @@ func Listen(cfg Config) (*Server, error) {
 	}
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = defaultIdleTimeout
+	}
+	if cfg.Heartbeat == 0 {
+		cfg.Heartbeat = 15 * time.Second
 	}
 	s := &Server{
 		cfg:      cfg,
@@ -156,13 +164,43 @@ func (s *Server) Sessions(platform string) []*Session {
 	return out
 }
 
-// Session 返回该平台最近一次 hello 的连接。
+// Session 返回该平台最近一次仍活着的 hello。已经断开的不算。
 func (s *Server) Session(platform string) (*Session, error) {
 	all := s.Sessions(platform)
-	if len(all) == 0 {
-		return nil, &ProtoError{Code: ENotConnected, Message: "扩展未连接"}
+	var live []*Session
+	for _, sess := range all {
+		select {
+		case <-sess.Done():
+		default:
+			live = append(live, sess)
+		}
 	}
-	return all[len(all)-1], nil
+	if len(live) == 0 {
+		return nil, &ProtoError{Code: ENotConnected, Message: "扩展未连接。请确认 tulai 已打开，扩展弹出页的端口和令牌与「浏览器」页一致。"}
+	}
+	return live[len(live)-1], nil
+}
+
+// Snapshot 给界面用：两个平台是否连着，以及最近一次 hello 失败原因。
+func (s *Server) Snapshot() (qianwen, doubao bool, lastErr, addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	addr = s.addr
+	lastErr = s.lastHelloErr
+	qianwen = platformLive(s.byPlat[PlatformQianwen])
+	doubao = platformLive(s.byPlat[PlatformDoubao])
+	return
+}
+
+func platformLive(list []*Session) bool {
+	for _, sess := range list {
+		select {
+		case <-sess.done:
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // Next 等待下一次成功的 hello。
@@ -210,6 +248,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handshake(conn net.Conn, reader *bufio.Reader) {
 	fail := func(id, code, message string) {
+		s.noteHello(message)
 		_ = writeEnvelope(conn, ws.StateServerSide, errorEnvelope(id, code, message))
 		_ = conn.Close()
 	}
@@ -226,12 +265,12 @@ func (s *Server) handshake(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 	if env.Type != TypeHello {
-		fail(env.ID, EAuth, "需要先 hello")
+		fail(env.ID, EAuth, "需要先 hello。在扩展弹出页点「保存并重连」。")
 		return
 	}
 	token, _ := helloToken(env)
 	if !tokenOK(token, s.cfg.Token) {
-		fail(env.ID, EAuth, "token 不匹配")
+		fail(env.ID, EAuth, fmt.Sprintf("令牌不一致（tulai 正在监听 %s）。打开「浏览器」页，把令牌和端口填进扩展弹出页，点「保存并重连」。不用重启 tulai。", s.addr))
 		return
 	}
 	sess := &Session{
@@ -264,7 +303,9 @@ func (s *Server) handshake(conn net.Conn, reader *bufio.Reader) {
 	}
 	if !s.register(sess) {
 		sess.shutdown(io.EOF)
+		return
 	}
+	go sess.heartbeat()
 }
 
 func (s *Server) register(sess *Session) bool {
@@ -281,8 +322,10 @@ func (s *Server) register(sess *Session) bool {
 	}
 	s.sessions[sess.id] = sess
 	s.byPlat[sess.platform] = append(s.byPlat[sess.platform], sess)
+	s.lastHelloErr = ""
 	s.mu.Unlock()
 	s.arrived.push(sess)
+	s.notify()
 	return true
 }
 
@@ -396,7 +439,57 @@ func (s *Session) shutdown(err error) {
 		close(s.done)
 		_ = s.conn.Close()
 		s.srv.unregister(s)
+		s.srv.notify()
 	})
+}
+
+func (s *Session) heartbeat() {
+	interval := s.srv.cfg.Heartbeat
+	if interval < 0 {
+		return
+	}
+	if interval == 0 {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), interval)
+			err := s.Ping(ctx)
+			cancel()
+			if err == nil {
+				continue
+			}
+			select {
+			case <-s.done:
+				return
+			default:
+			}
+			s.shutdown(&ProtoError{Code: ESWSleep, Message: "扩展心跳没有回应，连接已断开。扩展会自动重连，不用重启 tulai。"})
+			return
+		}
+	}
+}
+
+func (s *Server) noteHello(message string) {
+	s.mu.Lock()
+	s.lastHelloErr = message
+	s.mu.Unlock()
+	s.notify()
+}
+
+func (s *Server) notify() {
+	s.mu.Lock()
+	fn := s.cfg.OnChange
+	s.mu.Unlock()
+	if fn == nil {
+		return
+	}
+	go fn()
 }
 
 func (s *Session) writeEnvelope(env Envelope) error {
@@ -477,6 +570,10 @@ func remoteLoopback(addr string) bool {
 }
 
 func classifyConnErr(err error) *ProtoError {
+	var already *ProtoError
+	if errors.As(err, &already) && already != nil {
+		return already
+	}
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		return &ProtoError{Code: ENotConnected, Message: "扩展连接已关闭"}
 	}

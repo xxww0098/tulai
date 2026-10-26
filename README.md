@@ -1,6 +1,6 @@
-# 图来
+# tulai
 
-图来是豆包和千问的批量生图桌面应用。命令、仓库和安装包里的可执行文件仍叫 `xbs`。窗口标题和标题栏大字是「图来」；macOS 菜单里的应用名也是「图来」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
+tulai 是豆包和千问的批量生图桌面应用。命令、仓库和安装包里的可执行文件仍叫 `xbs`。窗口标题和标题栏大字是「tulai」；macOS 菜单里的应用名也是「tulai」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
 
 本地运行，没有授权激活，也不接远端数据库。已安装的桌面端可以从 GitHub Releases 检查并安装更新。
 
@@ -175,7 +175,7 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 
 桌面端产品版本是 **0.1.2**：`mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.6**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块版本由 git 标签决定，不写在 `go.mod`。
 
-相对已发布的 0.1.1：用户界面名改为「图来」（技术 id 和可执行文件仍是 xbs）；网页方式去掉 ego lite，改为 Chrome 和 Edge；页面桥扩展加上 popup。扩展版本仍是 0.3.6。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
+相对已发布的 0.1.1：用户界面名改为「tulai」（技术 id 和可执行文件仍是 xbs）；网页方式去掉 ego lite，改为 Chrome 和 Edge；页面桥扩展加上 popup。扩展版本仍是 0.3.6。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
 
 `.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet`，并上传 macOS、Windows、Linux 的安装包。合并进 `main` 之后，推送和 `mygo.json` 一致的标签，用 `GITHUB_TOKEN` 创建 GitHub Release。没有配置 Apple 公证或 Windows 代码签名。
 

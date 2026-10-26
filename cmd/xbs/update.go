@@ -14,7 +14,7 @@ import (
 	"xbs/internal/update"
 )
 
-const updateUsage = `图来
+const updateUsage = `tulai
 用法:
   xbs                 打开工作台
   xbs update          检查 GitHub Releases 并安装更新
