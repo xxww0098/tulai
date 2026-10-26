@@ -1,5 +1,5 @@
-// Package ui mygo 原生界面：左侧是任务设置、浏览器和验证码，
-// 右侧是模式、提示词、源图、队列、日志和开始停止。
+// Package ui mygo 原生界面。出图页只有拖图、提示词和「开始出图」，
+// 平台、轮换和输出在「高级」里。浏览器、提示词和设置仍是单独的页。
 package ui
 
 import (
@@ -98,7 +98,11 @@ type App struct {
 	promptSuffix    string
 	useSuffix       bool
 	batchMode       int // batchText 文生图 / batchImage 图生图
-	moreSettings    bool
+	platformAuto    bool
+	advancedOpen    bool
+	logsOpen        bool
+	outputNote      string
+	thumbs          map[string]*ui.Bitmap
 
 	// 验证码设置
 	captchaEnabled bool
@@ -235,6 +239,11 @@ func (a *App) loadSettings() {
 	a.extPort = extbridge.NormalizeExtPort(s.Get(extbridge.SettingExtPort))
 	a.platDoubao = containsStr(s.Platforms(), "豆包")
 	a.platQianwen = containsStr(s.Platforms(), "千问")
+	if raw := s.Get("platform_auto"); raw == "" {
+		a.platformAuto = true
+	} else {
+		a.platformAuto = raw == "1"
+	}
 	a.sendStrategy = pickStr(s.Get("send_strategy"), "顺序循环", []string{"顺序循环", "随机循环"})
 	a.concurrency = float64(clampInt(s.GetInt("concurrency"), 1, 16))
 	a.retryCount = float64(clampInt(s.GetInt("retry_count"), 0, 20))
@@ -317,6 +326,7 @@ func (a *App) saveSettings() {
 		plats = append(plats, "千问")
 	}
 	s.SetPlatforms(plats)
+	s.SetInt("platform_auto", boolInt(a.platformAuto))
 	s.Set("send_strategy", a.sendStrategy)
 	s.SetInt("concurrency", int(a.concurrency))
 	s.SetInt("retry_count", int(a.retryCount))
@@ -373,169 +383,28 @@ func (a *App) captchaConfig() captcha.Config {
 	}
 }
 
-// view 主视图。
+// view 主视图。向导盖住全部页面；否则是出图、浏览器、提示词或设置。
 func (a *App) view(c *ui.Context) {
 	if a.wizardOn {
 		a.wizardView(c)
 		return
 	}
-	width, _ := c.Size()
-	sidebarWidth := min(a.splitSz, max(300, width*0.32))
 	ui.Column(c).Fill().Children(func() {
-		ui.Row(c).Padding(16, 24).Gap(16).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "tulai").FontSize(22).Bold()
-			subtitle := "豆包 / 千问"
-			if v := mygo.App.Version(); v != "" {
-				subtitle += " · " + v
-			}
-			ui.Text(c, subtitle).FontSize(13).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0)
-			ui.Button(c, "设置向导").Disabled(a.running).OnClick(func() { a.openWizard() })
-			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
-		})
+		a.chrome(c)
 		ui.Divider(c)
-		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-			ui.Column(c).Width(sidebarWidth).FillHeight().MinHeight(0).Shrink(0).Padding(18, 16).Gap(16).Background(c.Theme().Surface).Children(func() {
-				a.settingsPane(c)
-			})
-			ui.Divider(c).Width(1).FillHeight()
-			ui.Column(c).Grow(1).FillHeight().MinWidth(0).MinHeight(0).Padding(16, 22).Gap(12).Children(func() {
-				a.workspace(c)
-			})
-		})
-	})
-}
-
-// workspace 右侧：控制条 + 源图 + 队列 + 日志。
-func (a *App) workspace(c *ui.Context) {
-	items := a.queue
-	if view := a.engine.View(); view != nil {
-		items = view.Snapshot()
-	}
-	needsUser := false
-	for _, task := range items {
-		if task.Status == tasks.StatusNeedsUser {
-			needsUser = true
-			break
-		}
-	}
-	promptList := a.taskPromptList()
-	countLabel := prompts.Describe(a.promptPick, a.prompts, a.userPrompts)
-	ready := countLabel
-	if a.batchMode == batchImage {
-		ready = fmt.Sprintf("%d 张源图 · %s", len(a.sources), countLabel)
-	} else {
-		ready = "文生图 · " + countLabel
-	}
-	status, hint := "待开始", ready
-	missingBrowsers := a.missingBrowserNames()
-	switch {
-	case a.running:
-		status = "进行中"
-	case a.progress > 0 || a.engine.View() != nil:
-		status = "已结束"
-	case !a.platDoubao && !a.platQianwen:
-		status, hint = "待选平台", "勾选豆包或千问"
-	case a.batchMode == batchImage && len(a.sources) == 0:
-		status, hint = "待导入", "添加源图，或切回文生图"
-	case a.batchMode == batchText && len(promptList) == 0:
-		status, hint = "待写提示词", "写下提示词即可开始，不用源图"
-	case len(missingBrowsers) > 0:
-		status, hint = "待添加浏览器", missingBrowserHint(missingBrowsers)
-	}
-	if a.progText != "" && status != "待添加浏览器" {
-		hint = a.progText
-	}
-	if needsUser {
-		status, hint = string(tasks.StatusNeedsUser), taskResultSummary(items)
-	}
-	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Segmented(c, &a.batchMode, "文生图", "图生图").Disabled(a.running).OnChange(func() {
-			if !a.running && a.progress == 0 {
-				a.progText = ""
+		ui.Column(c).Grow(1).MinHeight(0).Padding(4, 28, 16, 28).Children(func() {
+			switch a.tab {
+			case pageBrowser:
+				a.browserPane(c)
+			case pagePrompts:
+				a.promptsPage(c)
+			case pageSettings:
+				a.settingsPage(c)
+			default:
+				a.homePage(c)
 			}
 		})
-		ui.Checkbox(c, &a.platDoubao, "豆包").Disabled(a.running)
-		ui.Checkbox(c, &a.platQianwen, "千问").Disabled(a.running)
-		ui.Badge(c, status)
 	})
-	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Grow(1).MinWidth(0).Tooltip(hint)
-		ui.Button(c, "管理浏览器").Disabled(a.running).OnClick(func() { a.openSelectedPages() })
-		if a.running {
-			ui.Button(c, "停止任务").OnClick(func() { a.stopTasks() })
-		} else {
-			ui.PrimaryButton(c, "开始任务").Disabled(!a.canStart()).OnClick(func() { a.startTasks() })
-		}
-	})
-	a.promptRow(c)
-	ui.TextArea(c, &a.prompts).Height(56).Label("提示词").Placeholder("每行一条。选了模板后，整段一起发送")
-	if a.promptNote != "" {
-		ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
-	}
-	if needsUser {
-		ui.Text(c, verificationHint).FontSize(12).TextColor(c.Theme().Warning)
-	}
-	if a.running || a.progress > 0 {
-		ui.Progress(c, a.progress).FillWidth().Height(4)
-	}
-	if a.batchMode != batchImage {
-		ui.Column(c).Grow(1).MinHeight(0).Padding(4, 0, 0, 0).Gap(12).Children(func() { a.bottomPane(c) })
-		return
-	}
-	ui.SplitVertical(c, &a.sourceHeight, func() {
-		a.sourcesPane(c)
-	}, func() {
-		ui.Column(c).Fill().Padding(4, 0, 0, 0).Gap(12).Children(func() { a.bottomPane(c) })
-	}).Grow(1).MinHeight(0).FillWidth()
-}
-
-// sourcesPane 源图片管理。
-func (a *App) sourcesPane(c *ui.Context) {
-	ui.Column(c).Fill().Padding(16).Gap(12).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {
-		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, fmt.Sprintf("源图片（%d）", len(a.sources))).FontSize(15).Bold().Grow(1)
-			ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
-			ui.Button(c, "移除选中").Disabled(a.running || a.srcSel < 0 || a.srcSel >= len(a.sources)).OnClick(func() { a.removeSelected() })
-			ui.Button(c, "清空").Disabled(a.running || len(a.sources) == 0).OnClick(func() {
-				a.sources = nil
-				a.srcSel = -1
-			})
-		})
-		if len(a.sources) == 0 {
-			ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
-				ui.Text(c, "还没有源图").FontSize(16).Bold()
-				ui.Text(c, "点「添加图片」可多选导入，重复图片会自动过滤").FontSize(12).TextColor(c.Theme().TextMuted)
-			})
-			return
-		}
-		a.srcGrid.Selected = &a.srcSel
-		a.srcGrid.Key = func(i int) any { return a.sources[i].Path }
-		ui.GridView(c, &a.srcGrid, len(a.sources), 120, 128, func(i int) {
-			si := a.sources[i]
-			ui.Column(c).Gap(6).Children(func() {
-				if si.Thumb != nil {
-					ui.Image(c, si.Thumb).Size(100, 100).Radius(6)
-				} else {
-					ui.Text(c, "图片预览").Height(100)
-				}
-				ui.Text(c, filepath.Base(si.Path)).FontSize(11).SingleLine().Tooltip(si.Path)
-			})
-		}).Grow(1).MinHeight(0)
-	})
-}
-
-// bottomPane 队列 + 日志（见 views.go）。
-func (a *App) bottomPane(c *ui.Context) { a.bottomView(c) }
-
-// canStart 是当前模式下「开始任务」是否可点。
-func (a *App) canStart() bool {
-	if a.running || (!a.platDoubao && !a.platQianwen) || len(a.missingBrowserNames()) > 0 {
-		return false
-	}
-	if a.batchMode == batchImage {
-		return len(a.sources) > 0
-	}
-	return len(a.taskPromptList()) > 0
 }
 
 // missingBrowserNames 是已勾选、但还没有浏览器实例的平台。
@@ -582,71 +451,6 @@ func (a *App) configuredBrowsers() []store.Browser {
 		return a.store.Browsers()
 	}
 	return a.browserRows
-}
-
-// batchImages 是这次要上传的源图。文生图不上传，即使列表里还留着上次的图。
-func (a *App) batchImages() []string {
-	if a.batchMode != batchImage {
-		return nil
-	}
-	paths := make([]string, 0, len(a.sources))
-	for _, si := range a.sources {
-		paths = append(paths, si.Path)
-	}
-	return paths
-}
-
-// startTasks 按当前模式建队：文生图只提交提示词，图生图再上传源图。
-func (a *App) startTasks() {
-	if !a.canStart() {
-		return
-	}
-	prompts := a.taskPromptList()
-	srcPaths := a.batchImages()
-	var plats []string
-	if a.platDoubao {
-		plats = append(plats, "豆包")
-	}
-	if a.platQianwen {
-		plats = append(plats, "千问")
-	}
-	if len(plats) == 0 {
-		a.progText = "请至少选择一个平台"
-		return
-	}
-	a.saveSettings()
-	opts := a.taskOptions(plats, prompts, srcPaths)
-	if opts.OutputPath == "" {
-		opts.OutputPath = filepath.Join(mustWd(), "输出结果")
-		_ = os.MkdirAll(opts.OutputPath, 0o755)
-		a.outputPath = opts.OutputPath
-	}
-	a.running = true
-	a.progress = 0
-	a.engine.SetSolver(captcha.Build(a.captchaConfig()))
-	go func() {
-		err := a.engine.Run(context.Background(), opts,
-			func(t tasks.Task) {
-				a.syncUI(func() {})
-			},
-			func(p tasks.Progress) {
-				a.syncUI(func() {
-					if p.Total > 0 {
-						a.progress = float64(p.Done) / float64(p.Total)
-					}
-					a.progText = fmt.Sprintf("%d / %d", p.Done, p.Total)
-				})
-			})
-		a.syncUI(func() {
-			a.running = false
-			if err != nil {
-				a.progText = "失败: " + err.Error()
-				logging.Log.Errorf("任务终止: %v", err)
-			} else if view := a.engine.View(); view != nil {
-				a.progText = taskResultSummary(view.Snapshot())
-			}
-		})
-	}()
 }
 
 // syncUI 把界面更新送回窗口线程。
@@ -723,19 +527,7 @@ func (a *App) addImages() {
 		if len(paths) == 0 {
 			return
 		}
-		var loaded []sourceImage
-		for _, p := range paths {
-			data, err := os.ReadFile(p)
-			if err != nil || !images.IsValidImageBytes(data) {
-				continue
-			}
-			thumb, _ := images.Thumb(p, 200)
-			var bmp *ui.Bitmap
-			if thumb != nil {
-				bmp = ui.NewBitmap(thumb)
-			}
-			loaded = append(loaded, sourceImage{Path: p, Thumb: bmp, Hash: images.SHA256(data)})
-		}
+		loaded := loadSourceFiles(paths)
 		window.Update(func() {
 			logging.Log.Info("添加 %d 张源图", a.appendSources(loaded))
 		})

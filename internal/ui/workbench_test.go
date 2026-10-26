@@ -1,0 +1,249 @@
+package ui
+
+import (
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+
+	"xbs/internal/store"
+	"xbs/internal/tasks"
+)
+
+func TestPlanWorkbenchPicksLoggedInPlatforms(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.Local)
+	accounts := []AccountSnap{
+		{Platform: "豆包", LoggedIn: true, Health: store.HealthReady},
+		{Platform: "千问", LoggedIn: true, Health: store.HealthExhausted},
+		{Platform: "豆包", LoggedIn: true, Health: store.HealthCooling, CoolUntil: now.Add(time.Minute).Unix()},
+	}
+	got := PlanWorkbench(WorkbenchInput{
+		HasImages: true, AutoPlatform: true, Accounts: accounts, Now: now,
+	})
+	if got.Action != StartGenerate || len(got.Platforms) != 1 || got.Platforms[0] != "豆包" {
+		t.Fatalf("auto pick = %+v", got)
+	}
+
+	both := PlanWorkbench(WorkbenchInput{
+		HasPrompts: true, AutoPlatform: true, Now: now,
+		Accounts: []AccountSnap{
+			{Platform: "千问", LoggedIn: true, Health: store.HealthReady},
+			{Platform: "豆包", Extension: true, Health: store.HealthReady},
+			{Platform: "豆包", LoggedIn: true, Health: store.HealthReady},
+		},
+	})
+	if both.Action != StartGenerate || len(both.Platforms) != 2 || both.Platforms[0] != "豆包" || both.Platforms[1] != "千问" {
+		t.Fatalf("both platforms = %+v", both)
+	}
+
+	manual := PlanWorkbench(WorkbenchInput{
+		HasImages: true, WantQianwen: true, Now: now,
+		Accounts: []AccountSnap{{Platform: "豆包", LoggedIn: true, Health: store.HealthReady}},
+	})
+	if manual.Action != StartWizard || manual.Platforms != nil {
+		t.Fatalf("manual mismatch = %+v", manual)
+	}
+
+	ext := PlanWorkbench(WorkbenchInput{
+		HasPrompts: true, AutoPlatform: true, ExtensionMode: true, Now: now,
+		Accounts: []AccountSnap{
+			{Platform: "豆包", LoggedIn: true, Health: store.HealthReady},
+			{Platform: "千问", Extension: true, Health: store.HealthReady},
+		},
+	})
+	if ext.Action != StartGenerate || len(ext.Platforms) != 1 || ext.Platforms[0] != "千问" {
+		t.Fatalf("extension pick = %+v", ext)
+	}
+}
+
+func TestPlanWorkbenchStartButton(t *testing.T) {
+	now := time.Now()
+	ready := []AccountSnap{{Platform: "豆包", LoggedIn: true, Health: store.HealthReady}}
+	cases := []struct {
+		name string
+		in   WorkbenchInput
+		want StartAction
+	}{
+		{"running", WorkbenchInput{Running: true, HasImages: true, AutoPlatform: true, Accounts: ready, Now: now}, StartNone},
+		{"empty", WorkbenchInput{AutoPlatform: true, Accounts: ready, Now: now}, StartNone},
+		{"prompt only", WorkbenchInput{HasPrompts: true, AutoPlatform: true, Accounts: ready, Now: now}, StartGenerate},
+		{"image only", WorkbenchInput{HasImages: true, AutoPlatform: true, Accounts: ready, Now: now}, StartGenerate},
+		{"no account", WorkbenchInput{HasImages: true, HasPrompts: true, AutoPlatform: true, Now: now}, StartWizard},
+		{"signed out", WorkbenchInput{HasPrompts: true, AutoPlatform: true, Now: now, Accounts: []AccountSnap{{Platform: "豆包", Health: store.HealthReady}}}, StartWizard},
+	}
+	for _, tc := range cases {
+		got := PlanWorkbench(tc.in)
+		if got.Action != tc.want {
+			t.Errorf("%s action = %v, want %v (%+v)", tc.name, got.Action, tc.want, got)
+		}
+	}
+}
+
+func TestDefaultOutputDir(t *testing.T) {
+	if got := DefaultOutputDir("  /custom/out ", "/data"); got != "/custom/out" {
+		t.Fatalf("explicit = %q", got)
+	}
+	if got := DefaultOutputDir("", "/data"); got != filepath.Join("/data", DefaultOutputName) {
+		t.Fatalf("default = %q", got)
+	}
+	if got := DefaultOutputDir("  ", ""); got != filepath.Join(".", DefaultOutputName) {
+		t.Fatalf("blank work dir = %q", got)
+	}
+	dir := filepath.Join(t.TempDir(), "nested")
+	got, err := EnsureOutputDir(DefaultOutputDir("", dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(got)
+	if err != nil || !info.IsDir() || got != filepath.Join(dir, DefaultOutputName) {
+		t.Fatalf("created %q: %v", got, err)
+	}
+}
+
+func TestPlatformAutoDefaultsOn(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	a.loadSettings()
+	if !a.platformAuto {
+		t.Fatal("platform auto should default on")
+	}
+	a.platformAuto = false
+	a.saveSettings()
+	again := &App{store: st}
+	again.loadSettings()
+	if again.platformAuto {
+		t.Fatal("turned-off platform auto was not restored")
+	}
+}
+
+func TestDisplayStatusAndProgressCards(t *testing.T) {
+	if got := DisplayStatus([]tasks.Status{tasks.StatusPending, tasks.StatusSuccess}); got != "排队中" {
+		t.Fatalf("pending = %s", got)
+	}
+	if got := DisplayStatus([]tasks.Status{tasks.StatusRunning, tasks.StatusFailed}); got != "生成中" {
+		t.Fatalf("running = %s", got)
+	}
+	if got := DisplayStatus([]tasks.Status{tasks.StatusRetry}); got != "生成中" {
+		t.Fatalf("retry = %s", got)
+	}
+	if got := DisplayStatus([]tasks.Status{tasks.StatusSuccess}); got != "完成" {
+		t.Fatalf("success = %s", got)
+	}
+	if got := DisplayStatus([]tasks.Status{tasks.StatusFailed, tasks.StatusSuccess}); got != "失败" {
+		t.Fatalf("failed = %s", got)
+	}
+	if got := DisplayStatus([]tasks.Status{tasks.StatusNeedsUser}); got != "待验证" {
+		t.Fatalf("needs user = %s", got)
+	}
+
+	cards := ProgressCards([]tasks.Task{
+		{Platform: "豆包", Images: []string{"风景.png"}, Prompt: "甲", Status: tasks.StatusSuccess, Results: []string{"out/a.png"}},
+		{Platform: "千问", Images: []string{"风景.png"}, Prompt: "甲", Status: tasks.StatusFailed, Error: "账号额度已用尽"},
+		{Platform: "豆包", Prompt: "画一只猫", Status: tasks.StatusPending},
+	})
+	if len(cards) != 2 {
+		t.Fatalf("cards = %+v", cards)
+	}
+	if cards[0].Title != "风景.png" || cards[0].Status != "失败" || cards[0].Reason != "账号额度已用完" || len(cards[0].Retry) != 1 || cards[0].Retry[0].Platform != "千问" {
+		t.Fatalf("image card = %+v", cards[0])
+	}
+	if len(cards[0].Results) != 1 || cards[0].Results[0] != "out/a.png" {
+		t.Fatalf("results = %v", cards[0].Results)
+	}
+	if cards[1].Status != "排队中" || cards[1].Title != "画一只猫" || cards[1].Reason != "" {
+		t.Fatalf("text card = %+v", cards[1])
+	}
+	failed := FailedTasks([]tasks.Task{
+		{Status: tasks.StatusSuccess},
+		{Status: tasks.StatusFailed},
+		{Status: tasks.StatusNeedsUser},
+		{Status: tasks.StatusSkipped},
+	})
+	if len(failed) != 2 || failed[0].Status != tasks.StatusFailed || failed[1].Status != tasks.StatusSkipped {
+		t.Fatalf("failed = %+v", failed)
+	}
+}
+
+func TestHumanReason(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", "出图失败，请重试"},
+		{"等待生成结果超时：未得到有效的新图片", "等太久了，没有拿到新图片"},
+		{"平台[千问]没有配置浏览器，请先在浏览器管理中添加", "这个平台还没有可用账号"},
+		{"任务队列为空：请添加提示词，或添加源图片", "请先添加图片或提示词"},
+		{"任务已在执行中", "正在出图，请稍候"},
+		{"账号额度已用尽", "账号额度已用完"},
+		{"quota exceeded for today", "账号额度已用完"},
+		{"请求过于频繁", "请求太频繁，请稍后再试"},
+		{"rate limit", "请求太频繁，请稍后再试"},
+		{"千问页面未登录，请在扩展打开的网页登录后再开始任务", "账号未登录，请先登录"},
+		{"需人工验证：请在原网页手动完成验证后再开始任务", "需要在网页里完成验证"},
+		{"发送状态未确认，请检查网页后再开始任务", "发送结果不确定，请看网页后再试"},
+		{"网页下载结果 #1 校验失败: 文件为空或图片格式不支持", "结果图片保存失败"},
+		{"上传: 连接被拒绝", "图片上传失败"},
+		{"扩展账号未连接", "扩展没有连上"},
+		{"已停止", "已停止"},
+		{"同平台账号都不可用", "账号暂时不可用"},
+		{"启动浏览器[工作]: 未找到 Google Chrome，请先安装", "浏览器没有打开"},
+		{"websocket: connection refused", "网络中断，请重试"},
+		{"something broke in the page", "出图失败，请重试"},
+		{"源图是空文件", "源图是空文件"},
+	}
+	for _, tc := range cases {
+		if got := HumanReason(tc.in); got != tc.want {
+			t.Errorf("HumanReason(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	long := "这是一段已经是中文但长得放不进一行的说明需要被收短以免把进度卡片撑乱掉后面还有很多字"
+	got := HumanReason(long)
+	if len([]rune(got)) > 37 || !mostlyHan(got) {
+		t.Fatalf("long reason = %q", got)
+	}
+}
+
+func TestDropZoneAddsAndRemovesImages(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "one.png")
+	second := filepath.Join(dir, "two.png")
+	writeTinyPNG(t, first)
+	writeColorPNG(t, second)
+	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
+	tt := ui.NewTester(a.view, 1280, 840)
+	r := assertVisible(t, tt, "把图片拖到这里，或点击选择", 1280, 840)
+	if !tt.DropFiles(r.X+10, r.Y+10, first, second, filepath.Join(dir, "note.txt")) {
+		t.Fatal("drop zone did not take the files")
+	}
+	tt.Frame()
+	if len(a.sources) != 2 {
+		t.Fatalf("sources = %+v", a.sources)
+	}
+	assertVisible(t, tt, "已选 2 张", 1280, 840)
+	if err := tt.Click("移除"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.sources) != 1 {
+		t.Fatalf("after remove = %d", len(a.sources))
+	}
+}
+
+func writeColorPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 200, A: 255})
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}

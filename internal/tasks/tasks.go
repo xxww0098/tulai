@@ -139,6 +139,36 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 	return out
 }
 
+// RebuildRetry 把失败、跳过或待验证的任务收成一批新的等待任务。
+// 提示词保持原样（后缀已经拼过），不沿用上次的账号，方便重新挑一个健康账号。
+func RebuildRetry(items []Task) []Task {
+	var out []Task
+	for _, task := range items {
+		switch task.Status {
+		case StatusFailed, StatusSkipped, StatusNeedsUser:
+		default:
+			continue
+		}
+		if strings.TrimSpace(task.Platform) == "" {
+			continue
+		}
+		if len(task.Images) == 0 && strings.TrimSpace(task.Prompt) == "" {
+			continue
+		}
+		next := Task{
+			Index:    len(out) + 1,
+			Platform: task.Platform,
+			Prompt:   task.Prompt,
+			Status:   StatusPending,
+		}
+		if len(task.Images) > 0 {
+			next.Images = append([]string(nil), task.Images...)
+		}
+		out = append(out, next)
+	}
+	return out
+}
+
 // resultSource 是命名和分文件夹用的路径。文生图没有源图，用提示词第一行造一个文件名。
 func resultSource(t *Task) string {
 	if t != nil && len(t.Images) > 0 {
