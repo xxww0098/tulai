@@ -22,6 +22,7 @@ import (
 	"xbs/internal/prompts"
 	"xbs/internal/store"
 	"xbs/internal/tasks"
+	"xbs/internal/wizard"
 )
 
 func splitLines(s string) []string {
@@ -135,6 +136,22 @@ type App struct {
 	splitSz      float32
 	sourceHeight float32
 	updateBusy   bool
+
+	wizardOn        bool
+	wizardStep      wizard.Step
+	wizardPlan      wizard.BrowserPlan
+	wizardQueue     wizard.Queue
+	wizardAccount   store.Browser
+	wizardExtra     bool
+	wizardPickExtra bool
+	wizardPhase     string
+	wizardNote      string
+	wizardErr       string
+	wizardGen       int
+	wizardStop      chan struct{}
+	wizardLaunch    func(store.Browser) (string, error)
+	wizardOpen      func(ws, rawURL string) error
+	wizardProbe     func(ctx context.Context, endpoint string) (string, error)
 }
 
 type sourceImage struct {
@@ -158,6 +175,7 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		browserSel:   -1,
 	}
 	a.loadSettings()
+	a.applyWizardGate()
 	if a.engine != nil {
 		if err := a.engine.ServeLocal(); err != nil && a.extTokenNote == "" {
 			a.extTokenNote = "自动对接未启动，可复制令牌手动填写"
@@ -357,6 +375,10 @@ func (a *App) captchaConfig() captcha.Config {
 
 // view 主视图。
 func (a *App) view(c *ui.Context) {
+	if a.wizardOn {
+		a.wizardView(c)
+		return
+	}
 	width, _ := c.Size()
 	sidebarWidth := min(a.splitSz, max(300, width*0.32))
 	ui.Column(c).Fill().Children(func() {
@@ -367,6 +389,7 @@ func (a *App) view(c *ui.Context) {
 				subtitle += " · " + v
 			}
 			ui.Text(c, subtitle).FontSize(13).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0)
+			ui.Button(c, "设置向导").Disabled(a.running).OnClick(func() { a.openWizard() })
 			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
 		})
 		ui.Divider(c)
