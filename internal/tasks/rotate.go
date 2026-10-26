@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"xbs/internal/heal"
 	"xbs/internal/logging"
 	"xbs/internal/store"
 )
@@ -35,6 +36,9 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 	}
 	until := earliestCool(rows, now)
 	if until.IsZero() {
+		if e.accountWaitingOnUser(rows, now) {
+			return now.Add(heal.RecheckAfter), false
+		}
 		if task.Error == "" {
 			task.Error = "同平台账号都不可用"
 		}
@@ -55,7 +59,9 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 		return false
 	}
 	if (kind == faultCaptcha || kind == faultAuth) && task.submitted {
-		e.noteFault(task.ranOnOr(task.BrowserID), kind, err, now)
+		id := task.ranOnOr(task.BrowserID)
+		e.noteFault(id, kind, err, now)
+		e.announceAccount(id, kind)
 		return false
 	}
 	current := task.ranOnOr(task.BrowserID)
@@ -63,10 +69,12 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	if !ok {
 		if kind != faultOffline {
 			e.noteFault(current, kind, err, now)
+			e.announceAccount(current, kind)
 		}
 		return false
 	}
 	e.noteFault(current, kind, err, now)
+	e.announceAccount(current, kind)
 	name := browserName(e.store, next)
 	logging.Log.Warning("#%d 账号 %s，改用「%s」", task.Index, faultLabel(kind), name)
 	task.BrowserID = next

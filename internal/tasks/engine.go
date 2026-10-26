@@ -19,6 +19,7 @@ import (
 	"xbs/internal/captcha"
 	"xbs/internal/cdp"
 	"xbs/internal/extbridge"
+	"xbs/internal/heal"
 	"xbs/internal/images"
 	"xbs/internal/logging"
 	"xbs/internal/store"
@@ -56,6 +57,18 @@ type Engine struct {
 	extOnChange func()
 	pair        *extbridge.PairServer
 	pairErr     error
+
+	loginProbe  func(context.Context, store.Browser) (string, error)
+	loginFocus  func(context.Context, store.Browser) error
+	sliderFn    func(context.Context, store.Browser) error
+	onHeal      func()
+	onRecover   func(heal.Action, int64)
+	loginLast   map[int64]time.Time
+	loginPrev   map[int64]string
+	attention   string
+	attentionID int64
+	notes       []string
+	wake        chan struct{}
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。
@@ -182,8 +195,10 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	nudge := make(chan struct{}, 1)
 	e.cancel = cancel
 	e.running = true
+	e.wake = nudge
 	e.mu.Unlock()
 	e.rotateExtBatch()
 
@@ -192,6 +207,9 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		e.mu.Lock()
 		e.running = false
 		e.cancel = nil
+		if e.wake == nudge {
+			e.wake = nil
+		}
 		e.mu.Unlock()
 	}()
 
@@ -255,7 +273,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 			now := time.Now()
 			for i := 0; i < len(pending); i++ {
 				task := pending[i]
-				wait, dead := e.prepareAccount(&task, now)
+				wait, dead := e.settleAccount(ctx, &task)
 				pending[i] = task
 				if dead {
 					task.Status = StatusFailed
@@ -344,6 +362,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 				}
 			}
 		case <-wake:
+		case <-nudge:
 		case <-ctxDone:
 			pending, ctxDone = nil, nil
 		}
@@ -371,6 +390,7 @@ func (e *Engine) Stop() {
 // execute 执行单个任务（含重试）。
 func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Context, *Task) error) Task {
 	maxAttempts := 1 + e.opts.RetryCount
+	sliderTried := false
 	for t.Attempts < maxAttempts {
 		select {
 		case <-ctx.Done():
@@ -396,6 +416,12 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Status = StatusSuccess
 			t.Error = ""
 			return t
+		}
+		if again, done := e.healAttempt(ctx, &t, err, &sliderTried); done || again {
+			if done {
+				return t
+			}
+			continue
 		}
 		if e.maybeRotate(&t, err, time.Now()) {
 			return t
@@ -463,7 +489,10 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 		}
 		return err
 	}
-	stopRun := context.AfterFunc(sess.Ctx(), cancelRun)
+	work, workCancel := context.WithCancel(ctx)
+	defer workCancel()
+	// 调试连接断了就结束这一次尝试，整批任务继续，交给自愈重启。
+	context.AfterFunc(sess.Ctx(), workCancel)
 	closed := make(chan struct{})
 	stopSession := context.AfterFunc(ctx, func() {
 		sess.Close()
@@ -471,7 +500,6 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	})
 	defer func() {
 		if errors.Is(attemptErr, captcha.ErrVerificationRequired) && ctx.Err() == nil && !errors.Is(attemptErr, context.Canceled) && !errors.Is(attemptErr, context.DeadlineExceeded) {
-			stopRun()
 			if !stopSession() {
 				<-closed
 			}
@@ -479,24 +507,47 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 			e.forgetSession(sess)
 			return
 		}
-		if sess.Ctx().Err() != nil {
-			cancelRun()
-		}
-		stopRun()
 		if !stopSession() {
 			<-closed
 		}
-		if ctx.Err() != nil || sess.Ctx().Err() != nil {
+		if ctx.Err() != nil {
 			sess.Close()
 			e.forgetSession(sess)
+			return
+		}
+		if sess.Ctx().Err() != nil {
+			sess.Close()
+			e.forgetSession(sess)
+			if attemptErr == nil || errors.Is(attemptErr, context.Canceled) || errors.Is(attemptErr, context.DeadlineExceeded) {
+				attemptErr = fmt.Errorf("%w", heal.ErrCrashed)
+			}
 		}
 	}()
 	// 发送前等待（等待页面/登录就绪）
 	if !t.submitted && e.opts.WaitBeforeSend > 0 {
 		select {
 		case <-time.After(time.Duration(e.opts.WaitBeforeSend) * time.Second):
-		case <-ctx.Done():
-			return fmt.Errorf("已停止")
+		case <-work.Done():
+			if ctx.Err() != nil {
+				return fmt.Errorf("已停止")
+			}
+			return fmt.Errorf("%w", heal.ErrCrashed)
+		}
+	}
+	if !t.submitted {
+		if row, ok := e.browserByID(t.BrowserID); ok && row.ExtAccount == "" {
+			if state, stateErr := sess.LoginState(); stateErr == nil {
+				switch state {
+				case "out":
+					e.applyLogin(row, heal.StateOut)
+					return fmt.Errorf("未登录")
+				case "challenge":
+					e.applyLogin(row, heal.StateChallenge)
+					return errNeedsVerify
+				case "in":
+					e.applyLogin(row, heal.StateIn)
+				}
+			}
 		}
 	}
 	if err := e.submitTask(t, strat, sess); err != nil {
@@ -505,7 +556,7 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	if !e.opts.WaitResult {
 		return nil
 	}
-	return e.waitAndSave(ctx, t, strat, sess)
+	return e.waitAndSave(work, t, strat, sess)
 }
 
 func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session) error {
@@ -538,6 +589,7 @@ func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session)
 
 func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session) error {
 	deadline := time.Now().Add(time.Duration(e.opts.WaitResultSeconds) * time.Second)
+	lastProgress := time.Now()
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -571,6 +623,9 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 		}
 		if len(saved) > 0 || t.matchedSavedResult {
 			return nil
+		}
+		if time.Since(lastProgress) >= stallAfter {
+			return fmt.Errorf("%w", heal.ErrStuck)
 		}
 		logging.Log.Debugf("#%d 候选暂无有效生成图，继续等待", t.Index)
 		select {

@@ -1,6 +1,7 @@
 package cdp
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -29,9 +30,30 @@ func TestPickLoginTargetPrefersTheOpenSite(t *testing.T) {
 }
 
 func TestLoginProbeUsesComposerAndScanLogin(t *testing.T) {
-	for _, needle := range []string{"contenteditable", "扫码登录", "state:'in'", "state:'out'", "state:'unknown'"} {
+	for _, needle := range []string{"contenteditable", "扫码登录", "state:'in'", "state:'out'", "state:'unknown'", "state:'challenge'", "安全验证", "拖动滑块"} {
 		if !strings.Contains(loginProbeJS, needle) {
 			t.Fatalf("probe script missing %q", needle)
+		}
+	}
+}
+
+func TestNormalizeLoginState(t *testing.T) {
+	encoded, err := json.Marshal(`{"state":"out"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		`{"state":"in"}`:        "in",
+		`{"state":"challenge"}`: "challenge",
+		string(encoded):         "out",
+		"in":                    "in",
+		"challenge":             "challenge",
+		"":                      "unknown",
+		"nope":                  "unknown",
+	}
+	for raw, want := range cases {
+		if got := NormalizeLoginState(raw); got != want {
+			t.Errorf("NormalizeLoginState(%q) = %q, want %q", raw, got, want)
 		}
 	}
 }

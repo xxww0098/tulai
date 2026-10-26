@@ -2,12 +2,15 @@ package cdp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 )
 
 // loginProbeJS 跟页面桥的 loginWall、composer 的 hasComposer 用同一组信号：
-// 看得见输入框，并且没有扫码登录层，才算已登录。连接断开时不关用户的标签页。
+// 看得见输入框，并且没有扫码登录层，才算已登录。
+// 滑块、安全验证或 punish 页是 challenge，不算退出登录。连接断开时不关用户的标签页。
 const loginProbeJS = `(function () {
   function visible(el) {
     if (!el) return false;
@@ -44,6 +47,14 @@ const loginProbeJS = `(function () {
     }
     return false;
   }
+  function challenge() {
+    var href = String(location.href || '');
+    if (href.indexOf('_____tmd_____') >= 0 || href.indexOf('/punish') >= 0) return true;
+    if (document.querySelector('#aliyunCaptcha-sliding-slider,[class*="baxia-dialog"],iframe[src*="punish"],iframe[src*="captcha"]')) return true;
+    var body = String((document.body && document.body.innerText) || '').slice(0, 1200);
+    return /安全验证|滑动验证|拖动滑块|请按住滑块|请完成下方验证/.test(body);
+  }
+  if (challenge()) return {state:'challenge'};
   var hasComposer = composer();
   if (hasComposer && !loginDialog()) return {state:'in'};
   if (loginDialog() || loginButton()) return {state:'out'};
@@ -58,7 +69,7 @@ type loginProbeResult struct {
 
 // ProbeLogin 附着到已经打开的页面，读一次登录状态，然后只断开调试连接。
 // endpoint 可以是浏览器的 WebSocket 地址，或 http://127.0.0.1:端口。
-// 返回 in、out 或 unknown。没有页面时返回 unknown，方便继续等。
+// 返回 in、out、challenge 或 unknown。没有页面时返回 unknown，方便继续等。
 func ProbeLogin(ctx context.Context, endpoint string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -82,12 +93,65 @@ func ProbeLogin(ctx context.Context, endpoint string) (string, error) {
 	if err := conn.EvalJSON(ctx, id, loginProbeJS, &result); err != nil {
 		return "", err
 	}
-	switch result.State {
-	case "in", "out", "unknown":
-		return result.State, nil
-	default:
-		return "unknown", nil
+	return NormalizeLoginState(result.State), nil
+}
+
+// NormalizeLoginState 只保留 in、out、challenge、unknown。
+func NormalizeLoginState(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "unknown"
 	}
+	var wrapped loginProbeResult
+	if json.Unmarshal([]byte(raw), &wrapped) == nil && wrapped.State != "" {
+		return NormalizeLoginState(wrapped.State)
+	}
+	var encoded string
+	if json.Unmarshal([]byte(raw), &encoded) == nil && encoded != raw {
+		return NormalizeLoginState(encoded)
+	}
+	switch raw {
+	case "in", "out", "challenge", "unknown":
+		return raw
+	default:
+		return "unknown"
+	}
+}
+
+// LoginState 在已经打开的页面上读一次登录状态，不新开标签。
+func (s *Session) LoginState() (string, error) {
+	if s == nil {
+		return "unknown", errors.New("没有页面")
+	}
+	out, err := s.Evaluate(loginProbeJS)
+	if err != nil {
+		return "", err
+	}
+	return NormalizeLoginState(out), nil
+}
+
+// BringToFront 把豆包或千问那个标签拉到前面。没有站点页时激活当前页面。
+// 只断开调试连接，不关闭标签。
+func BringToFront(ctx context.Context, endpoint string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	conn, err := DialSlider(ctx, endpoint)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	targets, err := conn.targets(ctx)
+	if err != nil {
+		return err
+	}
+	id, ok := pickLoginTarget(targets)
+	if !ok {
+		return errors.New("没有可前置的页面")
+	}
+	return conn.Activate(ctx, id)
 }
 
 func pickLoginTarget(list []sliderTarget) (string, bool) {

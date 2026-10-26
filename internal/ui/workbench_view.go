@@ -15,6 +15,7 @@ import (
 	"xbs/internal/images"
 	"xbs/internal/logging"
 	"xbs/internal/prompts"
+	"xbs/internal/store"
 	"xbs/internal/tasks"
 )
 
@@ -49,6 +50,7 @@ func (a *App) homePage(c *ui.Context) {
 		ui.Column(c).FillWidth().MinHeight(minH).Gap(gap).Padding(8, 0, 12, 0).Children(func() {
 			a.dropZone(c)
 			a.promptPicker(c)
+			a.loginBanner(c)
 			a.startBar(c)
 			a.progressPane(c)
 			ui.Collapsible(c, "高级", &a.advancedOpen, func() {
@@ -190,6 +192,49 @@ func (a *App) promptPicker(c *ui.Context) {
 			ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
 	})
+}
+
+func (a *App) loginBanner(c *ui.Context) {
+	text, id, ok := "", int64(0), false
+	if a.engine != nil {
+		text, id, ok = a.engine.Attention()
+	}
+	if !ok || text == "" {
+		return
+	}
+	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
+		Background(c.Theme().Surface).Border(1, c.Theme().Warning).Radius(10).Children(func() {
+		ui.Text(c, text).FontSize(14).TextColor(c.Theme().Warning).Grow(1).MinWidth(0).SingleLine().Tooltip(text)
+		ui.Button(c, "去处理").OnClick(func() { a.openAttention(id) })
+	})
+}
+
+func (a *App) openAttention(id int64) {
+	a.tab = pageBrowser
+	a.refreshBrowsers()
+	for i, row := range a.browserRows {
+		if row.ID == id {
+			a.browserSel = i
+			break
+		}
+	}
+	var row store.Browser
+	if a.store != nil {
+		for _, b := range a.store.Browsers() {
+			if b.ID == id {
+				row = b
+				break
+			}
+		}
+	}
+	if row.ID == 0 || a.engine == nil {
+		return
+	}
+	go func(b store.Browser) {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		_ = a.engine.FocusAccount(ctx, b)
+	}(row)
 }
 
 func (a *App) startBar(c *ui.Context) {
@@ -366,6 +411,8 @@ func (a *App) captchaFields(c *ui.Context) {
 // advancedFields 是出图页「高级」里的平台、轮换、输出和单次任务选项。
 func (a *App) advancedFields(c *ui.Context) {
 	ui.Form(c, func() {
+		ui.Text(c, "运行日志").FontSize(15).Bold()
+		a.autoLogPane(c)
 		ui.Field(c, "平台", func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Switch(c, &a.platformAuto).Disabled(a.running)
@@ -449,10 +496,28 @@ func (a *App) advancedFields(c *ui.Context) {
 		ui.Field(c, "起始浏览器序号", func() {
 			ui.NumberInput(c, &a.startBrowserIdx, 1, 999, 1)
 		})
-		ui.Collapsible(c, "运行日志", &a.logsOpen, func() {
+		ui.Collapsible(c, "详细日志", &a.logsOpen, func() {
 			a.logPane(c)
 		})
 	}).FillWidth().Gap(12)
+}
+
+func (a *App) autoLogPane(c *ui.Context) {
+	var notes []string
+	if a.engine != nil {
+		notes = a.engine.AutoNotes()
+	}
+	if len(notes) == 0 {
+		ui.Text(c, "自动处理账号和浏览器的记录会显示在这里").FontSize(12).TextColor(c.Theme().TextMuted)
+		return
+	}
+	start := 0
+	if len(notes) > 6 {
+		start = len(notes) - 6
+	}
+	for _, line := range notes[start:] {
+		ui.Text(c, line).FontSize(12).SingleLine().Tooltip(line)
+	}
 }
 
 func (a *App) logPane(c *ui.Context) {
