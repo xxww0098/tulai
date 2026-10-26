@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 
+	"xbs/internal/store"
 	"xbs/internal/update"
 )
 
@@ -97,13 +99,14 @@ func runUpdateWith(args []string, run updateRun) int {
 		run.GOARCH = runtime.GOARCH
 	}
 	if run.Executable == "" {
-		exe, err := os.Executable()
+		exe, err := update.RunningExecutable()
 		if err != nil {
 			fmt.Fprintf(run.Stderr, "定位程序失败: %v\n", err)
 			return 1
 		}
 		run.Executable = exe
 	}
+	run.Client.ApplyMirrorSetting(configuredMirror())
 	current := run.Client.Version
 	if current == "" {
 		current = runningVersion()
@@ -160,6 +163,11 @@ func runUpdateWith(args []string, run updateRun) int {
 	if out.ManualCommand != "" {
 		fmt.Fprintln(run.Stdout, out.ManualCommand)
 	}
+	if out.OpenPath != "" {
+		if err := update.Open(out.OpenPath); err != nil {
+			fmt.Fprintf(run.Stderr, "未能打开安装包: %v\n", err)
+		}
+	}
 	if out.Helper != "" {
 		start := run.Start
 		if start == nil {
@@ -174,6 +182,22 @@ func runUpdateWith(args []string, run updateRun) int {
 		os.Exit(0)
 	}
 	return 0
+}
+
+func configuredMirror() string {
+	if v := strings.TrimSpace(os.Getenv("XBS_UPDATE_MIRROR")); v != "" {
+		return v
+	}
+	path := filepath.Join("database", "config.db")
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer st.Close()
+	return st.Get(update.KeyMirror)
 }
 
 func printRelease(w io.Writer, current string, rel update.Release) int {

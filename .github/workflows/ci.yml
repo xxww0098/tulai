@@ -145,7 +145,9 @@ jobs:
               echo "no release assets" >&2
               exit 1
             fi
+            # SHA256SUMS is required. The desktop updater refuses a release without it.
             sha256sum "${files[@]}" > SHA256SUMS
+            test -s SHA256SUMS
           )
           find release -type f -print | LC_ALL=C sort
       - name: Publish the GitHub release
@@ -163,7 +165,7 @@ jobs:
             echo "- macOS 磁盘映像只做了 ad-hoc 签名，没有公证。别的 Mac 上 Gatekeeper 会拦截。在访达里右键打开，或对应用执行 xattr -dr com.apple.quarantine。仓库里没有 Apple Developer ID。"
             echo "- Windows 安装器和 exe 没有代码签名，SmartScreen 可能报警。"
             echo "- Linux 的 deb 和 tar.gz 没有签名。把 install.sh 和对应架构的 .tar.gz 放在同一目录再执行，会安装到当前用户。"
-            echo "- 已安装的桌面端：菜单「帮助 → 检查更新…」，标题栏「检查更新」，或执行 \`xbs update\`。它请求 https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest（公开仓库，不带 token），按系统下载安装包并用 SHA256SUMS 校验。这些二进制没有公证，也没有代码签名。页面桥扩展不随桌面端更新。"
+            echo "- 已安装的桌面端启动后会自动检查（设置里可关闭），也可以用菜单「帮助 → 检查更新…」、标题栏「检查更新」或 \`xbs update\`。它请求 https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest（公开仓库，不带 token），GitHub 连不上时再试镜像前缀，按系统下载安装包并用 SHA256SUMS 校验。任务进行中不会打断。这些二进制没有公证，也没有代码签名。页面桥扩展不随桌面端更新。"
             echo
             echo "说明见 docs/RELEASING.md。"
           } >"$notes"

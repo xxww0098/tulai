@@ -17,6 +17,8 @@ const (
 	// ModeLinuxDeb is a package under /opt or /usr/bin. The system package
 	// manager has to install it; the app does not ask for a password.
 	ModeLinuxDeb Mode = "linux-deb"
+	// ModeLinuxBinary replaces an AppImage or a loose binary in place.
+	ModeLinuxBinary Mode = "linux-binary"
 	// ModeWindowsExe replaces the portable executable after this process exits.
 	ModeWindowsExe Mode = "windows-exe"
 	// ModeWindowsSetup runs the NSIS installer after this process exits.
@@ -31,11 +33,12 @@ const (
 type Kind string
 
 const (
-	KindLinuxTar     Kind = "linux-tar"
-	KindLinuxDeb     Kind = "linux-deb"
-	KindWindowsExe   Kind = "windows-exe"
-	KindWindowsSetup Kind = "windows-setup"
-	KindMacDMG       Kind = "mac-dmg"
+	KindLinuxTar      Kind = "linux-tar"
+	KindLinuxDeb      Kind = "linux-deb"
+	KindWindowsExe    Kind = "windows-exe"
+	KindWindowsSetup  Kind = "windows-setup"
+	KindMacDMG        Kind = "mac-dmg"
+	KindLinuxAppImage Kind = "linux-appimage"
 )
 
 // UnsignedWarning is shown before a download. The SHA256 check does not
@@ -66,6 +69,9 @@ func DetectMode(goos, executable string) Mode {
 		return ModeWindowsExe
 	default:
 		slash := toSlash(executable)
+		if strings.HasSuffix(strings.ToLower(slash), ".appimage") {
+			return ModeLinuxBinary
+		}
 		if slash == "/usr/bin/xbs" || strings.HasPrefix(slash, "/opt/xbs/") {
 			return ModeLinuxDeb
 		}
@@ -78,6 +84,8 @@ func KindFor(mode Mode) Kind {
 	switch mode {
 	case ModeLinuxDeb:
 		return KindLinuxDeb
+	case ModeLinuxBinary:
+		return KindLinuxAppImage
 	case ModeWindowsExe:
 		return KindWindowsExe
 	case ModeWindowsSetup:
@@ -121,13 +129,28 @@ func AssetName(kind Kind, version, arch string) (string, error) {
 		return fmt.Sprintf("%s.Setup.%s.%s.exe", appName, version, arch), nil
 	case KindMacDMG:
 		return fmt.Sprintf("%s.%s.dmg", appName, version), nil
+	case KindLinuxAppImage:
+		return fmt.Sprintf("%s-%s-linux-%s.AppImage", appName, version, arch), nil
 	default:
 		return "", fmt.Errorf("未知安装包类型 %s", kind)
 	}
 }
 
 // Select finds the asset for kind. Extension zips and other files are ignored.
+// An AppImage release falls back to the linux tar.gz, which is what this repo publishes.
 func Select(assets []Asset, kind Kind, version, arch string) (Asset, error) {
+	asset, err := selectExact(assets, kind, version, arch)
+	if err == nil || kind != KindLinuxAppImage {
+		return asset, err
+	}
+	fallback, ferr := selectExact(assets, KindLinuxTar, version, arch)
+	if ferr == nil {
+		return fallback, nil
+	}
+	return Asset{}, err
+}
+
+func selectExact(assets []Asset, kind Kind, version, arch string) (Asset, error) {
 	want, err := AssetName(kind, version, arch)
 	if err != nil {
 		return Asset{}, err

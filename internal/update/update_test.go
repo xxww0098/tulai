@@ -125,6 +125,7 @@ func TestDetectMode(t *testing.T) {
 		{"windows", `D:\Portable\xbs.exe`, ModeWindowsExe},
 		{"linux", "/usr/bin/xbs", ModeLinuxDeb},
 		{"linux", "/opt/xbs/xbs", ModeLinuxDeb},
+		{"linux", "/home/a/xbs-0.1.2-linux-amd64.AppImage", ModeLinuxBinary},
 		{"linux", "/home/a/.local/xbs.app/xbs", ModeLinuxUser},
 		{"linux", "/tmp/go-build/xbs", ModeLinuxUser},
 	}
@@ -303,8 +304,8 @@ func TestInstallLinuxUserArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Relaunch {
-		t.Fatal("in-place user install did not ask to relaunch")
+	if !out.Quit || out.Helper != "/bin/sh" || out.Relaunch {
+		t.Fatalf("in-place user install did not arrange a restart: %+v", out)
 	}
 	body, err := os.ReadFile(filepath.Join(home, ".local", "xbs.app", "xbs"))
 	if err != nil || !strings.Contains(string(body), "updated") {
@@ -356,7 +357,7 @@ func TestInstallDebIsManual(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Relaunch || out.Quit || !strings.Contains(out.ManualCommand, "sudo dpkg -i ") {
+	if out.Relaunch || out.Quit || !strings.Contains(out.ManualCommand, "sudo dpkg -i ") || out.OpenPath == "" {
 		t.Fatalf("deb outcome: %+v", out)
 	}
 	if _, err := os.Stat(out.InstalledPath); err != nil {
@@ -369,7 +370,7 @@ func TestInstallDebIsManual(t *testing.T) {
 
 func TestWindowsReplaceScript(t *testing.T) {
 	script := WindowsScript()
-	for _, needle := range []string{"Get-Process", "Move-Item -LiteralPath $Source", "Start-Process -FilePath $Destination", "Start-Process -FilePath $Installer"} {
+	for _, needle := range []string{"Get-Process", "Move-Item -LiteralPath $Source", "Start-Process -FilePath $Destination", "Start-Process -FilePath $Installer", ".previous", "-ArgumentList '/S'"} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("script missing %s:\n%s", needle, script)
 		}
