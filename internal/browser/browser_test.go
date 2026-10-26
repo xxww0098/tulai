@@ -69,8 +69,41 @@ func TestProfileDirSeparatesEdgeFromChrome(t *testing.T) {
 	if edge != filepath.Join("BrowserData", "Edge", "千问") || chrome == edge {
 		t.Fatalf("edge profile = %s", edge)
 	}
-	if pageBackend("ego lite") != "Chrome" || pageBackend("Edge") != "Edge" {
+	builtin := ProfileDir("BrowserData", "Builtin", "千问")
+	if builtin != filepath.Join("BrowserData", "Builtin", "千问") || builtin == chrome || builtin == edge {
+		t.Fatalf("builtin profile = %s", builtin)
+	}
+	if ProfileDir("BrowserData", "内置浏览器", "千问") != builtin {
+		t.Fatal("内置浏览器 profile")
+	}
+	if ProfileDir("BrowserData", "Chromium", "千问") != chrome {
+		t.Fatal("chromium shares the chrome profile directory")
+	}
+	if pageBackend("ego lite") != "Chrome" || pageBackend("Edge") != "Edge" || pageBackend("Builtin") != "Builtin" || pageBackend("内置浏览器") != "Builtin" {
 		t.Fatal("backend normalize")
+	}
+}
+
+func TestDebugArgsKeepProfileAndSkipAutomation(t *testing.T) {
+	userData := filepath.Join("BrowserData", "Edge", "千问")
+	args := debugArgs(9333, userData)
+	joined := strings.Join(args, "\n")
+	for _, want := range []string{
+		"--remote-debugging-port=9333",
+		"--user-data-dir=" + userData,
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-features=Translate",
+		"--disable-infobars",
+		"--remote-allow-origins=*",
+		"about:blank",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %s in %v", want, args)
+		}
+	}
+	if strings.Contains(joined, "--enable-automation") || strings.Contains(joined, "--headless") {
+		t.Fatalf("automation flag leaked: %v", args)
 	}
 }
 
