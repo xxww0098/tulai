@@ -164,7 +164,7 @@ func (a *App) browserPane(c *ui.Context) {
 					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
 				}
 			})
-		}).Grow(1).MinHeight(0).Border(1, c.Theme().Border).Radius(12)
+		}).Grow(1).MinHeight(72).Border(1, c.Theme().Border).Radius(12)
 		selected, hasSelection := a.selectedBrowser()
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
