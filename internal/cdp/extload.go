@@ -81,3 +81,42 @@ func extensionLoaded(ctx context.Context, endpoint string) (bool, error) {
 	}
 	return false, nil
 }
+
+// ExtensionPairState 读取这个 profile 里页面桥自己保存的配置文件标识和令牌。
+// found 表示已经能看到页面桥的 service worker。标识还没写上时 profileID 为空。
+func ExtensionPairState(ctx context.Context, endpoint string) (profileID, token string, found bool, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	conn, err := DialSlider(ctx, endpoint)
+	if err != nil {
+		return "", "", false, err
+	}
+	defer conn.Close()
+	targets, err := conn.targets(ctx)
+	if err != nil {
+		return "", "", false, err
+	}
+	expr := `chrome.storage.local.get(['profileId','token']).then(function (v) {
+		return {name:(chrome.runtime.getManifest()||{}).name||'', id:String((v&&v.profileId)||''), token:String((v&&v.token)||'')};
+	})`
+	for _, item := range targets {
+		if item.ID == "" || !strings.HasPrefix(item.URL, "chrome-extension://") {
+			continue
+		}
+		if item.Type != "service_worker" && item.Type != "background_page" {
+			continue
+		}
+		var snap struct {
+			Name  string `json:"name"`
+			ID    string `json:"id"`
+			Token string `json:"token"`
+		}
+		// 别的扩展没有这段存储，脚本异常就跳过。
+		if err := conn.evalJSON(ctx, item.ID, expr, &snap, true); err != nil || snap.Name != extensionName {
+			continue
+		}
+		return snap.ID, snap.Token, true, nil
+	}
+	return "", "", false, nil
+}

@@ -120,4 +120,11 @@ func TestChooseLoginPagePrefersTheVisibleBlankTab(t *testing.T) {
 	if landed("about:blank", want) || landed("https://example.com/", want) {
 		t.Fatal("not the login site")
 	}
+	qianwen := "https://www.tongyi.com/"
+	if !landed("https://www.qianwen.com/?ch=tongyi_redirect", qianwen) || !landed("https://chat.qwen.ai/", qianwen) {
+		t.Fatal("qianwen login redirect should count as the tongyi page")
+	}
+	if landed("https://not-qianwen.com/", qianwen) || landed("https://www.doubao.com/chat/", qianwen) {
+		t.Fatal("unrelated host counted as qianwen")
+	}
 }

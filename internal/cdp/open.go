@@ -306,7 +306,22 @@ func sameSite(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	return a == b || strings.HasSuffix(a, "."+b) || strings.HasSuffix(b, "."+a)
+	if a == b || strings.HasSuffix(a, "."+b) || strings.HasSuffix(b, "."+a) {
+		return true
+	}
+	// 千问的登录地址写的是 tongyi.com，站点会 301 到 qianwen.com。
+	return loginSite(a) != "" && loginSite(a) == loginSite(b)
+}
+
+func loginSite(host string) string {
+	switch {
+	case host == "tongyi.com" || strings.HasSuffix(host, ".tongyi.com") ||
+		host == "qianwen.com" || strings.HasSuffix(host, ".qianwen.com") ||
+		host == "qwen.ai" || strings.HasSuffix(host, ".qwen.ai"):
+		return "qianwen"
+	default:
+		return ""
+	}
 }
 
 func (c *SliderConn) pageHits(ctx context.Context) ([]pageHit, error) {

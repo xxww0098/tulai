@@ -436,11 +436,44 @@ func (a *App) deleteBrowser() {
 	if !ok {
 		return
 	}
-	a.manager.Stop(b.ID)
-	a.store.DeleteBrowser(b.ID)
+	ids := a.pairedProfileIDs(b)
+	if a.manager != nil {
+		a.manager.Stop(b.ID)
+	}
+	if a.store != nil {
+		a.store.DeleteBrowser(b.ID)
+		for _, id := range ids {
+			a.store.DeleteByExtensionAccount(id)
+		}
+	}
+	if err := browser.RemoveProfile(a.dataRoot, a.browserBackend, b); err != nil {
+		logging.Log.Warning("删除账号 %s 的配置目录失败：%v", accountLabel(b), err)
+	}
 	logging.Log.Info("浏览器[%s] 已删除", b.Name)
 	a.browserSel = -1
 	a.refreshBrowsers()
+}
+
+// pairedProfileIDs 是这个账号页面桥写在自己配置里的标识。
+// 调试端口还开着时从扩展里读；扩展账号行本身就带着这个标识。
+func (a *App) pairedProfileIDs(b store.Browser) []string {
+	if id := strings.TrimSpace(b.ExtAccount); id != "" {
+		return []string{id}
+	}
+	if b.Port <= 0 || !debugPortOpen(b.Port) {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	id, _, _, err := cdp.ExtensionPairState(ctx, fmt.Sprintf("http://127.0.0.1:%d", b.Port))
+	if err != nil {
+		return nil
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	return []string{id}
 }
 
 func (a *App) pickOutputDir() {

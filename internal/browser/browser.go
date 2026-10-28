@@ -296,6 +296,49 @@ func debugArgs(port int, userData, startURL string) []string {
 	return launchArgs(port, userData, startURL, "", nil)
 }
 
+// RemoveProfile 删掉这个账号的用户数据目录。
+// 只删除 dataRoot 下面的目录。扩展账号没有自己的目录时什么都不做。
+// 浏览器退出时还会往目录里写文件，所以先停掉残留进程，再多删几次。
+func RemoveProfile(dataRoot, backend string, b store.Browser) error {
+	dir := accountProfilePath(dataRoot, backend, b)
+	root := filepath.Clean(strings.TrimSpace(dataRoot))
+	if dir == "" || root == "" || root == "." {
+		return nil
+	}
+	clean := filepath.Clean(dir)
+	rel, err := filepath.Rel(root, clean)
+	if err != nil || rel == "" || rel == "." || strings.HasPrefix(rel, "..") {
+		return nil
+	}
+	releaseProfile(clean)
+	var last error
+	for i := 0; i < 8; i++ {
+		if _, err := os.Stat(clean); os.IsNotExist(err) {
+			return nil
+		}
+		last = os.RemoveAll(clean)
+		if _, err := os.Stat(clean); os.IsNotExist(err) {
+			return nil
+		}
+		releaseProfile(clean)
+		time.Sleep(150 * time.Millisecond)
+	}
+	if last == nil {
+		return fmt.Errorf("配置目录还在")
+	}
+	return last
+}
+
+func accountProfilePath(dataRoot, backend string, b store.Browser) string {
+	if dir := strings.TrimSpace(b.UserDataDir); dir != "" {
+		return dir
+	}
+	if strings.TrimSpace(b.ExtAccount) != "" || strings.TrimSpace(b.Name) == "" {
+		return ""
+	}
+	return ProfileDir(dataRoot, backend, b.Name)
+}
+
 // markFirstRunDone 写下 Chromium/Edge 的首次运行哨兵。
 // --no-first-run 挡不住 Edge 的欢迎页和同步提示时，这个空文件能让它跳过。
 func markFirstRunDone(userData string) {
@@ -341,15 +384,13 @@ func OpenFolder(path string) error {
 	return cmd.Start()
 }
 
-// Stop 停止指定浏览器进程。
+// Stop 停止指定浏览器进程，并等到它退出。配置目录要等进程结束后再删。
 func (m *Manager) Stop(id int64) {
 	m.mu.Lock()
 	r := m.procs[id]
 	delete(m.procs, id)
 	m.mu.Unlock()
-	if r != nil && r.proc != nil {
-		_ = r.proc.Kill()
-	}
+	waitProc(r)
 }
 
 // StopAll 停止全部浏览器。
@@ -359,9 +400,21 @@ func (m *Manager) StopAll() {
 	m.procs = map[int64]*runningProc{}
 	m.mu.Unlock()
 	for _, r := range all {
-		if r != nil && r.proc != nil {
-			_ = r.proc.Kill()
-		}
+		waitProc(r)
+	}
+}
+
+func waitProc(r *runningProc) {
+	if r == nil || r.proc == nil {
+		return
+	}
+	_ = r.proc.Kill()
+	if r.done == nil {
+		return
+	}
+	select {
+	case <-r.done:
+	case <-time.After(5 * time.Second):
 	}
 }
 

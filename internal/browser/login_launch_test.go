@@ -20,6 +20,15 @@ import (
 	"github.com/xxww0098/tulai/internal/store"
 )
 
+func TestDisplayNumberIgnoresADeadName(t *testing.T) {
+	if displayNumber("") != "" || displayNumber(":99.0") != "99" || displayNumber("localhost:99") != "99" || displayNumber(":abc") != "" {
+		t.Fatalf("display number: %q %q %q %q", displayNumber(""), displayNumber(":99.0"), displayNumber("localhost:99"), displayNumber(":abc"))
+	}
+	if displayAlive("") || displayAlive(":no-such-display") {
+		t.Fatal("missing display looked alive")
+	}
+}
+
 func TestChromeLoginLaunchLeavesVisiblePage(t *testing.T) {
 	if testing.Short() {
 		t.Skip("短测不启动浏览器")
@@ -325,24 +334,76 @@ func browserVersion(bin string) string {
 
 func ensureXvfb(t *testing.T) string {
 	t.Helper()
-	if os.Getenv("DISPLAY") != "" {
-		return os.Getenv("DISPLAY")
+	if display := os.Getenv("DISPLAY"); displayAlive(display) {
+		return display
 	}
 	if _, err := exec.LookPath("Xvfb"); err != nil {
 		t.Fatal("需要 Xvfb 才能有头启动 Edge")
 	}
-	cmd := exec.Command("Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac", "+extension", "GLX")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+	for n := 99; n < 110; n++ {
+		display := fmt.Sprintf(":%d", n)
+		if displayAlive(display) {
+			_ = os.Setenv("DISPLAY", display)
+			return display
 		}
-	})
-	_ = os.Setenv("DISPLAY", ":99")
-	time.Sleep(300 * time.Millisecond)
-	return ":99"
+		cmd := exec.Command("Xvfb", display, "-screen", "0", "1280x800x24", "-ac", "+extension", "GLX")
+		if err := cmd.Start(); err != nil {
+			continue
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) && !displayAlive(display) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !displayAlive(display) {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			continue
+		}
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+		_ = os.Setenv("DISPLAY", display)
+		return display
+	}
+	t.Fatal("Xvfb 没有起来")
+	return ""
+}
+
+// displayAlive 报告这个 DISPLAY 上是不是真有 X server。
+// 上一个测试关掉自己的 Xvfb 后，DISPLAY 环境变量还会留着。
+func displayAlive(display string) bool {
+	n := displayNumber(display)
+	if n == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", "/tmp/.X11-unix/X"+n, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func displayNumber(display string) string {
+	display = strings.TrimSpace(display)
+	if i := strings.LastIndex(display, ":"); i >= 0 {
+		display = display[i+1:]
+	}
+	if i := strings.IndexByte(display, '.'); i >= 0 {
+		display = display[:i]
+	}
+	if display == "" {
+		return ""
+	}
+	for _, r := range display {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return display
 }
 
 func flushEvidence(t *testing.T, dir, prefix string, log *bytes.Buffer, png []byte) {

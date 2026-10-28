@@ -87,7 +87,9 @@ jobs:
         env:
           TULAI_EDGE_E2E: "1"
           TULAI_EDGE_EVIDENCE: ${{ github.workspace }}/edge-evidence
-        run: go test -count=1 -timeout 20m -run 'TestEdgeLoginLaunchLeavesVisiblePage|TestEdgeExtensionPairs|TestCfTExtensionPairs' ./internal/browser/
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x800x24" go test -count=1 -timeout 18m -run 'TestEdgeLoginLaunchLeavesVisiblePage|TestEdgeExtensionPairs|TestCfTExtensionPairs|TestCfTMultiAccount$|TestEdgeLoadUnpacked$' ./internal/browser/
+          xvfb-run -a --server-args="-screen 0 1280x800x24" go test -count=1 -timeout 12m -run 'TestEdgeMultiAccount$' ./internal/ui/
       - uses: actions/upload-artifact@v7
         if: always()
         with:
