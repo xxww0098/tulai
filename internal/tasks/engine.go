@@ -710,7 +710,11 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 			logging.Log.Debugf("[页面] %s", line)
 		}
 	}
-	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, false)
+	home := ""
+	if strat != nil {
+		home = strat.HomeURL()
+	}
+	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, home, false)
 	if startErr != nil {
 		return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
 	}

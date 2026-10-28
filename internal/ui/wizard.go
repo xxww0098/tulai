@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 	"github.com/xxww0098/tulai/internal/wizard"
@@ -304,6 +306,9 @@ func (a *App) wizardFooter(c *ui.Context) {
 			}
 			ui.PrimaryButton(c, "进入主页").OnClick(func() { a.wizardFinish() })
 		case wizard.StepAccount:
+			if a.wizardNavFailed {
+				ui.Button(c, "重新打开").Disabled(a.wizardPhase == "launching").OnClick(func() { a.wizardRecheck() })
+			}
 			ui.Button(c, "已登录? 重新检测").Disabled(a.wizardPhase == "launching").OnClick(func() { a.wizardRecheck() })
 		default:
 			ui.PrimaryButton(c, "下一步").Disabled(!a.wizardCanNext()).OnClick(func() { a.wizardNext() })
@@ -479,31 +484,41 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 		var account store.Browser
 		a.wizardUI(func() { account = a.wizardAccount })
 		ws, err := a.launchWizardBrowser(account)
-		if err != nil {
+		if err != nil && !errors.Is(err, browser.ErrDebugPort) {
 			a.wizardUI(func() {
 				if gen != a.wizardGen {
 					return
 				}
 				a.wizardPhase = "error"
+				a.wizardNavFailed = false
 				a.wizardErr = "启动浏览器失败：" + err.Error()
 				a.wizardNote = "请在弹出的浏览器中扫码登录"
 			})
 			return
 		}
-		page := "about:blank"
-		if plat := strategy.Factory(account.Platform); plat != nil {
-			page = plat.HomeURL()
+		debugDown := errors.Is(err, browser.ErrDebugPort)
+		if debugDown {
+			ws = fmt.Sprintf("http://127.0.0.1:%d", account.Port)
 		}
-		if err := a.openWizardPage(ws, page); err != nil {
-			a.wizardUI(func() {
-				if gen != a.wizardGen {
-					return
-				}
-				a.wizardPhase = "error"
-				a.wizardErr = "打开登录页失败：" + err.Error()
-				a.wizardNote = "请在弹出的浏览器中扫码登录"
-			})
-			return
+		page := accountHomeURL(account)
+		if page == "" {
+			page = "about:blank"
+		}
+		if !debugDown {
+			if navErr := a.openWizardPage(ws, page); navErr != nil && !errors.Is(navErr, cdp.ErrDebugUnavailable) {
+				msg := account.Name + " 打开登录页失败：" + navErr.Error()
+				logging.Log.Errorf("%s", msg)
+				a.wizardUI(func() {
+					if gen != a.wizardGen {
+						return
+					}
+					a.wizardPhase = "error"
+					a.wizardNavFailed = true
+					a.wizardErr = msg
+					a.wizardNote = "请点「重新打开」"
+				})
+				return
+			}
 		}
 		a.wizardUI(func() {
 			if gen != a.wizardGen || a.store == nil {
@@ -583,6 +598,7 @@ func (a *App) wizardPrepare(gen int) bool {
 		a.wizardPhase = "launching"
 		a.wizardNote = "正在打开" + account.Platform + "…"
 		a.wizardErr = ""
+		a.wizardNavFailed = false
 		ok = true
 	})
 	return ok
@@ -666,7 +682,14 @@ func (a *App) launchWizardBrowser(b store.Browser) (string, error) {
 	if a.manager == nil {
 		return "", fmt.Errorf("没有浏览器")
 	}
-	return a.manager.Start(b, a.dataRoot, a.browserBackend, false)
+	return a.manager.Start(b, a.dataRoot, a.browserBackend, accountHomeURL(b), false)
+}
+
+func accountHomeURL(b store.Browser) string {
+	if plat := strategy.Factory(b.Platform); plat != nil {
+		return plat.HomeURL()
+	}
+	return ""
 }
 
 func (a *App) openWizardPage(ws, rawURL string) error {

@@ -65,6 +65,36 @@ jobs:
             dist-extension/*.zip
             dist-extension/SHA256SUMS.txt
 
+  edge:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Microsoft Edge
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/microsoft-edge.gpg >/dev/null
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-edge.gpg] https://packages.microsoft.com/repos/edge stable main" | sudo tee /etc/apt/sources.list.d/microsoft-edge.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y microsoft-edge-stable xvfb
+          microsoft-edge-stable --version
+      - name: Edge login page is not about:blank
+        env:
+          TULAI_EDGE_E2E: "1"
+          TULAI_EDGE_EVIDENCE: ${{ github.workspace }}/edge-evidence
+        run: go test -count=1 -timeout 15m -run TestEdgeLoginLaunchLeavesVisiblePage ./internal/browser/
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: edge-login-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+          path: edge-evidence/
+
   package:
     needs: guard
     name: package ${{ matrix.name }}
@@ -107,7 +137,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [test, package]
+    needs: [test, package, edge]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

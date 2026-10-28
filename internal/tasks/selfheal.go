@@ -323,7 +323,7 @@ func (e *Engine) focusBrowser(b store.Browser) {
 	if fn == nil || b.ID <= 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	_ = fn(ctx, b)
 }

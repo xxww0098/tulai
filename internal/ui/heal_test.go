@@ -46,6 +46,36 @@ func TestLoginBannerAndAutoLog(t *testing.T) {
 	}
 }
 
+func TestAttentionReopensLoginPage(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	row, err := st.AddBrowser("豆包", "账号1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := tasks.NewEngine(st, nil, nil, "")
+	var opened store.Browser
+	a := &App{store: st, engine: e, platformAuto: true, accountOpen: func(b store.Browser) error {
+		opened = b
+		return nil
+	}}
+	e.RaiseAttention("账号1 需要重新扫码登录", row.ID)
+	tt := ui.NewTester(a.view, 1280, 900)
+	if err := tt.Click("去处理"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for opened.ID == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if opened.ID != row.ID || opened.Platform != "豆包" {
+		t.Fatalf("去处理 opened %+v", opened)
+	}
+}
+
 func scrollIntoView(t *testing.T, tt *ui.Tester, label string, width, height float32) {
 	t.Helper()
 	inView := func() bool {
