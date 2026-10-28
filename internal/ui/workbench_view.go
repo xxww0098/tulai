@@ -141,6 +141,15 @@ func (a *App) advancedFields(c *ui.Context) {
 		ui.Field(c, "发送间隔(秒)", func() {
 			ui.NumberInput(c, &a.sendWait, 0, 600, 1)
 		})
+		ui.Text(c, "实际等待会在这个秒数上下浮动，避免每次都卡在同一拍。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Field(c, "每日上限", func() {
+			ui.NumberInput(c, &a.dailyCap, 1, 200, 1)
+		})
+		ui.Text(c, "每个账号每天最多出这么多次，到了就换下一个账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Field(c, "审核改写词", func() {
+			ui.TextInput(c, &a.riskyWords).Placeholder("逗号分隔")
+		})
+		ui.Text(c, "审核不通过时去掉这些词，并加上温和说法，最多自动重试 2 次。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "发送前等待(秒)", func() {
 			ui.NumberInput(c, &a.waitBefore, 0, 60, 1)
 		})
@@ -263,6 +272,20 @@ func (a *App) taskConcurrency() int {
 	return clampInt(int(a.concurrency), 1, 16)
 }
 
+func (a *App) shownDailyCap() int {
+	n := 0
+	if a != nil {
+		n = int(a.dailyCap)
+	}
+	if n <= 0 {
+		return tasks.DefaultDailyCap
+	}
+	if n > 200 {
+		return 200
+	}
+	return n
+}
+
 // parallelSlots 是当前勾选方式下能同时出图的账号数，和调度用的名额一致。
 func (a *App) parallelSlots() int {
 	now := time.Now()
@@ -288,7 +311,7 @@ func (a *App) parallelSlots() int {
 		}
 		rows = append(rows, b)
 	}
-	return tasks.ParallelSlots(rows, now)
+	return tasks.ParallelSlots(rows, now, a.shownDailyCap())
 }
 
 func (a *App) accountSnaps() []AccountSnap {

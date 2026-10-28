@@ -97,3 +97,42 @@ func TestDeleteByExtensionAccountLeavesLocalRows(t *testing.T) {
 		t.Fatalf("local account should remain: %+v", rows)
 	}
 }
+
+func TestAddUseResetsOnNewDay(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	b, err := s.AddBrowser("豆包", "甲", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := time.Date(2026, 10, 28, 15, 0, 0, 0, time.Local)
+	yesterday := today.AddDate(0, 0, -1)
+	s.AddUse(b.ID, yesterday)
+	s.AddUse(b.ID, yesterday)
+	got := browser(t, s, b.ID)
+	if got.UsedToday(today) != 0 || got.UsedToday(yesterday) != 2 {
+		t.Fatalf("rollover = today %d yesterday %d", got.UsedToday(today), got.UsedToday(yesterday))
+	}
+	s.AddUse(b.ID, today)
+	got = browser(t, s, b.ID)
+	if got.UsedToday(today) != 1 {
+		t.Fatalf("today = %d", got.UsedToday(today))
+	}
+	if s.Get("daily_cap") != "20" || s.Get("risky_words") == "" {
+		t.Fatalf("defaults cap=%q words=%q", s.Get("daily_cap"), s.Get("risky_words"))
+	}
+}
+
+func browser(t *testing.T, s *Store, id int64) Browser {
+	t.Helper()
+	for _, b := range s.Browsers() {
+		if b.ID == id {
+			return b
+		}
+	}
+	t.Fatalf("missing browser %d", id)
+	return Browser{}
+}

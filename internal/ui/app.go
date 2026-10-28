@@ -79,6 +79,9 @@ type App struct {
 	concurrency     float64 // 手动上限。自动时仍记住这个数，关掉自动后接着用
 	retryCount      float64
 	sendWait        float64
+	dailyCap        float64
+	riskyWords      string
+	pickFile        func() (string, error)
 	waitBefore      float64
 	waitResult      bool
 	waitResultS     float64
@@ -314,6 +317,11 @@ func (a *App) loadSettings() {
 	}
 	a.retryCount = float64(clampInt(s.GetInt("retry_count"), 0, 20))
 	a.sendWait = float64(clampInt(s.GetInt("send_wait_seconds"), 0, 600))
+	a.dailyCap = float64(clampInt(s.GetInt("daily_cap"), 1, 200))
+	a.riskyWords = s.Get("risky_words")
+	if strings.TrimSpace(a.riskyWords) == "" {
+		a.riskyWords = tasks.RiskySetting()
+	}
 	a.waitBefore = float64(clampInt(s.GetInt("wait_before_sending"), 0, 60))
 	a.waitResult = s.GetBool("wait_result")
 	a.waitResultS = float64(clampInt(s.GetInt("wait_result_seconds"), 10, 1800))
@@ -398,6 +406,12 @@ func (a *App) saveSettings() {
 	}
 	s.SetInt("retry_count", int(a.retryCount))
 	s.SetInt("send_wait_seconds", int(a.sendWait))
+	s.SetInt("daily_cap", a.shownDailyCap())
+	words := strings.TrimSpace(a.riskyWords)
+	if words == "" {
+		words = tasks.RiskySetting()
+	}
+	s.Set("risky_words", words)
 	s.SetInt("wait_before_sending", int(a.waitBefore))
 	s.SetInt("wait_result", boolInt(a.waitResult))
 	s.SetInt("wait_result_seconds", int(a.waitResultS))
@@ -557,6 +571,8 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		FileSuffixEnabled:  a.suffixOn,
 		OutputPath:         a.outputPath,
 		RemoveWatermark:    a.removeWatermark,
+		DailyCap:           a.shownDailyCap(),
+		RiskyWords:         tasks.ParseWords(a.riskyWords),
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +169,67 @@ func TestAuthSwitchesAccount(t *testing.T) {
 	queue := e.View().Snapshot()
 	if err != nil || queue[0].Status != StatusSuccess || got.Health != store.HealthExhausted || got.CoolUntil != 0 {
 		t.Fatalf("logged-out account should wait for 恢复: err=%v health=%+v queue=%+v", err, got, queue)
+	}
+}
+
+func TestDailyCapSkipsFullAccount(t *testing.T) {
+	st := openRotateStore(t)
+	first := addNamed(t, st, "豆包", "甲")
+	second := addNamed(t, st, "豆包", "乙")
+	st.AddUse(first.ID, time.Now())
+	e := NewEngine(st, nil, nil, "")
+	var used []int64
+	err := e.run(context.Background(), Options{
+		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 0, DailyCap: 1,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		used = append(used, task.BrowserID)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := e.View().Snapshot()
+	if len(used) != 1 || used[0] != second.ID {
+		t.Fatalf("full account should be skipped: used=%v queue=%+v", used, queue)
+	}
+	if queue[0].Status != StatusSuccess || queue[1].Status != StatusFailed || !strings.Contains(queue[1].Error, "今日已达上限") {
+		t.Fatalf("second task has nowhere to go: %+v", queue)
+	}
+	if browserByID(t, st, first.ID).UsedToday(time.Now()) != 1 || browserByID(t, st, second.ID).UsedToday(time.Now()) != 1 {
+		t.Fatalf("counts = 甲 %d 乙 %d", browserByID(t, st, first.ID).UsedToday(time.Now()), browserByID(t, st, second.ID).UsedToday(time.Now()))
+	}
+}
+
+func TestDailyCapAllFullFailsClosed(t *testing.T) {
+	st := openRotateStore(t)
+	first := addNamed(t, st, "豆包", "甲")
+	second := addNamed(t, st, "豆包", "乙")
+	now := time.Now()
+	st.AddUse(first.ID, now)
+	st.AddUse(second.ID, now)
+	e := NewEngine(st, nil, nil, "")
+	calls := 0
+	err := e.run(context.Background(), Options{
+		Platforms: []string{"豆包"}, Images: []string{"a.png"}, Concurrency: 0, DailyCap: 1,
+	}, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
+		calls++
+		return nil
+	})
+	queue := e.View().Snapshot()
+	if err != nil || calls != 0 || len(queue) != 1 || queue[0].Status != StatusFailed || !strings.Contains(queue[0].Error, "今日已达上限") {
+		t.Fatalf("calls=%d err=%v queue=%+v", calls, err, queue)
+	}
+}
+
+func TestDailyCapUnderLimitStillRunsTogether(t *testing.T) {
+	st := openRotateStore(t)
+	addNamed(t, st, "豆包", "甲")
+	addNamed(t, st, "豆包", "乙")
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 0, DailyCap: 1,
+	})
+	if len(got) != 2 || got[0] == got[1] {
+		t.Fatalf("two accounts under the cap should run together: %v", got)
 	}
 }
 

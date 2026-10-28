@@ -1,6 +1,6 @@
 # tulai 页面桥
 
-这个目录是未打包的 Manifest V3 扩展，显示名是「tulai 页面桥」，当前版本 **0.3.9**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.9。发布附件里的 `tulai-extension-0.3.9.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。0.3.6 是桌面端 0.1.2 一起发布的扩展；0.3.7 加上自动配对、心跳重连和额度信号；0.3.8 把扩展里的技术 id 改成 tulai；0.3.9 在桌面端通知时可以 `chrome.runtime.reload()`。
+这个目录是未打包的 Manifest V3 扩展，显示名是「tulai 页面桥」，当前版本 **0.3.10**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.10。发布附件里的 `tulai-extension-0.3.10.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。0.3.6 是桌面端 0.1.2 一起发布的扩展；0.3.7 加上自动配对、心跳重连和额度信号；0.3.8 把扩展里的技术 id 改成 tulai；0.3.9 在桌面端通知时可以 `chrome.runtime.reload()`；0.3.10 从当前这条助手回复里认出豆包和千问的审核拒绝。
 
 点工具栏图标会打开 `popup.html`。令牌、端口和桥状态跟选项页是同一组 `chrome.storage.local` 值。
 

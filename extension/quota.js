@@ -1,7 +1,7 @@
 // 额度 / 限流提示。只看短的提示条和对话框，不扫整页历史。
 // 正则与 internal/strategy/js/composer.js、internal/tasks/fault.go 保持一致。
 ;(function () {
-  const QUOTA = /额度不足|额度已用|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit/i
+  const QUOTA = /额度不足|额度已用尽|额度已用|额度用尽|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit/i
   const RATE = /过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests/i
 
   function textOf(el) {

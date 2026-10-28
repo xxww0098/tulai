@@ -191,6 +191,8 @@ type ProgressCard struct {
 	Source    string
 	Status    string
 	Reason    string
+	Action    string
+	Rewrite   string
 	Platforms []string
 	Sites     []CardSite
 	Results   []string
@@ -326,7 +328,8 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 		}
 		statuses := make([]tasks.Status, 0, len(group))
 		seen := map[string]bool{}
-		reason := ""
+		var failed tasks.Task
+		var haveFailed bool
 		for _, task := range group {
 			statuses = append(statuses, task.Status)
 			if task.Platform != "" && !seen[task.Platform] {
@@ -335,21 +338,27 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 			}
 			card.addSite(task.Platform, task.BrowserID)
 			card.Results = append(card.Results, task.Results...)
+			if task.Rewritten && card.Rewrite == "" {
+				card.Rewrite = shortLine(task.Prompt, 36)
+			}
 			switch task.Status {
 			case tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser:
 				card.Retry = append(card.Retry, task)
-				if reason == "" {
-					reason = task.Error
+				if !haveFailed {
+					failed = task
+					haveFailed = true
 				}
 			}
 		}
 		card.Status = DisplayStatus(statuses)
-		if card.Status == "失败" || card.Status == "待验证" {
-			if strings.TrimSpace(reason) != "" {
-				card.Reason = HumanReason(reason)
-			} else if card.Status == "失败" {
-				card.Reason = "出图失败，请重试"
-			}
+		if card.Status == "待验证" {
+			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)
+			card.Reason = hint.Sentence
+			card.Action = hint.Button
+		} else if card.Status == "失败" {
+			hint := tasks.ClassifyFailure(failed.Status, failed.Error)
+			card.Reason = hint.Sentence
+			card.Action = hint.Button
 		}
 		out = append(out, card)
 	}
@@ -469,6 +478,15 @@ func HumanReason(raw string) string {
 		return s
 	}
 	return "出图失败，请重试"
+}
+
+func shortLine(s string, n int) string {
+	s = oneLine(s)
+	rs := []rune(s)
+	if n > 0 && len(rs) > n {
+		return string(rs[:n]) + "…"
+	}
+	return s
 }
 
 func oneLine(s string) string {

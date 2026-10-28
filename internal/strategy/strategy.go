@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -29,6 +30,9 @@ var ErrAccountQuota = errors.New("账号额度已用尽")
 
 // ErrAccountRate 表示当前登录账号被限流。
 var ErrAccountRate = errors.New("账号请求过于频繁")
+
+// ErrModeration 表示豆包或千问拒绝了这条内容。页面话术在 extension/refuse.js。
+var ErrModeration = errors.New("审核不通过")
 
 // Result 一张生成结果。
 type Result struct {
@@ -124,6 +128,7 @@ func (base) InstallHook(s *cdp.Session) error {
 		}
 	}
 	s.AppendNavigateScript(fmt.Sprintf(`window.__tulaiHookRevision=%q;`, revision) + hookJS)
+	s.AppendNavigateScript(extbundle.RefuseJS())
 	s.AppendNavigateScript(composerJS)
 	return nil
 }
@@ -196,8 +201,9 @@ func pageAccountFault(s *cdp.Session) error {
 		return nil
 	}
 	var state struct {
-		Quota     bool `json:"quota"`
-		RateLimit bool `json:"rateLimit"`
+		Quota      bool   `json:"quota"`
+		RateLimit  bool   `json:"rateLimit"`
+		Moderation string `json:"moderation"`
 	}
 	if cdp.ParseJSValue(out, &state) != nil {
 		return nil
@@ -207,6 +213,9 @@ func pageAccountFault(s *cdp.Session) error {
 	}
 	if state.Quota {
 		return ErrAccountQuota
+	}
+	if msg := strings.TrimSpace(state.Moderation); msg != "" {
+		return fmt.Errorf("%w: %s", ErrModeration, msg)
 	}
 	return nil
 }

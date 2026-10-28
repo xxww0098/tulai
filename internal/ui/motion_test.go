@@ -148,7 +148,7 @@ func TestManyGeneratingCardsStayReadable(t *testing.T) {
 	queue[2].Error = "额度用尽"
 	a := &App{queue: queue}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"排队中", "生成中", "完成", "失败", "账号额度已用完", "重试"} {
+	for _, label := range []string{"排队中", "生成中", "完成", "失败", "账号额度已用完", "换账号重试"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}

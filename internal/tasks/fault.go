@@ -29,9 +29,9 @@ const (
 var errExtOffline = errors.New("扩展账号未连接")
 
 var (
-	quotaPattern = regexp.MustCompile(`额度不足|额度已用|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit`)
+	quotaPattern = regexp.MustCompile(`额度不足|额度已用尽|额度已用|额度用尽|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit`)
 	ratePattern  = regexp.MustCompile(`过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests`)
-	authPattern  = regexp.MustCompile(`未登录|请先登录|请登录|登录已失效|登录状态失效`)
+	authPattern  = regexp.MustCompile(`未登录|请先登录|请登录|登录已失效|登录失效|登录状态失效`)
 )
 
 func classifyFault(err error) faultKind {

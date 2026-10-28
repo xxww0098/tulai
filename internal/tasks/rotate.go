@@ -21,16 +21,17 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 	if len(rows) == 0 {
 		return time.Time{}, false
 	}
+	limit := e.capNow()
 	if task.BrowserID <= 0 {
-		if id, ok := pickHealthy(rows, 0, now); ok {
+		if id, ok := pickHealthy(rows, 0, now, limit); ok {
 			task.BrowserID = id
 		}
 	}
 	current := findBrowser(rows, task.BrowserID)
-	if current == nil || current.Usable(now) {
+	if current == nil || openAccount(*current, now, limit) {
 		return time.Time{}, false
 	}
-	if id, ok := pickHealthy(rows, task.BrowserID, now); ok {
+	if id, ok := pickHealthy(rows, task.BrowserID, now, limit); ok {
 		task.BrowserID = id
 		task.Error = ""
 		return time.Time{}, false
@@ -41,7 +42,11 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 			return now.Add(heal.RecheckAfter), false
 		}
 		if task.Error == "" {
-			task.Error = "同平台账号都不可用"
+			if cappedOut(rows, now, limit) {
+				task.Error = "今日已达上限"
+			} else {
+				task.Error = "同平台账号都不可用"
+			}
 		}
 		return time.Time{}, true
 	}
@@ -66,7 +71,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 		return false
 	}
 	current := task.ranOnOr(task.BrowserID)
-	next, ok := pickHealthy(e.accountsFor(task.Platform), current, now)
+	next, ok := pickHealthy(e.accountsFor(task.Platform), current, now, e.capNow())
 	if !ok {
 		if kind != faultOffline {
 			e.noteFault(current, kind, err, now)
@@ -90,7 +95,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 }
 
 func (e *Engine) hasOtherHealthy(platform string, avoid int64, now time.Time) bool {
-	_, ok := pickHealthy(e.accountsFor(platform), avoid, now)
+	_, ok := pickHealthy(e.accountsFor(platform), avoid, now, e.capNow())
 	return ok
 }
 
@@ -122,11 +127,31 @@ func (t *Task) ranOnOr(fallback int64) int64 {
 	return fallback
 }
 
-func pickHealthy(rows []store.Browser, avoid int64, now time.Time) (int64, bool) {
+func openAccount(b store.Browser, now time.Time, cap int) bool {
+	if !b.Usable(now) {
+		return false
+	}
+	return cap <= 0 || b.UsedToday(now) < cap
+}
+
+func cappedOut(rows []store.Browser, now time.Time, cap int) bool {
+	hit := false
+	for _, b := range rows {
+		if openAccount(b, now, cap) {
+			return false
+		}
+		if b.Usable(now) && cap > 0 && b.UsedToday(now) >= cap {
+			hit = true
+		}
+	}
+	return hit
+}
+
+func pickHealthy(rows []store.Browser, avoid int64, now time.Time, cap int) (int64, bool) {
 	var best *store.Browser
 	for i := range rows {
 		b := &rows[i]
-		if b.ID == avoid || !b.Usable(now) {
+		if b.ID == avoid || !openAccount(*b, now, cap) {
 			continue
 		}
 		if best == nil || b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID) {
@@ -141,10 +166,10 @@ func pickHealthy(rows []store.Browser, avoid int64, now time.Time) (int64, bool)
 
 // ParallelSlots 是这些账号里现在能同时出图的名额。
 // 同一个扩展配置文件只算一个：扩展每次命令都把标签页拉到前台，一个窗口不能两单一起跑。
-func ParallelSlots(rows []store.Browser, now time.Time) int {
+func ParallelSlots(rows []store.Browser, now time.Time, cap int) int {
 	seen := map[string]struct{}{}
 	for _, b := range rows {
-		if !b.Usable(now) {
+		if !openAccount(b, now, cap) {
 			continue
 		}
 		key := strconv.FormatInt(b.ID, 10)

@@ -1,6 +1,7 @@
 // tulai 结果截获 hook：网络层（fetch/XHR）+ DOM 层（聊天区新增大图）双通道，
 // 把生成图片 URL/数据 记入 window.__tulaiResults，供 Go 侧等待与保存。
 (function () {
+  window.__tulaiAssistantQuery = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-testid="receive_message"],.chat-answers-card-wrap';
   if (window.__tulaiHookInstalled) return;
   window.__tulaiHookInstalled = true;
   var results = [];
@@ -151,6 +152,7 @@
     taskNumber++;
     pendingGeneration = 0;
     window.__tulaiMark = Date.now();
+    window.__tulaiAssistantBaseline = document.querySelectorAll(window.__tulaiAssistantQuery).length;
     existingImages = new WeakSet();
     ignoredURLs = new Set();
     Array.from(document.images).forEach(function (img) {

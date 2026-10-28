@@ -52,6 +52,24 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function moderationBlocked(env) {
+  if (!globalThis.TULAIRefuse) return null
+  const chunks = []
+  if (Page && typeof Page.assistantText === 'function') {
+    try { chunks.push(Page.assistantText(document, pageMark) || '') } catch (e) {}
+  }
+  if (document && typeof document.querySelectorAll === 'function') {
+    const nodes = document.querySelectorAll('[role="alert"],[role="dialog"],[class*="toast"],[class*="notice"]')
+    for (let i = 0; i < nodes.length; i++) {
+      const text = String((nodes[i].innerText || nodes[i].textContent || '')).replace(/\s+/g, ' ').trim()
+      if (text && text.length <= 240) chunks.push(text)
+    }
+  }
+  const hit = TULAIRefuse.match(chunks.join('\n'))
+  if (!hit) return null
+  return TULAI.fail(env, TULAI.errors.E_MODERATION, '审核不通过: ' + hit)
+}
+
 function accountBlocked(env) {
   if (!globalThis.TULAIQuota || !document || typeof document.querySelectorAll !== 'function') return null
   const found = TULAIQuota.accountBlock(document)
@@ -419,6 +437,10 @@ async function waitResult(env, payload) {
     const images = Page.resultImages(document, pageMark).filter(function (item) {
       return item && item.url && !(typeof Page.isPlaceholderURL === 'function' && Page.isPlaceholderURL(item.url))
     })
+    if (!images.length) {
+      const refused = moderationBlocked(env)
+      if (refused) return refused
+    }
     const busy = Page.resultsBusy(document, pageMark)
     const urls = images.map(function (item) { return item.url }).join('\n')
     if (!busy && images.length) {

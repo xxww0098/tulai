@@ -762,6 +762,8 @@ func mapExtErr(err error, body extAck, platform string) error {
 		return fmt.Errorf("%w: %s", strategy.ErrAccountQuota, err.Error())
 	case extbridge.ERateLimit:
 		return fmt.Errorf("%w: %s", strategy.ErrAccountRate, err.Error())
+	case extbridge.EModeration:
+		return fmt.Errorf("%w: %s", strategy.ErrModeration, err.Error())
 	case extbridge.ENotLoggedIn:
 		loginErr := errQianwenLogin
 		if platform == "豆包" {

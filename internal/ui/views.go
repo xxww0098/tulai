@@ -83,6 +83,7 @@ func (a *App) browserPane(c *ui.Context) {
 					line = b.Platform + " · 扩展会话"
 				}
 				ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
 				if b.LastError != "" && !b.Usable(time.Now()) {
 					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
 				}

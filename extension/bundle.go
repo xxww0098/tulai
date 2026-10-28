@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//go:embed manifest.json background.js bridge_logic.js content.js pair.js popup.html options.html options.js protocol.js quota.js
+//go:embed manifest.json background.js bridge_logic.js content.js pair.js popup.html options.html options.js protocol.js quota.js refuse.js
 //go:embed all:icons
 //go:embed all:qianwen
 //go:embed all:doubao
@@ -29,6 +29,15 @@ func Version() string {
 		return ""
 	}
 	return strings.TrimSpace(manifest.Version)
+}
+
+// RefuseJS 是豆包和千问共用的审核话术。桌面端页面脚本也注入这一份。
+func RefuseJS() string {
+	body, err := fs.ReadFile(packed, "refuse.js")
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }
 
 // Install 把扩展解压到 <configDir>/extension/<版本>/，并同步到稳定目录 current。

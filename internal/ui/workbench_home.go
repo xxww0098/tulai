@@ -556,6 +556,71 @@ func (a *App) progressPane(c *ui.Context) {
 	})
 }
 
+func (a *App) failAction(card ProgressCard) {
+	switch card.Action {
+	case "去重登":
+		a.reloginCard(card)
+	case "换图":
+		a.replaceCardImage(card)
+	default:
+		a.retryTasks(card.Retry)
+	}
+}
+
+func (a *App) reloginCard(card ProgressCard) {
+	row := store.Browser{}
+	if len(card.Retry) > 0 {
+		row.ID = card.Retry[0].BrowserID
+		row.Platform = card.Retry[0].Platform
+	}
+	for _, b := range a.configuredBrowsers() {
+		if b.ID == row.ID && row.ID != 0 {
+			row = b
+			break
+		}
+	}
+	logging.Log.Info("请在「%s」的网页里重新登录", accountLabel(row))
+	go func(b store.Browser) {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		_ = a.ensureAccountPage(ctx, b)
+	}(row)
+}
+
+func (a *App) replaceCardImage(card ProgressCard) {
+	go func() {
+		path, err := a.chooseReplacement()
+		if err != nil || strings.TrimSpace(path) == "" {
+			return
+		}
+		items := append([]tasks.Task(nil), card.Retry...)
+		for i := range items {
+			items[i].Images = []string{path}
+		}
+		run := func() { a.retryTasks(items) }
+		if a.window != nil {
+			a.window.Update(run)
+			return
+		}
+		run()
+	}()
+}
+
+func (a *App) chooseReplacement() (string, error) {
+	if a != nil && a.pickFile != nil {
+		return a.pickFile()
+	}
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:  a.window,
+		Title:   "换一张图片",
+		Filters: []mygo.FileFilter{{Name: "图片", Extensions: []string{"png", "jpg", "jpeg", "webp", "gif"}}},
+	})
+	if err != nil || len(paths) == 0 {
+		return "", err
+	}
+	return paths[0], nil
+}
+
 func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 	tok := a.look
 	ui.Column(c.Key("card:"+card.Key)).Gap(8).Padding(10).Radius(tok.radiusM).
@@ -589,10 +654,18 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 			}
 			ui.Text(c.Key("reason"), card.Reason).FontSize(tok.caption).TextColor(color).SingleLine().Tooltip(card.Reason).Transition(motionReveal())
 		}
+		if card.Rewrite != "" {
+			line := "已改写：" + card.Rewrite
+			ui.Text(c.Key("rewrite"), line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
+		}
 		if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 || len(card.Results) > 0 {
 			ui.Row(c).Gap(8).Children(func() {
 				if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 {
-					ui.Button(c.Key("retry"), "重试").Disabled(a.running).Transition(motionReveal()).OnClick(func() { a.retryTasks(card.Retry) })
+					label := card.Action
+					if label == "" {
+						label = "重试"
+					}
+					ui.Button(c.Key("retry"), label).Disabled(a.running).Transition(motionReveal()).OnClick(func() { a.failAction(card) })
 				}
 				if len(card.Results) > 0 {
 					path := card.Results[0]

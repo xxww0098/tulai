@@ -30,7 +30,7 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 `go.mod` 把 MyGo 工具固定在 **v0.6.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.6**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.6` 上发布，页面扩展 zip 是 **0.3.9**。步骤见下文「发布 0.1.6」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.6**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.6` 上发布，页面扩展 zip 是 **0.3.10**。步骤见下文「发布 0.1.6」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、标题栏、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。它请求 `https://api.github.com/repos/xxww0098/tulai/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`tulai version` 打印桌面端版本。
 
@@ -181,7 +181,7 @@ go run ./cmd/tulai-cdp-smoke   # Chrome CDP 连通性冒烟
 
 ## 发布 0.1.6
 
-桌面端产品版本是 **0.1.6**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.9**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+桌面端产品版本是 **0.1.6**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.10**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
 
 0.1.6 相对 0.1.5：千问从 tongyi.com 跳到 qianwen.com 不再被当成空白登录窗口，删除账号会清掉浏览器配置和扩展配对，并加上真实 Edge 的多账号 CI 测试。扩展版本仍是 0.3.9。完整说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 

@@ -167,12 +167,20 @@ func TestPlatformAutoDefaultsOn(t *testing.T) {
 	if !a.platformAuto {
 		t.Fatal("platform auto should default on")
 	}
+	if int(a.dailyCap) != tasks.DefaultDailyCap || a.riskyWords != tasks.RiskySetting() {
+		t.Fatalf("safe defaults cap=%v words=%q", a.dailyCap, a.riskyWords)
+	}
 	a.platformAuto = false
+	a.dailyCap = 12
+	a.riskyWords = "血腥,武器"
 	a.saveSettings()
 	again := &App{store: st}
 	again.loadSettings()
 	if again.platformAuto {
 		t.Fatal("turned-off platform auto was not restored")
+	}
+	if int(again.dailyCap) != 12 || again.riskyWords != "血腥,武器" {
+		t.Fatalf("cap/words not restored: %v %q", again.dailyCap, again.riskyWords)
 	}
 }
 
@@ -204,7 +212,7 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if len(cards) != 2 {
 		t.Fatalf("cards = %+v", cards)
 	}
-	if cards[0].Title != "风景.png" || cards[0].Status != "失败" || cards[0].Reason != "账号额度已用完" || len(cards[0].Retry) != 1 || cards[0].Retry[0].Platform != "千问" {
+	if cards[0].Title != "风景.png" || cards[0].Status != "失败" || cards[0].Reason != "账号额度已用完" || cards[0].Action != "换账号重试" || len(cards[0].Retry) != 1 || cards[0].Retry[0].Platform != "千问" {
 		t.Fatalf("image card = %+v", cards[0])
 	}
 	if len(cards[0].Results) != 1 || cards[0].Results[0] != "out/a.png" {
@@ -263,6 +271,20 @@ func TestHumanReason(t *testing.T) {
 	got := HumanReason(long)
 	if len([]rune(got)) > 37 || !mostlyHan(got) {
 		t.Fatalf("long reason = %q", got)
+	}
+}
+
+func TestFailCardShowsOneAction(t *testing.T) {
+	a := &App{queue: []tasks.Task{
+		{Platform: "豆包", Status: tasks.StatusFailed, Prompt: "一张温和的插画。画面温和、健康，适合公开展示", Error: "审核不通过: 内容不符合规范", Rewritten: true},
+		{Platform: "千问", Status: tasks.StatusFailed, Images: []string{"风景.png"}, Prompt: "甲", Error: "登录已失效"},
+		{Platform: "豆包", Status: tasks.StatusFailed, Images: []string{"静物.png"}, Prompt: "乙", Error: "上传: 没就绪"},
+	}}
+	tt := ui.NewTester(a.view, 1280, 900)
+	for _, label := range []string{"这条内容没通过审核", "改提示词重试", "已改写：", "登录失效了，请重新登录", "去重登", "图片上传失败", "换图"} {
+		if !tt.HasText(label) {
+			t.Fatalf("missing %q", label)
+		}
 	}
 }
 

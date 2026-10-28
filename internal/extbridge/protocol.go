@@ -113,6 +113,7 @@ const (
 	ECancelled        = "E_CANCELLED"
 	EQuota            = "E_QUOTA"
 	ERateLimit        = "E_RATE_LIMIT"
+	EModeration       = "E_MODERATION"
 )
 
 // Envelope 是 v1 信封。时间戳 ts 为 Unix 毫秒。
@@ -183,7 +184,7 @@ func ErrorCodes() []string {
 	return []string{
 		ENotConnected, ENoTab, ENotLoggedIn, ESelectorMiss, EUploadFail,
 		ESendUncertain, ETimeout, ECaptchaHuman, ECaptchaSolveFail, EDownloadFail,
-		ESWSleep, EProtocol, EAuth, ECancelled, EQuota, ERateLimit,
+		ESWSleep, EProtocol, EAuth, ECancelled, EQuota, ERateLimit, EModeration,
 	}
 }
 
