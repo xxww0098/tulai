@@ -115,7 +115,7 @@ func runLoginLaunch(t *testing.T, kind, bin string, extra []string, realURL bool
 	}
 	assertNoAutomation(t, profile)
 
-	pids := profilePIDs(profile)
+	mains := browserMainPIDs(profile)
 	ws2, err := m.Start(row, t.TempDir(), kind, login, false)
 	if err != nil {
 		t.Fatalf("second start: %v", err)
@@ -125,15 +125,16 @@ func runLoginLaunch(t *testing.T, kind, bin string, extra []string, realURL bool
 	}
 	visible2 := waitVisible(t, ws2, login)
 	pages2 := pageList(port)
-	pids2 := profilePIDs(profile)
-	fmt.Fprintf(&log, "second visible=%s\npages=%s\npids=%v -> %v\n", visible2, pages2, pids, pids2)
+	mains2 := browserMainPIDs(profile)
+	fmt.Fprintf(&log, "second visible=%s\npages=%s\nmain=%v -> %v\ncdp=%s -> %s\n", visible2, pages2, mains, mains2, ws, ws2)
 	if !strings.HasPrefix(visible2, login) || strings.Contains(pages2, "about:blank") {
 		flushEvidence(t, evidence, prefix, &log, screenshot(ws2))
 		t.Fatalf("second launch visible=%q pages=%s", visible2, pages2)
 	}
-	if !sameIDs(pids, pids2) {
+	// 渲染、gpu、utility 进程本来就会退出。要守住的是主进程和它的调试端点。
+	if ws == "" || ws2 != ws || len(mains) != 1 || len(mains2) != 1 || mains[0] != mains2[0] {
 		flushEvidence(t, evidence, prefix, &log, shot)
-		t.Fatalf("second launch changed processes %v -> %v", pids, pids2)
+		t.Fatalf("second launch replaced the browser main %v -> %v cdp %q -> %q", mains, mains2, ws, ws2)
 	}
 	flushEvidence(t, evidence, prefix, &log, shot)
 
@@ -294,21 +295,34 @@ func profilePIDs(profile string) []int {
 	return ids
 }
 
-func sameIDs(a, b []int) bool {
-	if len(a) == 0 || len(a) != len(b) {
-		return false
+func TestBrowserMainCmdIgnoresHelpers(t *testing.T) {
+	main := "microsoft-edge --remote-debugging-port=9333 --user-data-dir=/tmp/p"
+	renderer := main + " --type=renderer"
+	gpu := main + " --type=gpu-process"
+	utility := main + " --type=utility"
+	crashpad := "/opt/microsoft/msedge/crashpad_handler --user-data-dir=/tmp/p"
+	if !browserMainCmd(main) || browserMainCmd(renderer) || browserMainCmd(gpu) || browserMainCmd(utility) || browserMainCmd(crashpad) || browserMainCmd("") {
+		t.Fatalf("main=%v renderer=%v gpu=%v utility=%v crashpad=%v empty=%v",
+			browserMainCmd(main), browserMainCmd(renderer), browserMainCmd(gpu), browserMainCmd(utility), browserMainCmd(crashpad), browserMainCmd(""))
 	}
-	seen := map[int]int{}
-	for _, id := range a {
-		seen[id]++
-	}
-	for _, id := range b {
-		seen[id]--
-		if seen[id] < 0 {
-			return false
+}
+
+func browserMainCmd(cmd string) bool {
+	return strings.Contains(cmd, "--remote-debugging-port=") && !strings.Contains(cmd, "--type=")
+}
+
+func browserMainPIDs(profile string) []int {
+	var ids []int
+	for _, pid := range profilePIDs(profile) {
+		raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err != nil {
+			continue
+		}
+		if browserMainCmd(strings.ReplaceAll(string(raw), "\x00", " ")) {
+			ids = append(ids, pid)
 		}
 	}
-	return true
+	return ids
 }
 
 func freePort(t *testing.T) int {
