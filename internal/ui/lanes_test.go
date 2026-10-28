@@ -224,6 +224,73 @@ func rectsOverlap(a, b ui.Rect) bool {
 	return a.X < b.X+b.W-1 && b.X < a.X+a.W-1 && a.Y < b.Y+b.H-1 && b.Y < a.Y+a.H-1
 }
 
+func TestGeneratingDoesNotExceedBusyAccounts(t *testing.T) {
+	now := time.Now()
+	rows := []store.Browser{
+		{ID: 1, Name: "豆包主力", Platform: "豆包", IsLoggedIn: true, Health: store.HealthReady},
+		{ID: 2, Name: "豆包小号", Platform: "豆包", IsLoggedIn: true, Health: store.HealthReady},
+		{ID: 3, Name: "千问备用", Platform: "千问", IsLoggedIn: true, Health: store.HealthReady},
+	}
+	queue := []tasks.Task{
+		{Index: 1, BrowserID: 1, Platform: "豆包", Status: tasks.StatusRunning, Images: []string{"风景.png"}, Prompt: "水彩，保留构图"},
+		{Index: 2, BrowserID: 2, Platform: "豆包", Status: tasks.StatusRunning, Images: []string{"人像.png"}, Prompt: "人像改成胶片色"},
+		{Index: 3, BrowserID: 3, Platform: "千问", Status: tasks.StatusRunning, Images: []string{"静物.png"}, Prompt: "静物换成暖光"},
+		{Index: 4, Platform: "豆包", Status: tasks.StatusPending, Images: []string{"街景.png"}, Prompt: "街边的傍晚"},
+		{Index: 5, Platform: "豆包", Status: tasks.StatusPending, Images: []string{"夜色.png"}, Prompt: "深蓝的夜色"},
+		{Index: 6, Platform: "豆包", Status: tasks.StatusPending, Images: []string{"花.png"}, Prompt: "一束白花"},
+	}
+	board := tasks.BoardFrom(rows, queue, 20, now)
+	cards := ProgressCards(queue)
+	if err := generatingFits(cards, board); err != nil {
+		t.Fatal(err)
+	}
+	_, gen, queued, _, _ := ProgressTally(cards)
+	if gen != 3 || queued != 3 {
+		t.Fatalf("gen %d queued %d", gen, queued)
+	}
+	for _, card := range cards {
+		if card.Status == "排队中" && len(card.Sites) != 0 {
+			t.Fatalf("queued card names an account: %+v", card.Sites)
+		}
+	}
+	seen := map[string]bool{}
+	for _, ln := range board.Lanes {
+		if ln.Job == nil {
+			continue
+		}
+		if got := laneCaption(ln.Job.Prompt, ln.Job.Image); got != ln.Job.Prompt {
+			t.Fatalf("lane caption %q", got)
+		}
+		seen[ln.Job.Image] = true
+	}
+	for _, card := range cards {
+		if card.Status == "生成中" && !seen[card.Source] {
+			t.Fatalf("generating card %s is not on a lane", card.Source)
+		}
+	}
+	if got := laneCaption("", "花.png"); got != "花.png" {
+		t.Fatal(got)
+	}
+
+	over := append([]tasks.Task{}, queue...)
+	for i := range over {
+		over[i].Status = tasks.StatusRunning
+		over[i].BrowserID = int64(i%3 + 1)
+	}
+	overBoard := tasks.BoardFrom(rows, over, 20, now)
+	if err := generatingFits(ProgressCards(over), overBoard); err == nil {
+		t.Fatal("six running cards on three accounts were accepted")
+	}
+}
+
+func generatingFits(cards []ProgressCard, board tasks.Board) error {
+	_, gen, _, _, _ := ProgressTally(cards)
+	if gen > board.Active {
+		return fmt.Errorf("生成中 %d > 忙碌账号 %d", gen, board.Active)
+	}
+	return nil
+}
+
 func TestLaneStripWhenStepIsNotCurrent(t *testing.T) {
 	a := &App{platformAuto: true, concurrencyAuto: true, browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")}}
 	tt := ui.NewTester(a.view, 1280, 800)

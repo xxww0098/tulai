@@ -740,8 +740,11 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 		if line := a.siteLine(card); line != "" {
 			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(line)
 		}
-		if card.Status == "生成中" {
+		switch card.Status {
+		case "生成中":
 			ui.Box(c.Key("gen-slot")).FillWidth().Height(6)
+		case "排队中":
+			ui.Box(c.Key("wait-slot")).FillWidth().Height(6).Radius(3).Background(tok.sunken)
 		}
 		if card.Reason != "" {
 			color := tok.danger

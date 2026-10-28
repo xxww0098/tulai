@@ -376,8 +376,12 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 		}
 		card.Status = DisplayStatus(statuses)
 		// 还在出或还在排队时，不把已经落下的图当成完成结果。
+		// 排队的还没分到账号，不把构建队列时占的浏览器写上去。
 		if card.Status == "生成中" || card.Status == "排队中" {
 			card.Shots = nil
+		}
+		if card.Status == "排队中" {
+			card.Sites = nil
 		}
 		if card.Status == "待验证" {
 			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)

@@ -193,18 +193,22 @@ func TestExportWorkbenchShots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	extra := []string{"街景.png", "夜色.png", "花.png"}
+	extra := []struct{ file, prompt string }{
+		{"街景.png", "街边的傍晚"},
+		{"夜色.png", "深蓝的夜色"},
+		{"花.png", "一束白花"},
+	}
 	var extraSrc []sourceImage
 	var extraQueue []tasks.Task
-	for i, name := range extra {
-		path := filepath.Join(pics, name)
+	for i, item := range extra {
+		path := filepath.Join(pics, item.file)
 		writeShot(t, path, 320, 320, func(x, y, w, h int) color.NRGBA {
 			return color.NRGBA{R: uint8(40 + i*60), G: uint8(80 + x%80), B: uint8(120 + y%80), A: 255}
 		})
 		extraSrc = append(extraSrc, sourceImage{Path: path})
 		extraQueue = append(extraQueue, tasks.Task{
-			Index: 4 + i, Platform: "豆包", BrowserID: 1,
-			Status: tasks.StatusRunning, Images: []string{path}, Prompt: name,
+			Index: 4 + i, Platform: "豆包", Status: tasks.StatusPending,
+			Images: []string{path}, Prompt: item.prompt,
 		})
 	}
 	six := &App{

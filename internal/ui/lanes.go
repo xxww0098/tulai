@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -387,15 +388,25 @@ func (a *App) laneJob(c *ui.Context, ln tasks.AccountLane) {
 			}
 		})
 		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-			line := shortLine(job.Prompt, 22)
-			if line == "" {
-				line = "正在出图"
-			}
-			ui.Text(c, line).FontSize(tok.caption).SingleLine().Tooltip(job.Prompt)
+			line := laneCaption(job.Prompt, job.Image)
+			ui.Text(c, line).FontSize(tok.caption).SingleLine().Tooltip(line)
 			ui.Text(c.Key("elapsed"), elapsedLabel(c.Now().Sub(job.Started))).FontSize(tok.caption).TextColor(tok.muted).MinWidth(72).
 				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseFast})
 		})
 	})
+}
+
+// laneCaption 车道上正在出的那一行：有提示词就用提示词，否则用文件名。
+func laneCaption(prompt, image string) string {
+	if line := shortLine(prompt, 22); line != "" {
+		return line
+	}
+	if image != "" {
+		if line := shortLine(filepath.Base(image), 22); line != "" {
+			return line
+		}
+	}
+	return "正在出图"
 }
 
 func elapsedLabel(d time.Duration) string {
