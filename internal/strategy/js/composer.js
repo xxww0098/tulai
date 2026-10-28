@@ -312,10 +312,41 @@
       fileCount: fileCount(),
       generating: /生成中|正在生成|绘制中|Drawing|Generating/i.test(body),
       failed: /生成失败|请重试|敏感|违规/i.test(body),
-      quota: accountNotice(document, /额度不足|额度已用|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit/i),
+      quota: accountNotice(document, /额度不足|额度已用尽|额度已用|额度用尽|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit/i),
       rateLimit: accountNotice(document, /过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests/i),
+      moderation: refusalText(),
     };
   };
+
+  // 只看这一轮新出现的助手回复，加上短提示条。话术表在 extension/refuse.js。
+  function refusalText() {
+    if (!window.TULAIRefuse) return '';
+    return window.TULAIRefuse.match(freshReplyText()) || window.TULAIRefuse.match(noticeBlob(document)) || '';
+  }
+
+  function freshReplyText() {
+    var q = window.__tulaiAssistantQuery;
+    if (!q) return '';
+    var nodes = document.querySelectorAll(q);
+    var start = window.__tulaiAssistantBaseline || 0;
+    if (start < 0 || start > nodes.length) start = nodes.length;
+    var parts = [];
+    for (var i = start; i < nodes.length; i++) {
+      var text = String(nodes[i].innerText || '').replace(/\s+/g, ' ').trim();
+      if (text) parts.push(text.slice(0, 800));
+    }
+    return parts.join('\n');
+  }
+
+  function noticeBlob(doc) {
+    var nodes = doc.querySelectorAll('[role="alert"],[role="dialog"],[class*="toast"],[class*="notice"]');
+    var parts = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var text = String(nodes[i].innerText || '').replace(/\s+/g, ' ').trim();
+      if (text && text.length <= 240) parts.push(text);
+    }
+    return parts.join('\n');
+  }
 
   // 只看提示条和对话框，避免历史对话里的「额度」字样把还可用的账号标掉。
   // 正则与 extension/quota.js、internal/tasks/fault.go 保持一致。

@@ -20,7 +20,7 @@ func TestVocabularyMatchesSpec(t *testing.T) {
 	if strings.Join(Commands(), ",") != "ping,helloAck,upload,setPrompt,send,waitResult,download,captchaAssist,cancel,status,reload" {
 		t.Fatalf("commands: %s", strings.Join(Commands(), ","))
 	}
-	wantCodes := "E_NOT_CONNECTED,E_NO_TAB,E_NOT_LOGGED_IN,E_SELECTOR_MISS,E_UPLOAD_FAIL,E_SEND_UNCERTAIN,E_TIMEOUT,E_CAPTCHA_HUMAN,E_CAPTCHA_SOLVE_FAIL,E_DOWNLOAD_FAIL,E_SW_SLEEP,E_PROTOCOL,E_AUTH,E_CANCELLED,E_QUOTA,E_RATE_LIMIT"
+	wantCodes := "E_NOT_CONNECTED,E_NO_TAB,E_NOT_LOGGED_IN,E_SELECTOR_MISS,E_UPLOAD_FAIL,E_SEND_UNCERTAIN,E_TIMEOUT,E_CAPTCHA_HUMAN,E_CAPTCHA_SOLVE_FAIL,E_DOWNLOAD_FAIL,E_SW_SLEEP,E_PROTOCOL,E_AUTH,E_CANCELLED,E_QUOTA,E_RATE_LIMIT,E_MODERATION"
 	if strings.Join(ErrorCodes(), ",") != wantCodes {
 		t.Fatalf("codes: %s", strings.Join(ErrorCodes(), ","))
 	}
@@ -193,7 +193,7 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	scripts, _ := json.Marshal(manifest["content_scripts"])
-	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "qianwen/page.js", "qianwen/chooser.js", "MAIN", "doubao/page.js", "www.doubao.com", "content.js"} {
+	for _, needle := range []string{"www.tongyi.com", "qianwen.com", "chat.qwen.ai", "qianwen/page.js", "qianwen/chooser.js", "MAIN", "doubao/page.js", "www.doubao.com", "content.js", "refuse.js"} {
 		if !bytes.Contains(scripts, []byte(needle)) {
 			t.Errorf("content_scripts missing %s: %s", needle, scripts)
 		}

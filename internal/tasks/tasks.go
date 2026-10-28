@@ -35,6 +35,7 @@ type Task struct {
 	Attempts  int // 已尝试次数
 	Error     string
 	Results   []string // 已保存结果路径
+	Rewritten bool     // 审核失败后提示词被改写过，卡片上要能看见
 
 	submitted          bool // 已确认发送，重试时继续等待原任务
 	savedHashes        map[string]bool
@@ -42,6 +43,7 @@ type Task struct {
 	slot               int64 // 这次派发时占用的浏览器，完成后用来释放并发名额
 	ranOn              int64 // 实际打到的账号。轮换后 BrowserID 会改成下一个
 	rotated            bool  // 失败后已改派，调度器要把任务放回队列
+	soften             int   // 审核改写已经自动重试的次数
 }
 
 // Options 引擎运行参数（由设置表构造）。
@@ -68,6 +70,8 @@ type Options struct {
 	FileSuffixEnabled  bool
 	OutputPath         string
 	RemoveWatermark    bool // 另存计算去水印版本，始终保留原图
+	DailyCap           int
+	RiskyWords         []string
 }
 
 // queueUnit 是队列的一行原料。图生图带一张源图并循环提示词；文生图固定一条提示词且没有源图。
@@ -156,10 +160,11 @@ func RebuildRetry(items []Task) []Task {
 			continue
 		}
 		next := Task{
-			Index:    len(out) + 1,
-			Platform: task.Platform,
-			Prompt:   task.Prompt,
-			Status:   StatusPending,
+			Index:     len(out) + 1,
+			Platform:  task.Platform,
+			Prompt:    task.Prompt,
+			Rewritten: task.Rewritten,
+			Status:    StatusPending,
 		}
 		if len(task.Images) > 0 {
 			next.Images = append([]string(nil), task.Images...)

@@ -88,8 +88,12 @@ func TestRunSendWaitPerResourceWithoutTrailingDelay(t *testing.T) {
 					times = append(times, time.Now())
 					return nil
 				})
-				if err != nil || len(times) != 2 || times[1].Sub(times[0]) != 10*time.Second || time.Since(start) != 10*time.Second {
-					t.Fatalf("同资源须间隔10秒，末项结束不再等待: times=%v elapsed=%v err=%v", times, time.Since(start), err)
+				gap := time.Duration(0)
+				if len(times) == 2 {
+					gap = times[1].Sub(times[0])
+				}
+				if err != nil || len(times) != 2 || gap < 5*time.Second || gap > 15*time.Second || time.Since(start) != gap {
+					t.Fatalf("同资源间隔应落在 5–15 秒，末项结束不再等待: times=%v elapsed=%v err=%v", times, time.Since(start), err)
 				}
 			})
 		})
@@ -113,6 +117,7 @@ func TestRunCoolingBrowserDoesNotOccupyWorker(t *testing.T) {
 		var indexes []int
 		var times []time.Duration
 		e := NewEngine(st, nil, nil, "")
+		e.gap = func(d time.Duration) time.Duration { return d }
 		opts := Options{Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, Concurrency: 1, SendWait: 10}
 		err := e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
 			indexes = append(indexes, task.Index)

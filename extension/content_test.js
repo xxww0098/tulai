@@ -26,7 +26,9 @@ function load(page) {
     },
     TULAIPage: page,
   })
+  context.globalThis = context
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'protocol.js'), 'utf8'), context)
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'refuse.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8'), context)
   assert.strictEqual(listeners.length, 1)
   return function command(payload) {
@@ -118,6 +120,20 @@ async function main() {
   assert.strictEqual(captchaSent.payload.kind, 'slider')
   assert.strictEqual(captchaSent.payload.baxia, true)
   assert.strictEqual(captchaSent.payload.captchaBlocked, true)
+
+  const refusedPage = composerPage({
+    assistantText() { return '抱歉，我无法生成你描述的图片，内容不符合规范' },
+    resultImages() { return [] },
+    resultsBusy() { return false },
+  })
+  const refusedCall = load(refusedPage)
+  const refusedSent = await refusedCall({ name: 'send', prompt: '水彩风格', timeoutMs: 2000 })
+  assert.strictEqual(refusedSent.payload.ok, true)
+  const started = Date.now()
+  const refusedWait = await refusedCall({ name: 'waitResult', timeoutMs: 3000 })
+  assert.strictEqual(refusedWait.payload.code, 'E_MODERATION')
+  assert.match(refusedWait.payload.message, /审核不通过/)
+  assert.ok(Date.now() - started < 1000, '审核失败应马上返回，用时 ' + (Date.now() - started))
   console.log('content wait ok')
 }
 

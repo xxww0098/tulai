@@ -605,6 +605,12 @@ globalThis.TULAIPage = (function () {
     return newAssistants(doc, state).some(busy)
   }
 
+  function assistantText(doc, state) {
+    return newAssistants(doc, state).map(function (node) {
+      return String((node && (node.innerText || node.textContent)) || '').replace(/\s+/g, ' ').trim()
+    }).filter(Boolean).join('\n').slice(0, 800)
+  }
+
   function scrollIntoView(el) {
     if (!el || typeof el.scrollIntoView !== 'function') return
     try {
@@ -861,6 +867,7 @@ globalThis.TULAIPage = (function () {
     resultImages,
     revealResults,
     resultsBusy,
+    assistantText,
     composerCleared,
     sendAccepted,
     assignFiles,

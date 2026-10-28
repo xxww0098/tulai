@@ -37,6 +37,8 @@ type Browser struct {
 	LastUsed    int64
 	LastError   string
 	ExtAccount  string // 扩展 hello 里的 profile id。空字符串表示本机启动的浏览器。
+	DayKey      string // 本地日期 2006-01-02。换日之后 UsedToday 归零。
+	DayCount    int
 }
 
 // Store 线程安全的配置库。
@@ -93,6 +95,8 @@ var defaults = map[string]string{
 	"auto_check_updates":      "1",
 	"update_mirror":           "",
 	"update_skipped_version":  "",
+	"daily_cap":               "20",
+	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
 }
 
 const schema = `
@@ -199,7 +203,8 @@ func (s *Store) Browsers() []Browser {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT id, platform, name, port, COALESCE(user_data_dir,''), is_running, is_logged_in,
-		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''), COALESCE(ext_account,'')
+		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''), COALESCE(ext_account,''),
+		COALESCE(day_key,''), COALESCE(day_count,0)
 		FROM browsers ORDER BY id`)
 	if err != nil {
 		return nil
@@ -209,7 +214,7 @@ func (s *Store) Browsers() []Browser {
 	for rows.Next() {
 		var b Browser
 		var run, login int
-		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount); err == nil {
+		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount); err == nil {
 			b.IsRunning = run != 0
 			b.IsLoggedIn = login != 0
 			out = append(out, b)
@@ -300,6 +305,25 @@ func (s *Store) ResetBrowserHealth(id int64) {
 	s.UpdateBrowserHealth(id, HealthReady, 0, "")
 }
 
+// UsedToday 是这个账号在 now 这一天已经派出的次数。换日之后是 0。
+func (b Browser) UsedToday(now time.Time) int {
+	if b.DayKey != now.Format("2006-01-02") || b.DayCount < 0 {
+		return 0
+	}
+	return b.DayCount
+}
+
+// AddUse 给这个账号的当天次数加一。日期不同就从 1 重新计。
+func (s *Store) AddUse(id int64, now time.Time) {
+	if s == nil || id <= 0 {
+		return
+	}
+	key := now.Format("2006-01-02")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`UPDATE browsers SET day_count = CASE WHEN day_key = ? THEN COALESCE(day_count,0) + 1 ELSE 1 END, day_key = ? WHERE id = ?`, key, key, id)
+}
+
 // TouchBrowser 记下最近一次接任务的时间，供最少最近使用的轮换。
 func (s *Store) TouchBrowser(id int64, now time.Time) {
 	if s == nil || id <= 0 {
@@ -369,6 +393,8 @@ func migrateBrowsers(db *sql.DB) error {
 		`ALTER TABLE browsers ADD COLUMN last_used INTEGER DEFAULT 0`,
 		`ALTER TABLE browsers ADD COLUMN last_error TEXT DEFAULT ''`,
 		`ALTER TABLE browsers ADD COLUMN ext_account TEXT DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN day_key TEXT DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN day_count INTEGER DEFAULT 0`,
 	}
 	for _, stmt := range alters {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

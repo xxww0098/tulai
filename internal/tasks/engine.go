@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -70,6 +71,7 @@ type Engine struct {
 	attentionID int64
 	notes       []string
 	wake        chan struct{}
+	gap         func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。
@@ -253,6 +255,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 				e.view.Update(t)
 				onTask(t)
 				t = e.execute(ctx, t, attempt)
+				e.noteUse(t)
 				if t.slot > 0 {
 					e.setActive(t.slot, false)
 				}
@@ -359,7 +362,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 			if used == 0 {
 				used = resource
 			}
-			readyAt[e.slotKey(used)] = time.Now().Add(time.Duration(opts.SendWait) * time.Second)
+			readyAt[e.slotKey(used)] = time.Now().Add(e.sendGap(time.Duration(opts.SendWait) * time.Second))
 			if t.rotated && t.Status == StatusPending {
 				t.rotated = false
 				pending = append(pending, t)
@@ -408,6 +411,13 @@ func noteCool(earliest *time.Time, rows []store.Browser, now time.Time) {
 	}
 }
 
+func (e *Engine) sendGap(base time.Duration) time.Duration {
+	if e != nil && e.gap != nil {
+		return e.gap(base)
+	}
+	return JitterWait(base, rand.Float64())
+}
+
 // dispatchLimit 是这一轮允许同时跑的任务数。
 // Concurrency <= 0 时等于当前可用账号名额，跑的过程中账号变多变少都会重算。
 // 正数是手动上限，仍然不会超过可用名额。一个可用账号都没有时，手动上限照旧，自动至少留 1，占位任务还能跑。
@@ -421,7 +431,7 @@ func (e *Engine) dispatchLimit(now time.Time) int {
 		seen[platform] = true
 		rows = append(rows, e.accountsFor(platform)...)
 	}
-	usable := ParallelSlots(rows, now)
+	usable := ParallelSlots(rows, now, e.capNow())
 	if e.opts.Concurrency > 0 {
 		if usable > 0 {
 			return min(e.opts.Concurrency, usable)
@@ -466,7 +476,7 @@ func (e *Engine) slotKey(id int64) int64 {
 func (e *Engine) pickIdleAccount(platform string, busySlot int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
 	var best *store.Browser
 	for _, b := range e.accountsFor(platform) {
-		if !b.Usable(now) {
+		if !openAccount(b, now, e.capNow()) {
 			continue
 		}
 		slot := e.slotKey(b.ID)
@@ -541,6 +551,12 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		}
 		if e.maybeRotate(&t, err, time.Now()) {
 			return t
+		}
+		if again, stop := e.softenModeration(&t, err); again || stop {
+			if stop {
+				return t
+			}
+			continue
 		}
 		t.Error = err.Error()
 		kind := classifyFault(err)

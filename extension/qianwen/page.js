@@ -479,6 +479,12 @@ globalThis.TULAIPage = (function () {
     return newAssistants(doc, state).some(busy)
   }
 
+  function assistantText(doc, state) {
+    return newAssistants(doc, state).map(function (node) {
+      return String((node && (node.innerText || node.textContent)) || '').replace(/\s+/g, ' ').trim()
+    }).filter(Boolean).join('\n').slice(0, 800)
+  }
+
   function imageSettled(img, state) {
     if (!visible(img) || !img.complete || !(img.naturalWidth > 0)) return false
     const url = imageURL(img)
@@ -1136,6 +1142,7 @@ globalThis.TULAIPage = (function () {
     mark,
     resultImages,
     resultsBusy,
+    assistantText,
     revealResults,
     isPlaceholderURL,
     composerCleared,
