@@ -84,10 +84,10 @@ git push origin v0.1.3
 检查地址是：
 
 ```text
-GET https://api.github.com/repos/xxww0098/xbs/releases/latest
+GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 ```
 
-`User-Agent` 为 `xbs/<当前版本>`。只接受这个 API 和 `github.com` 上 `xxww0098/xbs` 的发布附件；下载时允许 GitHub 跳到它自己的附件域名。草稿和预发布不算。
+`User-Agent` 为 `xbs/<当前版本>`。只接受这个 API 和 `github.com` 上 `xxww0098/tulai` 的发布附件；下载时允许 GitHub 跳到它自己的附件域名。草稿和预发布不算。镜像是在这些地址前面加前缀，所以检查和下载的镜像地址也跟着仓库路径走。
 
 入口：
 

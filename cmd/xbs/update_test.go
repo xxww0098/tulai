@@ -19,7 +19,7 @@ import (
 
 func TestUpdateCheckCommand(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/xxww0098/xbs/releases/latest" {
+		if r.URL.Path != "/repos/xxww0098/tulai/releases/latest" {
 			http.NotFound(w, r)
 			return
 		}
@@ -28,7 +28,7 @@ func TestUpdateCheckCommand(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(update.Release{
 			Tag:     "v0.2.0",
-			HTMLURL: "https://github.com/xxww0098/xbs/releases/tag/v0.2.0",
+			HTMLURL: "https://github.com/xxww0098/tulai/releases/tag/v0.2.0",
 			Assets:  []update.Asset{{Name: "xbs-extension-0.3.4.zip"}},
 		})
 	}))
@@ -52,7 +52,7 @@ func TestUpdateCheckCommand(t *testing.T) {
 
 func TestUpdateCheckUpToDate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(update.Release{Tag: "v0.1.0", HTMLURL: "https://github.com/xxww0098/xbs/releases/tag/v0.1.0"})
+		json.NewEncoder(w).Encode(update.Release{Tag: "v0.1.0", HTMLURL: "https://github.com/xxww0098/tulai/releases/tag/v0.1.0"})
 	}))
 	defer srv.Close()
 	var stdout, stderr bytes.Buffer
@@ -97,10 +97,10 @@ func TestUpdateInstallsUserArchive(t *testing.T) {
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/xxww0098/xbs/releases/latest":
+		case "/repos/xxww0098/tulai/releases/latest":
 			json.NewEncoder(w).Encode(update.Release{
 				Tag:     "v0.2.0",
-				HTMLURL: "https://github.com/xxww0098/xbs/releases/tag/v0.2.0",
+				HTMLURL: "https://github.com/xxww0098/tulai/releases/tag/v0.2.0",
 				Assets: []update.Asset{
 					{Name: "xbs-extension-0.3.4.zip", State: "uploaded", BrowserDownloadURL: srv.URL + "/ext", Size: 1, Digest: "sha256:" + strings.Repeat("a", 64)},
 					{Name: "SHA256SUMS", State: "uploaded", BrowserDownloadURL: srv.URL + "/sums", Size: int64(len(sumsText)), Digest: "sha256:" + hex.EncodeToString(sumsSum[:])},

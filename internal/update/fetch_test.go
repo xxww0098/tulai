@@ -35,7 +35,7 @@ func TestMirrorFallbackAndChecksum(t *testing.T) {
 	defer mirror.Close()
 	primary = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/xxww0098/xbs/releases/latest":
+		case "/repos/xxww0098/tulai/releases/latest":
 			rel := Release{
 				Tag: "v0.2.0",
 				Assets: []Asset{
@@ -87,7 +87,7 @@ func TestChecksumMismatchTriesMirror(t *testing.T) {
 	defer mirror.Close()
 	primary = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/xxww0098/xbs/releases/latest":
+		case "/repos/xxww0098/tulai/releases/latest":
 			json.NewEncoder(w).Encode(Release{
 				Tag: "v0.2.0",
 				Assets: []Asset{

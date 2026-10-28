@@ -167,11 +167,11 @@ func TestPrepareDownloadsVerifiedAsset(t *testing.T) {
 		if r.Header.Get("Authorization") != "" {
 			sawAuth = true
 		}
-		if r.Header.Get("User-Agent") == "" {
-			t.Errorf("missing user agent on %s", r.URL.Path)
+		if !strings.Contains(r.Header.Get("User-Agent"), "https://github.com/xxww0098/tulai") {
+			t.Errorf("user agent %q on %s", r.Header.Get("User-Agent"), r.URL.Path)
 		}
 		switch r.URL.Path {
-		case "/repos/xxww0098/xbs/releases/latest":
+		case "/repos/xxww0098/tulai/releases/latest":
 			rel := Release{
 				Tag:  "v0.2.0",
 				Name: "xbs 0.2.0",
@@ -230,7 +230,7 @@ func TestPrepareRejectsBadChecksumAndForeignURL(t *testing.T) {
 	sumsSum := sha256.Sum256([]byte(sumsText))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/xxww0098/xbs/releases/latest":
+		case "/repos/xxww0098/tulai/releases/latest":
 			rel := Release{
 				Tag: "v0.2.0",
 				Assets: []Asset{
@@ -261,7 +261,7 @@ func TestPrepareRejectsBadChecksumAndForeignURL(t *testing.T) {
 	if err := client.allowAssetURL("https://github.com/other/xbs/releases/download/v0.2.0/xbs.tar.gz", "v0.2.0", "xbs.tar.gz"); err == nil {
 		t.Fatal("accepted another repository")
 	}
-	if err := client.allowAssetURL("http://github.com/xxww0098/xbs/releases/download/v0.2.0/xbs.tar.gz", "v0.2.0", "xbs.tar.gz"); err == nil {
+	if err := client.allowAssetURL("http://github.com/xxww0098/tulai/releases/download/v0.2.0/xbs.tar.gz", "v0.2.0", "xbs.tar.gz"); err == nil {
 		t.Fatal("accepted plain HTTP")
 	}
 }

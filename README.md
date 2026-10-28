@@ -1,6 +1,6 @@
 # tulai
 
-tulai 是豆包和千问的批量生图桌面应用。命令、仓库和安装包里的可执行文件仍叫 `xbs`。窗口标题和标题栏大字是「tulai」；macOS 菜单里的应用名也是「tulai」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
+tulai 是豆包和千问的批量生图桌面应用。命令和安装包里的可执行文件仍叫 `xbs`。源码仓库是 [xxww0098/tulai](https://github.com/xxww0098/tulai)。窗口标题和标题栏大字是「tulai」；macOS 菜单里的应用名也是「tulai」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
 
 本地运行，没有授权激活，也不接远端数据库。已安装的桌面端可以从 GitHub Releases 检查并安装更新。
 
@@ -32,7 +32,7 @@ go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问
 
 桌面端产品版本是 **0.1.3**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.3` 上发布，页面扩展 zip 是 **0.3.7**。步骤见下文「发布 0.1.3」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
-已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、标题栏、设置页、设置向导，或终端里的 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/xbs/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
+已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、标题栏、设置页、设置向导，或终端里的 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/tulai/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
 
 应用图标是仓库根目录的 `resources/icon.png`（1024×1024）。`mygo.json` 的 `icon` 指向它。`mygo build` 会把它做成 macOS `.icns`（Dock）、Windows 可执行文件图标和 NSIS 安装器图标，以及 Linux 桌面项图标。应用没有托盘菜单，因此不另做托盘图；启动时同一张 PNG 也会设到窗口（Windows / Linux）和 Dock（macOS）。
 

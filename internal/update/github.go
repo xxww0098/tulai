@@ -19,7 +19,7 @@ import (
 const (
 	// Owner and Repo are the public GitHub repository that publishes desktop builds.
 	Owner = "xxww0098"
-	Repo  = "xbs"
+	Repo  = "tulai"
 	// DefaultAPI is the official GitHub API. Public releases need no token.
 	DefaultAPI = "https://api.github.com"
 
@@ -206,7 +206,7 @@ func (c *Client) userAgent() string {
 	if version == "" {
 		version = "0"
 	}
-	return "xbs/" + version + " (+https://github.com/xxww0098/xbs)"
+	return "xbs/" + version + " (+https://github.com/" + c.owner() + "/" + c.repo() + ")"
 }
 
 func (c *Client) http() *http.Client {
