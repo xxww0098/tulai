@@ -104,6 +104,13 @@ type App struct {
 	logsOpen        bool
 	outputNote      string
 	thumbs          map[string]*ui.Bitmap
+	thumbWait       map[string]bool
+	look            tokens
+	flowPin         int
+	skipImages      bool
+	previewOn       bool
+	previewPath     string
+	previewBmp      *ui.Bitmap
 
 	// 验证码设置
 	captchaEnabled bool
@@ -323,12 +330,7 @@ func (a *App) loadSettings() {
 		if err != nil || !images.IsValidImageBytes(data) {
 			continue
 		}
-		thumb, _ := images.Thumb(p, 200)
-		var bmp *ui.Bitmap
-		if thumb != nil {
-			bmp = ui.NewBitmap(thumb)
-		}
-		a.sources = append(a.sources, sourceImage{Path: p, Thumb: bmp, Hash: images.SHA256(data)})
+		a.sources = append(a.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
 	}
 	a.autoCheck = update.AutoOn(s.Get(update.KeyAutoCheck))
 	a.updateMirror = strings.TrimSpace(s.Get(update.KeyMirror))
@@ -430,10 +432,10 @@ func (a *App) view(c *ui.Context) {
 		return
 	}
 	a.noteTab()
-	ui.Column(c.Key("screen-main")).Fill().Transition(screenMotion()).Children(func() {
+	a.look = applyWorkbenchTheme(c)
+	ui.Column(c.Key("screen-main")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
 		a.chrome(c)
-		ui.Divider(c)
-		ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinHeight(0).Padding(4, 28, 16, 28).Transition(a.pageMotion()).Children(func() {
+		ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinHeight(0).Padding(8, 28, 12, 28).Transition(a.pageMotion()).Children(func() {
 			switch a.tab {
 			case pageBrowser:
 				a.browserPane(c)
@@ -588,6 +590,9 @@ func (a *App) appendSources(loaded []sourceImage) int {
 			seen[si.Hash] = true
 			added++
 		}
+	}
+	if added > 0 {
+		a.skipImages = false
 	}
 	return added
 }

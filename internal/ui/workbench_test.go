@@ -215,6 +215,39 @@ func TestHumanReason(t *testing.T) {
 	}
 }
 
+func TestLayoutFlow(t *testing.T) {
+	empty := LayoutFlow(false, false, false, false, 0)
+	if empty.Images.State != stepCurrent || !empty.Images.Open || !empty.Prompt.Open || empty.Run.State != stepPending {
+		t.Fatalf("empty %+v", empty)
+	}
+	picking := LayoutFlow(true, false, false, false, 0)
+	if !picking.Images.Open || picking.Images.State != stepCurrent || !picking.Prompt.Open {
+		t.Fatalf("picking %+v", picking)
+	}
+	ready := LayoutFlow(true, true, false, false, 0)
+	if ready.Images.Open || ready.Images.State != stepDone || ready.Prompt.Open || ready.Prompt.State != stepDone || ready.Run.State != stepCurrent {
+		t.Fatalf("ready %+v", ready)
+	}
+	queued := LayoutFlow(true, true, false, true, 0)
+	if queued.Images.Open || queued.Prompt.Open || queued.Run.State != stepCurrent {
+		t.Fatalf("queued %+v", queued)
+	}
+	text := LayoutFlow(false, true, false, false, 0)
+	if !text.Images.Open || text.Prompt.State != stepDone || !text.Prompt.Open {
+		t.Fatalf("text %+v", text)
+	}
+	skip := LayoutFlow(false, false, true, false, 0)
+	if skip.Images.Open || skip.Images.State != stepDone || !skip.Prompt.Open || skip.Prompt.State != stepCurrent {
+		t.Fatalf("skip %+v", skip)
+	}
+	if got := FormatProgressTally(1, 1, 1, 1, 0); got != "完成 1 · 生成中 1 · 排队 1 · 失败 1" {
+		t.Fatalf("tally %q", got)
+	}
+	if got := FormatProgressTally(0, 0, 0, 0, 1); got != "完成 0 · 生成中 0 · 排队 0 · 失败 0 · 待验证 1" {
+		t.Fatalf("needs tally %q", got)
+	}
+}
+
 func TestDropZoneAddsAndRemovesImages(t *testing.T) {
 	dir := t.TempDir()
 	first := filepath.Join(dir, "one.png")
@@ -223,7 +256,7 @@ func TestDropZoneAddsAndRemovesImages(t *testing.T) {
 	writeColorPNG(t, second)
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	r := assertVisible(t, tt, "把图片拖到这里，或点击选择", 1280, 840)
+	r := assertVisible(t, tt, "拖入或点击添加图片", 1280, 840)
 	if !tt.DropFiles(r.X+10, r.Y+10, first, second, filepath.Join(dir, "note.txt")) {
 		t.Fatal("drop zone did not take the files")
 	}

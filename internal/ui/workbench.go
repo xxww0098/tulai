@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,8 +180,117 @@ type ProgressCard struct {
 	Status    string
 	Reason    string
 	Platforms []string
+	Sites     []CardSite
 	Results   []string
 	Retry     []tasks.Task
+}
+
+// CardSite 是这张卡上的一个平台账号。
+type CardSite struct {
+	Platform  string
+	BrowserID int64
+}
+
+const (
+	stepPending = iota
+	stepCurrent
+	stepDone
+)
+
+// flowStep 是向导三步里的一步：做到哪了，卡片展不展开。
+type flowStep struct {
+	State int
+	Open  bool
+}
+
+// flowLayout 是选图、写提示词、出图三张卡。
+type flowLayout struct {
+	Images flowStep
+	Prompt flowStep
+	Run    flowStep
+}
+
+// LayoutFlow 决定每一步是当前、已完成还是还没到，以及展开还是收成摘要。
+// 已经做完的收起。正在挑图（有图、还没写提示词、也没在跑）时选图保持展开。
+// 已经有出图进度时收起上面两步，把进度留在窗口里。pin 为 1 或 2 表示人点开了那一步。
+func LayoutFlow(hasImages, hasPrompts, skipImages, hasQueue bool, pin int) flowLayout {
+	var f flowLayout
+	imagesDone := hasImages || skipImages
+	arranging := hasImages && !hasPrompts && !skipImages && !hasQueue && pin != 2
+	switch {
+	case pin == 1:
+		f.Images.Open = true
+	case !hasQueue && (!imagesDone || arranging):
+		f.Images.Open = true
+	}
+	switch {
+	case f.Images.Open && !skipImages:
+		f.Images.State = stepCurrent
+	case imagesDone:
+		f.Images.State = stepDone
+	default:
+		f.Images.State = stepCurrent
+	}
+
+	switch {
+	case hasPrompts:
+		f.Prompt.State = stepDone
+	case imagesDone && !f.Images.Open:
+		f.Prompt.State = stepCurrent
+	default:
+		f.Prompt.State = stepPending
+	}
+	switch {
+	case pin == 2:
+		f.Prompt.Open = true
+	case hasQueue:
+		f.Prompt.Open = false
+	case hasPrompts && imagesDone && !f.Images.Open:
+		f.Prompt.Open = false
+	default:
+		f.Prompt.Open = true
+	}
+
+	if (hasImages || hasPrompts) && !f.Images.Open && f.Prompt.State == stepDone {
+		f.Run.State = stepCurrent
+	} else {
+		f.Run.State = stepPending
+	}
+	f.Run.Open = true
+	return f
+}
+
+// ProgressTally 按卡片数完成、生成中、排队、失败和待验证。
+func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs int) {
+	for _, card := range cards {
+		switch card.Status {
+		case "完成":
+			done++
+		case "生成中":
+			running++
+		case "排队中":
+			queued++
+		case "失败":
+			failed++
+		case "待验证":
+			needs++
+		}
+	}
+	return done, running, queued, failed, needs
+}
+
+// FormatProgressTally 是进度条上的那一行。
+func FormatProgressTally(done, running, queued, failed, needs int) string {
+	parts := []string{
+		fmt.Sprintf("完成 %d", done),
+		fmt.Sprintf("生成中 %d", running),
+		fmt.Sprintf("排队 %d", queued),
+		fmt.Sprintf("失败 %d", failed),
+	}
+	if needs > 0 {
+		parts = append(parts, fmt.Sprintf("待验证 %d", needs))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // ProgressCards 按源图合并多平台任务。没有源图时按提示词合并。
@@ -211,6 +321,7 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 				seen[task.Platform] = true
 				card.Platforms = append(card.Platforms, task.Platform)
 			}
+			card.addSite(task.Platform, task.BrowserID)
 			card.Results = append(card.Results, task.Results...)
 			switch task.Status {
 			case tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser:
@@ -256,6 +367,18 @@ func cardSource(task tasks.Task) string {
 		return task.Images[0]
 	}
 	return ""
+}
+
+func (card *ProgressCard) addSite(platform string, id int64) {
+	if platform == "" && id == 0 {
+		return
+	}
+	for _, site := range card.Sites {
+		if site.Platform == platform && site.BrowserID == id {
+			return
+		}
+	}
+	card.Sites = append(card.Sites, CardSite{Platform: platform, BrowserID: id})
 }
 
 func cardTitle(task tasks.Task) string {

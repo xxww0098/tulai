@@ -20,10 +20,10 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"tulai", "出图", "浏览器", "提示词", "设置", "开始出图", "高级", "把图片拖到这里，或点击选择", "检查更新", "设置向导"} {
+	for _, label := range []string{"tulai", "出图", "浏览器", "提示词", "设置", "开始出图", "高级", "拖入或点击添加图片", "检查更新", "设置向导"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
-	drop := assertVisible(t, tt, "把图片拖到这里，或点击选择", 1280, 840)
+	drop := assertVisible(t, tt, "拖入或点击添加图片", 1280, 840)
 	start := assertVisible(t, tt, "开始出图", 1280, 840)
 	advanced := assertVisible(t, tt, "高级", 1280, 840)
 	if start.Y < drop.Y+drop.H+24 {
@@ -32,7 +32,7 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	if advanced.Y < start.Y+start.H-1 {
 		t.Fatalf("advanced overlaps the start button: start=%+v advanced=%+v", start, advanced)
 	}
-	if tt.HasText("添加图片") {
+	if tt.HasText("清空") {
 		t.Fatal("empty drop zone shows the filled-state importer")
 	}
 	for _, tab := range []struct{ label, want string }{
@@ -60,12 +60,12 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"开始出图", "把图片拖到这里，或点击选择", "检查更新"} {
+	for _, label := range []string{"开始出图", "拖入或点击添加图片", "不使用图片，只用提示词", "检查更新"} {
 		if !tt.HasText(label) {
 			t.Fatalf("缺少文生图说明 %q", label)
 		}
 	}
-	if tt.HasText("添加图片") {
+	if tt.HasText("清空") {
 		t.Fatal("没有源图时不应先要求导入")
 	}
 	if err := tt.Click("开始出图"); err != nil {
@@ -160,7 +160,7 @@ func TestWorkspaceNeedsUserVisible(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"待验证", verificationHint, "成功 0 · 失败 0 · 待验证 1 · 未完成 0", "开始出图", "出图进度", "重试"} {
+				for _, label := range []string{"待验证", verificationHint, "完成 0 · 生成中 0 · 排队 0 · 失败 0 · 待验证 1", "开始出图", "出图进度", "重试"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 				if tt.HasText("已结束") || tt.HasText("失败: 验证码需要手动处理") {
@@ -278,7 +278,7 @@ func TestWorkspaceActionsRespectRunningState(t *testing.T) {
 	if err := tt.Click("移除"); err != nil {
 		t.Fatal(err)
 	}
-	if len(a.sources) != 0 || !tt.HasText("把图片拖到这里，或点击选择") {
+	if len(a.sources) != 0 || !tt.HasText("拖入或点击添加图片") {
 		t.Fatal("removing the source did not restore the empty drop zone")
 	}
 	if err := tt.Click("开始出图"); err != nil {
@@ -437,7 +437,7 @@ func TestTextBatchStartsFromPromptAlone(t *testing.T) {
 		t.Fatal("text mode is ready before a prompt")
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	if tt.HasText("添加图片") {
+	if tt.HasText("清空") {
 		t.Fatal("an empty drop zone shows the filled-state importer")
 	}
 	if err := tt.Click("提示词内容"); err != nil {

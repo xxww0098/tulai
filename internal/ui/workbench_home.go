@@ -1,0 +1,742 @@
+package ui
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
+
+	"github.com/xxww0098/tulai/internal/images"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/prompts"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
+)
+
+func (a *App) chrome(c *ui.Context) {
+	tok := a.look
+	ui.Column(c).Padding(10, 28, 8, 28).Gap(8).Background(tok.card).
+		BorderWidth(0, 0, 1, 0).BorderColor(tok.border).
+		Shadow(0, 1, 0, 0, tok.shadow).Children(func() {
+		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "tulai").Font("Inter").FontSize(tok.display).Bold()
+			subtitle := "豆包 / 千问"
+			if v := mygo.App.Version(); v != "" {
+				subtitle += " · " + v
+			}
+			ui.Text(c, subtitle).FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0).SingleLine()
+			ui.Button(c, "设置向导").Disabled(a.running).OnClick(func() { a.openWizard() })
+			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
+		})
+		a.updateBanner(c)
+		a.tabBar(c)
+	})
+}
+
+func (a *App) tabBar(c *ui.Context) {
+	tok := a.look
+	labels := []string{"出图", "浏览器", "提示词", "设置"}
+	parts := ui.SegmentedBase(c.Key("main-tabs"), &a.tab, len(labels))
+	parts.Track.Padding(4).Gap(4).Radius(tok.radiusM).Background(tok.sunken).Children(func() {
+		for i, label := range labels {
+			seg := parts.Segment(i).Padding(6, 16).Radius(tok.radiusS).Disabled(a.running)
+			if i == a.tab {
+				seg.Background(tok.card).Shadow(0, 1, 2, 0, tok.shadow)
+			}
+			chosen := i == a.tab
+			seg.Children(func() {
+				tx := ui.Text(c, label).FontSize(tok.body)
+				if chosen {
+					tx.Bold().TextColor(tok.accent)
+				} else {
+					tx.TextColor(tok.muted)
+				}
+			})
+		}
+	})
+}
+
+func (a *App) homePage(c *ui.Context) {
+	flow := a.flowNow()
+	ui.Scroll(c.Key("home")).Grow(1).MinHeight(0).Children(func() {
+		ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
+			a.loginBanner(c)
+			a.flowStepper(c, flow)
+			a.stepImages(c, flow.Images)
+			a.stepPrompt(c, flow.Prompt)
+			a.stepRun(c, flow.Run)
+			a.progressPane(c)
+			ui.Collapsible(c, "高级", &a.advancedOpen, func() {
+				a.advancedFields(c)
+			})
+		})
+	})
+	a.previewModal(c)
+}
+
+func (a *App) flowNow() flowLayout {
+	return LayoutFlow(len(a.sources) > 0, len(a.taskPromptList()) > 0, a.skipImages, len(a.queueItems()) > 0, a.flowPin)
+}
+
+func (a *App) flowStepper(c *ui.Context, flow flowLayout) {
+	tok := a.look
+	type item struct {
+		n, label string
+		state    int
+		pin      int
+	}
+	items := []item{
+		{"1", "选图片", flow.Images.State, 1},
+		{"2", "写提示词", flow.Prompt.State, 2},
+		{"3", "出图", flow.Run.State, 3},
+	}
+	ui.Row(c.Key("flow-steps")).Gap(0).AlignItems(ui.Center).Children(func() {
+		for i, it := range items {
+			if i > 0 {
+				line := tok.border
+				if items[i-1].state == stepDone {
+					line = tok.accent.Alpha(0.5)
+				}
+				ui.Box(c).Width(28).Height(2).Radius(1).Margin(0, 8).Background(line)
+			}
+			pin := it.pin
+			state := it.state
+			mark := it.n
+			name := it.label
+			if state == stepDone {
+				mark = "✓"
+			}
+			step := ui.Row(c.Key(pin)).Gap(8).AlignItems(ui.Center).Padding(2, 0)
+			if step.Clicked() {
+				if a.flowPin == pin {
+					a.flowPin = 0
+				} else {
+					a.flowPin = pin
+				}
+			}
+			step.Children(func() {
+				fg, fill := tok.muted, tok.sunken
+				switch state {
+				case stepCurrent:
+					fg, fill = tok.onAccent, tok.accent
+				case stepDone:
+					fg, fill = tok.accent, tok.accent.Alpha(0.14)
+				}
+				ui.Column(c).Size(26, 26).Radius(13).Background(fill).Center().Children(func() {
+					ui.Text(c, mark).FontSize(12).Bold().TextColor(fg)
+				})
+				label := ui.Text(c, name).FontSize(tok.body).TextColor(tok.muted)
+				if state == stepCurrent {
+					label.Bold().TextColor(tok.text)
+				} else if state == stepDone {
+					label.TextColor(tok.text)
+				}
+			})
+		}
+	})
+}
+
+func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
+	tok := a.look
+	card := ui.Column(c.Key(key)).FillWidth().Padding(12, 14).Gap(8).Radius(tok.radiusL).
+		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
+		Transition(motionReveal())
+	if !tok.dark {
+		card.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.9))
+	}
+	if state == stepCurrent {
+		card.Border(1.5, tok.accent).Shadow(0, 8, 24, 0, tok.lift)
+	}
+	return card
+}
+
+func (a *App) stepImages(c *ui.Context, step flowStep) {
+	key := "step-images"
+	if !step.Open {
+		key = "step-images-compact"
+	}
+	card := a.stepCard(c, key, step.State)
+	if paths := card.DroppedFiles(); len(paths) > 0 {
+		a.ingestSources(paths)
+	}
+	if card.FileDragOver() && !a.running {
+		card.Border(2, a.look.accent).Background(a.look.accent.Alpha(0.08))
+	}
+	card.Children(func() {
+		if step.Open {
+			a.imageStepOpen(c)
+			return
+		}
+		a.imageStepCompact(c)
+	})
+}
+
+func (a *App) imageStepOpen(c *ui.Context) {
+	tok := a.look
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "① 选图片").FontSize(tok.title).Bold().Grow(1)
+		if n := len(a.sources); n > 0 {
+			ui.Text(c, fmt.Sprintf("已选 %d 张", n)).FontSize(tok.body).TextColor(tok.muted)
+			ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
+			ui.Button(c, "清空").Disabled(a.running).OnClick(func() { a.clearSources() })
+		}
+	})
+	if len(a.sources) == 0 {
+		a.emptyDrop(c)
+		link := ui.Text(c, "不使用图片，只用提示词").FontSize(tok.body).TextColor(tok.accent)
+		if link.Clicked() && !a.running {
+			a.skipImages = true
+			a.flowPin = 2
+		}
+		return
+	}
+	a.sourceGrid(c)
+}
+
+func (a *App) emptyDrop(c *ui.Context) {
+	tok := a.look
+	zone := ui.Column(c.Key("drop-zone")).FillWidth().MinHeight(156).Radius(tok.radiusM).
+		Border(1.5, tok.accent.Alpha(0.45)).BorderStyle(ui.BorderDashed).
+		Background(tok.sunken).Center().Gap(6).Cursor(ui.CursorPointer)
+	if zone.Hovered() && !a.running {
+		zone.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
+	}
+	hoverPressPose(zone)
+	if zone.Clicked() && !a.running {
+		a.addImages()
+	}
+	zone.Children(func() {
+		ui.Text(c, "拖入或点击添加图片").FontSize(tok.title).Bold()
+		ui.Text(c, "可以一次选多张。不放图片也可以只写提示词").FontSize(tok.caption).TextColor(tok.muted)
+	})
+}
+
+func (a *App) sourceGrid(c *ui.Context) {
+	tok := a.look
+	width, _ := c.Size()
+	cols := int((width - 48) / 168)
+	if cols < 2 {
+		cols = 2
+	}
+	if cols > 5 {
+		cols = 5
+	}
+	ui.Grid(c).Columns(cols).Gap(12).Children(func() {
+		for i := range a.sources {
+			a.sourceTile(c, i)
+		}
+		a.addTile(c, tok)
+	})
+}
+
+func (a *App) sourceTile(c *ui.Context, i int) {
+	tok := a.look
+	si := a.sources[i]
+	ui.Column(c.Key(si.Path)).Gap(6).Transition(motionItem()).Children(func() {
+		frame := ui.Box(c).FillWidth().AspectRatio(1).Radius(tok.radiusM).Background(tok.sunken)
+		frame.Children(func() {
+			if bmp := a.cachedThumb(si.Path); bmp != nil {
+				ui.Image(c, bmp).FillWidth().AspectRatio(1).Fit(ui.Cover).Radius(tok.radiusM).
+					ContentTransition(ui.ContentTransition{Animation: &motionEaseOut})
+			}
+			a.thumbRemove(c, frame, i)
+		})
+		ui.Text(c, filepath.Base(si.Path)).FontSize(tok.caption).SingleLine().Tooltip(si.Path)
+	})
+}
+
+func (a *App) addTile(c *ui.Context, tok tokens) {
+	ui.Column(c.Key("add-tile")).Gap(6).Transition(motionItem()).Children(func() {
+		tile := ui.Column(c).FillWidth().AspectRatio(1).Radius(tok.radiusM).Center().Gap(4).
+			Border(1.5, tok.accent.Alpha(0.45)).BorderStyle(ui.BorderDashed).
+			Background(tok.sunken).Cursor(ui.CursorPointer)
+		if tile.Hovered() && !a.running {
+			tile.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
+		}
+		hoverPressPose(tile)
+		if tile.Clicked() && !a.running {
+			a.addImages()
+		}
+		tile.Children(func() {
+			ui.Text(c, "拖入或点击添加图片").FontSize(tok.caption).Bold().TextColor(tok.accent)
+		})
+		ui.Text(c, "PNG · JPG · WEBP").FontSize(tok.caption).TextColor(tok.muted)
+	})
+}
+
+func (a *App) thumbRemove(c *ui.Context, host ui.Element, index int) {
+	btn := ui.ButtonBase(c.Key("rm")).Label("移除").Tooltip("移除").
+		Size(22, 22).Radius(11).Absolute().Top(6).Right(6).Center().
+		Background(ui.RGBA(20, 28, 42, 0.78)).Disabled(a.running)
+	op := float32(0)
+	if host.Hovered() || btn.Hovered() || btn.Focused() {
+		op = 1
+	}
+	btn.Opacity(btn.AnimateTo("rm", op, motionEaseFast))
+	btn.OnClick(func() { a.removeSourceAt(index) })
+	btn.Children(func() {
+		ui.Text(c, "×").FontSize(13).TextColor(ui.Hex("#ffffff"))
+	})
+}
+
+func (a *App) imageStepCompact(c *ui.Context) {
+	tok := a.look
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		title := "还没选图片"
+		if a.skipImages && len(a.sources) == 0 {
+			title = "未选图片，按提示词出图"
+		}
+		if n := len(a.sources); n > 0 {
+			title = fmt.Sprintf("已选 %d 张", n)
+		}
+		head := ui.Text(c, "① 选图片").FontSize(tok.caption).TextColor(tok.muted)
+		ui.Text(c, title).FontSize(tok.body).Bold()
+		if head.Clicked() {
+			a.flowPin = 1
+		}
+		if len(a.sources) > 0 {
+			ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Height(36).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					for i := range a.sources {
+						a.miniThumb(c, i)
+					}
+				})
+			})
+			ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
+			ui.Button(c, "清空").Disabled(a.running).OnClick(func() { a.clearSources() })
+			return
+		}
+		ui.Row(c).Grow(1).MinWidth(0)
+		ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
+		link := ui.Text(c, "只用提示词").FontSize(tok.body).TextColor(tok.accent)
+		if link.Clicked() && !a.running {
+			a.skipImages = true
+			a.flowPin = 2
+		}
+	})
+}
+
+func (a *App) miniThumb(c *ui.Context, i int) {
+	si := a.sources[i]
+	frame := ui.Box(c.Key(si.Path)).Size(36, 36).Radius(6).Background(a.look.sunken).Transition(motionItem())
+	frame.Children(func() {
+		if bmp := a.cachedThumb(si.Path); bmp != nil {
+			ui.Image(c, bmp).Size(36, 36).Fit(ui.Cover).Radius(6)
+		}
+		a.thumbRemove(c, frame, i)
+	})
+}
+
+func (a *App) clearSources() {
+	if a.running {
+		return
+	}
+	a.sources = nil
+	a.srcSel = -1
+	a.skipImages = false
+}
+
+func (a *App) stepPrompt(c *ui.Context, step flowStep) {
+	key := "step-prompt"
+	if !step.Open {
+		key = "step-prompt-compact"
+	}
+	card := a.stepCard(c, key, step.State)
+	card.Children(func() {
+		if !step.Open {
+			a.promptCompact(c)
+			return
+		}
+		a.promptOpen(c)
+	})
+}
+
+func (a *App) promptOpen(c *ui.Context) {
+	tok := a.look
+	labels := prompts.Labels(a.userPrompts)
+	if !containsStr(labels, a.promptChoice) {
+		a.promptChoice = prompts.LabelFor(a.promptPick, a.userPrompts)
+	}
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "② 写提示词").FontSize(tok.title).Bold()
+		motionSelect(c.Key("prompt-template"), &a.promptChoice, labels).Grow(1).MinWidth(0).Disabled(a.running).OnChange(func() {
+			a.applyPromptChoice()
+		})
+		ui.Button(c, "编辑提示词").Disabled(a.running).OnClick(func() { a.tab = pagePrompts })
+	})
+	h := float32(72)
+	if len(a.queueItems()) > 0 {
+		h = 48
+	}
+	ui.TextArea(c, &a.prompts).Height(h).FillWidth().Label("提示词内容").Placeholder("不放图片时，每行一条。选了模板就整段发送")
+	if a.promptNote != "" {
+		ui.Text(c, a.promptNote).FontSize(tok.caption).TextColor(tok.muted)
+	}
+}
+
+func (a *App) promptCompact(c *ui.Context) {
+	tok := a.look
+	preview := oneLine(a.prompts)
+	if preview == "" {
+		preview = "还没写提示词"
+	}
+	rs := []rune(preview)
+	if len(rs) > 32 {
+		preview = string(rs[:32]) + "…"
+	}
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "② 写提示词").FontSize(tok.caption).TextColor(tok.muted)
+		body := ui.Text(c, preview).FontSize(tok.body).Grow(1).MinWidth(0).SingleLine().Tooltip(oneLine(a.prompts))
+		if body.Clicked() {
+			a.flowPin = 2
+		}
+		ui.Button(c, "修改").Disabled(a.running).OnClick(func() { a.flowPin = 2 })
+	})
+}
+
+func (a *App) stepRun(c *ui.Context, step flowStep) {
+	tok := a.look
+	plan := a.workbenchPlan()
+	card := a.stepCard(c, "step-run", step.State)
+	card.Children(func() {
+		ui.Text(c, "③ 出图").FontSize(tok.title).Bold()
+		if plan.Action == StartWizard && !a.running {
+			a.accountCallout(c)
+		}
+		var b ui.Element
+		switch {
+		case a.running:
+			b = ui.Button(c, "").Height(48).FillWidth().OnClick(func() { a.stopTasks() })
+			b.Children(func() {
+				ui.Spinner(c).Size(18, 18)
+				ui.Text(c, "停止").FontSize(tok.title)
+			})
+		case plan.Action == StartNone:
+			b = ui.Button(c, "开始出图").Height(48).FontSize(tok.title).FillWidth().Disabled(true)
+		default:
+			b = ui.PrimaryButton(c, "开始出图").Height(48).FontSize(tok.title).FillWidth().OnClick(func() { a.startTasks() })
+		}
+		pressPose(b)
+		if hint := a.startHint(plan); hint != "" {
+			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(hint)
+		}
+		if a.running || a.progress > 0 {
+			motionProgress(c, "run-progress", a.progress, a.running && a.progress <= 0)
+		}
+	})
+}
+
+func (a *App) accountCallout(c *ui.Context) {
+	tok := a.look
+	ui.Row(c.Key("account-callout")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
+		Radius(tok.radiusM).Background(tok.warning.Alpha(0.14)).Border(1, tok.warning).
+		Transition(motionBanner()).Children(func() {
+		ui.Text(c, "还没有可用账号。先去设置登录，再开始出图。").FontSize(tok.body).Grow(1).MinWidth(0)
+		ui.Button(c, "去设置").OnClick(func() { a.openWizard() })
+	})
+}
+
+func (a *App) startHint(plan WorkbenchPlan) string {
+	if !a.running && hasNeedsUser(a.queueItems()) {
+		return ""
+	}
+	if a.running {
+		if a.progText != "" {
+			return a.progText
+		}
+		return "正在出图"
+	}
+	if a.progText != "" && plan.Action != StartWizard {
+		return a.progText
+	}
+	switch plan.Action {
+	case StartNone:
+		return "先添加图片，或写一条提示词。不放图片也可以只按提示词出图"
+	case StartGenerate:
+		return "将使用" + strings.Join(plan.Platforms, "、") + "，账号自动轮换 · 保存到 " + a.resolvedOutputDir()
+	default:
+		return ""
+	}
+}
+
+func hasNeedsUser(items []tasks.Task) bool {
+	for _, task := range items {
+		if task.Status == tasks.StatusNeedsUser {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) loginBanner(c *ui.Context) {
+	text, id, ok := "", int64(0), false
+	if a.engine != nil {
+		text, id, ok = a.engine.Attention()
+	}
+	if !ok || text == "" {
+		return
+	}
+	ui.Row(c.Key("login-banner")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
+		Background(a.look.card).Border(1, a.look.warning).Radius(a.look.radiusM).Transition(motionBanner()).Children(func() {
+		ui.Text(c, text).FontSize(a.look.body).TextColor(a.look.warning).Grow(1).MinWidth(0).SingleLine().Tooltip(text)
+		ui.Button(c, "去处理").OnClick(func() { a.openAttention(id) })
+	})
+}
+
+func (a *App) openAttention(id int64) {
+	a.tab = pageBrowser
+	a.refreshBrowsers()
+	for i, row := range a.browserRows {
+		if row.ID == id {
+			a.browserSel = i
+			break
+		}
+	}
+	var row store.Browser
+	if a.store != nil {
+		for _, b := range a.store.Browsers() {
+			if b.ID == id {
+				row = b
+				break
+			}
+		}
+	}
+	if row.ID == 0 || a.engine == nil {
+		return
+	}
+	go func(b store.Browser) {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		_ = a.engine.FocusAccount(ctx, b)
+	}(row)
+}
+
+func (a *App) progressPane(c *ui.Context) {
+	items := a.queueItems()
+	cards := ProgressCards(items)
+	if len(cards) == 0 {
+		return
+	}
+	tok := a.look
+	failed := FailedTasks(items)
+	done, running, queued, failN, needs := ProgressTally(cards)
+	ui.Column(c.Key("progress-pane")).FillWidth().Padding(12, 14).Gap(10).Radius(tok.radiusL).
+		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
+		Transition(motionReveal()).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, "出图进度").FontSize(tok.title).Bold()
+				ui.Text(c, FormatProgressTally(done, running, queued, failN, needs)).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+			})
+			if len(failed) > 0 {
+				ui.Button(c, "全部重试失败项").Disabled(a.running).OnClick(func() { a.retryTasks(failed) })
+			}
+			ui.Button(c, "打开输出文件夹").OnClick(func() { a.openOutputFolder() })
+		})
+		if needs > 0 {
+			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
+		}
+		width, _ := c.Size()
+		cols := int((width - 40) / 280)
+		if cols < 1 {
+			cols = 1
+		}
+		if cols > 3 {
+			cols = 3
+		}
+		ui.Grid(c).Columns(cols).Gap(12).Children(func() {
+			for _, card := range cards {
+				a.progressCard(c, card)
+			}
+		})
+	})
+}
+
+func (a *App) progressCard(c *ui.Context, card ProgressCard) {
+	tok := a.look
+	ui.Column(c.Key("card:"+card.Key)).Gap(8).Padding(10).Radius(tok.radiusM).
+		Background(tok.paper).Border(1, tok.border).Transition(motionItem()).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			a.inputThumb(c, card)
+			if len(card.Results) > 0 {
+				ui.Row(c).Gap(6).Grow(1).MinWidth(0).Children(func() {
+					n := len(card.Results)
+					if n > 3 {
+						n = 3
+					}
+					for _, path := range card.Results[:n] {
+						a.resultThumb(c, path, card.Status == "生成中")
+					}
+				})
+			}
+			statusPill(c, card.Status)
+		})
+		ui.Text(c, card.Title).Bold().FontSize(tok.body).SingleLine().Tooltip(card.Title)
+		if line := a.siteLine(card); line != "" {
+			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
+		}
+		if card.Status == "生成中" {
+			motionProgress(c, "gen", 0, true)
+		}
+		if card.Reason != "" {
+			color := tok.danger
+			if card.Status == "待验证" {
+				color = tok.warning
+			}
+			ui.Text(c.Key("reason"), card.Reason).FontSize(tok.caption).TextColor(color).SingleLine().Tooltip(card.Reason).Transition(motionReveal())
+		}
+		if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 || len(card.Results) > 0 {
+			ui.Row(c).Gap(8).Children(func() {
+				if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 {
+					ui.Button(c.Key("retry"), "重试").Disabled(a.running).Transition(motionReveal()).OnClick(func() { a.retryTasks(card.Retry) })
+				}
+				if len(card.Results) > 0 {
+					path := card.Results[0]
+					ui.Button(c, "打开文件").OnClick(func() { a.openResult(path) })
+				}
+			})
+		}
+	})
+}
+
+func (a *App) inputThumb(c *ui.Context, card ProgressCard) {
+	tok := a.look
+	frame := ui.Box(c.Key("in")).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
+	frame.Children(func() {
+		if card.Source == "" {
+			promptMark(c, tok)
+			return
+		}
+		if bmp := a.cachedThumb(card.Source); bmp != nil {
+			shot := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS)
+			if card.Status == "生成中" {
+				shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
+			}
+		}
+	})
+}
+
+func (a *App) resultThumb(c *ui.Context, path string, shimmer bool) {
+	tok := a.look
+	tile := ui.Box(c.Key(path)).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0).Transition(motionItem())
+	tile.Children(func() {
+		bmp := a.cachedThumb(path)
+		if bmp == nil {
+			return
+		}
+		shot := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS).
+			ContentTransition(ui.ContentTransition{Animation: &motionEaseOut}).
+			Cursor(ui.CursorPointer).Label("预览")
+		if shimmer {
+			shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
+		}
+		if shot.Clicked() {
+			a.showPreview(path)
+		}
+	})
+}
+
+func promptMark(c *ui.Context, tok tokens) {
+	ui.Box(c).Size(72, 72).Draw(func(p *ui.Painter, r ui.Rect) {
+		ink := tok.muted
+		for i := 0; i < 3; i++ {
+			w := r.W * 0.46
+			if i == 2 {
+				w = r.W * 0.28
+			}
+			p.Fill(ui.Rect{X: r.X + 16, Y: r.Y + 20 + float32(i)*12, W: w, H: 3}, ink, 1.5)
+		}
+	})
+}
+
+func (a *App) siteLine(card ProgressCard) string {
+	var parts []string
+	for _, site := range card.Sites {
+		line := site.Platform
+		if site.BrowserID > 0 {
+			if name := a.accountName(site.BrowserID); name != "" && name != line {
+				line += " · " + name
+			}
+		}
+		if line != "" {
+			parts = append(parts, line)
+		}
+	}
+	return strings.Join(parts, "、")
+}
+
+// paintShimmer 在生成中的缩略图上扫一条高光。只重绘，不重建视图。
+func paintShimmer(c *ui.Context, p *ui.Painter, r ui.Rect) {
+	if c.Preferences().ReduceMotion {
+		return
+	}
+	p.AnimationFrame()
+	phase := float32(p.Now().UnixMilli()%1200) / 1200
+	w := r.W * 0.45
+	x := r.X - w + (r.W+w)*phase
+	p.Clip(r, 8, func() {
+		p.Fill(ui.Rect{X: x, Y: r.Y, W: w, H: r.H}, ui.RGBA(255, 255, 255, 0.28), 0)
+	})
+}
+
+func (a *App) showPreview(path string) {
+	if path == "" {
+		return
+	}
+	a.previewPath = path
+	a.previewOn = true
+	a.previewBmp = nil
+	win := a.window
+	go func() {
+		img, err := images.Thumb(path, 960)
+		apply := func() {
+			if a.previewPath != path {
+				return
+			}
+			if err == nil && img != nil {
+				a.previewBmp = ui.NewBitmap(img)
+			}
+		}
+		if win != nil {
+			win.Update(apply)
+			return
+		}
+		apply()
+	}()
+}
+
+func (a *App) previewModal(c *ui.Context) {
+	if !a.previewOn {
+		return
+	}
+	tok := a.look
+	ui.Modal(c, &a.previewOn, func() {
+		ui.Column(c).MaxWidth(760).Gap(12).Children(func() {
+			ui.Text(c, filepath.Base(a.previewPath)).FontSize(tok.title).Bold()
+			if a.previewBmp != nil {
+				ui.Image(c, a.previewBmp).MaxWidth(720).MaxHeight(480).Fit(ui.Contain).Radius(tok.radiusM)
+			} else {
+				ui.Spinner(c).Size(28, 28)
+			}
+			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+				path := a.previewPath
+				ui.Button(c, "打开文件").OnClick(func() { a.openResult(path) })
+				ui.Button(c, "关闭").OnClick(func() { a.previewOn = false })
+			})
+		})
+	})
+}
+
+func (a *App) openResult(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	if err := mygo.Shell.OpenPath(path); err != nil {
+		a.outputNote = "无法打开文件"
+		logging.Log.Errorf("打开文件失败: %v", err)
+	}
+}
