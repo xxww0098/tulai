@@ -372,6 +372,9 @@ func (a *App) restoreBrowser() {
 		return
 	}
 	a.store.ResetBrowserHealth(b.ID)
+	if a.engine != nil {
+		a.engine.Wake()
+	}
 	logging.Log.Info("已恢复账号 %s", b.Name)
 	a.refreshBrowsers()
 }

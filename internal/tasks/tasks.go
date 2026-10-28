@@ -51,7 +51,7 @@ type Options struct {
 	PromptSuffix       string
 	UseSuffix          bool
 	Images             []string
-	Concurrency        int
+	Concurrency        int // 0 按可用账号自动；正数是同时出图的上限
 	RetryCount         int
 	SendWait           int // 发送间隔秒
 	WaitBeforeSend     int // 发送前等待秒

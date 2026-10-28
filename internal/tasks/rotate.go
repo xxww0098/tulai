@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/xxww0098/tulai/internal/heal"
@@ -136,6 +137,23 @@ func pickHealthy(rows []store.Browser, avoid int64, now time.Time) (int64, bool)
 		return 0, false
 	}
 	return best.ID, true
+}
+
+// ParallelSlots 是这些账号里现在能同时出图的名额。
+// 同一个扩展配置文件只算一个：扩展每次命令都把标签页拉到前台，一个窗口不能两单一起跑。
+func ParallelSlots(rows []store.Browser, now time.Time) int {
+	seen := map[string]struct{}{}
+	for _, b := range rows {
+		if !b.Usable(now) {
+			continue
+		}
+		key := strconv.FormatInt(b.ID, 10)
+		if b.ExtAccount != "" {
+			key = "ext:" + b.ExtAccount
+		}
+		seen[key] = struct{}{}
+	}
+	return len(seen)
 }
 
 func earliestCool(rows []store.Browser, now time.Time) time.Time {

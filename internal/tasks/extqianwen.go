@@ -230,6 +230,11 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 }
 
 func (e *Engine) noteHello(sess *extbridge.Session) {
+	e.rememberExtension(sess)
+	e.poke()
+}
+
+func (e *Engine) rememberExtension(sess *extbridge.Session) {
 	e.noteExtensionVersion(sess)
 	if e == nil || e.store == nil || sess == nil || sess.Account() == "" {
 		return
@@ -301,7 +306,8 @@ func (e *Engine) syncExtensionAccounts() {
 		return
 	}
 	for _, sess := range srv.Sessions("") {
-		e.noteHello(sess)
+		// claimRun 持有 e.mu，这里不能 poke。
+		e.rememberExtension(sess)
 	}
 }
 

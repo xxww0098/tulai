@@ -11,6 +11,7 @@ import (
 
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
@@ -120,8 +121,19 @@ func (a *App) advancedFields(c *ui.Context) {
 		ui.Field(c, "发送策略", func() {
 			motionSelect(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
 		})
-		ui.Field(c, "并发数", func() {
-			ui.NumberInput(c, &a.concurrency, 1, 16, 1)
+		ui.Field(c, "并发", func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Switch(c, &a.concurrencyAuto).Disabled(a.running)
+				if a.concurrencyAuto {
+					ui.Text(c, ConcurrencyCaption(true, a.parallelSlots()))
+				} else {
+					if a.concurrency < 1 {
+						a.concurrency = 1
+					}
+					ui.NumberInput(c, &a.concurrency, 1, 16, 1).Disabled(a.running)
+					ui.Text(c, ConcurrencyCaption(false, a.parallelSlots())).FontSize(12).TextColor(c.Theme().TextMuted)
+				}
+			})
 		})
 		ui.Field(c, "失败重试", func() {
 			ui.NumberInput(c, &a.retryCount, 0, 20, 1)
@@ -242,6 +254,41 @@ func (a *App) workbenchInput() WorkbenchInput {
 
 func (a *App) workbenchPlan() WorkbenchPlan {
 	return PlanWorkbench(a.workbenchInput())
+}
+
+func (a *App) taskConcurrency() int {
+	if a.concurrencyAuto {
+		return 0
+	}
+	return clampInt(int(a.concurrency), 1, 16)
+}
+
+// parallelSlots 是当前勾选方式下能同时出图的账号数，和调度用的名额一致。
+func (a *App) parallelSlots() int {
+	now := time.Now()
+	extension := a.extensionTasks()
+	wantDoubao := a.platformAuto || a.platDoubao
+	wantQianwen := a.platformAuto || a.platQianwen
+	var rows []store.Browser
+	for _, b := range a.configuredBrowsers() {
+		switch b.Platform {
+		case "豆包":
+			if !wantDoubao {
+				continue
+			}
+		case "千问":
+			if !wantQianwen {
+				continue
+			}
+		default:
+			continue
+		}
+		if extension != (b.ExtAccount != "") {
+			continue
+		}
+		rows = append(rows, b)
+	}
+	return tasks.ParallelSlots(rows, now)
 }
 
 func (a *App) accountSnaps() []AccountSnap {

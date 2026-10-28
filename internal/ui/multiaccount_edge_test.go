@@ -244,16 +244,48 @@ func TestEdgeMultiAccount(t *testing.T) {
 		}
 	}
 
+	release := make(chan struct{})
+	arrived := make(chan int64, 4)
+	doneRun := make(chan error, 1)
+	var usedMu sync.Mutex
 	var used []int64
-	err = eng.RunObserved(context.Background(), tasks.Options{
-		Platforms: []string{"豆包", "千问"}, Prompts: []string{"猫", "海"}, Concurrency: 3,
-	}, func(tasks.Task) {}, func(tasks.Progress) {}, func(_ context.Context, task *tasks.Task) error {
-		used = append(used, task.BrowserID)
-		return nil
-	})
-	if err != nil {
+	go func() {
+		doneRun <- eng.RunObserved(context.Background(), tasks.Options{
+			Platforms: []string{"豆包", "千问"}, Prompts: []string{"猫", "海"},
+		}, func(tasks.Task) {}, func(tasks.Progress) {}, func(_ context.Context, task *tasks.Task) error {
+			usedMu.Lock()
+			used = append(used, task.BrowserID)
+			usedMu.Unlock()
+			arrived <- task.BrowserID
+			<-release
+			return nil
+		})
+	}()
+	inflight := map[int64]bool{}
+	waitParallel := time.After(30 * time.Second)
+	for len(inflight) < 3 {
+		select {
+		case id := <-arrived:
+			inflight[id] = true
+		case err := <-doneRun:
+			t.Fatalf("run finished before 3 accounts overlapped: %v inflight=%v", err, inflight)
+		case <-waitParallel:
+			t.Fatalf("timed out waiting for parallel accounts: %v", inflight)
+		}
+	}
+	for _, run := range startedRows {
+		if edgeMainPID(dirs[run.row.ID]) == 0 {
+			t.Fatalf("%s browser exited while %d accounts were in flight", run.row.Name, len(inflight))
+		}
+	}
+	t.Logf("REAL Edge profiles, scheduler overlap across accounts %v (executor held open; pages are login fixtures)", inflight)
+	close(release)
+	if err := <-doneRun; err != nil {
 		t.Fatalf("distribute: %v queue=%+v", err, eng.View().Snapshot())
 	}
+	usedMu.Lock()
+	used = append([]int64(nil), used...)
+	usedMu.Unlock()
 	doubao, qianwen := map[int64]bool{}, map[int64]bool{}
 	for _, id := range used {
 		switch id {

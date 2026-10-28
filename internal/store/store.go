@@ -46,15 +46,16 @@ type Store struct {
 	path string
 }
 
-// defaults 是新库的初始设置。除 browserBackend、extBridgePort、extBridgeToken 外，键与原软件 settings 表实测默认值对应。
+// defaults 是新库的初始设置。除 browserBackend、extBridgePort、extBridgeToken、concurrency 外，键与原软件 settings 表实测默认值对应。
 // browserBackend 只接受 extension 或 ego，默认 ego。
 // extension 时千问和豆包走扩展桥，不要求本机浏览器实例。
 // ego 表示不走扩展，页面由 browser_backend（Chrome 或 Edge）打开。
+// concurrency 为 0 时按当前可用账号数自动调度；正数是手动上限。
 var defaults = map[string]string{
 	"selected_platforms":      "豆包",
 	"task_type":               "ImageGeneration",
 	"send_strategy":           "顺序循环",
-	"concurrency":             "1",
+	"concurrency":             "0",
 	"retry_count":             "3",
 	"sent_count":              "1",
 	"send_wait_seconds":       "5",
