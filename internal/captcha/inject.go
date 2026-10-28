@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"xbs/internal/cdp"
-	"xbs/internal/logging"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 //go:embed js/inject.js
@@ -22,11 +22,11 @@ var injectRevision = fmt.Sprintf("%x", sha256.Sum256([]byte(injectJS)))
 
 // InjectJS 返回验证码注入脚本。
 func InjectJS() string {
-	return strings.Replace(injectJS, "__XBS_CAPTCHA_REVISION__", injectRevision, 1)
+	return strings.Replace(injectJS, "__TULAI_CAPTCHA_REVISION__", injectRevision, 1)
 }
 
 func configuredInjectJS(enabled bool) string {
-	return fmt.Sprintf("window.__xbsCaptchaEnabled = %t;\nwindow.__xbsCaptcha && window.__xbsCaptcha.setManual(false);\n", enabled) + InjectJS()
+	return fmt.Sprintf("window.__tulaiCaptchaEnabled = %t;\nwindow.__tulaiCaptcha && window.__tulaiCaptcha.setManual(false);\n", enabled) + InjectJS()
 }
 
 type egoPagePreparer interface {
@@ -50,7 +50,7 @@ func PreparePage(s egoPagePreparer) error {
 	if err := s.Ctx().Err(); err != nil {
 		return err
 	}
-	err := s.EgoEvaluate(`({installed:!!window.__xbsCaptchaInstalled,revision:window.__xbsCaptchaRevision||'',blocked:`+verificationExpression+`,autoSolve:!!(window.__xbsCaptcha && window.__xbsCaptcha.status && window.__xbsCaptcha.status().autoSolve)})`, &current)
+	err := s.EgoEvaluate(`({installed:!!window.__tulaiCaptchaInstalled,revision:window.__tulaiCaptchaRevision||'',blocked:`+verificationExpression+`,autoSolve:!!(window.__tulaiCaptcha && window.__tulaiCaptcha.status && window.__tulaiCaptcha.status().autoSolve)})`, &current)
 	if ctxErr := s.Ctx().Err(); ctxErr != nil {
 		return ctxErr
 	}

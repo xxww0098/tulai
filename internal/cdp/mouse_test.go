@@ -11,7 +11,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"xbs/internal/browser"
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestTrustedPointerClickUpload(t *testing.T) {
@@ -50,7 +50,7 @@ document.querySelector('#active').addEventListener('change',()=>window.changes++
 	if _, err := s.Evaluate(`document.querySelector('#open').click()`); err != nil || s.EvaluateBool(`!!document.querySelector('#menu-item')`) {
 		t.Fatal("fixture must require a trusted pointerdown")
 	}
-	if _, err := s.Evaluate(`window.events=[];window.__xbsBaseInstalled=2;window.xbsClick=async()=>{window.__oldClick=true;return true}`); err != nil {
+	if _, err := s.Evaluate(`window.events=[];window.__tulaiBaseInstalled=2;window.tulaiClick=async()=>{window.__oldClick=true;return true}`); err != nil {
 		t.Fatal(err)
 	}
 	s.EnsureBase()
@@ -58,10 +58,10 @@ document.querySelector('#active').addEventListener('change',()=>window.changes++
 	if err := os.WriteFile(file, []byte("trusted pointer fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UploadFiles(`(async()=>{if(!await xbsClick(document.querySelector('#open')))throw new Error('入口点击失败');if(!await xbsClick('#menu-item'))throw new Error('菜单点击失败')})()`, []string{file}); err != nil {
+	if err := s.UploadFiles(`(async()=>{if(!await tulaiClick(document.querySelector('#open')))throw new Error('入口点击失败');if(!await tulaiClick('#menu-item'))throw new Error('菜单点击失败')})()`, []string{file}); err != nil {
 		t.Fatal(err)
 	}
-	if !s.EvaluateBool(`!window.__oldClick&&window.__xbsBaseInstalled===3&&window.changes===1&&document.querySelector('#active').files.length===1&&JSON.stringify(window.events)===JSON.stringify([['pointerdown','open',true],['click','open',true],['pointerdown','menu-item',true],['click','menu-item',true]])`) {
+	if !s.EvaluateBool(`!window.__oldClick&&window.__tulaiBaseInstalled===3&&window.changes===1&&document.querySelector('#active').files.length===1&&JSON.stringify(window.events)===JSON.stringify([['pointerdown','open',true],['click','open',true],['pointerdown','menu-item',true],['click','menu-item',true]])`) {
 		out, _ := s.Evaluate(`JSON.stringify({events:window.events,changes:window.changes,old:window.__oldClick})`)
 		t.Fatalf("trusted single-click/upload sequence failed: %s", out)
 	}

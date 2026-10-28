@@ -8,11 +8,11 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/browser"
-	"xbs/internal/cdp"
-	"xbs/internal/store"
-	"xbs/internal/strategy"
-	"xbs/internal/wizard"
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/strategy"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 // applyWizardGate 在启动时决定要不要盖住主界面。

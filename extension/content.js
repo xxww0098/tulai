@@ -1,8 +1,8 @@
 // 内容脚本把主机命令落到当前页面。千问加载 qianwen/page.js，豆包加载 doubao/page.js，
-// 两边都提供 XBSPage。选择器在各自的 page 脚本里，和 ego.js 的锚点一致。
+// 两边都提供 TULAIPage。选择器在各自的 page 脚本里，和 ego.js 的锚点一致。
 // 发送用 envelope.idempotencyKey 记住已经点过的一次：超时重试只复查结果，不再点发送。
-const XBS = globalThis.XBS
-const Page = globalThis.XBSPage
+const TULAI = globalThis.TULAI
+const Page = globalThis.TULAIPage
 
 const uploadParts = new Map()
 const uploadApplied = new Map()
@@ -15,7 +15,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || msg.type !== 'COMMAND_FROM_HOST') return
   const env = msg.envelope || {}
   handleCommand(env).then(sendResponse).catch((err) => {
-    sendResponse(XBS.fail(env, XBS.errors.E_PROTOCOL, String(err && err.message || err)))
+    sendResponse(TULAI.fail(env, TULAI.errors.E_PROTOCOL, String(err && err.message || err)))
   })
   return true
 })
@@ -24,27 +24,27 @@ chrome.runtime.sendMessage({ type: 'TAB_READY', href: location.href }).catch(() 
 
 async function handleCommand(env) {
   const name = env.payload && env.payload.name
-  if (name === XBS.commands.cancel) {
+  if (name === TULAI.commands.cancel) {
     cancelRequested = true
-    return XBS.ack(env, { name, ok: true, message: '已请求取消页面内等待' })
+    return TULAI.ack(env, { name, ok: true, message: '已请求取消页面内等待' })
   }
   cancelRequested = false
   const payload = env.payload || {}
   switch (name) {
-    case XBS.commands.upload:
+    case TULAI.commands.upload:
       return upload(env, payload)
-    case XBS.commands.setPrompt:
+    case TULAI.commands.setPrompt:
       return setPrompt(env, payload)
-    case XBS.commands.send:
+    case TULAI.commands.send:
       return sendPrompt(env, payload)
-    case XBS.commands.waitResult:
+    case TULAI.commands.waitResult:
       return waitResult(env, payload)
-    case XBS.commands.download:
+    case TULAI.commands.download:
       return download(env, payload)
-    case XBS.commands.captchaAssist:
+    case TULAI.commands.captchaAssist:
       return captchaAssist(env)
     default:
-      return XBS.fail(env, XBS.errors.E_PROTOCOL, '内容脚本未实现命令 ' + name)
+      return TULAI.fail(env, TULAI.errors.E_PROTOCOL, '内容脚本未实现命令 ' + name)
   }
 }
 
@@ -53,19 +53,19 @@ function delay(ms) {
 }
 
 function accountBlocked(env) {
-  if (!globalThis.XBSQuota || !document || typeof document.querySelectorAll !== 'function') return null
-  const found = XBSQuota.accountBlock(document)
+  if (!globalThis.TULAIQuota || !document || typeof document.querySelectorAll !== 'function') return null
+  const found = TULAIQuota.accountBlock(document)
   if (!found) return null
-  const code = found.kind === 'rate' ? XBS.errors.E_RATE_LIMIT : XBS.errors.E_QUOTA
+  const code = found.kind === 'rate' ? TULAI.errors.E_RATE_LIMIT : TULAI.errors.E_QUOTA
   const message = found.message || (found.kind === 'rate' ? '账号请求过于频繁' : '账号额度已用尽')
-  return XBS.fail(env, code, message)
+  return TULAI.fail(env, code, message)
 }
 
 function loginOrMiss(env, name, message) {
   if (Page.loginWall(document)) {
-    return XBS.fail(env, XBS.errors.E_NOT_LOGGED_IN, '页面没有输入框，看起来还未登录')
+    return TULAI.fail(env, TULAI.errors.E_NOT_LOGGED_IN, '页面没有输入框，看起来还未登录')
   }
-  return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, message)
+  return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, message)
 }
 
 async function readyComposer(timeout) {
@@ -79,7 +79,7 @@ async function readyComposer(timeout) {
 
 async function upload(env, payload) {
   const ready = await readyComposer(8000)
-  if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
+  if (ready === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入的输入框')
   const blocked = accountBlocked(env)
   if (blocked) return blocked
@@ -100,7 +100,7 @@ async function upload(env, payload) {
   }
   const uploadId = String(payload.uploadId || '')
   if (uploadApplied.get(uploadId)) {
-    return XBS.ack(env, { name: payload.name, ok: true, deduped: true, message: '这张源图已经交给输入区' })
+    return TULAI.ack(env, { name: payload.name, ok: true, deduped: true, message: '这张源图已经交给输入区' })
   }
   const total = Number(payload.total) || 0
   const offset = Number(payload.offset) || 0
@@ -112,24 +112,24 @@ async function upload(env, payload) {
   if (payload.dataBase64) part.chunks.set(offset, Page.base64ToBytes(payload.dataBase64))
   part.total = total
   if (!payload.finish) {
-    return XBS.ack(env, { name: payload.name, ok: true, offset, received: true })
+    return TULAI.ack(env, { name: payload.name, ok: true, offset, received: true })
   }
   const bytes = concatChunks(part)
   if (total && bytes.length !== total) {
     uploadParts.delete(uploadId)
-    return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '源图分片不完整')
+    return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '源图分片不完整')
   }
   if (!bytes.length) {
-    return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '源图是空文件')
+    return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '源图是空文件')
   }
   if (!part.assigned) {
     const blocked = Page.unsentBlocksUpload(document, Page.composer(document))
-    if (blocked) return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, blocked)
+    if (blocked) return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, blocked)
     let file
     try {
       file = new File([bytes], part.fileName, { type: part.mime })
     } catch (err) {
-      return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '无法构造上传文件')
+      return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '无法构造上传文件')
     }
     part.baseline = new Set(Array.from(document.querySelectorAll('img')))
     // 千问 page.js 提供 attachLocalImage：有 file input 就赋值，没有则点「上传图片」走主世界桥。
@@ -140,7 +140,7 @@ async function upload(env, payload) {
           cancelled: function () { return cancelRequested },
         })
       : await assignExistingInput(file)
-    if (located.error) return XBS.fail(env, located.code || XBS.errors.E_SELECTOR_MISS, located.error)
+    if (located.error) return TULAI.fail(env, located.code || TULAI.errors.E_SELECTOR_MISS, located.error)
     // 文件已经交给页面。重试只复查预览，避免同一张图再挂一次。
     part.assigned = true
   }
@@ -148,16 +148,16 @@ async function upload(env, payload) {
     if (typeof Page.attachmentRejected === 'function' && Page.attachmentRejected(document)) return 'rejected'
     return Page.freshAttachment(document, part.baseline)
   }, 2)
-  if (attached === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '上传等待已取消')
+  if (attached === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '上传等待已取消')
   if (attached === 'rejected') {
-    return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '输入区显示上传失败或加载失败，源图未就绪')
+    return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '输入区显示上传失败或加载失败，源图未就绪')
   }
   if (attached !== true) {
-    return XBS.fail(env, XBS.errors.E_UPLOAD_FAIL, '未确认当前输入区源图附件已就绪')
+    return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '未确认当前输入区源图附件已就绪')
   }
   uploadApplied.set(uploadId, true)
   uploadParts.delete(uploadId)
-  return XBS.ack(env, { name: payload.name, ok: true })
+  return TULAI.ack(env, { name: payload.name, ok: true })
 }
 
 function concatChunks(part) {
@@ -179,7 +179,7 @@ async function assignExistingInput(file) {
   const located = await locateFileInput()
   if (located.error) return located
   if (!Page.assignFiles(located.input, [file])) {
-    return { error: '无法把文件写入 input[type=file]', code: XBS.errors.E_UPLOAD_FAIL }
+    return { error: '无法把文件写入 input[type=file]', code: TULAI.errors.E_UPLOAD_FAIL }
   }
   return located
 }
@@ -194,18 +194,18 @@ async function locateFileInput() {
   const nestedNow = nestedUploadInput()
   if (nestedNow) return { input: nestedNow }
   const entry = Page.uploadEntry(document, comp)
-  if (!entry) return { error: '未找到当前输入区上传入口', code: XBS.errors.E_SELECTOR_MISS }
+  if (!entry) return { error: '未找到当前输入区上传入口', code: TULAI.errors.E_SELECTOR_MISS }
   try { entry.click() } catch (e) {}
   const deadline = Date.now() + 2000
   while (Date.now() < deadline) {
-    if (cancelRequested) return { error: '上传已取消', code: XBS.errors.E_CANCELLED }
+    if (cancelRequested) return { error: '上传已取消', code: TULAI.errors.E_CANCELLED }
     input = Page.fileInput(document, Page.composer(document))
     if (input) return { input }
     const nested = nestedUploadInput()
     if (nested) return { input: nested }
     await delay(100)
   }
-  return { error: '未找到输入区的文件选择框（上传入口旁没有 input[type=file]）', code: XBS.errors.E_SELECTOR_MISS }
+  return { error: '未找到输入区的文件选择框（上传入口旁没有 input[type=file]）', code: TULAI.errors.E_SELECTOR_MISS }
 }
 
 function nestedUploadInput() {
@@ -216,16 +216,16 @@ function nestedUploadInput() {
 
 async function setPrompt(env, payload) {
   const ready = await readyComposer(8000)
-  if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
+  if (ready === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
   const blockedPrompt = accountBlocked(env)
   if (blockedPrompt) return blockedPrompt
   const comp = ready
   const prompt = String(payload.prompt || '')
   if (!Page.setComposer(comp, prompt)) {
-    return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
+    return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
   }
-  return XBS.ack(env, { name: payload.name, ok: true })
+  return TULAI.ack(env, { name: payload.name, ok: true })
 }
 
 async function sendPrompt(env, payload) {
@@ -233,34 +233,34 @@ async function sendPrompt(env, payload) {
   if (key && sendState.has(key)) {
     const prev = sendState.get(key)
     if (prev.promise && prev.phase === 'clicking') return prev.promise
-    if (prev.phase === 'ok') return XBS.ack(env, { name: payload.name, ok: true, deduped: true })
+    if (prev.phase === 'ok') return TULAI.ack(env, { name: payload.name, ok: true, deduped: true })
     if (prev.phase === 'captcha') {
       const again = Page.detectCaptcha(document)
       if (again.blocked) return captchaAck(env, again, captchaSendMessage(again))
       if (prev.clicked) {
         if (Page.sendAccepted(document, pageMark)) {
           prev.phase = 'ok'
-          return XBS.ack(env, { name: payload.name, ok: true, deduped: true })
+          return TULAI.ack(env, { name: payload.name, ok: true, deduped: true })
         }
-        return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, '验证码已消失，但发送状态仍未确认，未再次点击')
+        return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, '验证码已消失，但发送状态仍未确认，未再次点击')
       }
     } else if (prev.phase === 'uncertain') {
-      return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, prev.message || '发送状态未确认，未再次点击')
+      return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, prev.message || '发送状态未确认，未再次点击')
     }
   }
   const ready = await readyComposer(8000)
-  if (ready === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '等待输入框已取消')
+  if (ready === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
   const blockedSend = accountBlocked(env)
   if (blockedSend) return blockedSend
   const comp = ready
   const prompt = String(payload.prompt || '')
   if (Page.normalize(Page.readComposer(comp)) !== Page.normalize(prompt)) {
-    return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
+    return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
   }
   const button = await waitFor(function () { return Page.sendButton(document, Page.composer(document)) }, 5000)
-  if (button === 'cancel') return XBS.fail(env, XBS.errors.E_CANCELLED, '发送已取消')
-  if (!button) return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '未找到已就绪的发送按钮')
+  if (button === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '发送已取消')
+  if (!button) return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '未找到已就绪的发送按钮')
   // 点发送之前记边界，和策略里的 MarkTask 一样，避免把源图回显当成结果。
   pageMark = Page.mark(document, prompt)
   const rec = { phase: 'clicking', message: '', clicked: false }
@@ -287,20 +287,20 @@ function captchaSendMessage(found) {
 async function prepareAttachedSend(payload) {
   if (typeof Page.sendBlockReason !== 'function' && typeof Page.composerHasAttachment !== 'function') return null
   const reason = typeof Page.sendBlockReason === 'function' ? Page.sendBlockReason(document) : ''
-  if (reason) return { code: XBS.errors.E_UPLOAD_FAIL, message: reason }
+  if (reason) return { code: TULAI.errors.E_UPLOAD_FAIL, message: reason }
   const hasAttachment = typeof Page.composerHasAttachment === 'function' && Page.composerHasAttachment(document)
   if (!hasAttachment || typeof Page.ensureImageMode !== 'function') return null
   const switched = Page.ensureImageMode(document)
   if (!switched || switched.error) {
     return {
-      code: (switched && switched.code) || XBS.errors.E_SELECTOR_MISS,
+      code: (switched && switched.code) || TULAI.errors.E_SELECTOR_MISS,
       message: (switched && switched.error) || '无法切换到「AI生图」，未发送',
     }
   }
   if (typeof Page.imageModeActive === 'function' && !Page.imageModeActive(document)) {
     const active = await waitUntil(2000, function () { return Page.imageModeActive(document) }, 1)
     if (active !== true) {
-      return { code: XBS.errors.E_SELECTOR_MISS, message: '点击「AI生图」后模式没有保持选中，未发送' }
+      return { code: TULAI.errors.E_SELECTOR_MISS, message: '点击「AI生图」后模式没有保持选中，未发送' }
     }
   }
   const prompt = String((payload && payload.prompt) || '')
@@ -308,15 +308,15 @@ async function prepareAttachedSend(payload) {
   if (Page.normalize(Page.readComposer(comp)) !== Page.normalize(prompt)) {
     // 切到「AI生图」会重绘输入框。再写一次，让 Slate 的文本状态和箭头按钮一起恢复。
     if (typeof Page.setComposer !== 'function' || !Page.setComposer(comp, prompt)) {
-      return { code: XBS.errors.E_SELECTOR_MISS, message: '切换模式后输入区内容与提示词不一致，未发送' }
+      return { code: TULAI.errors.E_SELECTOR_MISS, message: '切换模式后输入区内容与提示词不一致，未发送' }
     }
   }
   if (typeof Page.composerHasAttachment === 'function' && !Page.composerHasAttachment(document)) {
-    return { code: XBS.errors.E_UPLOAD_FAIL, message: '切换模式后源图不在输入区，未发送' }
+    return { code: TULAI.errors.E_UPLOAD_FAIL, message: '切换模式后源图不在输入区，未发送' }
   }
   if (typeof Page.sendBlockReason === 'function') {
     const again = Page.sendBlockReason(document)
-    if (again) return { code: XBS.errors.E_UPLOAD_FAIL, message: again }
+    if (again) return { code: TULAI.errors.E_UPLOAD_FAIL, message: again }
   }
   return { retarget: true }
 }
@@ -337,7 +337,7 @@ async function confirmSend(env, payload, button, rec) {
     rec.clicked = false
     rec.promise = null
     rec.message = prepared.message
-    return XBS.fail(env, prepared.code || XBS.errors.E_UPLOAD_FAIL, rec.message)
+    return TULAI.fail(env, prepared.code || TULAI.errors.E_UPLOAD_FAIL, rec.message)
   }
   let target = button
   if (prepared && prepared.retarget) {
@@ -348,21 +348,21 @@ async function confirmSend(env, payload, button, rec) {
       rec.clicked = false
       rec.promise = null
       rec.message = '发送已取消'
-      return XBS.fail(env, XBS.errors.E_CANCELLED, rec.message)
+      return TULAI.fail(env, TULAI.errors.E_CANCELLED, rec.message)
     }
     if (!target) {
       rec.phase = 'blocked'
       rec.clicked = false
       rec.promise = null
       rec.message = '切换模式后未找到已就绪的发送按钮，未发送'
-      return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, rec.message)
+      return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, rec.message)
     }
   }
   if (!pressSend(target)) {
     rec.phase = 'uncertain'
     rec.clicked = false
     rec.message = '点击发送失败'
-    return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, rec.message)
+    return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, rec.message)
   }
   rec.clicked = true
   const deadline = Date.now() + (Number(payload.timeoutMs) || 15000)
@@ -371,7 +371,7 @@ async function confirmSend(env, payload, button, rec) {
       rec.phase = 'uncertain'
       rec.promise = null
       rec.message = '发送已点击，取消时尚未确认平台接受'
-      return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, rec.message)
+      return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, rec.message)
     }
     const found = Page.detectCaptcha(document)
     if (found.blocked) {
@@ -383,7 +383,7 @@ async function confirmSend(env, payload, button, rec) {
     if (Page.sendAccepted(document, pageMark)) {
       rec.phase = 'ok'
       rec.promise = null
-      return XBS.ack(env, { name: payload.name, ok: true })
+      return TULAI.ack(env, { name: payload.name, ok: true })
     }
     await delay(300)
   }
@@ -397,17 +397,17 @@ async function confirmSend(env, payload, button, rec) {
   rec.phase = 'uncertain'
   rec.promise = null
   rec.message = '平台未接受消息：发送后输入仍未清空'
-  return XBS.fail(env, XBS.errors.E_SEND_UNCERTAIN, rec.message)
+  return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, rec.message)
 }
 
 async function waitResult(env, payload) {
-  if (!pageMark) return XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '还没有本轮发送标记，不能收集结果')
+  if (!pageMark) return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '还没有本轮发送标记，不能收集结果')
   const timeout = Number(payload.timeoutMs) || 120000
   const deadline = Date.now() + timeout
   let stable = 0
   let lastURLs = ''
   while (Date.now() < deadline) {
-    if (cancelRequested) return XBS.fail(env, XBS.errors.E_CANCELLED, '等待结果已取消')
+    if (cancelRequested) return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待结果已取消')
     const captcha = Page.detectCaptcha(document)
     if (captcha.blocked) return captchaAck(env, captcha)
     const blockedWait = accountBlocked(env)
@@ -425,7 +425,7 @@ async function waitResult(env, payload) {
       stable = urls === lastURLs ? stable + 1 : 1
       lastURLs = urls
       if (stable >= 2) {
-        return XBS.ack(env, {
+        return TULAI.ack(env, {
           name: payload.name,
           ok: true,
           images: images.map(function (item) { return { url: item.url } }),
@@ -437,34 +437,34 @@ async function waitResult(env, payload) {
     }
     await delay(400)
   }
-  return XBS.fail(env, XBS.errors.E_TIMEOUT, '等待生成结果超时')
+  return TULAI.fail(env, TULAI.errors.E_TIMEOUT, '等待生成结果超时')
 }
 
 async function download(env, payload) {
   const url = String(payload.url || '')
-  if (!url) return XBS.fail(env, XBS.errors.E_DOWNLOAD_FAIL, '缺少图片地址')
+  if (!url) return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, '缺少图片地址')
   const offset = Number(payload.offset) || 0
   const limit = Number(payload.limit) || (3 * 1024 * 1024)
   let cached = downloadCache.get(url)
-  if (cached && !XBS.looksLikeRaster(cached)) {
+  if (cached && !TULAI.looksLikeRaster(cached)) {
     downloadCache.delete(url)
     cached = null
   }
   if (!cached) {
     const fetched = await fetchImage(url)
-    if (fetched.error) return XBS.fail(env, XBS.errors.E_DOWNLOAD_FAIL, fetched.error)
+    if (fetched.error) return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, fetched.error)
     if (fetched.path) {
-      return XBS.ack(env, { name: payload.name, ok: true, path: fetched.path, done: true, total: 0 })
+      return TULAI.ack(env, { name: payload.name, ok: true, path: fetched.path, done: true, total: 0 })
     }
-    if (!XBS.looksLikeRaster(fetched.bytes)) {
-      return XBS.fail(env, XBS.errors.E_DOWNLOAD_FAIL, '下载内容不是 PNG、JPEG、WebP 或 GIF')
+    if (!TULAI.looksLikeRaster(fetched.bytes)) {
+      return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, '下载内容不是 PNG、JPEG、WebP 或 GIF')
     }
     cached = fetched.bytes
     downloadCache.set(url, cached)
   }
   const end = Math.min(cached.length, offset + limit)
   const slice = cached.subarray(offset, end)
-  return XBS.ack(env, {
+  return TULAI.ack(env, {
     name: payload.name,
     ok: true,
     dataBase64: Page.bytesToBase64(slice),
@@ -482,7 +482,7 @@ async function fetchImage(url) {
       const res = await fetch(url, { credentials: modes[i], cache: 'no-store' })
       if (!res.ok) continue
       const bytes = new Uint8Array(await res.arrayBuffer())
-      if (XBS.looksLikeRaster(bytes)) return { bytes }
+      if (TULAI.looksLikeRaster(bytes)) return { bytes }
       rejectedBody = true
     } catch (e) {}
   }
@@ -491,7 +491,7 @@ async function fetchImage(url) {
     const saved = await chrome.runtime.sendMessage({ type: 'FETCH_URL', url })
     if (saved && saved.bytesBase64) {
       const bytes = Page.base64ToBytes(saved.bytesBase64)
-      if (!XBS.looksLikeRaster(bytes)) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF: ' + safeURL(url) }
+      if (!TULAI.looksLikeRaster(bytes)) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF: ' + safeURL(url) }
       return { bytes }
     }
     if (saved && saved.path) return { path: saved.path }
@@ -513,17 +513,17 @@ function safeURL(url) {
 
 function captchaAssist(env) {
   const found = Page.detectCaptcha(document)
-  if (!found.blocked) return XBS.ack(env, { name: XBS.commands.captchaAssist, ok: true, captchaBlocked: false })
+  if (!found.blocked) return TULAI.ack(env, { name: TULAI.commands.captchaAssist, ok: true, captchaBlocked: false })
   return captchaAck(env, found)
 }
 
 function captchaAck(env, found, message) {
   const crop = Page.captchaCrop(found && found.root)
-  const name = (env && env.payload && env.payload.name) || XBS.commands.captchaAssist
-  return XBS.ack(env, {
+  const name = (env && env.payload && env.payload.name) || TULAI.commands.captchaAssist
+  return TULAI.ack(env, {
     name,
     ok: false,
-    code: XBS.errors.E_CAPTCHA_HUMAN,
+    code: TULAI.errors.E_CAPTCHA_HUMAN,
     message: message || '页面出现验证码，需要人工处理',
     captchaBlocked: true,
     kind: (found && found.kind) || 'unknown',

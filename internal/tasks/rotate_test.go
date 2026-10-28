@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/store"
-	"xbs/internal/strategy"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/strategy"
 )
 
 func TestQuotaSwitchesToOtherAccount(t *testing.T) {

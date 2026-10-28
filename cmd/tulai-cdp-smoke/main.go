@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"time"
 
-	"xbs/internal/browser"
-	"xbs/internal/cdp"
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/cdp"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 	must(err)
 	fmt.Println("Chrome:", chrome)
 
-	dir, _ := os.MkdirTemp("", "xbs-smoke-*")
+	dir, _ := os.MkdirTemp("", "tulai-smoke-*")
 	defer os.RemoveAll(dir)
 	port := 9555
 	cmd := exec.Command(chrome,
@@ -49,7 +49,7 @@ func main() {
 		got <- data
 		return `{"echo":` + data + `}`
 	})
-	res, err := sess.EvaluateAsync(`window.xbsCall ? window.xbsCall('ping', '42').then(function(a){return a;}) : Promise.resolve('no-bridge')`)
+	res, err := sess.EvaluateAsync(`window.tulaiCall ? window.tulaiCall('ping', '42').then(function(a){return a;}) : Promise.resolve('no-bridge')`)
 	must(err)
 	fmt.Println("桥返回:", res)
 	select {
@@ -65,7 +65,7 @@ func main() {
 	fmt.Printf("截图 %d 字节\n", len(png))
 
 	// 4) DOM 原语
-	out2, err := sess.Evaluate(`(function(){document.body.innerHTML='<textarea id=t></textarea>'; window.xbsInsertText && xbsInsertText('#t','hello'); return document.querySelector('#t').value;})()`)
+	out2, err := sess.Evaluate(`(function(){document.body.innerHTML='<textarea id=t></textarea>'; window.tulaiInsertText && tulaiInsertText('#t','hello'); return document.querySelector('#t').value;})()`)
 	must(err)
 	fmt.Println("插入文本:", out2)
 

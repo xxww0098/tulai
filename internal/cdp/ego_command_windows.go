@@ -24,7 +24,7 @@ func egoPlatformCommand(ctx context.Context, path, entry string) (*exec.Cmd, err
 	cmd := exec.CommandContext(ctx, shell)
 	cmd.Args = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CmdLine: egoBatchCommandLine(entry)}
-	cmd.Env = append(os.Environ(), "XBS_EGO_LAUNCHER="+path)
+	cmd.Env = append(os.Environ(), "TULAI_EGO_LAUNCHER="+path)
 	cmd.WaitDelay = 3 * time.Second
 	cmd.Cancel = func() error {
 		killCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "tulai 页面桥",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "把本机 tulai 的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
   "permissions": [
     "storage",

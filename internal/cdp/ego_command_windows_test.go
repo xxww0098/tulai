@@ -26,12 +26,12 @@ func TestEgoWindowsPrefersExecutable(t *testing.T) {
 }
 
 func TestEgoWindowsBatchLauncherPreservesArguments(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "中文 路径 & ! %XBS_EGO_SENTINEL%")
+	dir := filepath.Join(t.TempDir(), "中文 路径 & ! %TULAI_EGO_SENTINEL%")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	launcher := filepath.Join(dir, "ego-browser.cmd")
-	if err := os.WriteFile(launcher, []byte("@echo off\r\n@\"%XBS_EGO_TEST_BINARY%\" -test.run=TestEgoWindowsArgRecorder -- %*\r\n"), 0o600); err != nil {
+	if err := os.WriteFile(launcher, []byte("@echo off\r\n@\"%TULAI_EGO_TEST_BINARY%\" -test.run=TestEgoWindowsArgRecorder -- %*\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	binary, err := os.Executable()
@@ -39,7 +39,7 @@ func TestEgoWindowsBatchLauncherPreservesArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := filepath.Join(dir, "args.json")
-	t.Setenv("XBS_EGO_SENTINEL", "must-not-expand")
+	t.Setenv("TULAI_EGO_SENTINEL", "must-not-expand")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	entry := egoImportEntry(filepath.Join(dir, "bridge.mjs"))
@@ -47,7 +47,7 @@ func TestEgoWindowsBatchLauncherPreservesArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd.Env = append(cmd.Env, "XBS_EGO_TEST_BINARY="+binary, "XBS_EGO_TEST_RECORDER=1", "XBS_EGO_TEST_OUTPUT="+output)
+	cmd.Env = append(cmd.Env, "TULAI_EGO_TEST_BINARY="+binary, "TULAI_EGO_TEST_RECORDER=1", "TULAI_EGO_TEST_OUTPUT="+output)
 	if data, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("batch launcher failed: %v: %s", err, data)
 	}
@@ -62,13 +62,13 @@ func TestEgoWindowsBatchLauncherPreservesArguments(t *testing.T) {
 }
 
 func TestEgoWindowsArgRecorder(t *testing.T) {
-	if os.Getenv("XBS_EGO_TEST_RECORDER") != "1" {
+	if os.Getenv("TULAI_EGO_TEST_RECORDER") != "1" {
 		return
 	}
 	for i, arg := range os.Args {
 		if arg == "--" {
 			data, err := json.Marshal(os.Args[i+1:])
-			if err != nil || os.WriteFile(os.Getenv("XBS_EGO_TEST_OUTPUT"), data, 0o600) != nil {
+			if err != nil || os.WriteFile(os.Getenv("TULAI_EGO_TEST_OUTPUT"), data, 0o600) != nil {
 				os.Exit(1)
 			}
 			os.Exit(0)

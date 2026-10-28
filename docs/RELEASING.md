@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.3
+# 发布 tulai 0.1.4
 
-当前桌面端版本是 **0.1.3**，标签 **`v0.1.3`**。页面桥扩展是 **0.3.7**。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6；那之后 `extension/` 有改动，所以这次补丁升到 0.3.7。
+当前桌面端版本是 **0.1.4**，标签 **`v0.1.4`**。页面桥扩展是 **0.3.8**。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6，0.1.3 发布时是 0.3.7；0.3.8 只改技术 id。
+
+## 0.1.4
+
+技术 id 从 xbs 改成 tulai。Go 模块路径是 `github.com/xxww0098/tulai`，应用 id 是 `dev.tulai.app`。可执行文件、安装路径、发布附件名、`TULAI_*` 环境变量和数据目录 `<UserConfigDir>/tulai` 都用 tulai。页面桥扩展升到 0.3.8，配对地址是 `127.0.0.1:18764/tulai-pair`。
 
 0.1.0 是第一次对外打安装包。0.1.1 带上 GitHub Releases 检查更新、只要提示词的文生图、缩短的开跑步骤，以及应用图标。0.1.2 相对 0.1.1：用户界面名改为「tulai」（技术 id 和可执行文件仍是 xbs）；网页方式去掉 ego lite，改为 Chrome 和 Edge；页面桥扩展加上 popup（扩展版本仍是 0.3.6）。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
 
@@ -22,58 +26,58 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.3` | `mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.3` | git 标签，不写在 `go.mod` | 推送标签 `v0.1.3` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.7` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
-| 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `XBS.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
+| 桌面端 | `0.1.4` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.4` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.4` 之后，模块版本就是这个标签。 |
+| 页面桥扩展 | `0.3.8` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，当前是 0.3.7。桌面端版本和扩展版本各自走。同一份 Release 里会同时放上桌面安装包和 `xbs-extension-0.3.7.zip`。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，当前是 0.3.8。桌面端版本和扩展版本各自走。同一份 Release 里会同时放上桌面安装包和 `tulai-extension-0.3.8.zip`。
 
 ## 流水线
 
 `.github/workflows/ci.yml`：
 
-- pull request 和 `main`：跑 `go test ./... -short`、`go tool mygo vet`、扩展的 node 测试，并打出三个系统的安装包。产物在 Actions 的 artifacts 里，保留 14 天：`xbs-linux`、`xbs-windows`、`xbs-macos`、`xbs-extension`。
+- pull request 和 `main`：跑 `go test ./... -short`、`go tool mygo vet`、扩展的 node 测试，并打出三个系统的安装包。产物在 Actions 的 artifacts 里，保留 14 天：`tulai-linux`、`tulai-windows`、`tulai-macos`、`tulai-extension`。
 - 标签 `v*`：同一套构建。标签必须等于 `v` 加上 `mygo.json` 的版本，否则一开始就失败，不会发布。通过之后用 `GITHUB_TOKEN` 创建 GitHub Release，并上传安装包、扩展 zip 和 `SHA256SUMS`。
 
 没有自动更新密钥，也没有 Apple / Windows 签名证书。不要在仓库里造这些 secret。`-upload` 也不用：它要配 `updates` 和签名私钥，装好的程序只接受用那把私钥签过的清单。本仓库的桌面端不走这条签名更新，改由程序自己读公开的 GitHub Releases API。Release 仍由 `gh release create` 上传。
 
 macOS 包在 `macos-latest` 上构建，才能做出磁盘映像并做 ad-hoc 签名。Windows 安装器在 Ubuntu 上用 NSIS 交叉制作。Linux 同时打 amd64 和 arm64。这些都是 `CGO_ENABLED=0` 的 `go tool mygo build`，和本机的 `./build.sh` 同一条命令。
 
-## 切 0.1.3
+## 切 0.1.4
 
-等这套流水线在 `main` 上是绿的，并且 `mygo.json` 与 `ProductVersion` 都是 `0.1.3`：
+等这套流水线在 `main` 上是绿的，并且 `mygo.json` 与 `ProductVersion` 都是 `0.1.4`：
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
-推送标签会跑 CI。完成后 Release 页面出现 **tulai 0.1.3**。安装包文件名仍以 `xbs` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。
+推送标签会跑 CI。完成后 Release 页面出现 **tulai 0.1.4**。安装包文件名以 `tulai` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。
 
 再跑一次同一个标签的 workflow 会覆盖同名附件，不会另开一个 Release。
 
 ## 附件
 
-桌面版本记为 `0.1.3` 时，文件名是：
+桌面版本记为 `0.1.4` 时，文件名是：
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| macOS | `xbs 0.1.3.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `xbs.app` 拖进「应用程序」。 |
-| Windows | `xbs Setup 0.1.3 amd64.exe`、`xbs Setup 0.1.3 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `xbs-0.1.3-windows-amd64.exe` 和 `xbs-0.1.3-windows-arm64.exe`。 |
-| Linux | `xbs_0.1.3_amd64.deb`、`xbs_0.1.3_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
-| Linux | `xbs-0.1.3-linux-amd64.tar.gz`、`xbs-0.1.3-linux-arm64.tar.gz`、`install.sh` | 把脚本和本机架构的压缩包放在同一目录，执行 `sh install.sh`。装到 `~/.local/xbs.app`，并在 `~/.local/bin/xbs` 放命令。 |
-| 扩展 | `xbs-extension-0.3.7.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `xbs-extension` 目录。 |
+| macOS | `tulai 0.1.4.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `tulai.app` 拖进「应用程序」。 |
+| Windows | `tulai Setup 0.1.4 amd64.exe`、`tulai Setup 0.1.4 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.4-windows-amd64.exe` 和 `tulai-0.1.4-windows-arm64.exe`。 |
+| Linux | `tulai_0.1.4_amd64.deb`、`tulai_0.1.4_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
+| Linux | `tulai-0.1.4-linux-amd64.tar.gz`、`tulai-0.1.4-linux-arm64.tar.gz`、`install.sh` | 把脚本和本机架构的压缩包放在同一目录，执行 `sh install.sh`。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
+| 扩展 | `tulai-extension-0.3.8.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
 `SHA256SUMS` 覆盖上面这些文件，文件名是 `SHA256SUMS`（没有 `.txt`）。格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 里另有一份只覆盖该系统文件的 `SHA256SUMS.txt`，汇总进 Release 时会丢掉，避免和总校验文件撞名。标签任务在上传前检查这份 `SHA256SUMS` 非空，并且下面「从 GitHub 更新」里更新器会选的每个附件都有一行。缺了就不发布。
 
-`dpkg` 把程序装到 `/opt/xbs`，并在 `/usr/bin/xbs` 放命令。配置库位置见 README 的「运行」和「Windows 支持」。
+`dpkg` 把程序装到 `/opt/tulai`，并在 `/usr/bin/tulai` 放命令。配置库位置见 README 的「运行」和「Windows 支持」。
 
 ## 签名限制
 
-- **macOS**：ad-hoc 签名，没有公证。本机打出来的包可以在那台 Mac 上跑；拷到别的 Mac，Gatekeeper 会拦。右键打开，或 `xattr -dr com.apple.quarantine /Applications/xbs.app`。要去掉这个限制，需要 Apple Developer ID 和公证配置，这次没有。
+- **macOS**：ad-hoc 签名，没有公证。本机打出来的包可以在那台 Mac 上跑；拷到别的 Mac，Gatekeeper 会拦。右键打开，或 `xattr -dr com.apple.quarantine /Applications/tulai.app`。要去掉这个限制，需要 Apple Developer ID 和公证配置，这次没有。
 - **Windows**：没有证书。SmartScreen 会提示未知发布者。安装器仍然是当前用户安装。
 - **Linux**：deb 和压缩包都没有签名。
 
@@ -84,10 +88,10 @@ git push origin v0.1.3
 检查地址是：
 
 ```text
-GET https://api.github.com/repos/xxww0098/xbs/releases/latest
+GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 ```
 
-`User-Agent` 为 `xbs/<当前版本>`。只接受这个 API 和 `github.com` 上 `xxww0098/xbs` 的发布附件；下载时允许 GitHub 跳到它自己的附件域名。草稿和预发布不算。
+`User-Agent` 为 `tulai/<当前版本>`。只接受这个 API 和 `github.com` 上 `xxww0098/tulai` 的发布附件；下载时允许 GitHub 跳到它自己的附件域名。草稿和预发布不算。镜像是在这些地址前面加前缀，所以检查和下载的镜像地址也跟着仓库路径走。
 
 入口：
 
@@ -97,9 +101,9 @@ GET https://api.github.com/repos/xxww0098/xbs/releases/latest
 | 横幅「发现新版本 x.y.z」 | 「立即更新」下载、校验、安装并重新打开。「稍后」先关掉这条。「跳过此版本」记在配置库里，这个版本不再提示，更新的版本仍会提示。说明是 Release 正文的前一段。 |
 | 任务还在跑 | 不打断生成。点「立即更新」会等到队列空闲再装，横幅写「任务进行中，结束后将自动更新」。 |
 | 菜单「帮助 → 检查更新…」、标题栏、设置页、设置向导 | 手动检查。已是最新或失败时才弹窗。设置页和向导显示当前版本。 |
-| `xbs update` | 终端里检查并安装。GitHub 连不上时同样走镜像。 |
-| `xbs update --check` | 只打印当前版本和最新版本。 |
-| `xbs version` | 打印桌面端版本（`ProductVersion`，打包后与 `mygo.App.Version()` 相同）。 |
+| `tulai update` | 终端里检查并安装。GitHub 连不上时同样走镜像。 |
+| `tulai update --check` | 只打印当前版本和最新版本。 |
+| `tulai version` | 打印桌面端版本（`ProductVersion`，打包后与 `mygo.App.Version()` 相同）。 |
 
 下载先请求 GitHub。失败、或下完后 SHA256 对不上时，再试镜像。镜像是 ghproxy 那种前缀：`前缀 + 原来的 https 地址`。设置里的「更新镜像」留空时用内置的两个前缀；填 `off` 则只用 GitHub；填自己的前缀时先用它，再试内置的。没下完的文件会接着传，失败则删掉临时文件。
 
@@ -107,21 +111,21 @@ GET https://api.github.com/repos/xxww0098/xbs/releases/latest
 
 发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。没有这份校验文件就拒绝安装。
 
-版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `xbs-extension-0.3.7.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.8.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
 按当前系统选择附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 
 | 系统 | 怎么判断 | 下载 | 装到哪里 |
 |---|---|---|---|
-| Linux，普通或 `~/.local` | 不是下面的 deb 或 AppImage | `xbs-<版本>-linux-<架构>.tar.gz` | `~/.local/xbs.app`，并在 `~/.local/bin/xbs` 放命令。和 `install.sh` 同一位置。 |
-| Linux，AppImage | 正在跑的文件名以 `.AppImage` 结尾 | 先找 `xbs-<版本>-linux-<架构>.AppImage`，没有就用上一行的 tar.gz | 这份发布不附带 AppImage，所以走 tar.gz，装到 `~/.local`。 |
-| Linux，deb | 正在跑 `/usr/bin/xbs` 或 `/opt/xbs/` | `xbs_<版本>_<架构>.deb` | 不申请管理员权限。校验后把 `sudo dpkg -i …` 印出来，并打开已下载的包。 |
-| Windows，安装器或开发运行 | 路径里有 `\Programs\`、`Program Files` 或 `go-build` | `xbs.Setup.<版本>.<架构>.exe`（构建时的名字是 `xbs Setup <版本> <架构>.exe`） | 退出后打开 NSIS 安装器。 |
-| Windows，免安装 exe | 其他路径 | `xbs-<版本>-windows-<架构>.exe` | 退出后用 PowerShell 替换当前 exe 再打开。 |
-| macOS，正在跑 `.app` | `….app/Contents/MacOS/xbs` | `xbs.<版本>.dmg`（通用二进制；构建时的名字是 `xbs <版本>.dmg`） | 换掉当前的 `xbs.app`，并去掉隔离属性。 |
-| macOS，其他 | 开发运行 | 同一个 dmg | 复制到 `~/Applications/xbs.app`。 |
+| Linux，普通或 `~/.local` | 不是下面的 deb 或 AppImage | `tulai-<版本>-linux-<架构>.tar.gz` | `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。和 `install.sh` 同一位置。 |
+| Linux，AppImage | 正在跑的文件名以 `.AppImage` 结尾 | 先找 `tulai-<版本>-linux-<架构>.AppImage`，没有就用上一行的 tar.gz | 这份发布不附带 AppImage，所以走 tar.gz，装到 `~/.local`。 |
+| Linux，deb | 正在跑 `/usr/bin/tulai` 或 `/opt/tulai/` | `tulai_<版本>_<架构>.deb` | 不申请管理员权限。校验后把 `sudo dpkg -i …` 印出来，并打开已下载的包。 |
+| Windows，安装器或开发运行 | 路径里有 `\Programs\`、`Program Files` 或 `go-build` | `tulai.Setup.<版本>.<架构>.exe`（构建时的名字是 `tulai Setup <版本> <架构>.exe`） | 退出后打开 NSIS 安装器。 |
+| Windows，免安装 exe | 其他路径 | `tulai-<版本>-windows-<架构>.exe` | 退出后用 PowerShell 替换当前 exe 再打开。 |
+| macOS，正在跑 `.app` | `….app/Contents/MacOS/tulai` | `tulai.<版本>.dmg`（通用二进制；构建时的名字是 `tulai <版本>.dmg`） | 换掉当前的 `tulai.app`，并去掉隔离属性。 |
+| macOS，其他 | 开发运行 | 同一个 dmg | 复制到 `~/Applications/tulai.app`。 |
 
-应用内更新和 `xbs update` 装到 `~/.local` 时，把桌面项的 `Name` 写成「tulai」。文件名仍是 `xbs.desktop`，启动命令仍是 `xbs`。`install.sh`、deb、NSIS 和 macOS 包名跟 `mygo.json` 的 `name` 走，仍是 xbs。
+应用内更新和 `tulai update` 装到 `~/.local` 时，桌面项文件名是 `tulai.desktop`，启动命令是 `tulai`。`install.sh`、deb、NSIS 和 macOS 包名跟 `mygo.json` 的 `name` 走，也是 tulai。
 
 下载后核对两处摘要，对不上就删除文件、不安装：
 

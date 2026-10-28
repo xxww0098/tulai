@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/extbridge"
-	"xbs/internal/store"
-	"xbs/internal/strategy"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/strategy"
 )
 
 // 账号级失败。不确定的发送不在这里轮换，避免同一条提示词打两次。

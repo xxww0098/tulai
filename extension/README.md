@@ -1,6 +1,6 @@
 # tulai 页面桥
 
-这个目录是未打包的 Manifest V3 扩展，显示名是「tulai 页面桥」，当前版本 **0.3.7**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.7。发布附件里的 `xbs-extension-0.3.7.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。0.3.6 是桌面端 0.1.2 一起发布的扩展；那之后扩展有自动配对、心跳重连和额度信号，所以升到 0.3.7。
+这个目录是未打包的 Manifest V3 扩展，显示名是「tulai 页面桥」，当前版本 **0.3.8**。桌面端第一次打包是 **0.1.0**，两个编号各自走：扩展不跟着桌面端降到 0.1.0。hello 的 `payload.version` 用清单里的 0.3.8。发布附件里的 `tulai-extension-0.3.8.zip` 就是这个目录，见 [`docs/RELEASING.md`](../docs/RELEASING.md)。0.3.6 是桌面端 0.1.2 一起发布的扩展；0.3.7 加上自动配对、心跳重连和额度信号；0.3.8 把扩展里的技术 id 改成 tulai。
 
 点工具栏图标会打开 `popup.html`。令牌、端口和桥状态跟选项页是同一组 `chrome.storage.local` 值。
 
@@ -18,10 +18,10 @@
 1. 让桥先听着。二选一：
 
    ```sh
-   go run ./cmd/xbs-ext-smoke
+   go run ./cmd/tulai-ext-smoke
    ```
 
-   默认 `127.0.0.1:18765`，令牌 `dev-token`（只给这个冒烟进程）。要和桌面端一起跑时，不要再开冒烟进程，两边会抢同一个端口。桌面端自己听 `extBridgePort` / `extBridgeToken`，并在 `127.0.0.1:18764/xbs-pair` 把令牌交给扩展。
+   默认 `127.0.0.1:18765`，令牌 `dev-token`（只给这个冒烟进程）。要和桌面端一起跑时，不要再开冒烟进程，两边会抢同一个端口。桌面端自己听 `extBridgePort` / `extBridgeToken`，并在 `127.0.0.1:18764/tulai-pair` 把令牌交给扩展。
 
 2. 打开 `chrome://extensions`，打开开发者模式，加载已解压的扩展程序，指向本目录 `extension`。不要指向 `extension/qianwen` 或 `extension/doubao`，那两个目录没有清单。
 3. 先打开 tulai。扩展会自动读取令牌和端口，弹出页显示「已自动对接」。徽章变成 `ON` 表示至少一条 hello 已经成功。弹出页跟着 `bridgeStatus` 显示已连接、未连接或连接失败。认证失败时徽章是 `ERR`，弹出页另显示 `lastError`。自动对接失败时，弹出页显示「需要手动配对」，把桌面端令牌贴进去保存即可。手动保存后要点「恢复自动对接」才会再跟着桌面端变。冒烟进程不会走这套自动对接，它仍打印自己的令牌。冒烟进程会先后打印 `platform=qianwen` 和 `platform=doubao`。
@@ -33,29 +33,29 @@
 
 ## 跑一次真实生成
 
-先完成上面的加载和登录，然后在仓库根目录。不设 `XBS_EXT_IMAGE` 就是文生图，只发送提示词、不上传。千问：
+先完成上面的加载和登录，然后在仓库根目录。不设 `TULAI_EXT_IMAGE` 就是文生图，只发送提示词、不上传。千问：
 
 ```sh
-XBS_EXT_LIVE=1 \
-XBS_EXT_PROMPT='画一只坐在窗边的猫' \
-go run ./cmd/xbs-ext-smoke
+TULAI_EXT_LIVE=1 \
+TULAI_EXT_PROMPT='画一只坐在窗边的猫' \
+go run ./cmd/tulai-ext-smoke
 ```
 
 图生图再加上源图。豆包再加平台：
 
 ```sh
-XBS_EXT_PLATFORM=doubao \
-XBS_EXT_LIVE=1 \
-XBS_EXT_IMAGE=/绝对路径/源图.png \
-XBS_EXT_PROMPT='把这张图变成水彩' \
-go run ./cmd/xbs-ext-smoke
+TULAI_EXT_PLATFORM=doubao \
+TULAI_EXT_LIVE=1 \
+TULAI_EXT_IMAGE=/绝对路径/源图.png \
+TULAI_EXT_PROMPT='把这张图变成水彩' \
+go run ./cmd/tulai-ext-smoke
 ```
 
-可选：`XBS_EXT_WAIT=180`（等待秒数，默认 120），`XBS_EXT_OUT=ext-live-out`（结果目录）。成功时目录里会有 `result-01.png`。这一次会真的点发送。
+可选：`TULAI_EXT_WAIT=180`（等待秒数，默认 120），`TULAI_EXT_OUT=ext-live-out`（结果目录）。成功时目录里会有 `result-01.png`。这一次会真的点发送。
 
 ## 下载与去水印
 
-扩展只把结果地址的字节拿回来，不去改 CDN。主机在 `extDownload`（`internal/tasks/extqianwen.go`）里处理，豆包和千问共用这一条。`cmd/xbs-ext-smoke` 实机保存和 `browserBackend=extension` 的任务落盘都写这里返回的字节。
+扩展只把结果地址的字节拿回来，不去改 CDN。主机在 `extDownload`（`internal/tasks/extqianwen.go`）里处理，豆包和千问共用这一条。`cmd/tulai-ext-smoke` 实机保存和 `browserBackend=extension` 的任务落盘都写这里返回的字节。
 
 豆包页面地址如果带 `watermark` 或 `wm=` 查询，主机会先用 `strategy.PreferUnwatermarkedURL` 去掉整段查询再让扩展下载。这和 ego 的 `Doubao.FetchResultBytes` 是同一个函数。这次下载失败才退回页面上的原地址。千问结果地址没有这组参数时保持原样，这里也不另写一套千问专用参数。
 
@@ -78,11 +78,11 @@ UPDATE settings SET value='extension' WHERE key='browserBackend';
 ```sh
 google-chrome \
   --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/xbs-chrome-profile \
+  --user-data-dir=/tmp/tulai-chrome-profile \
   --remote-allow-origins=*
 ```
 
-然后按上面的方式加载扩展、登录，再跑 `XBS_EXT_LIVE=1`。默认会试 `XBS_CDP_URL`、`XBS_CDP_PORT`、`XBS_CHROME_PROFILE/DevToolsActivePort`、`/tmp/xbs-chrome-profile/DevToolsActivePort`，最后是 `127.0.0.1:9222`。`XBS_BAXIA_SOLVE=0` 关掉自动拖动。调试连接只 detach，不关千问标签页。缺口匹配是纯 Go，不调用付费验证码接口。
+然后按上面的方式加载扩展、登录，再跑 `TULAI_EXT_LIVE=1`。默认会试 `TULAI_CDP_URL`、`TULAI_CDP_PORT`、`TULAI_CHROME_PROFILE/DevToolsActivePort`、`/tmp/tulai-chrome-profile/DevToolsActivePort`，最后是 `127.0.0.1:9222`。`TULAI_BAXIA_SOLVE=0` 关掉自动拖动。调试连接只 detach，不关千问标签页。缺口匹配是纯 Go，不调用付费验证码接口。
 
 千问源图要在输入区解码成功（`naturalWidth` 大于 0）才算就绪。预览来自千问 / 通义 CDN 但解码失败（`naturalWidth` 为 0），或输入区出现「上传失败」「加载失败」，都不算就绪，不发送。未解码时，只有 img 上同时写了大于 0 的像素宽高、并且地址是产品 CDN，才当成已经收下。带可用源图发送前会点输入壳里的「AI生图」；胶囊已经选中就不再点，避免退出该模式。当前页面的发送是箭头按钮，灰色（disabled）时不点；切模式后会等到它重新可点。纯文字发送不切换模式。点过发送之后，确认方式不变：输入清空或出现包含提示词的新用户消息才算接受，否则仍是 `E_SEND_UNCERTAIN`。
 

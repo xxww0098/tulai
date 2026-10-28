@@ -17,7 +17,7 @@ async function egoCloseRetiredPages(task) {
     try {
       const candidate = task.page(tab.label);
       const empty = await candidate.evaluate(() => {
-        if (sessionStorage.getItem("__xbsRetiredHookPage") !== "1") return false;
+        if (sessionStorage.getItem("__tulaiRetiredHookPage") !== "1") return false;
         const editors = [...document.querySelectorAll('textarea,input,[contenteditable]:not([contenteditable="false" i])')].filter(editor =>
           editor.tagName !== "INPUT" || /^(text|search|email|url|tel|password|number)$/.test(editor.type)
         );

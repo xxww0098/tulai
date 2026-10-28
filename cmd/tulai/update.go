@@ -12,16 +12,16 @@ import (
 
 	"github.com/egoist/mygo"
 
-	"xbs/internal/store"
-	"xbs/internal/update"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/update"
 )
 
 const updateUsage = `tulai
 用法:
-  xbs                 打开工作台
-  xbs update          检查 GitHub Releases 并安装更新
-  xbs update --check  只检查，不下载
-  xbs version         打印桌面端版本`
+  tulai                 打开工作台
+  tulai update          检查 GitHub Releases 并安装更新
+  tulai update --check  只检查，不下载
+  tulai version         打印桌面端版本`
 
 // handleCommand runs a version or update command. It reports whether it
 // handled the process and the caller should return.
@@ -185,7 +185,7 @@ func runUpdateWith(args []string, run updateRun) int {
 }
 
 func configuredMirror() string {
-	if v := strings.TrimSpace(os.Getenv("XBS_UPDATE_MIRROR")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("TULAI_UPDATE_MIRROR")); v != "" {
 		return v
 	}
 	path := filepath.Join("database", "config.db")

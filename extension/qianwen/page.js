@@ -5,7 +5,7 @@
 // 已按下再点会退出该模式。上传用的 input 标了 aria-hidden，页面自己 showPicker 才接文件；
 // 主世界 chooser.js 武装之后，点「上传图片」把源图交进去，不打开系统文件框。
 // 本文件不碰 chrome.*，方便用 node 对锚点做夹具测试。
-globalThis.XBSPage = (function () {
+globalThis.TULAIPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
   const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"]'
   const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请按住滑块|拖动到最右边|向右滑动|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|please drag the slider|verify (?:that )?you are human|human verification|security verification/i
@@ -608,16 +608,16 @@ globalThis.XBSPage = (function () {
   }
 
   // 与 qianwen/chooser.js 约定的事件名。源图只在派发 arm 的同步调用里留在 DOM 上。
-  const CHOOSER_SLOT = 'xbs-qianwen-file-slot'
+  const CHOOSER_SLOT = 'tulai-qianwen-file-slot'
 
   function createChooserBridge(doc) {
     const root = doc && doc.documentElement
-    if (!root || typeof root.getAttribute !== 'function' || root.getAttribute('data-xbs-chooser') !== 'qianwen') return null
+    if (!root || typeof root.getAttribute !== 'function' || root.getAttribute('data-tulai-chooser') !== 'qianwen') return null
     return {
       arm: function (file) { return armChooserSlot(doc, root, file) },
-      result: function () { return root.getAttribute('data-xbs-chooser-result') || '' },
+      result: function () { return root.getAttribute('data-tulai-chooser-result') || '' },
       disarm: function () {
-        try { doc.dispatchEvent(new Event('xbs-qianwen-disarm')) } catch (e) {}
+        try { doc.dispatchEvent(new Event('tulai-qianwen-disarm')) } catch (e) {}
         const slot = doc.getElementById && doc.getElementById(CHOOSER_SLOT)
         if (slot && typeof slot.remove === 'function') {
           try { slot.remove() } catch (err) {}
@@ -644,8 +644,8 @@ globalThis.XBSPage = (function () {
   }
 
   async function armChooserSlot(doc, root, file) {
-    root.setAttribute('data-xbs-chooser-result', '')
-    root.setAttribute('data-xbs-chooser-armed', '0')
+    root.setAttribute('data-tulai-chooser-result', '')
+    root.setAttribute('data-tulai-chooser-armed', '0')
     let bytes
     try {
       bytes = new Uint8Array(await file.arrayBuffer())
@@ -660,12 +660,12 @@ globalThis.XBSPage = (function () {
         mime: (file && file.type) || 'application/octet-stream',
         b64: bytesToBase64(bytes),
       })
-      doc.dispatchEvent(new Event('xbs-qianwen-arm'))
+      doc.dispatchEvent(new Event('tulai-qianwen-arm'))
     } catch (e) {
       slot.textContent = ''
       return false
     }
-    const armed = root.getAttribute('data-xbs-chooser-armed') === '1'
+    const armed = root.getAttribute('data-tulai-chooser-armed') === '1'
     slot.textContent = ''
     if (typeof slot.remove === 'function') {
       try { slot.remove() } catch (e) {}

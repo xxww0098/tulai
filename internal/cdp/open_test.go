@@ -12,7 +12,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"xbs/internal/browser"
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestOpenURLKeepsPageAfterDisconnect(t *testing.T) {

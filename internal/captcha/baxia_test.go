@@ -16,20 +16,20 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/browser"
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestSolveDisabled(t *testing.T) {
-	t.Setenv("XBS_BAXIA_SOLVE", "0")
-	t.Setenv("XBS_CDP_URL", "http://127.0.0.1:1")
+	t.Setenv("TULAI_BAXIA_SOLVE", "0")
+	t.Setenv("TULAI_CDP_URL", "http://127.0.0.1:1")
 	if err := SolveQianwenSlider(context.Background()); err != errBaxiaDisabled {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestSliderEndpointsPreferExplicitURL(t *testing.T) {
-	t.Setenv("XBS_CDP_URL", "http://127.0.0.1:9")
-	t.Setenv("XBS_CDP_PORT", "9222")
+	t.Setenv("TULAI_CDP_URL", "http://127.0.0.1:9")
+	t.Setenv("TULAI_CDP_PORT", "9222")
 	got := sliderEndpoints()
 	if len(got) != 1 || got[0] != "http://127.0.0.1:9" {
 		t.Fatalf("endpoints=%v", got)

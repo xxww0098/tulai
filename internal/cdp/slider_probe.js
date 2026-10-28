@@ -1,4 +1,4 @@
-function xbsProbeSlider() {
+function tulaiProbeSlider() {
   function shown(el) {
     if (!el || !el.getBoundingClientRect) return false
     const r = el.getBoundingClientRect()

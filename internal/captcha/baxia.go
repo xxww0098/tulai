@@ -20,8 +20,8 @@ import (
 
 	_ "golang.org/x/image/webp"
 
-	"xbs/internal/cdp"
-	"xbs/internal/logging"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 var (
@@ -36,7 +36,7 @@ var (
 // SolveQianwenSlider 附着到已经打开远程调试的 Chrome，用信任的鼠标事件拖过阿里云滑块。
 // 拼图用本地缺口匹配；没有拼图图时把滑块拖到轨道尽头。页面脚本合成的点击是 isTrusted=false，这里不用那条路。
 func SolveQianwenSlider(ctx context.Context) error {
-	if strings.TrimSpace(os.Getenv("XBS_BAXIA_SOLVE")) == "0" {
+	if strings.TrimSpace(os.Getenv("TULAI_BAXIA_SOLVE")) == "0" {
 		return errBaxiaDisabled
 	}
 	endpoints := sliderEndpoints()
@@ -67,7 +67,7 @@ func SolveQianwenSlider(ctx context.Context) error {
 	return fmt.Errorf("%w: %v", errBaxiaNoCDP, last)
 }
 
-// SolveQianwenSliderAt 只连一个调试地址。测试和显式 XBS_CDP_URL 走这里。
+// SolveQianwenSliderAt 只连一个调试地址。测试和显式 TULAI_CDP_URL 走这里。
 func SolveQianwenSliderAt(ctx context.Context, endpoint string) error {
 	conn, err := cdp.DialSlider(ctx, endpoint)
 	if err != nil {
@@ -224,7 +224,7 @@ func decodeData(s string) ([]byte, error) {
 }
 
 func sliderEndpoints() []string {
-	if raw := strings.TrimSpace(os.Getenv("XBS_CDP_URL")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("TULAI_CDP_URL")); raw != "" {
 		return []string{raw}
 	}
 	var out []string
@@ -240,13 +240,13 @@ func sliderEndpoints() []string {
 		}
 		out = append(out, v)
 	}
-	if port := strings.TrimSpace(os.Getenv("XBS_CDP_PORT")); port != "" {
+	if port := strings.TrimSpace(os.Getenv("TULAI_CDP_PORT")); port != "" {
 		add("http://127.0.0.1:" + port)
 	}
-	if ws := devtoolsEndpoint(os.Getenv("XBS_CHROME_PROFILE")); ws != "" {
+	if ws := devtoolsEndpoint(os.Getenv("TULAI_CHROME_PROFILE")); ws != "" {
 		add(ws)
 	}
-	if ws := devtoolsEndpoint("/tmp/xbs-chrome-profile"); ws != "" {
+	if ws := devtoolsEndpoint("/tmp/tulai-chrome-profile"); ws != "" {
 		add(ws)
 	}
 	add("http://127.0.0.1:9222")

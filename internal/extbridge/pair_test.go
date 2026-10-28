@@ -27,7 +27,7 @@ func TestPairServerReturnsTokenOnLoopback(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body["product"] != "xbs" || body["token"] != "abc123abc123abc123abc123abc123ab" || body["port"] != "18770" {
+	if body["product"] != "tulai" || body["token"] != "abc123abc123abc123abc123abc123ab" || body["port"] != "18770" {
 		t.Fatalf("body %#v", body)
 	}
 	if p.LastHit().IsZero() || time.Since(p.LastHit()) > time.Minute {

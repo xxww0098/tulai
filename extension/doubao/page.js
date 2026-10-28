@@ -7,7 +7,7 @@
 // 生成卡片里常有一张 1536×1536 的空 SVG（data:image/svg+xml 或 blob）占位，complete 且 naturalWidth 已经大于 0。
 // 这层壳不是结果。要等 http(s) 实图，或同一张卡片上的 srcset / data-src / picture / 背景图 / 下载链接。
 // 内容脚本读不到页面的 React fiber。本文件不碰 chrome.*，方便用 node 对锚点做夹具测试。
-globalThis.XBSPage = (function () {
+globalThis.TULAIPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
   const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"]'
   const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|verify (?:that )?you are human|human verification|security verification/i

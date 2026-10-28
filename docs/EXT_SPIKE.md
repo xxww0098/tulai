@@ -8,8 +8,8 @@
 
 - `internal/extbridge`：v1 信封、本机监听、令牌 hello、ping/pong、会话表、带超时和幂等键的 RPC。
 - `extension/`：一份未打包扩展。`qianwen/page.js` 和 `doubao/page.js` 各自实现页面动作，共用 `content.js` 和 `background.js`。找不到节点时仍返回 `E_SELECTOR_MISS`。
-- `cmd/xbs-ext-smoke`：手动加载扩展时使用的桥。`XBS_EXT_LIVE=1` 时跑一次图生图。`XBS_EXT_PLATFORM=doubao` 时打到豆包那条 hello。
-- 配置键 `browserBackend`，取值 `extension` 或 `ego`，默认 `ego`。千问和豆包任务都会读它。`extBridgePort` 默认 `18765`。`extBridgeToken` 在新库里会由桌面端生成随机值，不再把 `dev-token` 留作正式令牌。扩展启动时向 `http://127.0.0.1:18764/xbs-pair` 读取令牌和端口。桌面端「浏览器」页仍可查看、复制和重新生成。hello 可以额外带 `payload.account`（这个浏览器配置文件的 id），用来区分多条扩展会话；不带时仍是原来的单连接。
+- `cmd/tulai-ext-smoke`：手动加载扩展时使用的桥。`TULAI_EXT_LIVE=1` 时跑一次图生图。`TULAI_EXT_PLATFORM=doubao` 时打到豆包那条 hello。
+- 配置键 `browserBackend`，取值 `extension` 或 `ego`，默认 `ego`。千问和豆包任务都会读它。`extBridgePort` 默认 `18765`。`extBridgeToken` 在新库里会由桌面端生成随机值，不再把 `dev-token` 留作正式令牌。扩展启动时向 `http://127.0.0.1:18764/tulai-pair` 读取令牌和端口。桌面端「浏览器」页仍可查看、复制和重新生成。hello 可以额外带 `payload.account`（这个浏览器配置文件的 id），用来区分多条扩展会话；不带时仍是原来的单连接。
 
 不删除 CDP。扩展里只检测验证码并把画布交回主机，不在页面脚本里求解。千问滑块由主机用 CDP 信任拖动，见下方风险。
 
@@ -36,10 +36,10 @@ internal/extbridge               extension/
 第一条消息必须是 hello：
 
 ```json
-{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.7","account":"可选的配置文件 id"}}
+{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.8","account":"可选的配置文件 id"}}
 ```
 
-`payload.version` 是扩展清单的版本（现在是 0.3.7），不是桌面端的 0.1.3。信封字段 `v` 仍是协议版本 1。
+`payload.version` 是扩展清单的版本（现在是 0.3.8），不是桌面端的 0.1.4。信封字段 `v` 仍是协议版本 1。
 
 令牌正确时主机回 `type=ack`，`payload.name` 为 `helloAck`，并带上 `sessionId`。令牌错误、或 hello 之前发送了别的消息，主机回 `E_AUTH` 并关闭连接。令牌放在 payload 里，不放在 URL 上。
 
@@ -70,17 +70,17 @@ node extension/qianwen/page_test.js
 node extension/doubao/page_test.js
 node extension/bridge_test.js
 node extension/content_test.js
-go run ./cmd/xbs-ext-smoke
+go run ./cmd/tulai-ext-smoke
 ```
 
 然后按 [`extension/README.md`](../extension/README.md) 加载未打包扩展。会看到两条 hello（`qianwen` 和 `doubao`）以及各自的 `ping/pong`。`status` 只列出这一条连接对应的标签页。
 
-实机生成（需要已登录的页面，CI 做不到）。不设 `XBS_EXT_IMAGE` 时只发提示词，不上传：
+实机生成（需要已登录的页面，CI 做不到）。不设 `TULAI_EXT_IMAGE` 时只发提示词，不上传：
 
 ```sh
-XBS_EXT_LIVE=1 XBS_EXT_PROMPT='画一只坐在窗边的猫' go run ./cmd/xbs-ext-smoke
-XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XBS_EXT_PROMPT='水彩风格' go run ./cmd/xbs-ext-smoke
-XBS_EXT_PLATFORM=doubao XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XBS_EXT_PROMPT='水彩风格' go run ./cmd/xbs-ext-smoke
+TULAI_EXT_LIVE=1 TULAI_EXT_PROMPT='画一只坐在窗边的猫' go run ./cmd/tulai-ext-smoke
+TULAI_EXT_LIVE=1 TULAI_EXT_IMAGE=/绝对路径/源图.png TULAI_EXT_PROMPT='水彩风格' go run ./cmd/tulai-ext-smoke
+TULAI_EXT_PLATFORM=doubao TULAI_EXT_LIVE=1 TULAI_EXT_IMAGE=/绝对路径/源图.png TULAI_EXT_PROMPT='水彩风格' go run ./cmd/tulai-ext-smoke
 ```
 
 监听地址只允许字面量 `127.0.0.1` 或 `::1`。`0.0.0.0` 和主机名 `localhost` 会在绑定前被拒绝。冒烟进程和桌面端不要同时占用 `18765`。
@@ -98,6 +98,6 @@ XBS_EXT_PLATFORM=doubao XBS_EXT_LIVE=1 XBS_EXT_IMAGE=/绝对路径/源图.png XB
 - 千问生成卡在视口外常常只是灰占位（`alt="loading"`，或 `naturalWidth` 为 0）。等待循环会把这张卡滚进画面再收集；空地址、blob、SVG 和很短的 data 图不是结果。豆包不滚动。
 - 上传要等输入区里出现新的完整预览图。如果站点改成只显示文件名、不插 `img`，会报未就绪。豆包「立即下载电脑版」会在清理附件时尝试点旁边的「关闭」；范围里有输入框或验证码时不点。
 - 结果图先在页面里 `fetch`（带 cookie），跨域失败再让后台下载并回传绝对路径。正文不是 PNG、JPEG、GIF、WebP 时返回 `E_DOWNLOAD_FAIL`，不会把空 SVG 壳存成 `.png`。CDN 不给扩展读正文时，这一步也会是 `E_DOWNLOAD_FAIL`。豆包图片编辑器里的「保存」不由扩展点击，下载用的是 `mdbox_image` 上的图片地址。主机拿到字节后才去水印：豆包地址若带 `watermark` 或 `wm=`，先按 `strategy.PreferUnwatermarkedURL` 去掉查询再下载，失败才用页面原地址；千问共用这条下载，没有这组参数时不改地址，也不另做千问专用剥离。随后豆包和千问都跑 `images.RemoveWatermark`。匹配成功时，冒烟目录里的 `result-01.png` 和扩展任务落盘的那张图就是去水印 PNG。
-- 千问滑块（Baxia / `aliyunCaptcha` / `scratch-captcha` / `nc_*_n1z`，含 `_____tmd_____/punish` iframe）在 `E_CAPTCHA_HUMAN` 之后会试一次本机 CDP 信任拖动。拼图在本地找缺口；没有拼图图就拖到轨道尽头。通过后发送和等待会再问一次页面，`E_CAPTCHA_HUMAN` 不写入发送幂等缓存。Chrome 要开远程调试（冒烟默认 `127.0.0.1:9222`，也认 `XBS_CDP_URL` 和 profile 里的 `DevToolsActivePort`）。对不上或端口没开时仍是人工验证。`XBS_BAXIA_SOLVE=0` 关闭。有 `DISPLAY` 且本机有 `xdotool` 时优先 OS 级拖动（应对 CDP 被判 SP6GQr）；`XBS_BAXIA_X11=0` 强制只用 CDP。跨域 punish iframe 无独立 CDP target 时从父页 frame tree 建隔离世界探测。豆包不拖。内容脚本不合成点击。
+- 千问滑块（Baxia / `aliyunCaptcha` / `scratch-captcha` / `nc_*_n1z`，含 `_____tmd_____/punish` iframe）在 `E_CAPTCHA_HUMAN` 之后会试一次本机 CDP 信任拖动。拼图在本地找缺口；没有拼图图就拖到轨道尽头。通过后发送和等待会再问一次页面，`E_CAPTCHA_HUMAN` 不写入发送幂等缓存。Chrome 要开远程调试（冒烟默认 `127.0.0.1:9222`，也认 `TULAI_CDP_URL` 和 profile 里的 `DevToolsActivePort`）。对不上或端口没开时仍是人工验证。`TULAI_BAXIA_SOLVE=0` 关闭。有 `DISPLAY` 且本机有 `xdotool` 时优先 OS 级拖动（应对 CDP 被判 SP6GQr）；`TULAI_BAXIA_X11=0` 强制只用 CDP。跨域 punish iframe 无独立 CDP target 时从父页 frame tree 建隔离世界探测。豆包不拖。内容脚本不合成点击。
 - `qwen.ai` 沿用通义的卡片 class 兜底。国际站如果结构不同，要拿一次真实 DOM 再改选择器，不要猜。
 - 豆包页面目前只匹配 `doubao.com`。聊天和出图都在 `https://www.doubao.com/chat/`，没有单独的图片站主机。

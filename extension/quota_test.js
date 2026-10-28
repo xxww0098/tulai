@@ -33,19 +33,19 @@ function doc(nodes) {
   }
 }
 
-const quota = XBSQuota.accountBlock(doc([el('alert', '今日免费次数已用完，请明天再来')]))
+const quota = TULAIQuota.accountBlock(doc([el('alert', '今日免费次数已用完，请明天再来')]))
 assert.strictEqual(quota.kind, 'quota')
 assert.match(quota.message, /免费次数已用完/)
 
-const rate = XBSQuota.accountBlock(doc([el('status', '请求过于频繁，请稍后再试', 'toast')]))
+const rate = TULAIQuota.accountBlock(doc([el('status', '请求过于频繁，请稍后再试', 'toast')]))
 assert.strictEqual(rate.kind, 'rate')
 
-const history = XBSQuota.accountBlock(doc([
+const history = TULAIQuota.accountBlock(doc([
   { nodeType: 1, innerText: '刚才那条回复里写了额度不足，但这不是提示条', textContent: 'x', getAttribute() { return null }, className: 'message' },
 ]))
 assert.strictEqual(history, null)
 
-const hidden = XBSQuota.accountBlock(doc([
+const hidden = TULAIQuota.accountBlock(doc([
   Object.assign(el('alert', '额度不足'), { getAttribute(name) { return name === 'hidden' ? '' : (name === 'role' ? 'alert' : null) } }),
 ]))
 assert.strictEqual(hidden, null)

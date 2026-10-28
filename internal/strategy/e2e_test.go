@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/cdp"
-	"xbs/internal/logging"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 // ---- 测试用平台（共享 base，指向 mock 页） ----
@@ -308,7 +308,7 @@ entry.onclick=function(){window.__entryClicks++};upload.onclick=function(){windo
 	if err := (mockChat{}).InstallHook(sess); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sess.EvaluateAsync(`xbsOpenUpload()`); err != nil {
+	if _, err := sess.EvaluateAsync(`tulaiOpenUpload()`); err != nil {
 		t.Fatal(err)
 	}
 	if sess.EvaluateInt("window.__trustedPointer") != 1 || sess.EvaluateInt("window.__entryClicks") != 1 || sess.EvaluateInt("window.__uploadClicks") != 1 {
@@ -342,7 +342,7 @@ upload.onclick=function(){window.__uploadClicks++;var input=document.createEleme
 	if err := (mockChat{}).InstallHook(sess); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.UploadFiles(`xbsOpenUpload()`, []string{makeSourcePNG(t)}); err != nil {
+	if err := sess.UploadFiles(`tulaiOpenUpload()`, []string{makeSourcePNG(t)}); err != nil {
 		t.Fatal(err)
 	}
 	if sess.EvaluateInt("window.__entryClicks") != 1 || sess.EvaluateInt("window.__uploadClicks") != 1 || !sess.EvaluateBool(`document.querySelector('input[type=file]').files.length===1`) {
@@ -373,7 +373,7 @@ func TestUploadDoesNotClickHistoryE2E(t *testing.T) {
 	if err := (mockChat{}).InstallHook(sess); err != nil {
 		t.Fatal(err)
 	}
-	out, err := sess.EvaluateAsync(`xbsOpenUpload()`)
+	out, err := sess.EvaluateAsync(`tulaiOpenUpload()`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +411,7 @@ func TestUploadTargetsCurrentComposerE2E(t *testing.T) {
 	if err := strat.UploadFiles(sess, []string{makeSourcePNG(t)}); err != nil {
 		t.Fatal(err)
 	}
-	if !sess.EvaluateBool(`window.__mockFiles===1 && document.getElementById('stale').files.length===0 && window.__otherUploadClicks===0 && window.__xbsUploadState.scope===document.getElementById('compose')`) {
+	if !sess.EvaluateBool(`window.__mockFiles===1 && document.getElementById('stale').files.length===0 && window.__otherUploadClicks===0 && window.__tulaiUploadState.scope===document.getElementById('compose')`) {
 		t.Fatal("不应将源图上传到旧的全局file input")
 	}
 }
@@ -443,13 +443,13 @@ func TestUploadSiblingPreviewScopeE2E(t *testing.T) {
 	if _, err := sess.Evaluate(`var historyImage=document.createElement('img');historyImage.width=300;historyImage.height=300;historyImage.src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQ1sAAAAASUVORK5CYII=';document.getElementById('messages').appendChild(historyImage);var historyButton=document.createElement('button');historyButton.setAttribute('aria-label','删除历史图片');window.__historyClicks=0;historyButton.onclick=function(){window.__historyClicks++};document.getElementById('messages').appendChild(historyButton);`); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.UploadFiles(`xbsOpenUpload()`, []string{makeSourcePNG(t)}); err != nil {
+	if err := sess.UploadFiles(`tulaiOpenUpload()`, []string{makeSourcePNG(t)}); err != nil {
 		t.Fatal(err)
 	}
-	if !sess.EvaluateBool(`window.__xbsUploadState.scope===document.getElementById('surface')&&!window.__xbsUploadState.scope.contains(document.getElementById('messages'))`) {
+	if !sess.EvaluateBool(`window.__tulaiUploadState.scope===document.getElementById('surface')&&!window.__tulaiUploadState.scope.contains(document.getElementById('messages'))`) {
 		t.Fatal("附件应定位到包含当前入口的真实surface，不能扩到历史区域")
 	}
-	out, err := sess.EvaluateAsync(`xbsWaitForUpload(1)`)
+	out, err := sess.EvaluateAsync(`tulaiWaitForUpload(1)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,10 +493,10 @@ func TestUploadRequiresNewComposerAttachmentE2E(t *testing.T) {
 	if _, err := sess.Evaluate(`var historyImg=document.createElement('img');historyImg.src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQ1sAAAAASUVORK5CYII=';historyImg.width=200;historyImg.height=200;document.getElementById('messages').appendChild(historyImg);`); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.UploadFiles(`xbsOpenUpload()`, []string{makeSourcePNG(t)}); err != nil {
+	if err := sess.UploadFiles(`tulaiOpenUpload()`, []string{makeSourcePNG(t)}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := sess.EvaluateAsync(`Promise.race([xbsWaitForUpload(1).then(function(v){return JSON.stringify({finished:true,value:v})}),new Promise(function(resolve){setTimeout(function(){resolve(JSON.stringify({pending:true}))},300)})])`)
+	out, err := sess.EvaluateAsync(`Promise.race([tulaiWaitForUpload(1).then(function(v){return JSON.stringify({finished:true,value:v})}),new Promise(function(resolve){setTimeout(function(){resolve(JSON.stringify({pending:true}))},300)})])`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +519,7 @@ func TestFetchResultBytesCORSE2E(t *testing.T) {
 	defer shutdown()
 	imageData := noisePNG(220)
 	asset := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("xbs-fixture-auth")
+		cookie, err := r.Cookie("tulai-fixture-auth")
 		if err != nil || cookie.Value != "allowed" || r.URL.RawQuery != "token=fixture%2Fsignature" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -529,7 +529,7 @@ func TestFetchResultBytesCORSE2E(t *testing.T) {
 	}))
 	defer asset.Close()
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: "xbs-fixture-auth", Value: "allowed", HttpOnly: true, Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "tulai-fixture-auth", Value: "allowed", HttpOnly: true, Path: "/"})
 		fmt.Fprint(w, "<!doctype html><body>fixture</body>")
 	}))
 	defer page.Close()
@@ -596,7 +596,7 @@ func TestSignedStreamResultURLE2E(t *testing.T) {
 	if err := strat.InstallHook(sess); err != nil {
 		t.Fatal(err)
 	}
-	if !sess.EvaluateBool(`window.fetch === window.__installedFetch && !!window.__xbsHookRevision`) {
+	if !sess.EvaluateBool(`window.fetch === window.__installedFetch && !!window.__tulaiHookRevision`) {
 		t.Fatal("同一版hook重复安装不应叠加fetch包装")
 	}
 	for _, transport := range []string{"fetch", "xhr"} {
@@ -771,7 +771,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 			if _, err := sess.EvaluateAsync(`(async function(){` + tc.action + `;await new Promise(function(resolve){setTimeout(resolve,200)});return true})()`); err != nil {
 				t.Fatal(err)
 			}
-			if sess.EvaluateInt(`window.__xbsPendingGeneration()`) != 0 {
+			if sess.EvaluateInt(`window.__tulaiPendingGeneration()`) != 0 {
 				t.Fatal("拒绝或中止必须释放本轮生成计数")
 			}
 		})
@@ -806,7 +806,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 			if _, err := sess.EvaluateAsync(`window.__oldDone.then(function(){return new Promise(function(resolve){setTimeout(resolve,50)})})`); err != nil {
 				t.Fatal(err)
 			}
-			if sess.EvaluateInt(`window.__xbsResultsSince().length`) != 0 || sess.EvaluateInt(`window.__xbsPendingGeneration()`) != 0 {
+			if sess.EvaluateInt(`window.__tulaiResultsSince().length`) != 0 || sess.EvaluateInt(`window.__tulaiPendingGeneration()`) != 0 {
 				t.Fatal("Mark前旧响应不能以完成时新时间戳进入本轮结果")
 			}
 		})
@@ -833,13 +833,13 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 		if _, err := sess.EvaluateAsync(`(async function(){window.newControl=new AbortController();fetch('/chat/hang',{signal:newControl.signal}).catch(function(){});oldControl.abort();await new Promise(function(resolve){setTimeout(resolve,150)});return true})()`); err != nil {
 			t.Fatal(err)
 		}
-		if sess.EvaluateInt(`__xbsPendingGeneration()`) != 1 {
+		if sess.EvaluateInt(`__tulaiPendingGeneration()`) != 1 {
 			t.Fatal("旧代次完成不能释放新任务的pending")
 		}
 		if _, err := sess.EvaluateAsync(`(async function(){newControl.abort();await new Promise(function(resolve){setTimeout(resolve,150)});return true})()`); err != nil {
 			t.Fatal(err)
 		}
-		if sess.EvaluateInt(`__xbsPendingGeneration()`) != 0 {
+		if sess.EvaluateInt(`__tulaiPendingGeneration()`) != 0 {
 			t.Fatal("新任务中止应释放本轮pending")
 		}
 	})
@@ -1265,7 +1265,7 @@ func TestCaptchaGridE2E(t *testing.T) {
 			`JSON.stringify({
 				events: (window.__mockEvents||[]).slice(-6),
 				canvasCount: document.querySelectorAll('#captcha_verify_image canvas').length,
-				status: window.__xbsCaptcha && window.__xbsCaptcha.status(),
+				status: window.__tulaiCaptcha && window.__tulaiCaptcha.status(),
 			})`)
 		if diag != lastDiag {
 			t.Logf("诊断: %s", diag)
@@ -1273,7 +1273,7 @@ func TestCaptchaGridE2E(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	status := sessEvaluateString(t, sess, "JSON.stringify(window.__xbsCaptcha && window.__xbsCaptcha.status())")
+	status := sessEvaluateString(t, sess, "JSON.stringify(window.__tulaiCaptcha && window.__tulaiCaptcha.status())")
 	t.Fatalf("验证码未在期限内通过，注入状态: %s", status)
 }
 

@@ -96,9 +96,9 @@ func TestWatermarkDoesNotInventMarks(t *testing.T) {
 }
 
 func TestWatermarkDownloadedSamples(t *testing.T) {
-	root := os.Getenv("XBS_WATERMARK_SAMPLES")
+	root := os.Getenv("TULAI_WATERMARK_SAMPLES")
 	if root == "" {
-		t.Skip("set XBS_WATERMARK_SAMPLES for local downloaded-image QA")
+		t.Skip("set TULAI_WATERMARK_SAMPLES for local downloaded-image QA")
 	}
 	for _, row := range []struct{ platform, path string }{{"豆包", "doubao/测试色彩图_1.png"}, {"千问", "qianwen/测试色彩图.png"}} {
 		t.Run(row.platform, func(t *testing.T) {

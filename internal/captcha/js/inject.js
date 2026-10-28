@@ -1,10 +1,10 @@
-// xbs 验证码自动求解注入脚本（自研实现）
+// tulai 验证码自动求解注入脚本（自研实现）
 // 能力：验证窗口检测（九宫格/滑块）→ 截图 → 桥调 Go 求解 → 拟人拖拽 → 提交 → 重试/换题；
 //      登录弹窗自动关闭、下载客户端弹窗关闭、阻塞状态上报。
 (function () {
-  if (window.__xbsCaptchaInstalled) return;
-  window.__xbsCaptchaInstalled = true;
-  window.__xbsCaptchaRevision = '__XBS_CAPTCHA_REVISION__';
+  if (window.__tulaiCaptchaInstalled) return;
+  window.__tulaiCaptchaInstalled = true;
+  window.__tulaiCaptchaRevision = '__TULAI_CAPTCHA_REVISION__';
 
   var CFG = {
     pollMs: 1000,     // 主轮询间隔
@@ -13,11 +13,11 @@
   };
   var st = { running: false, retries: 0, manual: false, loginMode: false };
 
-  function autoSolveEnabled() { return window.__xbsCaptchaEnabled === true && !st.manual; }
+  function autoSolveEnabled() { return window.__tulaiCaptchaEnabled === true && !st.manual; }
 
   function log(msg) {
     console.log('[验证码] ' + msg);
-    try { window.xbsCall && window.xbsCall('captchaLog', msg); } catch (e) {}
+    try { window.tulaiCall && window.tulaiCall('captchaLog', msg); } catch (e) {}
   }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function rnd(a, b) { return a + Math.random() * (b - a); }
@@ -327,7 +327,7 @@
     var tImg = container.querySelector('img');
     if (tImg) targetB64 = captureEl(tImg);
 
-    var answer = await window.xbsCall('captchaSolve', JSON.stringify({
+    var answer = await window.tulaiCall('captchaSolve', JSON.stringify({
       type: 'grid',
       gridBase64: compositeGrid(grid.box),
       targetBase64: targetB64,
@@ -409,12 +409,12 @@
     var tr2 = (track || btn.parentElement).getBoundingClientRect();
     var sx = br.left + br.width / 2, sy = br.top + br.height / 2;
     // 截图区域：轨道上方 120px 到轨道下方（覆盖缺口背景）
-    var shot = await window.xbsCall('captchaShot', JSON.stringify({
+    var shot = await window.tulaiCall('captchaShot', JSON.stringify({
       x: tr2.left, y: Math.min(tr2.top, br.top) - 120, w: tr2.width, h: tr2.height + 160,
     }));
     if (!autoSolveEnabled()) return false;
     if (!shot || !shot.success) { log('滑块截图失败'); return false; }
-    var answer = await window.xbsCall('captchaSolve', JSON.stringify({ type: 'slider', gridBase64: shot.base64 }));
+    var answer = await window.tulaiCall('captchaSolve', JSON.stringify({ type: 'slider', gridBase64: shot.base64 }));
     if (!autoSolveEnabled()) return false;
     if (!answer || !answer.success) { log('滑块求解失败: ' + (answer && answer.error)); return false; }
     var maxDrag = tr2.left + tr2.width - br.width;
@@ -514,7 +514,7 @@
       el = el.parentElement;
     }
     var r = btn.getBoundingClientRect();
-    window.xbsClick && window.xbsClick('button[aria-label="关闭"]');
+    window.tulaiClick && window.tulaiClick('button[aria-label="关闭"]');
     var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     var t = document.elementFromPoint(cx, cy) || btn;
     pointerTo(t, 'pointerdown', cx, cy); fire(t, MouseEvent, 'mousedown', cx, cy);
@@ -545,7 +545,7 @@
     if (now !== blockingState || now) {
       blockingState = now;
       var reason = hasCaptcha ? 'captcha' : (hasLogin ? 'login' : (hasDownload ? 'download' : ''));
-      try { window.xbsCall('captchaBlocking', JSON.stringify({ blocked: now, reason: reason })); } catch (e) {}
+      try { window.tulaiCall('captchaBlocking', JSON.stringify({ blocked: now, reason: reason })); } catch (e) {}
     }
   }
 
@@ -589,7 +589,7 @@
           }
           if (!ok) {
             log('登录弹窗无法关闭，通知主程序');
-            try { window.xbsCall('loginDetected', ''); } catch (e) {}
+            try { window.tulaiCall('loginDetected', ''); } catch (e) {}
             break;
           }
           await sleep(CFG.pollMs);
@@ -611,7 +611,7 @@
         if (success) {
           st.retries = 0;
           log('验证通过');
-          try { window.xbsCall('captchaBlocking', '{"blocked":false,"reason":""}'); } catch (e) {}
+          try { window.tulaiCall('captchaBlocking', '{"blocked":false,"reason":""}'); } catch (e) {}
         } else {
           st.retries++;
           log('求解失败，重试 ' + st.retries + '/' + CFG.maxRetries);
@@ -623,7 +623,7 @@
     }
   }
 
-  window.__xbsCaptcha = {
+  window.__tulaiCaptcha = {
     start: startPolling,
     stop: function () { st.running = false; },
     setManual: function (v) { st.manual = !!v; },

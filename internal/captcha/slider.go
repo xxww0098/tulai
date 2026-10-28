@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"time"
 
-	"xbs/internal/cdp"
+	"github.com/xxww0098/tulai/internal/cdp"
 )
 
 // TrackStep 是按下之后的一条采样。DX/DY 相对按下点，DT 是抵达这一点之前要等的时间。

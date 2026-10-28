@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"xbs/internal/prompts"
+	"github.com/xxww0098/tulai/internal/prompts"
 
 	"github.com/egoist/mygo/ui"
 )

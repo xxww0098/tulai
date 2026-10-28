@@ -25,7 +25,7 @@ func egoImportEntry(path string) string {
 }
 
 func egoCommand(ctx context.Context, path, source string) (*exec.Cmd, func(), error) {
-	dir, err := os.MkdirTemp("", "xbs-ego-")
+	dir, err := os.MkdirTemp("", "tulai-ego-")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -47,5 +47,5 @@ func egoCommand(ctx context.Context, path, source string) (*exec.Cmd, func(), er
 }
 
 func egoBatchCommandLine(entry string) string {
-	return `cmd.exe /d /v:off /s /c ""%XBS_EGO_LAUNCHER%" nodejs -e "` + entry + `""`
+	return `cmd.exe /d /v:off /s /c ""%TULAI_EGO_LAUNCHER%" nodejs -e "` + entry + `""`
 }

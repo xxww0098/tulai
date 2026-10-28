@@ -10,8 +10,8 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/logging"
-	"xbs/internal/update"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/update"
 )
 
 func (a *App) installMenu() *mygo.Menu {

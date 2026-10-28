@@ -14,7 +14,7 @@ let task, page, polling = false, handedOff = false, fileChooser = null;
 const logCleanup = closed => send({ event: "log", payload: `已回收 ${closed} 个无草稿的旧版页面` });
 async function evaluateAsync(params) {
   // Ego 按页面串行处理 RPC；长 awaitPromise 会堵住 binding 事件与 Go 回执。
-  const key = JSON.stringify("__xbsEgoAsync_" + randomUUID());
+  const key = JSON.stringify("__tulaiEgoAsync_" + randomUUID());
   const evaluate = expression => page.cdp("Runtime.evaluate", { ...params, expression, awaitPromise: false, returnByValue: true }, { timeout: 60000 });
   await evaluate(`globalThis[${key}]={done:false};Promise.resolve().then(()=>(${params.expression})).then(value=>{globalThis[${key}]={done:true,value}},error=>{globalThis[${key}]={done:true,error:String(error?.message||error)}});void 0`);
   try {
@@ -63,7 +63,7 @@ async function dispatch(method, params) {
         try { matches = params.hosts.includes(new URL(tab.url).host.toLowerCase()); } catch { continue; }
         if (!matches) continue;
         const candidate = tab.label ? task.page(tab.label) : await task.adopt(tab.page);
-        if (await candidate.evaluate(() => sessionStorage.getItem("__xbsRetiredHookPage") === "1")) continue;
+        if (await candidate.evaluate(() => sessionStorage.getItem("__tulaiRetiredHookPage") === "1")) continue;
         existing = candidate;
         break;
       }
@@ -75,7 +75,7 @@ async function dispatch(method, params) {
         await page.goto(params.url, { waitUntil: "domcontentloaded", timeout: 60000 });
       }
       await page.cdp("Runtime.enable");
-      await page.cdp("Runtime.addBinding", { name: "xbsBridge" });
+      await page.cdp("Runtime.addBinding", { name: "tulaiBridge" });
       await page.cdp("Page.bringToFront");
       return { label: page.label, url: await page.url() };
     }
@@ -86,9 +86,9 @@ async function dispatch(method, params) {
       try {
         await fresh.goto(currentURL, { waitUntil: "domcontentloaded", timeout: 60000 });
         await fresh.cdp("Runtime.enable");
-        await fresh.cdp("Runtime.addBinding", { name: "xbsBridge" });
+        await fresh.cdp("Runtime.addBinding", { name: "tulaiBridge" });
         await fresh.cdp("Page.bringToFront");
-        await previous.evaluate(() => sessionStorage.setItem("__xbsRetiredHookPage", "1"));
+        await previous.evaluate(() => sessionStorage.setItem("__tulaiRetiredHookPage", "1"));
       } catch (error) {
         await fresh.close();
         throw error;
@@ -146,7 +146,7 @@ const poll = setInterval(async () => {
     const events = await page.events();
     for (const message of egoConsoleMessages(events)) send({ event: "log", payload: message });
     for (const event of events) {
-      if (event.method === "Runtime.bindingCalled" && event.params?.name === "xbsBridge") {
+      if (event.method === "Runtime.bindingCalled" && event.params?.name === "tulaiBridge") {
         send({ event: "binding", payload: event.params.payload });
       } else if (event.method === "Page.fileChooserOpened" && fileChooser && fileChooser.node === null) {
         fileChooser.node = event.params?.backendNodeId || 0;

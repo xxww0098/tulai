@@ -1,8 +1,8 @@
-// xbs 结果截获 hook：网络层（fetch/XHR）+ DOM 层（聊天区新增大图）双通道，
-// 把生成图片 URL/数据 记入 window.__xbsResults，供 Go 侧等待与保存。
+// tulai 结果截获 hook：网络层（fetch/XHR）+ DOM 层（聊天区新增大图）双通道，
+// 把生成图片 URL/数据 记入 window.__tulaiResults，供 Go 侧等待与保存。
 (function () {
-  if (window.__xbsHookInstalled) return;
-  window.__xbsHookInstalled = true;
+  if (window.__tulaiHookInstalled) return;
+  window.__tulaiHookInstalled = true;
   var results = [];
   var existingImages = new WeakSet();
   var ignoredURLs = new Set();
@@ -18,11 +18,11 @@
     ticket.done = true;
     if (ticket.task === taskNumber) pendingGeneration = Math.max(0, pendingGeneration - 1);
   }
-  window.__xbsPendingGeneration = function () { return pendingGeneration; };
+  window.__tulaiPendingGeneration = function () { return pendingGeneration; };
 
-  window.__xbsResults = results;
-  window.__xbsMark = Date.now();
-  window.__xbsAddResult = function (url, src) {
+  window.__tulaiResults = results;
+  window.__tulaiMark = Date.now();
+  window.__tulaiAddResult = function (url, src) {
     if (!url) return;
     // 去重
     for (var i = 0; i < results.length; i++) if (results[i].url === url) return;
@@ -57,7 +57,7 @@
                 if (requestTask !== taskNumber) return;
                 var re = /https?:\/\/[^\s"'\\]+?(?:\.(?:png|jpe?g|webp)(?:\?[^\s"'\\]*)?|tosv[^"'\\]*|object_(?:basic|image)[^\s"'\\]*)/gi;
                 var m;
-                while ((m = re.exec(txt))) window.__xbsAddResult(m[0], 'stream');
+                while ((m = re.exec(txt))) window.__tulaiAddResult(m[0], 'stream');
               }).catch(function () {}).finally(function () { finishGeneration(ticket); });
               return resp;
             }
@@ -72,7 +72,7 @@
             if (looksLikeImage(url, mime)) {
               resp.clone().blob().then(function (b) {
                 if (requestTask !== taskNumber) return;
-                if (b.size > 20480) window.__xbsAddResult(url, 'net'); // 过滤小图标
+                if (b.size > 20480) window.__tulaiAddResult(url, 'net'); // 过滤小图标
               }).catch(function () {});
             }
           } catch (e) {}
@@ -86,26 +86,26 @@
   // ---- XHR 拦截 ----
   var origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url) {
-    this.__xbsUrl = url;
+    this.__tulaiUrl = url;
     return origOpen.apply(this, arguments);
   };
   var origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function () {
-    var xhr = this, requestTask = taskNumber, ticket = generationURL(xhr.__xbsUrl || '') ? beginGeneration() : null;
+    var xhr = this, requestTask = taskNumber, ticket = generationURL(xhr.__tulaiUrl || '') ? beginGeneration() : null;
     xhr.addEventListener('loadend', function () { finishGeneration(ticket); }, { once: true });
     xhr.addEventListener('load', function () {
       if (requestTask !== taskNumber) return;
       try {
         var mime = xhr.getResponseHeader('content-type') || '';
-        if (looksLikeImage(xhr.__xbsUrl, mime)) {
+        if (looksLikeImage(xhr.__tulaiUrl, mime)) {
           if ((xhr.responseType === '' || xhr.responseType === 'blob') && xhr.response && xhr.response.size > 20480) {
-            window.__xbsAddResult(xhr.__xbsUrl, 'net');
+            window.__tulaiAddResult(xhr.__tulaiUrl, 'net');
           }
         } else if (/json|text/i.test(mime)) {
           var txt = typeof xhr.responseText === 'string' ? xhr.responseText : '';
           var re = /https?:\/\/[^\s"'\\]+?(?:\.(?:png|jpe?g|webp)(?:\?[^\s"'\\]*)?|tosv[^"'\\]*|object_(?:basic|image)[^\s"'\\]*)/gi;
           var m;
-          while ((m = re.exec(txt))) window.__xbsAddResult(m[0], 'xhr');
+          while ((m = re.exec(txt))) window.__tulaiAddResult(m[0], 'xhr');
         }
       } catch (e) {}
     });
@@ -133,7 +133,7 @@
       var r = img.getBoundingClientRect();
       if (r.width >= 180 && r.height >= 180) { // 生成结果是大图，排除头像/图标
         var src = img.currentSrc || img.src;
-        if (src && !/avatar|icon|logo|emoji/i.test(src)) window.__xbsAddResult(src, 'dom');
+        if (src && !/avatar|icon|logo|emoji/i.test(src)) window.__tulaiAddResult(src, 'dom');
       }
     } catch (e) {}
   }
@@ -147,10 +147,10 @@
   else window.addEventListener('load', start);
 
   // ---- 标记当前任务起点（MarkJs） ----
-  window.__xbsMarkTask = function () {
+  window.__tulaiMarkTask = function () {
     taskNumber++;
     pendingGeneration = 0;
-    window.__xbsMark = Date.now();
+    window.__tulaiMark = Date.now();
     existingImages = new WeakSet();
     ignoredURLs = new Set();
     Array.from(document.images).forEach(function (img) {
@@ -158,7 +158,7 @@
       checkImg(img);
     });
   };
-  window.__xbsResultsSince = function () {
-    return results.filter(function (r) { return r.ts >= window.__xbsMark && !ignoredURLs.has(r.url); });
+  window.__tulaiResultsSince = function () {
+    return results.filter(function (r) { return r.ts >= window.__tulaiMark && !ignoredURLs.has(r.url); });
   };
 })();

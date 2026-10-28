@@ -7,9 +7,9 @@ import (
 	"net"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/cdp"
-	"xbs/internal/store"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 func (a *App) wireHealing() {

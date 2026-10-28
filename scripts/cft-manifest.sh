@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 生成 internal/browser/cft_manifest.json（版本、sha256、压缩包内可执行文件路径）。
 # Chrome for Testing 不打进安装包；用户在 tulai 里点下载后才落到
-# <UserConfigDir>/xbs/runtime/cft/<版本>/。
+# <UserConfigDir>/tulai/runtime/cft/<版本>/。
 # 用法: scripts/cft-manifest.sh [版本]
 # 默认版本是 Chrome for Testing 的 Stable。需要能访问 npmmirror 或 storage.googleapis.com。
 set -euo pipefail
@@ -37,7 +37,7 @@ platforms = {
 }
 
 def sha256(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "xbs"})
+    req = urllib.request.Request(url, headers={"User-Agent": "tulai"})
     with urllib.request.urlopen(req, timeout=120) as resp:
         digest = hashlib.sha256()
         while True:

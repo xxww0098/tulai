@@ -1,7 +1,7 @@
-// xbs composer 流程：找输入框 → 打开上传入口 → 让 input[type=file] 出现。
+// tulai composer 流程：找输入框 → 打开上传入口 → 让 input[type=file] 出现。
 // 浏览器先等待真实文件选择器，脚本只点击当前输入区入口与本次菜单。
 (function () {
-  window.__xbsComposer = window.__xbsComposer || {};
+  window.__tulaiComposer = window.__tulaiComposer || {};
 
   function visible(el) {
     if (!el) return false;
@@ -25,7 +25,7 @@
     return null;
   }
   // 仅有占位/隐藏文本时视为空；有可编辑正文时保留浏览器的多行 innerText。
-  window.xbsReadComposer = function (comp) {
+  window.tulaiReadComposer = function (comp) {
     if (!comp) return null;
     if (comp.tagName === 'TEXTAREA' || comp.tagName === 'INPUT') return comp.value;
     var walker = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), text;
@@ -41,7 +41,7 @@
     return '';
   };
 
-  window.xbsComposerDiagnostic = function (comp) {
+  window.tulaiComposerDiagnostic = function (comp) {
     if (!comp) return ['composer=none'];
     function stats(value) {
       var points = Array.from(String(value || ''));
@@ -51,7 +51,7 @@
     function describe(node) {
       return node.tagName + '#' + (node.id || '').slice(0,30) + '; class=' + cls(node).slice(0,40) + '; editable=' + (node.getAttribute('contenteditable') || '') + '; ariaHidden=' + (node.getAttribute('aria-hidden') || '') + '; data=' + node.getAttributeNames().filter(function(name){return name.indexOf('data-')===0 || name==='aria-placeholder'}).join(',').slice(0,70) + '; ' + stats(node.textContent);
     }
-    var lines = ['value ' + stats(window.xbsReadComposer(comp)), describe(comp)];
+    var lines = ['value ' + stats(window.tulaiReadComposer(comp)), describe(comp)];
     var nodes = Array.from(comp.querySelectorAll('[contenteditable="false"],[aria-hidden="true"],[data-slate-placeholder],[data-placeholder],[aria-placeholder],[class*="placeholder" i]'));
     var walker = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), text;
     while ((text = walker.nextNode()) && nodes.length < 8) { if (String(text.nodeValue || '').trim() && text.parentElement !== comp && nodes.indexOf(text.parentElement) === -1) nodes.push(text.parentElement); }
@@ -82,7 +82,7 @@
   }
   async function clickEl(el) {
     if (!el) return false;
-    try { return await window.xbsClick(el); } catch (e) { return false; }
+    try { return await window.tulaiClick(el); } catch (e) { return false; }
   }
 
   var MODE_KW = ['AI生图', 'AI生视频', 'PPT创作', 'AI写作', '智能体', '模板', '海报', '电商', '人像', '视频生成', '音乐', '翻译', '画图', '代码', '千问高考', '办公助理', '研究'];
@@ -126,9 +126,9 @@
 
 
   // 只打开当前编辑器的真实上传动作，文件由本轮浏览器 chooser 接收。
-  window.xbsOpenUpload = async function () {
+  window.tulaiOpenUpload = async function () {
     var comp = findComposer(), log = [];
-    window.__xbsUploadDiagnostic = log;
+    window.__tulaiUploadDiagnostic = log;
     if (!comp) throw new Error('未找到输入框');
     var entry = null;
     for (var scope = comp.parentElement; scope && scope !== document.body; scope = scope.parentElement) {
@@ -144,7 +144,7 @@
     if (!entry) throw new Error('未找到当前输入区上传入口');
     var previewScope = attachmentScope(comp, entry), initialImages = new Map();
     Array.from(document.images).forEach(function (img) { initialImages.set(img, img.currentSrc || img.src); });
-    window.__xbsUploadState = { scope: previewScope, entry: entry, images: initialImages, files: new Map(Array.from(document.querySelectorAll('input[type=file]')).map(function(input){return [input,input.files]})) };
+    window.__tulaiUploadState = { scope: previewScope, entry: entry, images: initialImages, files: new Map(Array.from(document.querySelectorAll('input[type=file]')).map(function(input){return [input,input.files]})) };
     log.push('scope=' + (previewScope ? previewScope.tagName + '#' + (previewScope.id || '').slice(0, 40) + '.' + cls(previewScope).slice(0, 60) + '; role=' + (previewScope.getAttribute('role') || '').slice(0, 40) : 'none'));
     log.push('entry=' + entry.tagName + '; testid=' + (entry.getAttribute('data-testid') || '').slice(0, 60) + '; id=' + (entry.id || '').slice(0, 50) + '; aria=' + (entry.getAttribute('aria-label') || '').slice(0, 60));
     var oldPanels = new Set(Array.from(document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[popover]')).filter(visible));
@@ -170,9 +170,9 @@
     return JSON.stringify({ opened: true });
   };
 
-  window.xbsWaitForUpload = async function (expected) {
+  window.tulaiWaitForUpload = async function (expected) {
     var deadline = Date.now() + 30000, stable = 0, count = 0, busy = false;
-    var state = window.__xbsUploadState;
+    var state = window.__tulaiUploadState;
     while (Date.now() < deadline) {
       var comp = findComposer(), scope = comp && attachmentScope(comp, state && state.entry);
       if (state && state.scope && state.scope.isConnected && state.scope.contains(comp)) scope = state.scope;
@@ -194,8 +194,8 @@
     return JSON.stringify({ ready: false, diagnostic: diagnostic });
   };
 
-  window.xbsUploadAncestorDiagnostic = function () {
-    var lines = [], comp = findComposer(), state = window.__xbsUploadState;
+  window.tulaiUploadAncestorDiagnostic = function () {
+    var lines = [], comp = findComposer(), state = window.__tulaiUploadState;
     function attribute(node, name, length) { return String(node && node.getAttribute(name) || '').replace(/https?:\/\/[^/\s?#]+/gi, '[origin]').replace(/\?[^#\s]*/g, '?[redacted]').slice(0, length); }
     function describe(node) {
       if (!node) return 'none';
@@ -219,11 +219,11 @@
     return lines.map(function(line){return line.slice(0, 320)});
   };
 
-  window.xbsMarkComposer = function () {
+  window.tulaiMarkComposer = function () {
     var comp = findComposer();
     if (!comp || comp.readOnly) return false;
-    document.querySelectorAll('[data-xbs-composer]').forEach(function (el) { el.removeAttribute('data-xbs-composer'); });
-    comp.setAttribute('data-xbs-composer', '1');
+    document.querySelectorAll('[data-tulai-composer]').forEach(function (el) { el.removeAttribute('data-tulai-composer'); });
+    comp.setAttribute('data-tulai-composer', '1');
     return true;
   };
 
@@ -262,8 +262,8 @@
     }), extra.map(function (el, index) { return describe(el, 'icon#' + (index + 1) + ' '); }));
   }
 
-  window.xbsSendPrompt = async function () {
-    var comp = document.querySelector('[data-xbs-composer="1"]');
+  window.tulaiSendPrompt = async function () {
+    var comp = document.querySelector('[data-tulai-composer="1"]');
     if (!comp) return JSON.stringify({ attempted: false, error: '未找到已定位的输入框' });
     var deadline = Date.now() + 5000, button;
     while (Date.now() < deadline) {
@@ -280,18 +280,18 @@
     while (Date.now() < deadline) {
       var current = findComposer();
       if (current) {
-        var text = window.xbsReadComposer(current);
+        var text = window.tulaiReadComposer(current);
         if (!String(text || '').trim()) return JSON.stringify({ sent: true });
       }
       await sleep(100);
     }
     var latest = findComposer();
-    var remaining = window.xbsReadComposer(latest);
-    return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后输入仍未清空', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.xbsComposerDiagnostic(latest)) });
+    var remaining = window.tulaiReadComposer(latest);
+    return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后输入仍未清空', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.tulaiComposerDiagnostic(latest)) });
   };
 
   // 文本由可信 InsertText 全文替换，只清理输入区附件。
-  window.xbsCleanComposer = async function () {
+  window.tulaiCleanComposer = async function () {
     var comp = findComposer();
     if (!comp) return false;
     var scope = findScope(comp);
@@ -305,7 +305,7 @@
   };
 
   // 页面状态探测
-  window.xbsPageState = function () {
+  window.tulaiPageState = function () {
     var body = (document.body && document.body.innerText) || '';
     return {
       hasComposer: !!findComposer(),

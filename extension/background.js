@@ -1,7 +1,7 @@
 importScripts('protocol.js', 'bridge_logic.js', 'pair.js')
 
-const XBS = globalThis.XBS
-const ALARM = 'xbs-bridge-reconnect'
+const TULAI = globalThis.TULAI
+const ALARM = 'tulai-bridge-reconnect'
 // 一条 WebSocket hello 只登记一个 platform。千问和豆包各开一条连接，命令只发给对应站点的标签页。
 const SITES = {
   qianwen: {
@@ -56,7 +56,7 @@ function newLink(platform) {
     socket: null,
     opened: false,
     sessionId: '',
-    retryMs: XBSBridge.retryMinMs,
+    retryMs: TULAIBridge.retryMinMs,
     reconnectTimer: null,
     pingTimer: null,
     connecting: false,
@@ -136,14 +136,14 @@ function startPing(link) {
   link.lastPongAt = Date.now()
   link.pingTimer = setInterval(() => {
     if (!link.opened || !link.socket || link.socket.readyState !== WebSocket.OPEN) return
-    if (XBSBridge.pingTimedOut(link.lastPongAt, link.pingAwaiting, Date.now(), XBS.pingEveryMs)) {
+    if (TULAIBridge.pingTimedOut(link.lastPongAt, link.pingAwaiting, Date.now(), TULAI.pingEveryMs)) {
       link.linkError = '心跳没有回应，正在重连。不用重启 tulai。'
       link.authError = ''
       reconnect(link)
       return
     }
     link.pingAwaiting = true
-    const env = XBS.envelope('ping')
+    const env = TULAI.envelope('ping')
     env.platform = link.platform
     try {
       link.socket.send(JSON.stringify(env))
@@ -151,7 +151,7 @@ function startPing(link) {
       link.linkError = '发送心跳失败，正在重连。'
       reconnect(link)
     }
-  }, XBS.pingEveryMs)
+  }, TULAI.pingEveryMs)
 }
 
 function sendToHost(link, env) {
@@ -172,7 +172,7 @@ function remember(status, lastError, platforms) {
 function scheduleReconnect(link) {
   if (link.reconnectTimer) return
   const wait = link.retryMs
-  link.retryMs = XBSBridge.nextRetryMs(link.retryMs)
+  link.retryMs = TULAIBridge.nextRetryMs(link.retryMs)
   link.reconnectTimer = setTimeout(() => {
     link.reconnectTimer = null
     connect(link)
@@ -228,7 +228,7 @@ async function connect(link) {
     ws = new WebSocket('ws://127.0.0.1:' + port + '/')
   } catch (err) {
     link.connecting = false
-    if (!link.authError) link.linkError = XBSBridge.refusedMessage(port)
+    if (!link.authError) link.linkError = TULAIBridge.refusedMessage(port)
     refreshBadge()
     scheduleReconnect(link)
     return
@@ -239,16 +239,16 @@ async function connect(link) {
   link.sessionId = ''
   const openTimer = setTimeout(() => {
     if (link.socket === ws && !link.opened) {
-      if (!link.authError) link.linkError = XBSBridge.refusedMessage(port)
+      if (!link.authError) link.linkError = TULAIBridge.refusedMessage(port)
       try { ws.close() } catch (err) {}
     }
   }, 8000)
   ws.onopen = () => {
     clearTimeout(openTimer)
     try {
-      ws.send(JSON.stringify(XBS.hello(cfg.token, link.platform, cfg.profileId)))
+      ws.send(JSON.stringify(TULAI.hello(cfg.token, link.platform, cfg.profileId)))
     } catch (err) {
-      link.linkError = XBSBridge.refusedMessage(port)
+      link.linkError = TULAIBridge.refusedMessage(port)
       try { ws.close() } catch (e) {}
     }
   }
@@ -257,7 +257,7 @@ async function connect(link) {
     onHostMessage(link, ws, ev.data)
   }
   ws.onerror = () => {
-    if (!link.authError) link.linkError = XBSBridge.refusedMessage(port)
+    if (!link.authError) link.linkError = TULAIBridge.refusedMessage(port)
   }
   ws.onclose = () => {
     clearTimeout(openTimer)
@@ -272,7 +272,7 @@ async function connect(link) {
       link.authError = ''
       if (!link.linkError) link.linkError = '连接已断开，正在重连。不用重启 tulai。'
     } else if (!link.authError && !link.linkError) {
-      link.linkError = XBSBridge.refusedMessage(port)
+      link.linkError = TULAIBridge.refusedMessage(port)
     }
     refreshBadge()
     scheduleReconnect(link)
@@ -281,11 +281,11 @@ async function connect(link) {
 
 async function autoPair() {
   const cfg = await storageGet()
-  const ident = await XBSPair.identity(chrome.storage.local)
+  const ident = await TULAIPair.identity(chrome.storage.local)
   cfg.profileId = ident.profileId
   if (cfg.pairMode === 'manual') return cfg
   try {
-    const pair = await XBSPair.pull(function (url, opts) { return fetch(url, opts) })
+    const pair = await TULAIPair.pull(function (url, opts) { return fetch(url, opts) })
     if (cfg.token !== pair.token || Number(cfg.port) !== pair.port || cfg.pairState !== 'paired') {
       await storageSet({ token: pair.token, port: pair.port, pairMode: 'auto', pairState: 'paired' })
     }
@@ -300,7 +300,7 @@ async function autoPair() {
 function connectAll() {
   Object.values(links).forEach((link) => {
     const open = link.opened && link.socket && link.socket.readyState === WebSocket.OPEN
-    if (open && XBSBridge.pingTimedOut(link.lastPongAt, link.pingAwaiting, Date.now(), XBS.pingEveryMs)) {
+    if (open && TULAIBridge.pingTimedOut(link.lastPongAt, link.pingAwaiting, Date.now(), TULAI.pingEveryMs)) {
       link.linkError = '心跳没有回应，正在重连。不用重启 tulai。'
       reconnect(link)
       return
@@ -321,18 +321,18 @@ function onHostMessage(link, ws, data) {
   if (!link.opened) {
     if (env.type === 'error') {
       const message = (env.payload && env.payload.message) || (env.payload && env.payload.code) || 'hello 失败'
-      link.authError = XBSBridge.authMessage(message)
+      link.authError = TULAIBridge.authMessage(message)
       link.linkError = ''
       refreshBadge()
       ws.close()
       return
     }
-    if (env.type === 'ack' && env.payload && env.payload.name === XBS.commands.helloAck) {
+    if (env.type === 'ack' && env.payload && env.payload.name === TULAI.commands.helloAck) {
       link.opened = true
       link.authError = ''
       link.linkError = ''
       link.sessionId = env.sessionId || ''
-      link.retryMs = XBSBridge.retryMinMs
+      link.retryMs = TULAIBridge.retryMinMs
       link.pingAwaiting = false
       link.lastPongAt = Date.now()
       startPing(link)
@@ -341,7 +341,7 @@ function onHostMessage(link, ws, data) {
     return
   }
   if (env.type === 'ping') {
-    sendToHost(link, XBS.reply(env, 'pong'))
+    sendToHost(link, TULAI.reply(env, 'pong'))
     return
   }
   if (env.type === 'pong') {
@@ -358,25 +358,25 @@ function onHostMessage(link, ws, data) {
 
 async function dispatchCommand(link, env) {
   const name = env.payload && env.payload.name
-  if (name === XBS.commands.ping) {
-    sendToHost(link, XBS.ack(env, { name, ok: true }))
+  if (name === TULAI.commands.ping) {
+    sendToHost(link, TULAI.ack(env, { name, ok: true }))
     return
   }
-  if (name === XBS.commands.status) {
-    sendToHost(link, XBS.ack(env, { name, ok: true, tabs: await snapshotTabs(link.platform) }))
+  if (name === TULAI.commands.status) {
+    sendToHost(link, TULAI.ack(env, { name, ok: true, tabs: await snapshotTabs(link.platform) }))
     return
   }
-  if (name === XBS.commands.cancel && !(await pickTab(link.platform))) {
-    sendToHost(link, XBS.ack(env, { name, ok: true, message: '没有进行中的页面任务' }))
+  if (name === TULAI.commands.cancel && !(await pickTab(link.platform))) {
+    sendToHost(link, TULAI.ack(env, { name, ok: true, message: '没有进行中的页面任务' }))
     return
   }
-  if (!XBS.pageCommands.includes(name) && name !== XBS.commands.cancel) {
-    sendToHost(link, XBS.fail(env, XBS.errors.E_PROTOCOL, '未知命令 ' + name))
+  if (!TULAI.pageCommands.includes(name) && name !== TULAI.commands.cancel) {
+    sendToHost(link, TULAI.fail(env, TULAI.errors.E_PROTOCOL, '未知命令 ' + name))
     return
   }
   const tab = await pickTab(link.platform)
   if (!tab) {
-    sendToHost(link, XBS.fail(env, XBS.errors.E_NO_TAB, SITES[link.platform].noTab))
+    sendToHost(link, TULAI.fail(env, TULAI.errors.E_NO_TAB, SITES[link.platform].noTab))
     return
   }
   // 豆包在后台标签时，合成 pointer/click 常常点了也不发送（E_SEND_UNCERTAIN）。
@@ -389,12 +389,12 @@ async function dispatchCommand(link, env) {
       envelope: env,
     })
     if (!response) {
-      sendToHost(link, XBS.fail(env, XBS.errors.E_SELECTOR_MISS, '内容脚本没有返回结果'))
+      sendToHost(link, TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '内容脚本没有返回结果'))
       return
     }
     sendToHost(link, response)
   } catch (err) {
-    sendToHost(link, XBS.fail(env, XBS.errors.E_NO_TAB, String(err && err.message || err)))
+    sendToHost(link, TULAI.fail(env, TULAI.errors.E_NO_TAB, String(err && err.message || err)))
   } finally {
     markTab(tab.id, 'idle', '', tab.url || '')
   }
@@ -467,7 +467,7 @@ async function fetchOrDownload(url) {
     const res = await fetch(url, { credentials: 'include' })
     if (res.ok) {
       const bytes = new Uint8Array(await res.arrayBuffer())
-      if (!XBS.looksLikeRaster(bytes)) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF' }
+      if (!TULAI.looksLikeRaster(bytes)) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF' }
       if (bytes.length <= 3 * 1024 * 1024) return { bytesBase64: bytesToBase64(bytes) }
     }
   } catch (err) {}

@@ -19,7 +19,7 @@ import (
 	cdpio "github.com/chromedp/cdproto/io"
 	"github.com/chromedp/chromedp"
 
-	"xbs/internal/browser"
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 type resourceStreamExecutor struct {
@@ -74,8 +74,8 @@ func TestLoadResourceCrossOrigin(t *testing.T) {
 	}
 	for _, backend := range []string{"Chrome", "Ego"} {
 		t.Run(backend, func(t *testing.T) {
-			if backend == "Ego" && os.Getenv("XBS_EGO_E2E") != "1" {
-				t.Skip("需显式 XBS_EGO_E2E=1；仅访问隔离 localhost")
+			if backend == "Ego" && os.Getenv("TULAI_EGO_E2E") != "1" {
+				t.Skip("需显式 TULAI_EGO_E2E=1；仅访问隔离 localhost")
 			}
 			var encoded bytes.Buffer
 			if err := png.Encode(&encoded, image.NewNRGBA(image.Rect(0, 0, 32, 24))); err != nil {
@@ -83,7 +83,7 @@ func TestLoadResourceCrossOrigin(t *testing.T) {
 			}
 			const signedQuery = "sig=a%2Fb%2Bc%3D&expires=7"
 			resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				cookie, err := r.Cookie("xbs_resource_fixture")
+				cookie, err := r.Cookie("tulai_resource_fixture")
 				if r.URL.Path != "/result.png" || r.URL.RawQuery != signedQuery || err != nil || cookie.Value != "logged-in" {
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
@@ -93,7 +93,7 @@ func TestLoadResourceCrossOrigin(t *testing.T) {
 			}))
 			defer resource.Close()
 			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.SetCookie(w, &http.Cookie{Name: "xbs_resource_fixture", Value: "logged-in", Path: "/", HttpOnly: true})
+				http.SetCookie(w, &http.Cookie{Name: "tulai_resource_fixture", Value: "logged-in", Path: "/", HttpOnly: true})
 				w.Write([]byte("<!doctype html><html><body>isolated cross-origin download fixture</body></html>"))
 			}))
 			defer source.Close()

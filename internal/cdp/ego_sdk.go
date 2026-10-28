@@ -73,7 +73,7 @@ func (s *Session) EgoDownload(selector string, timeout time.Duration) ([]byte, e
 	if timeout <= 0 || strings.TrimSpace(selector) == "" {
 		return nil, fmt.Errorf("缺少下载入口或有效超时")
 	}
-	dir, err := os.MkdirTemp("", "xbs-ego-download-")
+	dir, err := os.MkdirTemp("", "tulai-ego-download-")
 	if err != nil {
 		return nil, err
 	}

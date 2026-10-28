@@ -2,4 +2,4 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 export CGO_ENABLED=0
-exec go run ./cmd/xbs "$@"
+exec go run ./cmd/tulai "$@"

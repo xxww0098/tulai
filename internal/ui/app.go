@@ -14,16 +14,16 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/browser"
-	"xbs/internal/captcha"
-	"xbs/internal/extbridge"
-	"xbs/internal/images"
-	"xbs/internal/logging"
-	"xbs/internal/prompts"
-	"xbs/internal/store"
-	"xbs/internal/tasks"
-	"xbs/internal/update"
-	"xbs/internal/wizard"
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/images"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/prompts"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
+	"github.com/xxww0098/tulai/internal/update"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 func splitLines(s string) []string {
@@ -181,7 +181,7 @@ type sourceImage struct {
 
 // Run 启动应用（主 goroutine）。
 func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot string) {
-	// 菜单「关于 / 退出」用这个名字。可执行文件和 mygo.json 的 name 仍是 xbs。
+	// 菜单「关于 / 退出」用这个名字。可执行文件和 mygo.json 的 name 也是 tulai。
 	mygo.App.SetName("tulai")
 	a := &App{
 		store:        st,

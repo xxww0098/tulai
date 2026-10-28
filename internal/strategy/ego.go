@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/logging"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 //go:embed js/ego.js
@@ -59,7 +59,7 @@ func egoEvaluate(s egoPage, action string, args any, out any) error {
 	if out == nil {
 		out = &egoState{}
 	}
-	err = s.EgoEvaluate(fmt.Sprintf("/* xbs ego:%s */ (%s)(%q,%s)", action, egoJS, action, data), out)
+	err = s.EgoEvaluate(fmt.Sprintf("/* tulai ego:%s */ (%s)(%q,%s)", action, egoJS, action, data), out)
 	if ctxErr := s.Ctx().Err(); ctxErr != nil {
 		return ctxErr
 	}

@@ -189,7 +189,7 @@ function makeDoc(hostname) {
 }
 
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'page.js'), 'utf8'))
-const Page = globalThis.XBSPage
+const Page = globalThis.TULAIPage
 
 function surfaceWithInputs() {
   const doc = makeDoc('www.tongyi.com')
@@ -808,11 +808,11 @@ function sleep(ms) {
 async function chooserFlow() {
   installChooserMocks()
   vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'chooser.js'), 'utf8'))
-  assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser'), 'qianwen')
+  assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser'), 'qianwen')
 
-  document.documentElement.setAttribute('data-xbs-chooser', '')
+  document.documentElement.setAttribute('data-tulai-chooser', '')
   assert.strictEqual(Page.createChooserBridge(document), null)
-  document.documentElement.setAttribute('data-xbs-chooser', 'qianwen')
+  document.documentElement.setAttribute('data-tulai-chooser', 'qianwen')
 
   const bytes = Uint8Array.from([137, 80, 78, 71, 0, 255])
   const file = new File([bytes], 'src.png', { type: 'image/png' })
@@ -900,8 +900,8 @@ async function chooserFlow() {
     assert.strictEqual(item.picked[0].type, 'image/png')
     const got = new Uint8Array(await item.picked[0].arrayBuffer())
     assert.deepStrictEqual(Array.from(got), Array.from(bytes))
-    assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser-armed'), '0')
-    assert.strictEqual(document.getElementById('xbs-qianwen-file-slot'), null)
+    assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser-armed'), '0')
+    assert.strictEqual(document.getElementById('tulai-qianwen-file-slot'), null)
   }
 
   {
@@ -913,7 +913,7 @@ async function chooserFlow() {
     pdf.accept = '.pdf,.doc,application/pdf'
     pdf.showPicker()
     assert.strictEqual(HTMLInputElement.nativePickers, before + 1, '文档选择框仍走系统文件框')
-    assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser-result') || '', '')
+    assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser-result') || '', '')
     const img = new HTMLInputElement()
     img.type = 'file'
     img.accept = 'image/png'
@@ -922,7 +922,7 @@ async function chooserFlow() {
     img.showPicker()
     assert.strictEqual(got, 1)
     assert.strictEqual(HTMLInputElement.nativePickers, before + 1)
-    assert.strictEqual(document.documentElement.getAttribute('data-xbs-chooser-result'), 'ok')
+    assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser-result'), 'ok')
     bridge.disarm()
   }
 

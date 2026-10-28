@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/browser"
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 // KeyComplete 写在配置库 settings 表里。值为 CompleteYes 表示向导走完过。

@@ -11,10 +11,10 @@ import (
 	"testing/synctest"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/cdp"
-	"xbs/internal/images"
-	"xbs/internal/strategy"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/images"
+	"github.com/xxww0098/tulai/internal/strategy"
 )
 
 type resumeStrategy struct {

@@ -146,8 +146,8 @@ func TestEgoTransportStartupCancellation(t *testing.T) {
 }
 
 func TestEgoSessionLocalPage(t *testing.T) {
-	if testing.Short() || os.Getenv("XBS_EGO_E2E") != "1" {
-		t.Skip("需显式 XBS_EGO_E2E=1，在软件自有 ego lite 空间测试本地页面")
+	if testing.Short() || os.Getenv("TULAI_EGO_E2E") != "1" {
+		t.Skip("需显式 TULAI_EGO_E2E=1，在软件自有 ego lite 空间测试本地页面")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html><body><div id="ready">local test</div><input type="file"><textarea>old text</textarea><div id="editor" contenteditable="true">old text</div><script>window.changes=0;window.trustedEditorInputs=0;document.querySelector('input').addEventListener('change',()=>window.changes++);document.addEventListener('input',event=>{if(event.isTrusted&&event.target.id==='editor')window.trustedEditorInputs++})</script></body></html>`))
@@ -189,7 +189,7 @@ func TestEgoSessionLocalPage(t *testing.T) {
 		t.Fatalf("Ego trusted editor input failed: %v", err)
 	}
 	s.Handle("ping", func(data string) string { return `{"success":true,"data":"` + data + `"}` })
-	out, err := s.EvaluateAsync(`xbsCall('ping','bridge-test')`)
+	out, err := s.EvaluateAsync(`tulaiCall('ping','bridge-test')`)
 	if err != nil || !strings.Contains(out, "bridge-test") {
 		t.Fatalf("page bridge = %q, %v", out, err)
 	}
@@ -248,8 +248,8 @@ func TestEgoSessionLocalPage(t *testing.T) {
 }
 
 func TestEgoRenewPageSkipsLegacyNewDocument(t *testing.T) {
-	if testing.Short() || os.Getenv("XBS_EGO_E2E") != "1" {
-		t.Skip("需显式 XBS_EGO_E2E=1；只迁移隔离本地页面")
+	if testing.Short() || os.Getenv("TULAI_EGO_E2E") != "1" {
+		t.Skip("需显式 TULAI_EGO_E2E=1；只迁移隔离本地页面")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html><body>isolated legacy-hook migration</body></html>`))
@@ -298,7 +298,7 @@ const task=await taskSpace("小帮手");
 const tabs=(await task.tabs()).filter(tab=>tab.label&&new URL(tab.url).origin===origin);
 if(tabs.length!==2)throw new Error('renew must retain exactly two local pages');
 let retired=0;
-for(const tab of tabs){const page=task.page(tab.label);if(await page.evaluate(()=>sessionStorage.getItem('__xbsRetiredHookPage')==='1')){retired++;await page.reload();if(!await page.evaluate(()=>sessionStorage.getItem('__xbsRetiredHookPage')==='1'&&window.__legacyInjected===true))throw new Error('retired marker or legacy new-document script did not survive reload')}}
+for(const tab of tabs){const page=task.page(tab.label);if(await page.evaluate(()=>sessionStorage.getItem('__tulaiRetiredHookPage')==='1')){retired++;await page.reload();if(!await page.evaluate(()=>sessionStorage.getItem('__tulaiRetiredHookPage')==='1'&&window.__legacyInjected===true))throw new Error('retired marker or legacy new-document script did not survive reload')}}
 if(retired!==1)throw new Error('legacy page was not retired');
 `); err != nil {
 		t.Fatal(err)

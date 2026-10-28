@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/captcha"
+	"github.com/xxww0098/tulai/internal/captcha"
 )
 
 type egoFixture struct {
@@ -35,15 +35,15 @@ type egoFixture struct {
 
 func (f *egoFixture) Ctx() context.Context { return f.ctx }
 func (f *egoFixture) EgoEvaluate(expression string, out any) error {
-	if strings.Contains(expression, "xbs captcha:manual") {
+	if strings.Contains(expression, "tulai captcha:manual") {
 		f.manual = true
 		return nil
 	}
-	if strings.Contains(expression, "xbs captcha:verification") {
+	if strings.Contains(expression, "tulai captcha:verification") {
 		data, _ := json.Marshal(map[string]any{"blocked": f.blocked, "autoSolve": f.autoSolve && !f.manual})
 		return json.Unmarshal(data, out)
 	}
-	action := strings.TrimPrefix(strings.SplitN(expression, " */", 2)[0], "/* xbs ego:")
+	action := strings.TrimPrefix(strings.SplitN(expression, " */", 2)[0], "/* tulai ego:")
 	rows := f.states[action]
 	if len(rows) == 0 {
 		if action != "preview" {

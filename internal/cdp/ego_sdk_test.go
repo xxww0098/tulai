@@ -16,8 +16,8 @@ import (
 )
 
 func TestEgoSDKLocalPage(t *testing.T) {
-	if testing.Short() || os.Getenv("XBS_EGO_E2E") != "1" {
-		t.Skip("需显式 XBS_EGO_E2E=1；仅官方 SDK localhost 验收")
+	if testing.Short() || os.Getenv("TULAI_EGO_E2E") != "1" {
+		t.Skip("需显式 TULAI_EGO_E2E=1；仅官方 SDK localhost 验收")
 	}
 	scratch := egoTestTempDir(t)
 	var imageData bytes.Buffer
@@ -131,7 +131,7 @@ func TestEgoSDKLocalPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "xbs-ego-download-") {
+		if strings.HasPrefix(entry.Name(), "tulai-ego-download-") {
 			t.Fatalf("private SDK download directory remained: %s", entry.Name())
 		}
 	}
@@ -139,8 +139,8 @@ func TestEgoSDKLocalPage(t *testing.T) {
 }
 
 func TestEgoSDKDivMenuLocalPage(t *testing.T) {
-	if testing.Short() || os.Getenv("XBS_EGO_E2E") != "1" {
-		t.Skip("需显式 XBS_EGO_E2E=1；仅 DIV 菜单 localhost 验收")
+	if testing.Short() || os.Getenv("TULAI_EGO_E2E") != "1" {
+		t.Skip("需显式 TULAI_EGO_E2E=1；仅 DIV 菜单 localhost 验收")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<!doctype html><html><body><h1>DIV menu SDK fixture</h1>

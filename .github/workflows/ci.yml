@@ -51,14 +51,14 @@ jobs:
         run: |
           ver=$(jq -r .version extension/manifest.json)
           rm -rf dist-extension
-          mkdir -p dist-extension/xbs-extension
-          cp -a extension/. dist-extension/xbs-extension/
+          mkdir -p dist-extension/tulai-extension
+          cp -a extension/. dist-extension/tulai-extension/
           find dist-extension -name .DS_Store -delete
-          (cd dist-extension && zip -r "xbs-extension-${ver}.zip" xbs-extension)
-          (cd dist-extension && sha256sum "xbs-extension-${ver}.zip" > SHA256SUMS.txt)
+          (cd dist-extension && zip -r "tulai-extension-${ver}.zip" tulai-extension)
+          (cd dist-extension && sha256sum "tulai-extension-${ver}.zip" > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v7
         with:
-          name: xbs-extension
+          name: tulai-extension
           if-no-files-found: error
           retention-days: 14
           path: |
@@ -100,7 +100,7 @@ jobs:
         run: scripts/collect-dist.sh "${{ matrix.name }}"
       - uses: actions/upload-artifact@v7
         with:
-          name: xbs-${{ matrix.name }}
+          name: tulai-${{ matrix.name }}
           if-no-files-found: error
           retention-days: 14
           path: dist/*
@@ -115,7 +115,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          pattern: xbs-*
+          pattern: tulai-*
           path: artifacts
       - name: Stage release assets
         run: |
@@ -153,20 +153,20 @@ jobs:
             test -s SHA256SUMS
             version=${GITHUB_REF_NAME#v}
             required=(
-              "xbs ${version}.dmg"
-              "xbs Setup ${version} amd64.exe"
-              "xbs Setup ${version} arm64.exe"
-              "xbs-${version}-windows-amd64.exe"
-              "xbs-${version}-windows-arm64.exe"
-              "xbs-${version}-linux-amd64.tar.gz"
-              "xbs-${version}-linux-arm64.tar.gz"
-              "xbs_${version}_amd64.deb"
-              "xbs_${version}_arm64.deb"
+              "tulai ${version}.dmg"
+              "tulai Setup ${version} amd64.exe"
+              "tulai Setup ${version} arm64.exe"
+              "tulai-${version}-windows-amd64.exe"
+              "tulai-${version}-windows-arm64.exe"
+              "tulai-${version}-linux-amd64.tar.gz"
+              "tulai-${version}-linux-arm64.tar.gz"
+              "tulai_${version}_amd64.deb"
+              "tulai_${version}_arm64.deb"
             )
             shopt -s nullglob
-            extzips=(xbs-extension-*.zip)
+            extzips=(tulai-extension-*.zip)
             if [[ ${#extzips[@]} -ne 1 ]]; then
-              echo "expected one xbs-extension zip, found ${#extzips[@]}" >&2
+              echo "expected one tulai-extension zip, found ${#extzips[@]}" >&2
               exit 1
             fi
             for name in "${required[@]}"; do
@@ -186,17 +186,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=${GITHUB_REF_NAME#v}
-          ext=$(unzip -p release/xbs-extension-*.zip xbs-extension/manifest.json | jq -r .version)
+          ext=$(unzip -p release/tulai-extension-*.zip tulai-extension/manifest.json | jq -r .version)
           notes=$(mktemp)
           {
             echo "# tulai ${version}"
             echo
-            echo "桌面端 ${version}（mygo.json，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（xbs-extension-${ext}.zip），编号独立，不跟着桌面端走。"
+            echo "桌面端 ${version}（mygo.json，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（tulai-extension-${ext}.zip），编号独立，不跟着桌面端走。"
             echo
             echo "- macOS 磁盘映像只做了 ad-hoc 签名，没有公证。别的 Mac 上 Gatekeeper 会拦截。在访达里右键打开，或对应用执行 xattr -dr com.apple.quarantine。仓库里没有 Apple Developer ID。"
             echo "- Windows 安装器和 exe 没有代码签名，SmartScreen 可能报警。"
             echo "- Linux 的 deb 和 tar.gz 没有签名。把 install.sh 和对应架构的 .tar.gz 放在同一目录再执行，会安装到当前用户。"
-            echo "- 已安装的桌面端启动后会自动检查（设置里可关闭），也可以用菜单「帮助 → 检查更新…」、标题栏「检查更新」或 \`xbs update\`。它请求 https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest（公开仓库，不带 token），GitHub 连不上时再试镜像前缀，按系统下载安装包并用 SHA256SUMS 校验。任务进行中不会打断。这些二进制没有公证，也没有代码签名。页面桥扩展不随桌面端更新。"
+            echo "- 已安装的桌面端启动后会自动检查（设置里可关闭），也可以用菜单「帮助 → 检查更新…」、标题栏「检查更新」或 \`tulai update\`。它请求 https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest（公开仓库，不带 token），GitHub 连不上时再试镜像前缀，按系统下载安装包并用 SHA256SUMS 校验。任务进行中不会打断。这些二进制没有公证，也没有代码签名。页面桥扩展不随桌面端更新。"
             echo
             echo "说明见 docs/RELEASING.md。"
           } >"$notes"

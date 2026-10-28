@@ -24,7 +24,7 @@ function load(page) {
         sendMessage() { return { catch() {} } },
       },
     },
-    XBSPage: page,
+    TULAIPage: page,
   })
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'protocol.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8'), context)

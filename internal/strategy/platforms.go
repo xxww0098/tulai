@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"xbs/internal/cdp"
+	"github.com/xxww0098/tulai/internal/cdp"
 )
 
 // Doubao 豆包策略。

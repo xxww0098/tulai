@@ -1,6 +1,6 @@
 // ext-smoke 启动本机扩展桥，等待扩展 hello，并做一次 ping 与 status。
-// 设置 XBS_EXT_LIVE=1 时，在已登录的页面上再跑一次图生图。
-// XBS_EXT_PLATFORM 默认 qianwen，豆包实机设为 doubao。步骤见 extension/README.md。
+// 设置 TULAI_EXT_LIVE=1 时，在已登录的页面上再跑一次图生图。
+// TULAI_EXT_PLATFORM 默认 qianwen，豆包实机设为 doubao。步骤见 extension/README.md。
 // 千问若弹出阿里云滑块，会连本机 Chrome 调试端口（默认 127.0.0.1:9222）做信任拖动，再继续等图。
 package main
 
@@ -14,20 +14,20 @@ import (
 	"syscall"
 	"time"
 
-	"xbs/internal/extbridge"
-	"xbs/internal/images"
-	"xbs/internal/tasks"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/images"
+	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 func main() {
-	addr := os.Getenv("XBS_EXT_ADDR")
+	addr := os.Getenv("TULAI_EXT_ADDR")
 	if addr == "" {
 		addr = extbridge.DefaultAddr
 	}
-	token := os.Getenv("XBS_EXT_TOKEN")
+	token := os.Getenv("TULAI_EXT_TOKEN")
 	if token == "" {
 		token = "dev-token"
-		fmt.Println("未设置 XBS_EXT_TOKEN，使用仅供本机冒烟的默认令牌 dev-token。桌面端 tulai 会自己生成令牌，扩展打开 tulai 后会自动对接。")
+		fmt.Println("未设置 TULAI_EXT_TOKEN，使用仅供本机冒烟的默认令牌 dev-token。桌面端 tulai 会自己生成令牌，扩展打开 tulai 后会自动对接。")
 	}
 	srv, err := extbridge.Listen(extbridge.Config{Addr: addr, Token: token})
 	must(err)
@@ -45,7 +45,7 @@ func main() {
 			return
 		}
 		fmt.Printf("hello 已通过 session=%s platform=%s\n", sess.ID(), sess.Platform())
-		if os.Getenv("XBS_EXT_LIVE") == "1" && sess.Platform() != livePlatform() {
+		if os.Getenv("TULAI_EXT_LIVE") == "1" && sess.Platform() != livePlatform() {
 			fmt.Printf("实机目标是 %s，先跳过这条 %s hello。\n", livePlatform(), sess.Platform())
 			continue
 		}
@@ -68,7 +68,7 @@ func main() {
 		} else {
 			fmt.Printf("status 应答: %s\n", res.Payload)
 		}
-		if os.Getenv("XBS_EXT_LIVE") == "1" {
+		if os.Getenv("TULAI_EXT_LIVE") == "1" {
 			if err := liveOnce(ctx, sess); err != nil {
 				fmt.Println("实机生成失败:", err)
 				os.Exit(1)
@@ -76,12 +76,12 @@ func main() {
 			return
 		}
 		fmt.Println("等待扩展断开或下一次 hello。Ctrl+C 退出。")
-		fmt.Println("要在已登录页面上跑一次生成，另开进程并设置 XBS_EXT_LIVE=1、XBS_EXT_PROMPT。图生图再加 XBS_EXT_IMAGE。豆包再加 XBS_EXT_PLATFORM=doubao。")
+		fmt.Println("要在已登录页面上跑一次生成，另开进程并设置 TULAI_EXT_LIVE=1、TULAI_EXT_PROMPT。图生图再加 TULAI_EXT_IMAGE。豆包再加 TULAI_EXT_PLATFORM=doubao。")
 	}
 }
 
 func livePlatform() string {
-	platform := os.Getenv("XBS_EXT_PLATFORM")
+	platform := os.Getenv("TULAI_EXT_PLATFORM")
 	if platform == "" {
 		return extbridge.PlatformQianwen
 	}
@@ -89,16 +89,16 @@ func livePlatform() string {
 }
 
 func liveOnce(ctx context.Context, sess *extbridge.Session) error {
-	image := os.Getenv("XBS_EXT_IMAGE")
-	prompt := os.Getenv("XBS_EXT_PROMPT")
+	image := os.Getenv("TULAI_EXT_IMAGE")
+	prompt := os.Getenv("TULAI_EXT_PROMPT")
 	if prompt == "" {
-		return fmt.Errorf("实机生成需要 XBS_EXT_PROMPT；图生图再设置 XBS_EXT_IMAGE")
+		return fmt.Errorf("实机生成需要 TULAI_EXT_PROMPT；图生图再设置 TULAI_EXT_IMAGE")
 	}
 	wait := 120 * time.Second
-	if raw := os.Getenv("XBS_EXT_WAIT"); raw != "" {
+	if raw := os.Getenv("TULAI_EXT_WAIT"); raw != "" {
 		seconds, err := strconv.Atoi(raw)
 		if err != nil || seconds <= 0 {
-			return fmt.Errorf("XBS_EXT_WAIT 需要正整数秒")
+			return fmt.Errorf("TULAI_EXT_WAIT 需要正整数秒")
 		}
 		wait = time.Duration(seconds) * time.Second
 	}
@@ -127,7 +127,7 @@ func liveOnce(ctx context.Context, sess *extbridge.Session) error {
 	if out.Submitted {
 		fmt.Println("发送已确认")
 	}
-	dir := os.Getenv("XBS_EXT_OUT")
+	dir := os.Getenv("TULAI_EXT_OUT")
 	if dir == "" {
 		dir = "ext-live-out"
 	}

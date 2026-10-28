@@ -1,19 +1,19 @@
-// xbs 基础页面运行时：Go↔页面桥桩与 DOM 原语。
+// tulai 基础页面运行时：Go↔页面桥桩与 DOM 原语。
 // 由 Go 端在会话建立后注入（并注册为新文档脚本）。
 (function () {
-  if (window.__xbsBaseInstalled === 3) return;
-  window.__xbsBaseInstalled = 3;
+  if (window.__tulaiBaseInstalled === 3) return;
+  window.__tulaiBaseInstalled = 3;
 
   // ---- 桥：页面 → Go 异步调用 ----
-  // 页面侧: await xbsCall("cmd", dataString) → Go 处理结果字符串
-  window.__xbsSeq = window.__xbsSeq || 0;
-  window.__xbsPending = window.__xbsPending || {};
-  window.__xbsResolve = function (id, answerJson) {
+  // 页面侧: await tulaiCall("cmd", dataString) → Go 处理结果字符串
+  window.__tulaiSeq = window.__tulaiSeq || 0;
+  window.__tulaiPending = window.__tulaiPending || {};
+  window.__tulaiResolve = function (id, answerJson) {
     var obj;
     try { obj = JSON.parse(answerJson); } catch (e) { return; }
-    var entry = window.__xbsPending[id];
+    var entry = window.__tulaiPending[id];
     if (entry) {
-      delete window.__xbsPending[id];
+      delete window.__tulaiPending[id];
       // result 是处理程序返回的 JSON 字符串，解析成对象再交给调用方
       var res = obj.result;
       if (typeof res === 'string') {
@@ -22,25 +22,25 @@
       entry(res);
     }
   };
-  function xbsCall(cmd, data) {
+  function tulaiCall(cmd, data) {
     return new Promise(function (resolve) {
-      var id = ++window.__xbsSeq;
-      window.__xbsPending[id] = resolve;
+      var id = ++window.__tulaiSeq;
+      window.__tulaiPending[id] = resolve;
       try {
-        xbsBridge(JSON.stringify({ cmd: cmd, id: id, data: data == null ? '' : String(data) }));
-      } catch (e) { delete window.__xbsPending[id]; resolve(null); }
+        tulaiBridge(JSON.stringify({ cmd: cmd, id: id, data: data == null ? '' : String(data) }));
+      } catch (e) { delete window.__tulaiPending[id]; resolve(null); }
       // 60s 超时兜底
       setTimeout(function () {
-        if (window.__xbsPending[id]) { delete window.__xbsPending[id]; resolve(null); }
+        if (window.__tulaiPending[id]) { delete window.__tulaiPending[id]; resolve(null); }
       }, 60000);
     });
   }
-  window.xbsCall = xbsCall;
+  window.tulaiCall = tulaiCall;
 
   // ---- DOM 原语 ----
 
   // 单次浏览器点击，可信 pointerdown 可打开 Radix 等受控菜单。
-  window.xbsClick = async function (sel) {
+  window.tulaiClick = async function (sel) {
     var el = typeof sel === 'string' ? document.querySelector(sel) : sel;
     if (!el || !el.isConnected || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
     el.scrollIntoView({ block: 'center', inline: 'center' });
@@ -51,12 +51,12 @@
     var x = (left + right) / 2, y = (top + bottom) / 2;
     var target = document.elementFromPoint(x, y);
     if (!target || !el.contains(target)) return false;
-    var answer = await xbsCall('mouseClick', JSON.stringify({ x: x, y: y }));
+    var answer = await tulaiCall('mouseClick', JSON.stringify({ x: x, y: y }));
     return !!(answer && answer.success);
   };
 
   // 向 composer（textarea / contenteditable / input）写入文本并派发输入事件
-  window.xbsInsertText = function (sel, text) {
+  window.tulaiInsertText = function (sel, text) {
     var el = document.querySelector(sel);
     if (!el) return false;
     el.focus();
@@ -76,23 +76,23 @@
   };
 
   // 标记第 n 个 file input 供 CDP 上传
-  window.xbsMarkFileInput = function (n) {
+  window.tulaiMarkFileInput = function (n) {
     var inputs = document.querySelectorAll('input[type=file]');
     var el = inputs[n];
     if (!el) return -1;
-    for (var i = 0; i < inputs.length; i++) inputs[i].removeAttribute('data-xbs-upload');
-    el.setAttribute('data-xbs-upload', '1');
+    for (var i = 0; i < inputs.length; i++) inputs[i].removeAttribute('data-tulai-upload');
+    el.setAttribute('data-tulai-upload', '1');
     return inputs.length;
   };
-  window.xbsUnmarkFileInput = function () {
-    var el = document.querySelector('input[type=file][data-xbs-upload="1"]');
+  window.tulaiUnmarkFileInput = function () {
+    var el = document.querySelector('input[type=file][data-tulai-upload="1"]');
     if (!el) return false;
-    el.removeAttribute('data-xbs-upload');
+    el.removeAttribute('data-tulai-upload');
     return true;
   };
 
   // 按文本找按钮并点击（发送按钮等）
-  window.xbsClickButtonText = async function (texts, scopeSel) {
+  window.tulaiClickButtonText = async function (texts, scopeSel) {
     var scope = scopeSel ? (document.querySelector(scopeSel) || document) : document;
     var els = scope.querySelectorAll('button,[role=button],div,span,a');
     for (var i = els.length - 1; i >= 0; i--) {

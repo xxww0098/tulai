@@ -7,8 +7,8 @@ import (
 	"time"
 	"unicode"
 
-	"xbs/internal/tasks"
-	"xbs/internal/wizard"
+	"github.com/xxww0098/tulai/internal/tasks"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 const (

@@ -15,7 +15,7 @@ import (
 const PairPort = "18764"
 
 // PairPath 是发现令牌的路径。
-const PairPath = "/xbs-pair"
+const PairPath = "/tulai-pair"
 
 // PairInfo 是扩展启动时来取的令牌和桥端口。
 type PairInfo struct {
@@ -108,7 +108,7 @@ func (p *PairServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]string{
-		"product": "xbs",
+		"product": "tulai",
 		"token":   token,
 		"port":    port,
 	})

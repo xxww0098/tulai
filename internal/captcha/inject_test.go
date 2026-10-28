@@ -45,18 +45,18 @@ const canvas=()=>new Element('canvas');
 const editor=(text='创建画布 标记改图 抠图 擦除 扩图 保存',count=1)=>new Element('div',{class:'dbx-dialog modal overlay'},Array.from({length:count},canvas),text);
 let body=new Element('body'),report,events=[];
 const document={readyState:'loading',get body(){return body},querySelectorAll:q=>body.querySelectorAll(q),querySelector:q=>body.querySelector(q)};
-const window={addEventListener(){},xbsCall(name,value){events.push([name,value]);return Promise.resolve({success:false})}};
+const window={addEventListener(){},tulaiCall(name,value){events.push([name,value]);return Promise.resolve({success:false})}};
 const source=` + strconv.Quote(InjectJS()) + `;
-const staleWindow={__xbsCaptchaInstalled:true};vm.runInNewContext(source,{window:staleWindow});
-assert.equal(staleWindow.__xbsCaptchaRevision,undefined,'old installed guard must not claim a new revision');
+const staleWindow={__tulaiCaptchaInstalled:true};vm.runInNewContext(source,{window:staleWindow});
+assert.equal(staleWindow.__tulaiCaptchaRevision,undefined,'old installed guard must not claim a new revision');
 vm.runInNewContext(source,{window,document,console:{log(){}},getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),setInterval:fn=>{report=fn},setTimeout:()=>0});
-assert.equal(window.__xbsCaptchaRevision,` + strconv.Quote(injectRevision) + `);
-window.__xbsCaptcha.setManual(true);
-window.__xbsCaptcha.start();
+assert.equal(window.__tulaiCaptchaRevision,` + strconv.Quote(injectRevision) + `);
+window.__tulaiCaptcha.setManual(true);
+window.__tulaiCaptcha.start();
 function check(root,expected,label,extra=[]){
  body=new Element('body',{},[root,...extra]);
- assert.equal(!!window.__xbsCaptcha.detect(),expected,label);
- report();assert.equal(window.__xbsCaptcha.status().blocked,expected,label+' blocking state');
+ assert.equal(!!window.__tulaiCaptcha.detect(),expected,label);
+ report();assert.equal(window.__tulaiCaptcha.status().blocked,expected,label+' blocking state');
 }
 check(editor(),false,'normal generated-image editor');
 check(editor('请拖动画布，滑动缩放图片'),false,'editing instructions are not verification semantics');
@@ -70,7 +70,7 @@ check(new Element('div',{class:'modal'},[canvas()],'请完成下方验证码'),t
 check(new Element('div',{class:'dialog'},[canvas()],'安全验证：请拖动滑块'),true,'explicit slider verification');
 check(new Element('iframe',{src:'https://example.test/captcha'}),true,'dedicated captcha iframe');
 check(editor(),false,'normal editor clears prior captcha blocking');
-window.__xbsCaptcha.stop();
+window.__tulaiCaptcha.stop();
 assert.equal(events.some(([name])=>name==='captchaSolve'),false,'classification fixture must never solve a challenge');
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
@@ -100,35 +100,35 @@ async function check(kind,enabled,disableAt){
   querySelectorAll:q=>q==='#captcha_verify_image'?[root]:[],
   createElement(){actions.push('capture');return {getContext:()=>({drawImage(){}}),toDataURL:()=>''}},
   elementFromPoint(){actions.push('hit');return {dispatchEvent(){actions.push('drag')}}}};
- const window={addEventListener(){},xbsCall(name,value){
+ const window={addEventListener(){},tulaiCall(name,value){
   calls.push(name);
-  if(name===disableAt){window.__xbsCaptcha.setManual(true);actionsAtDisable=actions.length;return Promise.resolve({success:true,indices:[1],ratio:0.5,base64:'fixture'})}
+  if(name===disableAt){window.__tulaiCaptcha.setManual(true);actionsAtDisable=actions.length;return Promise.resolve({success:true,indices:[1],ratio:0.5,base64:'fixture'})}
   return Promise.resolve({success:false,error:'fixture stop'});
  }};
  const context={window,document,console:{log:msg=>logs.push(msg)},getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),
   setInterval:fn=>timers.push(fn),setTimeout:()=>0};
  vm.runInNewContext(enabled===undefined?source:(enabled?enabledSource:disabledSource),context);
- assert.ok(window.__xbsCaptcha.detect(),kind+' must remain detectable');
- await window.__xbsCaptcha.solve();
- const polling=window.__xbsCaptcha.start();
+ assert.ok(window.__tulaiCaptcha.detect(),kind+' must remain detectable');
+ await window.__tulaiCaptcha.solve();
+ const polling=window.__tulaiCaptcha.start();
  timers.forEach(fn=>fn());
  await Promise.resolve();await Promise.resolve();
- window.__xbsCaptcha.stop();
+ window.__tulaiCaptcha.stop();
  assert.ok(calls.includes('captchaBlocking'),kind+' must report blocking');
  if(enabled===true){
   assert.ok(calls.includes(kind==='slider'?'captchaShot':'captchaSolve'),kind+' enabled enters solver');
   if(disableAt)assert.equal(actions.length,actionsAtDisable,kind+' disabling during bridge call stops subsequent actions');
-  const listener=window.__xbsCaptcha,revision=window.__xbsCaptchaRevision;
+  const listener=window.__tulaiCaptcha,revision=window.__tulaiCaptchaRevision;
   vm.runInNewContext(disabledSource,context);
-  assert.equal(window.__xbsCaptcha,listener,'installed listener must receive config without reinstall');
-  assert.equal(window.__xbsCaptchaRevision,revision,'config must preserve installed revision');
+  assert.equal(window.__tulaiCaptcha,listener,'installed listener must receive config without reinstall');
+  assert.equal(window.__tulaiCaptchaRevision,revision,'config must preserve installed revision');
   calls.length=0;actions.length=0;
-  await window.__xbsCaptcha.solve();
+  await window.__tulaiCaptcha.solve();
   assert.equal(calls.some(name=>name==='captchaShot'||name==='captchaSolve'),false,kind+' installed guard must not retain enabled');
   assert.deepEqual(actions,[],kind+' installed guard must not retain actions');
-  window.__xbsCaptcha.setManual(true);
+  window.__tulaiCaptcha.setManual(true);
   vm.runInNewContext(enabledSource,context);
-  assert.equal(window.__xbsCaptcha.status().autoSolve,true,'new Attach must reset manual using explicit user configuration');
+  assert.equal(window.__tulaiCaptcha.status().autoSolve,true,'new Attach must reset manual using explicit user configuration');
  }else{
   assert.equal(calls.some(name=>name==='captchaShot'||name==='captchaSolve'),false,kind+' disabled must not enter solver');
   assert.deepEqual(actions,[],kind+' disabled must not capture, drag or submit');
@@ -171,7 +171,7 @@ func (s *preparePageFixture) Ctx() context.Context {
 
 func (s *preparePageFixture) EgoEvaluate(expression string, out any) error {
 	s.evaluations++
-	if strings.Contains(expression, "xbs captcha:manual") {
+	if strings.Contains(expression, "tulai captcha:manual") {
 		s.manualCalls++
 		return nil
 	}

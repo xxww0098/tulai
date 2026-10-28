@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/browser"
-	"xbs/internal/store"
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 func TestPlanBrowserPrefersWindowsEdgeThenInstalledBrowsers(t *testing.T) {

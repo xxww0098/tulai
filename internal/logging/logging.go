@@ -88,7 +88,7 @@ func (l *Logger) Entries() []Entry {
 }
 
 // Info 记录普通信息。
-func (l *Logger) Info(format string, a ...any)  { l.add(Info, fmt.Sprintf(format, a...)) }
+func (l *Logger) Info(format string, a ...any) { l.add(Info, fmt.Sprintf(format, a...)) }
 
 // Success 记录成功信息。
 func (l *Logger) Success(format string, a ...any) { l.add(Success, fmt.Sprintf(format, a...)) }

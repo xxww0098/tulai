@@ -145,7 +145,7 @@ func installLinuxBinary(opts Options) (Outcome, error) {
 	src := opts.AssetPath
 	lower := strings.ToLower(src)
 	if strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
-		dir, err := os.MkdirTemp("", "xbs-bin-")
+		dir, err := os.MkdirTemp("", "tulai-bin-")
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -181,7 +181,7 @@ func installLinuxDeb(opts Options) (Outcome, error) {
 	if err != nil {
 		dir = os.TempDir()
 	}
-	dir = filepath.Join(dir, "xbs", "updates")
+	dir = filepath.Join(dir, "tulai", "updates")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return Outcome{}, err
 	}
@@ -277,7 +277,7 @@ func MacBundle(executable string) (string, bool) {
 	return bundle, true
 }
 
-// MacDestination is the bundle to replace, or ~/Applications/xbs.app.
+// MacDestination is the bundle to replace, or ~/Applications/tulai.app.
 func MacDestination(executable, home string) (dest string, inPlace bool) {
 	if bundle, ok := MacBundle(executable); ok {
 		return bundle, true
@@ -311,7 +311,7 @@ func installDMG(dmg, dest string) error {
 	if runtime.GOOS != "darwin" {
 		return errors.New("磁盘映像只能在 macOS 上安装")
 	}
-	mount, err := os.MkdirTemp("", "xbs-dmg-")
+	mount, err := os.MkdirTemp("", "tulai-dmg-")
 	if err != nil {
 		return err
 	}
@@ -639,7 +639,7 @@ func WindowsScript() string {
 }
 
 func writeWindowsScript() (string, error) {
-	dir, err := os.MkdirTemp("", "xbs-replace-")
+	dir, err := os.MkdirTemp("", "tulai-replace-")
 	if err != nil {
 		return "", err
 	}
