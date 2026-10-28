@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -26,7 +27,7 @@ func TestCfTExtensionPairs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pairExtension(t, rt.Path, []string{"--headless=new", "--disable-gpu"}, "cft")
+	pairExtension(t, rt.Path, []string{"--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"}, "cft")
 }
 
 func TestEdgeExtensionPairs(t *testing.T) {
@@ -75,7 +76,9 @@ func pairExtension(t *testing.T, bin string, extra []string, label string) {
 
 	profile := t.TempDir()
 	port := freePort(t)
+	var stderr bytes.Buffer
 	cmd := exec.Command(bin, launchArgs(port, profile, "about:blank", extDir, extra)...)
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +90,7 @@ func pairExtension(t *testing.T, bin string, extra []string, label string) {
 	})
 	ws, err := WaitWSURL(port, 25*time.Second)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\nstderr:\n%s", err, stderr.String())
 	}
 	if err := cdp.EnsureExtension(context.Background(), ws, extDir); err != nil {
 		t.Fatalf("ensure extension: %v", err)
