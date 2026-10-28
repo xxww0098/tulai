@@ -94,12 +94,17 @@ func (e *Engine) currentExtBatch() string {
 func (e *Engine) closeExtensionBridge() {
 	e.extMu.Lock()
 	srv := e.extSrv
+	pair := e.pair
 	e.extSrv = nil
+	e.pair = nil
 	e.extToken = ""
 	e.extListen = ""
 	e.extMu.Unlock()
 	if srv != nil {
 		_ = srv.Close()
+	}
+	if pair != nil {
+		_ = pair.Close()
 	}
 }
 

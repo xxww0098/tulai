@@ -283,6 +283,10 @@ func (c *SliderConn) Play(ctx context.Context, targetID string, events []SliderE
 
 // EvalJSON 在目标页主世界执行 expression，把返回值解到 dest。
 func (c *SliderConn) EvalJSON(ctx context.Context, targetID, expression string, dest any) error {
+	return c.evalJSON(ctx, targetID, expression, dest, false)
+}
+
+func (c *SliderConn) evalJSON(ctx context.Context, targetID, expression string, dest any, await bool) error {
 	session, err := c.session(ctx, targetID)
 	if err != nil {
 		return err
@@ -297,6 +301,9 @@ func (c *SliderConn) EvalJSON(ctx context.Context, targetID, expression string, 
 	params := map[string]any{
 		"expression":    expression,
 		"returnByValue": true,
+	}
+	if await {
+		params["awaitPromise"] = true
 	}
 	if err := c.call(ctx, session, "Runtime.evaluate", params, &eval); err != nil {
 		return err

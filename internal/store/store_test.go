@@ -69,3 +69,31 @@ func TestOpenAndDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteByExtensionAccountLeavesLocalRows(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	local, err := s.AddBrowser("豆包", "账号1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertExtensionAccount("豆包", "profile-a", "扩展甲"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertExtensionAccount("千问", "profile-a", "扩展甲"); err != nil {
+		t.Fatal(err)
+	}
+	s.DeleteByExtensionAccount("")
+	s.DeleteByExtensionAccount("  ")
+	if rows := s.Browsers(); len(rows) != 3 {
+		t.Fatalf("empty account id must not delete rows: %+v", rows)
+	}
+	s.DeleteByExtensionAccount("profile-a")
+	rows := s.Browsers()
+	if len(rows) != 1 || rows[0].ID != local.ID || rows[0].ExtAccount != "" {
+		t.Fatalf("local account should remain: %+v", rows)
+	}
+}

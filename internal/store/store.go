@@ -269,6 +269,21 @@ func (s *Store) DeleteBrowser(id int64) {
 	s.db.Exec(`DELETE FROM browsers WHERE id=?`, id)
 }
 
+// DeleteByExtensionAccount 删掉这个配置文件标识在各平台上的扩展账号。
+// 空标识不能用：本地浏览器的 ext_account 就是空字符串，一刀会把它们全删掉。
+func (s *Store) DeleteByExtensionAccount(account string) {
+	if s == nil {
+		return
+	}
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`DELETE FROM browsers WHERE ext_account=?`, account)
+}
+
 // UpdateBrowserHealth 记下额度、限流、验证码或登录失败。coolUntil 为 0 时不会自动恢复。
 func (s *Store) UpdateBrowserHealth(id int64, health string, coolUntil int64, lastError string) {
 	if s == nil || id <= 0 {

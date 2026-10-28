@@ -111,6 +111,11 @@ func (e *Engine) Run(ctx context.Context, opts Options, onTask func(Task), onPro
 	return e.run(ctx, opts, onTask, onProgress, e.attempt)
 }
 
+// RunObserved 和 Run 走同一条调度。attempt 换成测试里的页面操作，用来看任务落到哪个账号。
+func (e *Engine) RunObserved(ctx context.Context, opts Options, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
+	return e.run(ctx, opts, onTask, onProgress, attempt)
+}
+
 // Retry 只重跑失败、跳过或待验证的任务。提示词沿用已经拼好的正文。
 func (e *Engine) Retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress)) error {
 	return e.retry(ctx, opts, failed, onTask, onProgress, e.attempt)
