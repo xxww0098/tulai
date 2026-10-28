@@ -151,6 +151,40 @@ func hoverPressPose(e ui.Element) ui.Element {
 	return e.AnimatePose(pose, motionEaseFast)
 }
 
+// paintGenBar 在整条轨道上铺一层颜色，再扫一条高光。宽度跟卡片走，
+// 停在任意一帧也是一根完整的进度，不是左端一小截。少动时不扫。
+func paintGenBar(p *ui.Painter, r ui.Rect, accent ui.Color, reduce bool) {
+	// 整条一起明暗，不留空的一头。少动时固定在中间亮度。
+	alpha := float32(0.72)
+	if !reduce {
+		p.AnimationFrame()
+		phase := float32(p.Now().UnixMilli()%1200) / 1200
+		if phase > 0.5 {
+			phase = 1 - phase
+		}
+		alpha = 0.45 + phase
+	}
+	p.Fill(r, accent.Alpha(alpha), 3)
+}
+
+func quotaBar(c *ui.Context, key string, fraction float64, fill, track ui.Color) {
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	host := ui.Box(c.Key(key)).FillWidth().Height(6).Radius(3).Background(track)
+	shown := host.AnimateTo("fraction", float32(fraction), motionEaseOut)
+	host.Draw(func(p *ui.Painter, r ui.Rect) {
+		w := r.W * shown
+		if w <= 0 {
+			return
+		}
+		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: w, H: r.H}, fill, 3)
+	})
+}
+
 // motionProgress 把进度条的填充缓动到 fraction。indeterminate 时画一条来回的光带，
 // 只重绘、不重跑界面，生成中的卡片多了也不逐张重建视图。
 func motionProgress(c *ui.Context, key string, fraction float64, indeterminate bool) {

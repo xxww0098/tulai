@@ -17,7 +17,7 @@ import (
 // jobFly 让刚完成的缩略图从账号车道飞到结果格。同一单只标一处。
 type jobFly struct{ Task int }
 
-// LaneHeader 是账号面板顶上的那一行。N 是现在能同时出图的账号数。
+// LaneHeader 是已经在出图时面板顶上的那一行。
 func LaneHeader(slots, done, total int) string {
 	if slots < 0 {
 		slots = 0
@@ -29,6 +29,66 @@ func LaneHeader(slots, done, total int) string {
 		total = 0
 	}
 	return fmt.Sprintf("%d 个账号同时出图 · 完成 %d / 共 %d", slots, done, total)
+}
+
+// LaneStatusLine 是账号面板的标题。还没开始时只说有几个账号就绪；跑起来以后才写完成数。
+func LaneStatusLine(slots, done, total int, started bool) string {
+	if slots < 0 {
+		slots = 0
+	}
+	if slots == 0 {
+		if started && total > 0 {
+			return fmt.Sprintf("暂无可用账号 · 完成 %d / 共 %d", done, total)
+		}
+		return "暂无可用账号"
+	}
+	if !started {
+		return fmt.Sprintf("%d 个账号就绪", slots)
+	}
+	return LaneHeader(slots, done, total)
+}
+
+// BlockedAccounts 把不能出图的账号收成一句原因。能用的状态不写进来。
+func BlockedAccounts(lanes []tasks.AccountLane) string {
+	var parts []string
+	seen := map[string]bool{}
+	for _, ln := range lanes {
+		reason := blockReason(ln.State)
+		if reason == "" {
+			continue
+		}
+		name := ln.Platform
+		if name == "" {
+			name = ln.Name
+		}
+		piece := name + reason
+		if seen[piece] {
+			continue
+		}
+		seen[piece] = true
+		parts = append(parts, piece)
+	}
+	if len(parts) == 0 {
+		return "还没有可用账号"
+	}
+	return "没有可用账号：" + strings.Join(parts, "，")
+}
+
+func blockReason(state tasks.LaneState) string {
+	switch state {
+	case tasks.LaneLogin:
+		return "需要重新登录"
+	case tasks.LaneFull:
+		return "今日已满"
+	case tasks.LaneCooling:
+		return "冷却中"
+	case tasks.LaneCaptcha:
+		return "需要验证"
+	case tasks.LaneOffline:
+		return "离线"
+	default:
+		return ""
+	}
 }
 
 func (a *App) liveParallel() int {
@@ -122,8 +182,8 @@ func (a *App) laneHeader(c *ui.Context) {
 	tok := a.look
 	cards := ProgressCards(a.queueItems())
 	done, _, _, _, _ := ProgressTally(cards)
-	line := LaneHeader(a.liveParallel(), done, len(cards))
-	ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().
+	line := LaneStatusLine(a.liveParallel(), done, len(cards), a.running || len(cards) > 0)
+	ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).
 		ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 }
 
@@ -157,7 +217,7 @@ func (a *App) laneCards(c *ui.Context, board tasks.Board) {
 		if n := len(board.Lanes); cols > n {
 			cols = n
 		}
-		ui.Grid(c).Columns(cols).Gap(10).Children(func() {
+		ui.Grid(c).Columns(cols).Gap(10).AlignItems(ui.Stretch).Children(func() {
 			for i, ln := range board.Lanes {
 				a.laneCard(c, ln, i)
 			}
@@ -179,7 +239,11 @@ func laneEnter(i int) ui.ElementTransition {
 func (a *App) laneCard(c *ui.Context, ln tasks.AccountLane, i int) {
 	tok := a.look
 	card := ui.Column(c.Key(ln.ID)).Gap(8).Padding(10, 12).Radius(tok.radiusM).
-		Background(tok.paper).Border(1, tok.border).Transition(laneEnter(i))
+		Background(tok.paper).Border(1, tok.border).AlignSelf(ui.Stretch).FillHeight().
+		Label("车道" + ln.Name).Transition(laneEnter(i))
+	if ln.State == tasks.LaneLogin {
+		card.Opacity(0.72)
+	}
 	if ln.State == tasks.LaneRunning && !c.Preferences().ReduceMotion {
 		card.DrawOver(func(p *ui.Painter, r ui.Rect) {
 			p.AnimationFrame()
@@ -197,6 +261,7 @@ func (a *App) laneCard(c *ui.Context, ln tasks.AccountLane, i int) {
 			ui.Text(c, "同一窗口正在出图").FontSize(tok.caption).TextColor(tok.muted)
 		}
 		a.laneQuota(c, ln)
+		ui.Box(c).Grow(1)
 	})
 }
 
@@ -350,12 +415,22 @@ func (a *App) laneQuota(c *ui.Context, ln tasks.AccountLane) {
 		used = 0
 	}
 	frac := float64(used) / float64(capN)
+	if frac > 1 {
+		frac = 1
+	}
+	fill := tok.accent
+	switch {
+	case used >= capN:
+		fill = tok.muted
+	case used*5 >= capN*4:
+		fill = tok.warning
+	}
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "今日").FontSize(tok.caption).TextColor(tok.muted)
-		ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).TextColor(tok.text).
+		ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).TextColor(fill).
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 	})
-	motionProgress(c, "quota", frac, false)
+	quotaBar(c, "quota", frac, fill, tok.border)
 }
 
 func platformMark(c *ui.Context, platform string, tok tokens) {

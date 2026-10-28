@@ -24,6 +24,12 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	if got := LaneHeader(3, 1, 4); got != "3 个账号同时出图 · 完成 1 / 共 4" {
 		t.Fatal(got)
 	}
+	if got := LaneStatusLine(2, 0, 0, false); got != "2 个账号就绪" {
+		t.Fatal(got)
+	}
+	if got := LaneStatusLine(0, 0, 0, false); got != "暂无可用账号" {
+		t.Fatal(got)
+	}
 	a := &App{
 		platformAuto:    true,
 		concurrencyAuto: true,
@@ -36,7 +42,7 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
 	tt.Advance(500 * time.Millisecond)
-	for _, label := range []string{"豆包主力", "千问备用", "空闲", "2 个账号同时出图 · 完成 0 / 共 0", "今日", "0/20"} {
+	for _, label := range []string{"豆包主力", "千问备用", "空闲", "2 个账号就绪", "今日", "0/20"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
@@ -66,9 +72,19 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 			t.Fatalf("missing %q", label)
 		}
 	}
+	sum, ok := tt.Find("1 张图 · 1 个账号同时出图")
+	path, pathOK := tt.Find("图片/输出结果")
+	if !ok || !pathOK {
+		t.Fatal("summary lines missing")
+	}
+	mid := (sum.Y + path.Y + path.H) / 2
+	btnMid := start.Y + start.H/2
+	if delta := mid - btnMid; delta > 6 || delta < -6 {
+		t.Fatalf("button not centered on the two lines: text mid %v button mid %v", mid, btnMid)
+	}
 	a.running = true
 	tt.Frame()
-	tt.Advance(motionFast + 40*time.Millisecond)
+	tt.Advance(motionUI + 40*time.Millisecond)
 	if tt.HasText("开始出图") {
 		t.Fatal("start label stayed after the crossfade")
 	}
@@ -78,6 +94,63 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	}
 	if tt.FramePending() {
 		t.Fatal("stop button kept asking for frames")
+	}
+}
+
+func TestBlockedAccountsDisableStart(t *testing.T) {
+	if got := BlockedAccounts([]tasks.AccountLane{
+		{Platform: "豆包", State: tasks.LaneLogin},
+		{Platform: "千问", State: tasks.LaneFull},
+		{Platform: "豆包", State: tasks.LaneLogin},
+	}); got != "没有可用账号：豆包需要重新登录，千问今日已满" {
+		t.Fatal(got)
+	}
+	today := time.Now().Format("2006-01-02")
+	a := &App{
+		platformAuto:    true,
+		concurrencyAuto: true,
+		dailyCap:        20,
+		prompts:         "一只猫",
+		outputPath:      "图片/输出结果",
+		sources:         []sourceImage{{Path: "风景.png"}},
+		browserRows: []store.Browser{
+			{ID: 1, Name: "豆包没登录", Platform: "豆包", Health: store.HealthExhausted, LastError: "未登录"},
+			{ID: 2, Name: "千问今天满了", Platform: "千问", IsLoggedIn: true, Health: store.HealthReady, DayKey: today, DayCount: 20},
+		},
+	}
+	tt := ui.NewTester(a.view, 1280, 980)
+	tt.Advance(300 * time.Millisecond)
+	for _, label := range []string{"没有可用账号：豆包需要重新登录，千问今日已满", "暂无可用账号", "去重登"} {
+		if !tt.HasText(label) {
+			t.Fatalf("missing %q", label)
+		}
+	}
+	if tt.HasText("0 个账号同时出图") {
+		t.Fatal("zero concurrency still advertised")
+	}
+	if err := tt.Click("开始出图"); err != nil {
+		t.Fatal(err)
+	}
+	if a.running || a.wizardOn {
+		t.Fatal("disabled start still ran")
+	}
+	left, okL := tt.Find("车道豆包没登录")
+	right, okR := tt.Find("车道千问今天满了")
+	if !okL || !okR {
+		t.Fatalf("lane cards missing %v %v", okL, okR)
+	}
+	if d := left.H - right.H; d > 2 || d < -2 {
+		t.Fatalf("lane heights left %v right %v", left.H, right.H)
+	}
+
+	a.running = true
+	a.queue = []tasks.Task{
+		{Index: 1, Images: []string{"风景.png"}, Status: tasks.StatusRunning},
+		{Index: 2, Images: []string{"人像.png"}, Status: tasks.StatusRunning},
+		{Index: 3, Images: []string{"静物.png"}, Status: tasks.StatusRunning},
+	}
+	if got := a.stepLead(a.accountBoard(time.Now())); got != "正在出图 · 已完成 0/3" {
+		t.Fatal(got)
 	}
 }
 

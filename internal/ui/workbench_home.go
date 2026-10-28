@@ -413,9 +413,10 @@ func (a *App) stepRun(c *ui.Context, step flowStep) {
 		if plan.Action == StartWizard && !a.running {
 			a.accountCallout(c)
 		}
+		board := a.accountBoard(c.Now())
 		ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				summary := RunSummary(len(a.sources), len(a.taskPromptList()) > 0, a.liveParallel())
+				summary := a.stepLead(board)
 				ui.Text(c, summary).FontSize(tok.body).SingleLine().Tooltip(summary)
 				if note := a.runNote(); note != "" {
 					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(note)
@@ -433,12 +434,17 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	tok := a.look
 	th := c.Theme()
 	running := a.running
+	// 一个账号都没有时，按钮仍打开设置向导。有账号但今天都不能用，则关掉。
 	disabled := !running && plan.Action == StartNone
+	if !running && plan.Action == StartGenerate && a.liveParallel() == 0 {
+		disabled = true
+	}
 	label := "开始出图"
 	if running {
 		label = "停止"
 	}
-	b := ui.ButtonBase(c.Key("run-go")).Padding(8, 16).Gap(8).Radius(th.Radius).Shrink(0).AlignItems(ui.Center)
+	b := ui.ButtonBase(c.Key("run-go")).Padding(8, 16).Gap(8).Radius(th.Radius).Shrink(0).
+		AlignItems(ui.Center).AlignSelf(ui.Center)
 	bg, fg := th.Accent, th.AccentText
 	border := ui.Color{}
 	switch {
@@ -509,6 +515,25 @@ func (a *App) accountCallout(c *ui.Context) {
 		ui.Text(c, "还没有可用账号。先去设置登录，再开始出图。").FontSize(tok.body).Grow(1).MinWidth(0)
 		ui.Button(c, "去设置").OnClick(func() { a.openWizard() })
 	})
+}
+
+// stepLead 是出图步骤左侧的一行。跑起来写进度，没有能用的账号就写原因，避免和面板标题重复。
+func (a *App) stepLead(board tasks.Board) string {
+	cards := ProgressCards(a.queueItems())
+	done, _, _, _, _ := ProgressTally(cards)
+	if a != nil && a.running {
+		return fmt.Sprintf("正在出图 · 已完成 %d/%d", done, len(cards))
+	}
+	if a.liveParallel() == 0 {
+		if len(board.Lanes) > 0 {
+			return BlockedAccounts(board.Lanes)
+		}
+		if len(a.sources) == 0 && len(a.taskPromptList()) == 0 {
+			return "先添加图片，或写一条提示词"
+		}
+		return "还没有可用账号"
+	}
+	return RunSummary(len(a.sources), len(a.taskPromptList()) > 0, a.liveParallel())
 }
 
 // runNote 是出图步骤上的一行进度。待验证已经写在卡片上，这里不再重复成一条失败。
@@ -675,8 +700,16 @@ func (a *App) chooseReplacement() (string, error) {
 
 func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 	tok := a.look
-	ui.Column(c.Key("card:"+card.Key)).Gap(8).Padding(10).Radius(tok.radiusM).
-		Background(tok.paper).Border(1, tok.border).Transition(motionItem()).Children(func() {
+	box := ui.Column(c.Key("card:"+card.Key)).FillWidth().Gap(8).Padding(10).Radius(tok.radiusM).
+		Background(tok.paper).Border(1, tok.border).AlignSelf(ui.Stretch).Transition(motionItem())
+	if card.Status == "生成中" {
+		accent := c.Theme().Accent
+		reduce := c.Preferences().ReduceMotion
+		box.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			paintGenBar(p, ui.Rect{X: r.X + 10, Y: r.Y + r.H - 16, W: r.W - 20, H: 6}, accent, reduce)
+		})
+	}
+	box.Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			a.inputThumb(c, card)
 			if len(card.Shots) > 0 {
@@ -702,7 +735,7 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
 		}
 		if card.Status == "生成中" {
-			motionProgress(c, "gen", 0, true)
+			ui.Box(c.Key("gen-slot")).FillWidth().Height(6)
 		}
 		if card.Reason != "" {
 			color := tok.danger
