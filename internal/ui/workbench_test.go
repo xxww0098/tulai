@@ -11,6 +11,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -102,6 +103,56 @@ func TestDefaultOutputDir(t *testing.T) {
 	info, err := os.Stat(got)
 	if err != nil || !info.IsDir() || got != filepath.Join(dir, DefaultOutputName) {
 		t.Fatalf("created %q: %v", got, err)
+	}
+}
+
+func TestConcurrencyCaption(t *testing.T) {
+	if got := ConcurrencyCaption(true, 3); got != "自动（当前 3 个账号同时出图）" {
+		t.Fatalf("auto caption = %q", got)
+	}
+	if got := ConcurrencyCaption(false, 3); got != "手动上限（当前 3 个账号可用）" {
+		t.Fatalf("manual caption = %q", got)
+	}
+	if got := ConcurrencyCaption(true, 0); got != "自动（当前 0 个账号同时出图）" {
+		t.Fatalf("empty caption = %q", got)
+	}
+}
+
+func TestConcurrencyDefaultsToAuto(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	a.loadSettings()
+	if !a.concurrencyAuto || a.taskConcurrency() != 0 {
+		t.Fatal("concurrency should default to auto")
+	}
+	if got := ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots()); got != "自动（当前 0 个账号同时出图）" {
+		t.Fatalf("caption = %q", got)
+	}
+	if _, err := st.UpsertExtensionAccount("千问", "profile-a", "甲"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertExtensionAccount("豆包", "profile-a", "甲"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertExtensionAccount("千问", "profile-b", "乙"); err != nil {
+		t.Fatal(err)
+	}
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	a.platformAuto = true
+	if slots := a.parallelSlots(); slots != 2 {
+		t.Fatalf("same extension profile should count once: %d", slots)
+	}
+	a.concurrencyAuto = false
+	a.concurrency = 4
+	a.saveSettings()
+	again := &App{store: st}
+	again.loadSettings()
+	if again.concurrencyAuto || again.taskConcurrency() != 4 {
+		t.Fatalf("manual cap was not restored: auto=%v n=%v", again.concurrencyAuto, again.taskConcurrency())
 	}
 }
 

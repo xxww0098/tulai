@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -243,5 +244,271 @@ func TestRunUncertainSubmissionStopsWithoutResend(t *testing.T) {
 		if task.Status != StatusPending || task.Attempts != 0 {
 			t.Fatalf("不确定的生成仍可能进行，不能启动后续任务: %+v", task)
 		}
+	}
+}
+
+// overlapStarted 跑到第一批任务都堵在 attempt 里，返回已经开始的浏览器 ID。
+func overlapStarted(t *testing.T, st *store.Store, opts Options) []int64 {
+	t.Helper()
+	var got []int64
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		started := make(chan int64, 8)
+		finished := make(chan error, 1)
+		e := NewEngine(st, nil, nil, "")
+		go func() {
+			finished <- e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+				started <- task.BrowserID
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+		}()
+		synctest.Wait()
+		for len(started) > 0 {
+			got = append(got, <-started)
+		}
+		close(release)
+		synctest.Wait()
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+	})
+	return got
+}
+
+func TestAutoConcurrencyRunsOneJobPerAccount(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	for range 3 {
+		if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png", "d.png"},
+	})
+	if len(got) != 3 {
+		t.Fatalf("3 个可用账号应同时跑 3 条，实际 %v", got)
+	}
+	seen := map[int64]bool{}
+	for _, id := range got {
+		if seen[id] {
+			t.Fatalf("同一账号跑了两条: %v", got)
+		}
+		seen[id] = true
+	}
+}
+
+func TestManualConcurrencyCapsBelowAccountCount(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	for range 3 {
+		if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png", "d.png"}, Concurrency: 2,
+	})
+	if len(got) != 2 {
+		t.Fatalf("手动上限 2 时应只跑 2 条: %v", got)
+	}
+}
+
+func TestAutoConcurrencyFollowsAccountRecovery(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	first, err := st.AddBrowser("豆包", "甲", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.AddBrowser("豆包", "乙", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		until := time.Now().Add(5 * time.Second).Unix()
+		st.UpdateBrowserHealth(first.ID, store.HealthCooling, until, "冷却")
+		st.UpdateBrowserHealth(second.ID, store.HealthCooling, until, "冷却")
+		release := make(chan struct{})
+		started := make(chan int64, 4)
+		finished := make(chan error, 1)
+		e := NewEngine(st, nil, nil, "")
+		go func() {
+			finished <- e.run(context.Background(), Options{
+				Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"},
+			}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+				started <- task.BrowserID
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+		}()
+		synctest.Wait()
+		if len(started) != 0 {
+			t.Fatalf("冷却中的账号不应出图: %d", len(started))
+		}
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if len(started) != 2 {
+			t.Fatalf("两个账号恢复后应同时出图: %d", len(started))
+		}
+		close(release)
+		synctest.Wait()
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestAutoConcurrencyPicksUpRecoveredAccount(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	first, err := st.AddBrowser("豆包", "甲", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.AddBrowser("豆包", "乙", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		st.UpdateBrowserHealth(second.ID, store.HealthCooling, time.Now().Add(5*time.Second).Unix(), "冷却")
+		release := make(chan struct{})
+		started := make(chan int64, 4)
+		finished := make(chan error, 1)
+		e := NewEngine(st, nil, nil, "")
+		go func() {
+			finished <- e.run(context.Background(), Options{
+				Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"},
+			}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+				started <- task.BrowserID
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+		}()
+		synctest.Wait()
+		if len(started) != 1 {
+			t.Fatalf("冷却期间只应跑甲: %d", len(started))
+		}
+		if id := <-started; id != first.ID {
+			t.Fatalf("冷却期间只应跑甲: %d", id)
+		}
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if len(started) != 1 {
+			t.Fatalf("乙恢复后应和甲一起出图: %d", len(started))
+		}
+		if id := <-started; id != second.ID {
+			t.Fatalf("第二单应落到乙: %d", id)
+		}
+		close(release)
+		synctest.Wait()
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestExtensionAccountsRunInParallel(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	if _, err := st.UpsertExtensionAccount("千问", "profile-a", "甲"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertExtensionAccount("千问", "profile-b", "乙"); err != nil {
+		t.Fatal(err)
+	}
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"千问"}, Images: []string{"a.png", "b.png", "c.png"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("两个扩展配置文件应同时出图: %v", got)
+	}
+	if got[0] == got[1] {
+		t.Fatalf("两个任务落在同一个扩展账号: %v", got)
+	}
+}
+
+func TestExtensionPlaceholderIDsDoNotShareASlot(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"豆包", "千问"}, Images: []string{"a.png"}, Concurrency: 2,
+	})
+	if len(got) != 2 || got[0] == got[1] {
+		t.Fatalf("扩展占位 -1 与 -2 应各占一个名额: %v", got)
+	}
+}
+
+func TestSameExtensionProfileStaysSerial(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	qianwen, err := st.UpsertExtensionAccount("千问", "profile-a", "甲")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doubao, err := st.UpsertExtensionAccount("豆包", "profile-a", "甲")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.UpsertExtensionAccount("豆包", "profile-b", "乙")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"},
+	})
+	seen := map[int64]bool{}
+	for _, id := range got {
+		seen[id] = true
+	}
+	if seen[qianwen.ID] && seen[doubao.ID] {
+		t.Fatalf("同一扩展配置文件的千问和豆包不应同时出图: %v", got)
+	}
+	if !seen[other.ID] {
+		t.Fatalf("另一个配置文件应同时出图: %v", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("应有两个配置文件在跑: %v", got)
 	}
 }

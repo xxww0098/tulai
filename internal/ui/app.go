@@ -75,7 +75,8 @@ type App struct {
 	platDoubao      bool
 	platQianwen     bool
 	sendStrategy    string
-	concurrency     float64
+	concurrencyAuto bool
+	concurrency     float64 // 手动上限。自动时仍记住这个数，关掉自动后接着用
 	retryCount      float64
 	sendWait        float64
 	waitBefore      float64
@@ -304,7 +305,13 @@ func (a *App) loadSettings() {
 		a.platformAuto = raw == "1"
 	}
 	a.sendStrategy = pickStr(s.Get("send_strategy"), "顺序循环", []string{"顺序循环", "随机循环"})
-	a.concurrency = float64(clampInt(s.GetInt("concurrency"), 1, 16))
+	if n := s.GetInt("concurrency"); n <= 0 {
+		a.concurrencyAuto = true
+		a.concurrency = 1
+	} else {
+		a.concurrencyAuto = false
+		a.concurrency = float64(clampInt(n, 1, 16))
+	}
 	a.retryCount = float64(clampInt(s.GetInt("retry_count"), 0, 20))
 	a.sendWait = float64(clampInt(s.GetInt("send_wait_seconds"), 0, 600))
 	a.waitBefore = float64(clampInt(s.GetInt("wait_before_sending"), 0, 60))
@@ -384,7 +391,11 @@ func (a *App) saveSettings() {
 	s.SetPlatforms(plats)
 	s.SetInt("platform_auto", boolInt(a.platformAuto))
 	s.Set("send_strategy", a.sendStrategy)
-	s.SetInt("concurrency", int(a.concurrency))
+	if a.concurrencyAuto {
+		s.SetInt("concurrency", 0)
+	} else {
+		s.SetInt("concurrency", clampInt(int(a.concurrency), 1, 16))
+	}
 	s.SetInt("retry_count", int(a.retryCount))
 	s.SetInt("send_wait_seconds", int(a.sendWait))
 	s.SetInt("wait_before_sending", int(a.waitBefore))
@@ -529,7 +540,7 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		PromptSuffix:       a.promptSuffix,
 		UseSuffix:          a.useSuffix,
 		Images:             paths,
-		Concurrency:        int(a.concurrency),
+		Concurrency:        a.taskConcurrency(),
 		RetryCount:         int(a.retryCount),
 		SendWait:           int(a.sendWait),
 		WaitBeforeSend:     int(a.waitBefore),

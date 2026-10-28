@@ -15,8 +15,8 @@ func TestOpenAndDefaults(t *testing.T) {
 	if got := s.Get("send_strategy"); got != "顺序循环" {
 		t.Errorf("默认发送策略: %s", got)
 	}
-	if n := s.GetInt("concurrency"); n != 1 {
-		t.Errorf("默认并发: %d", n)
+	if n := s.GetInt("concurrency"); n != 0 {
+		t.Errorf("默认并发: %d，0 表示自动", n)
 	}
 	if got := s.Get("browserBackend"); got != "ego" {
 		t.Errorf("默认控制面: %s", got)

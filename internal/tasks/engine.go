@@ -222,17 +222,18 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	total := len(queue)
 	done := 0
 	var runErr error
-	workers := min(max(opts.Concurrency, 1), total)
+	// 工人数跟任务数走。真正的同时出图上限在每一轮按可用账号重算。
+	pool := total
 	jobs := make(chan Task)
-	completed := make(chan Task, workers)
-	// 按浏览器 ID 隔离。扩展桥的占位 ID 为负数，调度时归到同一个执行空间。
+	completed := make(chan Task, pool)
+	// 每个账号一个名额。扩展配置文件跨平台共用；负数占位 ID 不再并成 0。
 	busy := map[int64]bool{}
 	readyAt := map[int64]time.Time{}
 	var wg sync.WaitGroup
-	logging.Log.Info("任务开始：共 %d 个（并发 %d）", total, workers)
+	logging.Log.Info("任务开始：共 %d 个（并发 %d）", total, e.dispatchLimit(time.Now()))
 	onProgress(Progress{Done: 0, Total: total})
 
-	for w := 0; w < workers; w++ {
+	for w := 0; w < pool; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -275,8 +276,8 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		var next Task
 		index := -1
 		var earliest time.Time
-		if active < workers && ctx.Err() == nil {
-			now := time.Now()
+		now := time.Now()
+		if active < e.dispatchLimit(now) && ctx.Err() == nil {
 			for i := 0; i < len(pending); i++ {
 				task := pending[i]
 				wait, dead := e.settleAccount(ctx, &task)
@@ -301,18 +302,32 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 					}
 					continue
 				}
-				resource := max(task.BrowserID, 0)
+				resource := e.slotKey(task.BrowserID)
+				if busy[resource] || now.Before(readyAt[resource]) {
+					if id, ok := e.pickIdleAccount(task.Platform, resource, busy, readyAt, now); ok {
+						task.BrowserID = id
+						pending[i] = task
+						resource = e.slotKey(id)
+					}
+				}
 				if busy[resource] {
+					noteCool(&earliest, e.accountsFor(task.Platform), now)
 					continue
 				}
 				if ready := readyAt[resource]; now.Before(ready) {
 					if earliest.IsZero() || ready.Before(earliest) {
 						earliest = ready
 					}
+					noteCool(&earliest, e.accountsFor(task.Platform), now)
 					continue
 				}
 				index, next, dispatch = i, task, jobs
 				break
+			}
+		} else if ctx.Err() == nil {
+			// 名额满了也要在冷却结束时醒来，否则新恢复的账号要等当前这一单跑完。
+			for _, platform := range e.opts.Platforms {
+				noteCool(&earliest, e.accountsFor(platform), now)
 			}
 		}
 		if len(pending) == 0 && active == 0 {
@@ -326,7 +341,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		}
 		select {
 		case dispatch <- next:
-			busy[max(next.BrowserID, 0)] = true
+			busy[e.slotKey(next.BrowserID)] = true
 			if index == 0 {
 				pending = pending[1:]
 			} else {
@@ -339,13 +354,12 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 			if resource == 0 {
 				resource = t.BrowserID
 			}
-			resource = max(resource, 0)
-			delete(busy, resource)
+			delete(busy, e.slotKey(resource))
 			used := t.ranOn
 			if used == 0 {
 				used = resource
 			}
-			readyAt[max(used, 0)] = time.Now().Add(time.Duration(opts.SendWait) * time.Second)
+			readyAt[e.slotKey(used)] = time.Now().Add(time.Duration(opts.SendWait) * time.Second)
 			if t.rotated && t.Status == StatusPending {
 				t.rotated = false
 				pending = append(pending, t)
@@ -380,6 +394,102 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	wg.Wait()
 	logging.Log.Info("任务结束：完成 %d/%d", done, total)
 	return runErr
+}
+
+// noteCool 把同平台最近的冷却结束时间算进下一轮唤醒。
+// 正在跑的任务不会挡住刚恢复的账号。
+func noteCool(earliest *time.Time, rows []store.Browser, now time.Time) {
+	until := earliestCool(rows, now)
+	if until.IsZero() {
+		return
+	}
+	if earliest.IsZero() || until.Before(*earliest) {
+		*earliest = until
+	}
+}
+
+// dispatchLimit 是这一轮允许同时跑的任务数。
+// Concurrency <= 0 时等于当前可用账号名额，跑的过程中账号变多变少都会重算。
+// 正数是手动上限，仍然不会超过可用名额。一个可用账号都没有时，手动上限照旧，自动至少留 1，占位任务还能跑。
+func (e *Engine) dispatchLimit(now time.Time) int {
+	var rows []store.Browser
+	seen := map[string]bool{}
+	for _, platform := range e.opts.Platforms {
+		if seen[platform] {
+			continue
+		}
+		seen[platform] = true
+		rows = append(rows, e.accountsFor(platform)...)
+	}
+	usable := ParallelSlots(rows, now)
+	if e.opts.Concurrency > 0 {
+		if usable > 0 {
+			return min(e.opts.Concurrency, usable)
+		}
+		return e.opts.Concurrency
+	}
+	if usable < 1 {
+		return 1
+	}
+	return usable
+}
+
+// slotKey 是调度名额。本机浏览器用自己的 ID。
+// 扩展桥里同一个配置文件的千问和豆包共用一个名额：background.js 每条命令都会 focusTab，
+// 同一个窗口只能有一个前台标签，再开一个标签也抢不到焦点。不同配置文件各有进程和标签，名额分开。
+// 还没登记的负数占位 ID 保持原值，-1 和 -2 不再并成 0。
+func (e *Engine) slotKey(id int64) int64 {
+	if e == nil || e.store == nil || id == 0 {
+		return id
+	}
+	rows := e.store.Browsers()
+	account := ""
+	for _, b := range rows {
+		if b.ID == id {
+			account = b.ExtAccount
+			break
+		}
+	}
+	if account == "" {
+		return id
+	}
+	slot := id
+	for _, b := range rows {
+		if b.ExtAccount == account && b.ID < slot {
+			slot = b.ID
+		}
+	}
+	return slot
+}
+
+// pickIdleAccount 在当前名额正忙或还在发送间隔里时，改派到同平台另一个空闲账号。
+func (e *Engine) pickIdleAccount(platform string, busySlot int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
+	var best *store.Browser
+	for _, b := range e.accountsFor(platform) {
+		if !b.Usable(now) {
+			continue
+		}
+		slot := e.slotKey(b.ID)
+		if slot == busySlot || busy[slot] || now.Before(readyAt[slot]) {
+			continue
+		}
+		if best == nil || b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID) {
+			row := b
+			best = &row
+		}
+	}
+	if best == nil {
+		return 0, false
+	}
+	return best.ID, true
+}
+
+// Wake 让正在跑的调度再看一眼账号。恢复账号或新的扩展连上时调用。
+func (e *Engine) Wake() {
+	if e == nil {
+		return
+	}
+	e.poke()
 }
 
 // Stop 停止任务并关闭会话。

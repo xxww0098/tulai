@@ -88,6 +88,18 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 	return WorkbenchPlan{Action: StartGenerate, Platforms: platforms}
 }
 
+// ConcurrencyCaption 是「调度与等待」里并发这一行的说明。
+// 自动时写出当前能同时出图的账号数；手动时写出上限旁边的可用账号数。
+func ConcurrencyCaption(auto bool, slots int) string {
+	if slots < 0 {
+		slots = 0
+	}
+	if auto {
+		return fmt.Sprintf("自动（当前 %d 个账号同时出图）", slots)
+	}
+	return fmt.Sprintf("手动上限（当前 %d 个账号可用）", slots)
+}
+
 func (a AccountSnap) carries(extensionMode bool, now time.Time) bool {
 	if a.Extension != extensionMode {
 		return false
