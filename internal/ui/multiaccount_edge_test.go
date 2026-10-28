@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -631,22 +632,64 @@ func edgeMainPID(profile string) int {
 
 func startEdgeDisplay(t *testing.T) string {
 	t.Helper()
-	if os.Getenv("DISPLAY") != "" {
-		return os.Getenv("DISPLAY")
+	if display := os.Getenv("DISPLAY"); edgeDisplayAlive(display) {
+		return display
 	}
 	if _, err := exec.LookPath("Xvfb"); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac", "+extension", "GLX")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+	for n := 99; n < 110; n++ {
+		display := fmt.Sprintf(":%d", n)
+		if edgeDisplayAlive(display) {
+			_ = os.Setenv("DISPLAY", display)
+			return display
 		}
-	})
-	_ = os.Setenv("DISPLAY", ":99")
-	time.Sleep(300 * time.Millisecond)
-	return ":99"
+		cmd := exec.Command("Xvfb", display, "-screen", "0", "1280x800x24", "-ac", "+extension", "GLX")
+		if err := cmd.Start(); err != nil {
+			continue
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) && !edgeDisplayAlive(display) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !edgeDisplayAlive(display) {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			continue
+		}
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+		_ = os.Setenv("DISPLAY", display)
+		return display
+	}
+	t.Fatal("Xvfb 没有起来")
+	return ""
+}
+
+func edgeDisplayAlive(display string) bool {
+	display = strings.TrimSpace(display)
+	if i := strings.LastIndex(display, ":"); i >= 0 {
+		display = display[i+1:]
+	}
+	if i := strings.IndexByte(display, '.'); i >= 0 {
+		display = display[:i]
+	}
+	if display == "" {
+		return false
+	}
+	for _, r := range display {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	conn, err := net.DialTimeout("unix", "/tmp/.X11-unix/X"+display, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
