@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/extbridge"
-	"xbs/internal/heal"
-	"xbs/internal/logging"
-	"xbs/internal/store"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/heal"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 // errNeedsVerify 是页面上的滑块或安全验证。标签页留着，方便自动拖动或让用户处理。

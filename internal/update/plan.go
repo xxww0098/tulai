@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const appName = "xbs"
+const appName = "tulai"
 
 // Mode is how the running copy should be updated.
 type Mode string
@@ -72,7 +72,7 @@ func DetectMode(goos, executable string) Mode {
 		if strings.HasSuffix(strings.ToLower(slash), ".appimage") {
 			return ModeLinuxBinary
 		}
-		if slash == "/usr/bin/xbs" || strings.HasPrefix(slash, "/opt/xbs/") {
+		if slash == "/usr/bin/tulai" || strings.HasPrefix(slash, "/opt/tulai/") {
 			return ModeLinuxDeb
 		}
 		return ModeLinuxUser

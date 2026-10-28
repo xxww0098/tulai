@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/logging"
-	"xbs/internal/store"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 // ErrChromeNotFound 本机找不到 Chrome。

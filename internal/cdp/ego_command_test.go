@@ -47,7 +47,7 @@ func TestEgoImportPreservesUnicodeAndSpecialPaths(t *testing.T) {
 
 func egoTestTempDir(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "中文 路径 & ! %XBS_UNSET%")
+	dir := filepath.Join(t.TempDir(), "中文 路径 & ! %TULAI_UNSET%")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -85,15 +85,15 @@ func TestEgoCommandWritesUTF8AndCleansScript(t *testing.T) {
 
 func TestEgoBatchCommandQuotesOnlySafeEntry(t *testing.T) {
 	entry := egoImportEntry("C:/中文 %name% & !/bridge.mjs")
-	want := `cmd.exe /d /v:off /s /c ""%XBS_EGO_LAUNCHER%" nodejs -e "` + entry + `""`
+	want := `cmd.exe /d /v:off /s /c ""%TULAI_EGO_LAUNCHER%" nodejs -e "` + entry + `""`
 	if got := egoBatchCommandLine(entry); got != want || strings.Count(got, "%") != 2 {
 		t.Fatalf("unexpected cmd command line: %q", got)
 	}
 }
 
 func TestEgoBridgeUTF8FileImport(t *testing.T) {
-	if testing.Short() || os.Getenv("XBS_EGO_E2E") != "1" {
-		t.Skip("需显式 XBS_EGO_E2E=1；仅创建本机 IPC，不访问 TaskSpace 或网页")
+	if testing.Short() || os.Getenv("TULAI_EGO_E2E") != "1" {
+		t.Skip("需显式 TULAI_EGO_E2E=1；仅创建本机 IPC，不访问 TaskSpace 或网页")
 	}
 	dir := egoTestTempDir(t)
 	transport, err := startEgoTransport(context.Background(), nil, nil)

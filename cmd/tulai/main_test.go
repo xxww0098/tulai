@@ -63,16 +63,16 @@ func TestPackagedDataDir(t *testing.T) {
 		executable string
 		packaged   bool
 	}{
-		{"darwin", "/Applications/xbs.app/Contents/MacOS/xbs", true},
-		{"darwin", "/Applications/XBS.APP/Contents/MacOS/xbs", true},
-		{"darwin", "/tmp/go-build123/b001/exe/xbs", false},
-		{"darwin", "/tmp/xbs", false},
-		{"darwin", "/tmp/xbs/Contents/MacOS/xbs", false},
-		{"darwin", "/Applications/xbs.app/Contents/Resources/xbs", false},
-		{"windows", `C:\Program Files\xbs\xbs.exe`, true},
-		{"windows", `D:\Portable\xbs.exe`, true},
-		{"windows", `C:\Users\user\Temp\go-build\exe\xbs.exe`, true},
-		{"linux", "/usr/local/bin/xbs", false},
+		{"darwin", "/Applications/tulai.app/Contents/MacOS/tulai", true},
+		{"darwin", "/Applications/TULAI.APP/Contents/MacOS/tulai", true},
+		{"darwin", "/tmp/go-build123/b001/exe/tulai", false},
+		{"darwin", "/tmp/tulai", false},
+		{"darwin", "/tmp/tulai/Contents/MacOS/tulai", false},
+		{"darwin", "/Applications/tulai.app/Contents/Resources/tulai", false},
+		{"windows", `C:\Program Files\tulai\tulai.exe`, true},
+		{"windows", `D:\Portable\tulai.exe`, true},
+		{"windows", `C:\Users\user\Temp\go-build\exe\tulai.exe`, true},
+		{"linux", "/usr/local/bin/tulai", false},
 	} {
 		t.Run(tc.goos+"/"+tc.executable, func(t *testing.T) {
 			got, err := packagedDataDir(tc.goos, tc.executable)
@@ -81,7 +81,7 @@ func TestPackagedDataDir(t *testing.T) {
 			}
 			want := ""
 			if tc.packaged {
-				want = filepath.Join(configDir, "xbs")
+				want = filepath.Join(configDir, "tulai")
 			}
 			if got != want {
 				t.Fatalf("data directory = %q, want %q", got, want)

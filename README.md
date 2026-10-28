@@ -1,6 +1,6 @@
 # tulai
 
-tulai 是豆包和千问的批量生图桌面应用。命令和安装包里的可执行文件仍叫 `xbs`。源码仓库是 [xxww0098/tulai](https://github.com/xxww0098/tulai)。窗口标题和标题栏大字是「tulai」；macOS 菜单里的应用名也是「tulai」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
+tulai 是豆包和千问的批量生图桌面应用。命令和安装包里的可执行文件也叫 `tulai`。源码仓库是 [xxww0098/tulai](https://github.com/xxww0098/tulai)。窗口标题和标题栏大字是「tulai」；macOS 菜单里的应用名也是「tulai」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
 
 本地运行，没有授权激活，也不接远端数据库。已安装的桌面端可以从 GitHub Releases 检查并安装更新。
 
@@ -16,29 +16,29 @@ tulai 是豆包和千问的批量生图桌面应用。命令和安装包里的�
 | `internal/store` | SQLite `database/config.db`（`browsers` / `settings` / `prompts`）。已有同结构的库可以直接打开 |
 | `internal/logging` | Info/Success/Warning/Error/Debug 环形日志 |
 | `internal/ui` | mygo 原生窗口：首次设置向导、工作台、任务设置、浏览器、验证码、源图缩略图、队列表格、日志 |
-| `internal/update` | 启动时和每 6 小时静默检查、横幅一键更新、GitHub 镜像回退、`xbs update`。走公开 GitHub API，不需要 token。页面桥扩展不跟着桌面端更新 |
+| `internal/update` | 启动时和每 6 小时静默检查、横幅一键更新、GitHub 镜像回退、`tulai update`。走公开 GitHub API，不需要 token。页面桥扩展不跟着桌面端更新 |
 
 ## 运行
 
 ```bash
-./dev.sh          # 开发运行（等价 CGO_ENABLED=0 go run ./cmd/xbs）
+./dev.sh          # 开发运行（等价 CGO_ENABLED=0 go run ./cmd/tulai）
 ./build.sh        # 打包（go tool mygo build）
 go test ./...     # 单元测试（CV 求解器 / 配置库）
-go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟测试
-go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问和豆包扩展 hello
+go run ./cmd/tulai-cdp-smoke   # Chrome CDP 连通性冒烟测试
+go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问和豆包扩展 hello
 ```
 
 `go.mod` 把 MyGo 工具固定在 **v0.6.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.3**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.3` 上发布，页面扩展 zip 是 **0.3.7**。步骤见下文「发布 0.1.3」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.4**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.4` 上发布，页面扩展 zip 是 **0.3.8**。步骤见下文「发布 0.1.4」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
-已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、标题栏、设置页、设置向导，或终端里的 `xbs update`（只查看用 `xbs update --check`）。它请求 `https://api.github.com/repos/xxww0098/tulai/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`xbs version` 打印桌面端版本。
+已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、标题栏、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。它请求 `https://api.github.com/repos/xxww0098/tulai/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`tulai version` 打印桌面端版本。
 
 应用图标是仓库根目录的 `resources/icon.png`（1024×1024）。`mygo.json` 的 `icon` 指向它。`mygo build` 会把它做成 macOS `.icns`（Dock）、Windows 可执行文件图标和 NSIS 安装器图标，以及 Linux 桌面项图标。应用没有托盘菜单，因此不另做托盘图；启动时同一张 PNG 也会设到窗口（Windows / Linux）和 Dock（macOS）。
 
 千问和豆包都可以改由同一个 MV3 扩展操作页面。配置库 `browserBackend=extension` 时，这两个平台走本机扩展桥，不必再添加 Chrome 或 Edge 实例。键值 `ego` 表示不走扩展，页面由网页方式里的 Chrome 或 Edge 打开。加载、实机试跑和风险见 [`docs/EXT_SPIKE.md`](docs/EXT_SPIKE.md)。
 
-桌面端第一次打开会生成页面桥令牌（不再把 `dev-token` 当作正式令牌），并在 `127.0.0.1:18764/xbs-pair` 上给本机扩展读取。扩展弹出页显示「已自动对接」或「需要手动配对」。自动对接失败时，仍可复制令牌手动保存。重新生成后，扩展下一轮重连会自己换上新令牌；弹出页如果选过手动保存，要点「恢复自动对接」。
+桌面端第一次打开会生成页面桥令牌（不再把 `dev-token` 当作正式令牌），并在 `127.0.0.1:18764/tulai-pair` 上给本机扩展读取。扩展弹出页显示「已自动对接」或「需要手动配对」。自动对接失败时，仍可复制令牌手动保存。重新生成后，扩展下一轮重连会自己换上新令牌；弹出页如果选过手动保存，要点「恢复自动对接」。
 
 第一次打开，或还没有可用账号时，会先走设置向导：确认浏览器、勾选豆包或千问、弹出登录页。扫码登录后自动进入主界面。完成状态写在配置库里；以后还有健康账号就不再弹出。右上角「设置向导」可以再打开，用来多加一个账号。
 
@@ -48,13 +48,13 @@ go run ./cmd/xbs-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千问
 
 Windows 查找 `chrome.exe` 和 `msedge.exe`（Program Files、Program Files (x86)、LocalAppData）。macOS 查找 `/Applications` 里的 Google Chrome 和 Microsoft Edge。Linux 在 PATH、`/usr/bin` 和 `/opt/microsoft/msedge` 中查找 `google-chrome` 与 `microsoft-edge`。
 
-macOS 打包版将配置库、`BrowserData/` 和默认输出保存到 `~/Library/Application Support/xbs/`，可直接双击启动。macOS 的 `./dev.sh` / `go run` 仍使用项目工作目录。手动启动和任务执行共用同一个 profile 目录。
+macOS 打包版将配置库、`BrowserData/` 和默认输出保存到 `~/Library/Application Support/tulai/`，可直接双击启动。macOS 的 `./dev.sh` / `go run` 仍使用项目工作目录。手动启动和任务执行共用同一个 profile 目录。
 
 配置库位于数据目录下的 `database/config.db`。已有配置使用旧目录名时，请先退出应用，再将 `数据库/` 重命名为 `database/`。
 
 ### Windows 支持
 
-支持 Windows 10/11，提供 amd64 与 arm64 原生 GUI 构建。运行对应架构的安装器，或直接双击 `xbs.exe`；配置库、`BrowserData/` 和默认输出均保存在 `%APPDATA%\xbs\`，不依赖启动位置，也不会写入安装目录。Windows 的开发运行同样使用该用户数据目录。
+支持 Windows 10/11，提供 amd64 与 arm64 原生 GUI 构建。运行对应架构的安装器，或直接双击 `tulai.exe`；配置库、`BrowserData/` 和默认输出均保存在 `%APPDATA%\tulai\`，不依赖启动位置，也不会写入安装目录。Windows 的开发运行同样使用该用户数据目录。
 
 第一次打开会走设置向导。Windows 上有系统 Edge 时直接用它，不用另装 Chrome。Windows 上的可执行文件位置见上一节。
 
@@ -80,7 +80,7 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 开启自动求解时使用配置的验证码后端；需要人工验证时显示“待验证”，停止本批任务并交还网页。手动完成后可重新开始任务。
 
-文生图结果在命名规则为「原文件名」时，用提示词第一行做文件名，去掉 `\ / : * ? " < > |` 和不可见字符，最长 40 个字符；收成空串时用「文生图」。「按源图片分文件夹」用同一段文字做子目录。提示词和源图都空时不能开始，引擎返回「任务队列为空：请添加提示词，或添加源图片」。扩展实机冒烟同样可以不设 `XBS_EXT_IMAGE`，只设 `XBS_EXT_PROMPT`。
+文生图结果在命名规则为「原文件名」时，用提示词第一行做文件名，去掉 `\ / : * ? " < > |` 和不可见字符，最长 40 个字符；收成空串时用「文生图」。「按源图片分文件夹」用同一段文字做子目录。提示词和源图都空时不能开始，引擎返回「任务队列为空：请添加提示词，或添加源图片」。扩展实机冒烟同样可以不设 `TULAI_EXT_IMAGE`，只设 `TULAI_EXT_PROMPT`。
 
 重试按阶段处理：确认发送成功后，等待或保存失败只继续获取原任务结果，不重新上传、标记或发送；已保存的部分图片保留且不重复落盘。发送动作已尝试但无法确认平台是否接受时，停止整批任务并显示错误，请先检查网页再决定是否重新开始。该恢复状态仅在当前批次内有效，不跨软件重启保存。
 
@@ -90,7 +90,7 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 在「任务设置 → 更多设置」里勾选「去水印（实验）」，默认关闭。软件先完整保存网页下载的原图，再在本地识别已校准的角落水印，将处理结果另存为 `原文件名_去水印.png`；原图始终保留，队列每张生成图只显示一个最终结果。处理失败或未匹配时记录警告并使用原图，不会为去水印重新上传、发送或生成。
 
-扩展下载不看这个开关。`browserBackend=extension` 的任务，以及 `cmd/xbs-ext-smoke` 实机保存，都在主机侧先按豆包 CDN 规则去掉 `watermark` / `wm=` 查询（失败再用页面原地址），再对豆包和千问调用同一套 `RemoveWatermark`。匹配成功时写下的就是去水印 PNG。千问地址没有这组参数时不会被改写。细节见 [`extension/README.md`](extension/README.md)。
+扩展下载不看这个开关。`browserBackend=extension` 的任务，以及 `cmd/tulai-ext-smoke` 实机保存，都在主机侧先按豆包 CDN 规则去掉 `watermark` / `wm=` 查询（失败再用页面原地址），再对豆包和千问调用同一套 `RemoveWatermark`。匹配成功时写下的就是去水印 PNG。千问地址没有这组参数时不会被改写。细节见 [`extension/README.md`](extension/README.md)。
 
 当前适配 2026-10-22 校准的豆包、千问**正方形网页导出图**，包括千问左上角「AI生成」与右下角标记。通过归一化相关匹配固定字形，再按字形蒙版估算背景并补偿邻近细纹理。没有完整背景的真实值，复杂纹理、线条或主体上的水印可能留下痕迹，不能保证无损还原；平台改变样式后可能不再匹配。非方图、16 位高精度图、动画和超出处理大小限制的图片保留原样。
 
@@ -109,8 +109,8 @@ free 解不了的（描述类九宫格、滑块）自动落到 custom 兜底（�
 ```bash
 go test ./...            # 单测 + E2E（无 Chrome 或 -short 时 E2E 自动跳过）
 go test ./... -short     # 仅单测
-XBS_EGO_E2E=1 go test ./internal/cdp -run '^TestEgoSDKLocalPage$' -count=1 -timeout=120s  # 官方 SDK 本地上传/下载验收
-go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
+TULAI_EGO_E2E=1 go test ./internal/cdp -run '^TestEgoSDKLocalPage$' -count=1 -timeout=120s  # 官方 SDK 本地上传/下载验收
+go run ./cmd/tulai-cdp-smoke   # Chrome CDP 连通性冒烟
 ```
 
 测试分层：
@@ -179,9 +179,11 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
-## 发布 0.1.3
+## 发布 0.1.4
 
-桌面端产品版本是 **0.1.3**：`mygo.json` 的 `version`，以及 `cmd/xbs/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.7**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块版本由 git 标签决定，不写在 `go.mod`。
+桌面端产品版本是 **0.1.4**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.8**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+
+0.1.4 把技术 id 改成 tulai（模块 `github.com/xxww0098/tulai`，可执行文件、安装路径、附件名、`TULAI_*` 和数据目录）。扩展是 0.3.8。
 
 相对已发布的 0.1.2：页面桥令牌可以在软件里查看和复制；用户可见名称定为 tulai，界面更宽，并带上内置提示词和自己保存的提示词；同一平台的多个免费账号会轮换，扩展可以自动配对；没有本机浏览器时可以下载内置浏览器；第一次打开走设置向导；出图页收成拖图、提示词和「开始出图」；掉线、崩溃和卡住会自动恢复；启动后会静默检查更新，一键下载并用 `SHA256SUMS` 校验后安装。扩展从 0.3.6 升到 0.3.7。完整说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
 
@@ -190,8 +192,8 @@ go run ./cmd/xbs-cdp-smoke   # Chrome CDP 连通性冒烟
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
 附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。

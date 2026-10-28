@@ -32,5 +32,5 @@
     return null
   }
 
-  globalThis.XBSQuota = { accountBlock }
+  globalThis.TULAIQuota = { accountBlock }
 })()

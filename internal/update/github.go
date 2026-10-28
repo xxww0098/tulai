@@ -75,7 +75,7 @@ type Client struct {
 	OnProgress func(Progress)
 }
 
-// NewClient returns a client for the public xbs releases.
+// NewClient returns a client for the public tulai releases.
 func NewClient(version string) *Client {
 	return &Client{API: DefaultAPI, Owner: Owner, Repo: Repo, Version: version}
 }
@@ -206,7 +206,7 @@ func (c *Client) userAgent() string {
 	if version == "" {
 		version = "0"
 	}
-	return "xbs/" + version + " (+https://github.com/" + c.owner() + "/" + c.repo() + ")"
+	return "tulai/" + version + " (+https://github.com/" + c.owner() + "/" + c.repo() + ")"
 }
 
 func (c *Client) http() *http.Client {
@@ -280,9 +280,9 @@ func (c *Client) downloadDir() (string, error) {
 	}
 	base, err := os.UserCacheDir()
 	if err != nil {
-		return os.MkdirTemp("", "xbs-update-")
+		return os.MkdirTemp("", "tulai-update-")
 	}
-	dir := filepath.Join(base, "xbs", "updates")
+	dir := filepath.Join(base, "tulai", "updates")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

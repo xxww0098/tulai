@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"xbs/internal/cdp"
+	"github.com/xxww0098/tulai/internal/cdp"
 )
 
 // playSliderX11 用本机 DISPLAY 上的 xdotool 发真实鼠标事件。
@@ -105,9 +105,9 @@ func runXDo(ctx context.Context, args ...string) error {
 	return nil
 }
 
-// x11DragEnabled 默认在有 DISPLAY 时优先 OS 拖动；XBS_BAXIA_X11=0 关掉。
+// x11DragEnabled 默认在有 DISPLAY 时优先 OS 拖动；TULAI_BAXIA_X11=0 关掉。
 func x11DragEnabled() bool {
-	if strings.TrimSpace(os.Getenv("XBS_BAXIA_X11")) == "0" {
+	if strings.TrimSpace(os.Getenv("TULAI_BAXIA_X11")) == "0" {
 		return false
 	}
 	if strings.TrimSpace(os.Getenv("DISPLAY")) == "" {
@@ -116,4 +116,3 @@ func x11DragEnabled() bool {
 	_, err := exec.LookPath("xdotool")
 	return err == nil
 }
-

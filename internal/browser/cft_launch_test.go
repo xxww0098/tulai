@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/cdp"
+	"github.com/xxww0098/tulai/internal/cdp"
 )
 
 func TestLaunchPinnedCfT(t *testing.T) {

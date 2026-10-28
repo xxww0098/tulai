@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"xbs/internal/heal"
-	"xbs/internal/logging"
-	"xbs/internal/store"
+	"github.com/xxww0098/tulai/internal/heal"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 // prepareAccount 在派发前把任务放到一个还能用的账号上。

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/cdp"
-	"xbs/internal/logging"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 //go:embed js/hook.js
@@ -85,7 +85,7 @@ func (base) InstallHook(s *cdp.Session) error {
 			return err
 		}
 		var old bool
-		if err := s.EgoEvaluate(`!!window.__xbsHookInstalled`, &old); err != nil {
+		if err := s.EgoEvaluate(`!!window.__tulaiHookInstalled`, &old); err != nil {
 			return err
 		}
 		if old {
@@ -107,7 +107,7 @@ func (base) InstallHook(s *cdp.Session) error {
 		return nil
 	}
 	revision := fmt.Sprintf("%x", sha256.Sum256([]byte(hookJS)))
-	out, err := s.Evaluate(`JSON.stringify({installed:!!window.__xbsHookInstalled,revision:window.__xbsHookRevision||''})`)
+	out, err := s.Evaluate(`JSON.stringify({installed:!!window.__tulaiHookInstalled,revision:window.__tulaiHookRevision||''})`)
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (base) InstallHook(s *cdp.Session) error {
 			return fmt.Errorf("更新页面脚本: %w", err)
 		}
 	}
-	s.AppendNavigateScript(fmt.Sprintf(`window.__xbsHookRevision=%q;`, revision) + hookJS)
+	s.AppendNavigateScript(fmt.Sprintf(`window.__tulaiHookRevision=%q;`, revision) + hookJS)
 	s.AppendNavigateScript(composerJS)
 	return nil
 }
@@ -138,7 +138,7 @@ func (base) MarkTask(s *cdp.Session) error {
 		logEgoDiagnostic("任务边界", state.Diagnostic)
 		return nil
 	}
-	_, err := s.Evaluate(`window.__xbsMarkTask && window.__xbsMarkTask(), 1`)
+	_, err := s.Evaluate(`window.__tulaiMarkTask && window.__tulaiMarkTask(), 1`)
 	return err
 }
 
@@ -149,7 +149,7 @@ func (b base) UploadFiles(s *cdp.Session, files []string) error {
 	}
 	s.EnsureBase()
 	logDiagnostic := func() {
-		out, err := s.Evaluate(`JSON.stringify((window.__xbsUploadDiagnostic || []).concat(window.xbsUploadAncestorDiagnostic ? xbsUploadAncestorDiagnostic() : []))`)
+		out, err := s.Evaluate(`JSON.stringify((window.__tulaiUploadDiagnostic || []).concat(window.tulaiUploadAncestorDiagnostic ? tulaiUploadAncestorDiagnostic() : []))`)
 		if err != nil {
 			return
 		}
@@ -160,11 +160,11 @@ func (b base) UploadFiles(s *cdp.Session, files []string) error {
 			}
 		}
 	}
-	if err := s.UploadFiles(`window.xbsOpenUpload ? xbsOpenUpload() : Promise.reject(new Error('上传脚本未注入'))`, files); err != nil {
+	if err := s.UploadFiles(`window.tulaiOpenUpload ? tulaiOpenUpload() : Promise.reject(new Error('上传脚本未注入'))`, files); err != nil {
 		logDiagnostic()
 		return fmt.Errorf("上传文件选择: %w", err)
 	}
-	out, err := s.EvaluateAsync(fmt.Sprintf(`window.xbsWaitForUpload ? xbsWaitForUpload(%d) : '{"ready":false}'`, len(files)))
+	out, err := s.EvaluateAsync(fmt.Sprintf(`window.tulaiWaitForUpload ? tulaiWaitForUpload(%d) : '{"ready":false}'`, len(files)))
 	if err != nil {
 		logDiagnostic()
 		return fmt.Errorf("等待上传: %w", err)
@@ -191,7 +191,7 @@ func pageAccountFault(s *cdp.Session) error {
 	if s == nil || s.IsEgo() {
 		return nil
 	}
-	out, err := s.Evaluate(`JSON.stringify(window.xbsPageState ? xbsPageState() : {})`)
+	out, err := s.Evaluate(`JSON.stringify(window.tulaiPageState ? tulaiPageState() : {})`)
 	if err != nil {
 		return nil
 	}
@@ -217,7 +217,7 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 		return egoSend(s, prompt)
 	}
 	s.EnsureBase()
-	out, err := s.Evaluate(`window.xbsMarkComposer ? xbsMarkComposer() : false`)
+	out, err := s.Evaluate(`window.tulaiMarkComposer ? tulaiMarkComposer() : false`)
 	if err != nil {
 		return fmt.Errorf("定位输入框: %w", err)
 	}
@@ -225,10 +225,10 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if err := cdp.ParseJSValue(out, &found); err != nil || !found {
 		return fmt.Errorf("未找到可写入提示词的输入框")
 	}
-	if err := s.InsertText(`[data-xbs-composer="1"]`, prompt); err != nil {
+	if err := s.InsertText(`[data-tulai-composer="1"]`, prompt); err != nil {
 		return fmt.Errorf("写入提示词: %w", err)
 	}
-	out, err = s.Evaluate(`window.xbsReadComposer ? xbsReadComposer(document.querySelector('[data-xbs-composer="1"]')) : null`)
+	out, err = s.Evaluate(`window.tulaiReadComposer ? tulaiReadComposer(document.querySelector('[data-tulai-composer="1"]')) : null`)
 	if err != nil {
 		return fmt.Errorf("校验提示词: %w", err)
 	}
@@ -239,7 +239,7 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if strings.TrimSpace(strings.ReplaceAll(actual, "\r\n", "\n")) != strings.TrimSpace(strings.ReplaceAll(prompt, "\r\n", "\n")) {
 		points := []rune(actual)
 		logging.Log.Debugf("提示词校验失败 expectedChars=%d; composerChars=%d; first=%U; last=%U", len([]rune(prompt)), len(points), points[:min(3, len(points))], points[max(0, len(points)-3):])
-		if diagnostic, err := s.Evaluate(`JSON.stringify(window.xbsComposerDiagnostic ? xbsComposerDiagnostic(document.querySelector('[data-xbs-composer="1"]')) : [])`); err == nil {
+		if diagnostic, err := s.Evaluate(`JSON.stringify(window.tulaiComposerDiagnostic ? tulaiComposerDiagnostic(document.querySelector('[data-tulai-composer="1"]')) : [])`); err == nil {
 			var lines []string
 			if cdp.ParseJSValue(diagnostic, &lines) == nil {
 				for _, line := range lines {
@@ -259,7 +259,7 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 			sendErr = fmt.Errorf("%w: %w", ErrSubmissionUncertain, sendErr)
 		}
 	}()
-	out, err = s.EvaluateAsync(`window.xbsSendPrompt ? xbsSendPrompt() : '{"error":"发送脚本未注入"}'`)
+	out, err = s.EvaluateAsync(`window.tulaiSendPrompt ? tulaiSendPrompt() : '{"error":"发送脚本未注入"}'`)
 	if err != nil {
 		return fmt.Errorf("点击发送: %w", err)
 	}
@@ -304,7 +304,7 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 		if err := pageAccountFault(s); err != nil {
 			return nil, err
 		}
-		out, err := s.Evaluate(`JSON.stringify({results:window.__xbsResultsSince ? __xbsResultsSince() : [],pending:window.__xbsPendingGeneration ? __xbsPendingGeneration() : 0})`)
+		out, err := s.Evaluate(`JSON.stringify({results:window.__tulaiResultsSince ? __tulaiResultsSince() : [],pending:window.__tulaiPendingGeneration ? __tulaiPendingGeneration() : 0})`)
 		if err == nil {
 			var state struct {
 				Results []Result `json:"results"`
@@ -389,7 +389,7 @@ func (base) CleanComposer(s *cdp.Session) error {
 	if s.IsEgo() {
 		return egoClean(s)
 	}
-	_, err := s.EvaluateAsync(`window.xbsCleanComposer ? xbsCleanComposer() : false`)
+	_, err := s.EvaluateAsync(`window.tulaiCleanComposer ? tulaiCleanComposer() : false`)
 	return err
 }
 
@@ -402,7 +402,7 @@ func (base) PageState(s *cdp.Session) map[string]any {
 		}
 		return map[string]any{"hasComposer": state.Composer != "", "generating": state.Busy}
 	}
-	out, err := s.Evaluate(`window.xbsPageState ? JSON.stringify(xbsPageState()) : '{}'`)
+	out, err := s.Evaluate(`window.tulaiPageState ? JSON.stringify(tulaiPageState()) : '{}'`)
 	if err != nil {
 		return map[string]any{}
 	}

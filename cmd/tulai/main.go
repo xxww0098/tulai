@@ -1,4 +1,4 @@
-// tulai 是豆包和千问的批量生图桌面应用（命令与模块名仍是 xbs，窗口和菜单显示「tulai」）。
+// tulai 是豆包和千问的批量生图桌面应用。
 // 本地工具，不含授权激活。
 package main
 
@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/browser"
-	"xbs/internal/logging"
-	"xbs/internal/store"
-	"xbs/internal/tasks"
-	"xbs/internal/ui"
-	"xbs/internal/update"
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
+	"github.com/xxww0098/tulai/internal/ui"
+	"github.com/xxww0098/tulai/internal/update"
 )
 
 func main() {
@@ -72,5 +72,5 @@ func packagedDataDir(goos, executable string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(configDir, "xbs"), nil
+	return filepath.Join(configDir, "tulai"), nil
 }

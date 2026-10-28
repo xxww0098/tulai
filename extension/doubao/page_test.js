@@ -182,7 +182,7 @@ function makeDoc(hostname) {
 
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'protocol.js'), 'utf8'))
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'page.js'), 'utf8'))
-const Page = globalThis.XBSPage
+const Page = globalThis.TULAIPage
 const EMPTY_SVG = "<svg xmlns='http://www.w3.org/2000/svg' version='1.1' width='1536' height='1536'/>"
 const EMPTY_SVG_URL = 'data:image/svg+xml,' + EMPTY_SVG
 
@@ -393,14 +393,14 @@ function generatedCard(prompt) {
   assert.strictEqual(Page.isPlaceholderURL('https://cdn.example/shell.svg'), true)
   assert.strictEqual(Page.isPlaceholderURL('https://p3-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.jpeg'), false)
   const shellBytes = Uint8Array.from(EMPTY_SVG, (ch) => ch.charCodeAt(0))
-  assert.strictEqual(globalThis.XBS.looksLikeRaster(shellBytes), false)
-  assert.strictEqual(globalThis.XBS.looksLikeRaster(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true)
-  assert.strictEqual(globalThis.XBS.looksLikeRaster(Uint8Array.from([0xff, 0xd8, 0xff, 0x00])), true)
-  assert.strictEqual(globalThis.XBS.looksLikeRaster(Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])), true)
+  assert.strictEqual(globalThis.TULAI.looksLikeRaster(shellBytes), false)
+  assert.strictEqual(globalThis.TULAI.looksLikeRaster(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true)
+  assert.strictEqual(globalThis.TULAI.looksLikeRaster(Uint8Array.from([0xff, 0xd8, 0xff, 0x00])), true)
+  assert.strictEqual(globalThis.TULAI.looksLikeRaster(Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])), true)
   const webp = new Uint8Array(12)
   webp.set(Uint8Array.from('RIFF', (ch) => ch.charCodeAt(0)), 0)
   webp.set(Uint8Array.from('WEBP', (ch) => ch.charCodeAt(0)), 8)
-  assert.strictEqual(globalThis.XBS.looksLikeRaster(webp), true)
+  assert.strictEqual(globalThis.TULAI.looksLikeRaster(webp), true)
 }
 
 {

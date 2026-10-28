@@ -242,7 +242,7 @@ exit 1
 }
 
 func writeRestartScript() (string, error) {
-	dir, err := os.MkdirTemp("", "xbs-restart-")
+	dir, err := os.MkdirTemp("", "tulai-restart-")
 	if err != nil {
 		return "", err
 	}

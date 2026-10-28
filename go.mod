@@ -1,4 +1,4 @@
-module xbs
+module github.com/xxww0098/tulai
 
 go 1.27.3
 

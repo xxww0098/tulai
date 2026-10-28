@@ -8,8 +8,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"xbs/internal/store"
-	"xbs/internal/strategy"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/strategy"
 )
 
 func TestRunDispatchesIdleBrowserPastBusyTask(t *testing.T) {

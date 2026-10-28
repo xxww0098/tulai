@@ -60,7 +60,7 @@ func (c *Client) NewSession(url string, onLog func(string)) (*Session, error) {
 	chromedp.ListenTarget(ctx, func(ev any) {
 		switch e := ev.(type) {
 		case *runtime.EventBindingCalled:
-			if e.Name == "xbsBridge" {
+			if e.Name == "tulaiBridge" {
 				go s.dispatchBridge(e.Payload)
 			}
 		case *runtime.EventConsoleAPICalled:
@@ -79,7 +79,7 @@ func (c *Client) NewSession(url string, onLog func(string)) (*Session, error) {
 	}
 	// 注册桥绑定（对当前与后续文档生效需两者都做）
 	if err := s.exec(func(ec context.Context) error {
-		return runtime.AddBinding("xbsBridge").Do(ec)
+		return runtime.AddBinding("tulaiBridge").Do(ec)
 	}); err != nil {
 		cancel()
 		return nil, err
@@ -130,7 +130,7 @@ func (s *Session) exec(fn func(ec context.Context) error) error {
 	}))
 }
 
-// Handle 注册桥命令处理函数（页面 JS: xbsBridge({cmd, id, data})）。
+// Handle 注册桥命令处理函数（页面 JS: tulaiBridge({cmd, id, data})）。
 func (s *Session) Handle(cmd string, fn func(data string) string) {
 	s.mu.Lock()
 	s.hooks[cmd] = fn
@@ -171,7 +171,7 @@ func (s *Session) dispatchBridge(payload string) {
 		result = `{"success":false,"error":"未注册的命令: ` + msg.Cmd + `"}`
 	}
 	ans, _ := jsonMarshal(map[string]any{"id": msg.ID, "result": result})
-	s.Evaluate(fmt.Sprintf(`window.__xbsResolve && window.__xbsResolve(%d, %q)`, msg.ID, ans))
+	s.Evaluate(fmt.Sprintf(`window.__tulaiResolve && window.__tulaiResolve(%d, %q)`, msg.ID, ans))
 }
 
 // Evaluate 执行 JS 表达式（不 await），返回 JSON 值。
@@ -294,7 +294,7 @@ func (s *Session) WaitForSelector(sel string, timeout time.Duration) error {
 
 // Click 通过浏览器鼠标协议单击元素。
 func (s *Session) Click(sel string) error {
-	out, err := s.EvaluateAsync(fmt.Sprintf(`xbsClick(%q)`, sel))
+	out, err := s.EvaluateAsync(fmt.Sprintf(`tulaiClick(%q)`, sel))
 	if err != nil {
 		return err
 	}
@@ -328,7 +328,7 @@ return true;
 // SetUploadFilesNth 给第 n 个 input[type=file] 设置文件，由浏览器发送输入事件。
 // 实现：JS 先给目标 input 打标记，浏览器上传后只清除标记，避免重复 change。
 func (s *Session) SetUploadFilesNth(n int, files []string) error {
-	if _, err := s.Evaluate(fmt.Sprintf(`xbsMarkFileInput(%d)`, n)); err != nil {
+	if _, err := s.Evaluate(fmt.Sprintf(`tulaiMarkFileInput(%d)`, n)); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
@@ -342,12 +342,12 @@ func (s *Session) SetUploadFilesNth(n int, files []string) error {
 				return err
 			}
 		}
-		err = s.ego.request(ctx, "upload", map[string]any{"selector": `input[type=file][data-xbs-upload="1"]`, "files": paths}, nil)
+		err = s.ego.request(ctx, "upload", map[string]any{"selector": `input[type=file][data-tulai-upload="1"]`, "files": paths}, nil)
 	} else {
-		err = chromedp.Run(ctx, chromedp.SetUploadFiles(`input[type=file][data-xbs-upload="1"]`, files))
+		err = chromedp.Run(ctx, chromedp.SetUploadFiles(`input[type=file][data-tulai-upload="1"]`, files))
 	}
 	if err == nil {
-		_, _ = s.Evaluate(`xbsUnmarkFileInput()`)
+		_, _ = s.Evaluate(`tulaiUnmarkFileInput()`)
 	}
 	return err
 }

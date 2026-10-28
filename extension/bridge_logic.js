@@ -1,6 +1,6 @@
 // 纯函数：重连退避、心跳超时、端口/令牌对不上时给用户看的话。
 // background.js 用 importScripts 引入。节点测试直接读这个文件。
-globalThis.XBSBridge = {
+globalThis.TULAIBridge = {
   retryMinMs: 1000,
   retryMaxMs: 15000,
   nextRetryMs(current) {

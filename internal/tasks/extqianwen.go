@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/extbridge"
-	"xbs/internal/images"
-	"xbs/internal/logging"
-	"xbs/internal/strategy"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/images"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/strategy"
 )
 
 const (

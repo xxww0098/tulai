@@ -6,7 +6,7 @@ const vm = require('vm')
 const context = vm.createContext({ globalThis: {} })
 context.globalThis = context
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'bridge_logic.js'), 'utf8'), context)
-const bridge = context.XBSBridge
+const bridge = context.TULAIBridge
 
 assert.strictEqual(bridge.nextRetryMs(1000), 2000)
 assert.strictEqual(bridge.nextRetryMs(8000), 15000)

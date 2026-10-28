@@ -11,7 +11,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"xbs/internal/browser"
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestTrustedInputAndSingleUploadChange(t *testing.T) {
@@ -46,20 +46,20 @@ document.querySelector('#upload').addEventListener('change',()=>window.changes++
 		t.Fatal(err)
 	}
 	s := &Session{ctx: ctx}
-	if _, err := s.Evaluate(`window.__xbsBaseInstalled=true;window.__xbsSeq=7;window.__keptPending=window.__xbsPending={marker:'retained'};window.xbsUnmarkFileInput=()=>{window.__oldUnmark=true}`); err != nil {
+	if _, err := s.Evaluate(`window.__tulaiBaseInstalled=true;window.__tulaiSeq=7;window.__keptPending=window.__tulaiPending={marker:'retained'};window.tulaiUnmarkFileInput=()=>{window.__oldUnmark=true}`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.InjectBase(); err != nil {
 		t.Fatal(err)
 	}
-	if !s.EvaluateBool(`window.__xbsBaseInstalled===3&&window.__xbsPending===window.__keptPending&&window.__xbsPending.marker==='retained'&&window.__xbsSeq===7`) {
+	if !s.EvaluateBool(`window.__tulaiBaseInstalled===3&&window.__tulaiPending===window.__keptPending&&window.__tulaiPending.marker==='retained'&&window.__tulaiSeq===7`) {
 		t.Fatal("base upgrade did not replace old revision while preserving pending calls")
 	}
-	if _, err := s.Evaluate(`window.__xbsBaseInstalled=true;window.xbsUnmarkFileInput=()=>{window.__oldUnmark=true}`); err != nil {
+	if _, err := s.Evaluate(`window.__tulaiBaseInstalled=true;window.tulaiUnmarkFileInput=()=>{window.__oldUnmark=true}`); err != nil {
 		t.Fatal(err)
 	}
 	s.EnsureBase()
-	if !s.EvaluateBool(`window.__xbsBaseInstalled===3`) {
+	if !s.EvaluateBool(`window.__tulaiBaseInstalled===3`) {
 		t.Fatal("EnsureBase did not upgrade the old boolean marker")
 	}
 	for _, tc := range []struct{ selector, text string }{

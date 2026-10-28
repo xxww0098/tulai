@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/store"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 func TestShouldOfferAndSkipPersists(t *testing.T) {

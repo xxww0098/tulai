@@ -10,8 +10,8 @@ import (
 var ErrVerificationRequired = errors.New("需人工验证：请在原网页手动完成验证后再开始任务")
 
 const verificationExpression = `(function () {
-  if (!window.__xbsCaptcha || typeof window.__xbsCaptcha.detect !== 'function') return false;
-  var el = window.__xbsCaptcha.detect();
+  if (!window.__tulaiCaptcha || typeof window.__tulaiCaptcha.detect !== 'function') return false;
+  var el = window.__tulaiCaptcha.detect();
   if (!el) return false;
   var rect = el.getBoundingClientRect(), style = getComputedStyle(el);
   return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
@@ -31,7 +31,7 @@ func CheckVerificationRequired(s verificationPage) error {
 		Blocked   bool `json:"blocked"`
 		AutoSolve bool `json:"autoSolve"`
 	}
-	err := s.EgoEvaluate("/* xbs captcha:verification */ ({blocked:"+verificationExpression+`,autoSolve:!!(window.__xbsCaptcha && window.__xbsCaptcha.status && window.__xbsCaptcha.status().autoSolve)})`, &current)
+	err := s.EgoEvaluate("/* tulai captcha:verification */ ({blocked:"+verificationExpression+`,autoSolve:!!(window.__tulaiCaptcha && window.__tulaiCaptcha.status && window.__tulaiCaptcha.status().autoSolve)})`, &current)
 	if ctxErr := s.Ctx().Err(); ctxErr != nil {
 		return ctxErr
 	}
@@ -49,7 +49,7 @@ func SetManual(s verificationPage) error {
 	if err := s.Ctx().Err(); err != nil {
 		return err
 	}
-	err := s.EgoEvaluate(`/* xbs captcha:manual */ (window.__xbsCaptcha && window.__xbsCaptcha.setManual(true),true)`, nil)
+	err := s.EgoEvaluate(`/* tulai captcha:manual */ (window.__tulaiCaptcha && window.__tulaiCaptcha.setManual(true),true)`, nil)
 	if ctxErr := s.Ctx().Err(); ctxErr != nil {
 		return ctxErr
 	}

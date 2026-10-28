@@ -1,10 +1,10 @@
-// 桌面端在 127.0.0.1:18764/xbs-pair 上公布当前令牌和桥端口。
+// 桌面端在 127.0.0.1:18764/tulai-pair 上公布当前令牌和桥端口。
 // 扩展取不到时保留弹出页里手填的值。
 ;(function () {
-  const url = 'http://127.0.0.1:18764/xbs-pair'
+  const url = 'http://127.0.0.1:18764/tulai-pair'
 
   function parse(body) {
-    if (!body || body.product !== 'xbs' || typeof body.token !== 'string' || !body.token.trim()) {
+    if (!body || body.product !== 'tulai' || typeof body.token !== 'string' || !body.token.trim()) {
       throw new Error('pair payload')
     }
     const port = Number(body.port)
@@ -28,5 +28,5 @@
     return { profileId }
   }
 
-  globalThis.XBSPair = { url, parse, pull, identity }
+  globalThis.TULAIPair = { url, parse, pull, identity }
 })()

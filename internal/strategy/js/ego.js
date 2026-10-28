@@ -1,6 +1,6 @@
 // Read-only identification/state for the Ego SDK path. Actions stay in the SDK.
 (function (action, args) {
-  var state = window.__xbsEgoState || (window.__xbsEgoState = {});
+  var state = window.__tulaiEgoState || (window.__tulaiEgoState = {});
   var assistantQuery = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"]';
   var userQuery = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]';
   if (/(^|\.)(tongyi|qianwen)\.com$/.test(location.hostname) && !document.querySelectorAll(assistantQuery + ',' + userQuery).length) {

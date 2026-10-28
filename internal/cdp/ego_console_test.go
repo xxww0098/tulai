@@ -24,7 +24,7 @@ const events = [
  consoleEvent({description:'Error: website failure'}),
  consoleEvent(),
  {method:'Runtime.consoleAPICalled'},
- {method:'Runtime.bindingCalled',params:{name:'xbsBridge',payload:'[验证码] binding'}},
+ {method:'Runtime.bindingCalled',params:{name:'tulaiBridge',payload:'[验证码] binding'}},
  {event:'error',error:'SDK request failed'},
  owned, owned,
  consoleEvent({value:'[验证码]'}, {value:'识别完成'}, {value:0}),

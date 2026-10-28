@@ -609,7 +609,7 @@ func (c *SliderConn) lookInChildFrames(ctx context.Context, page sliderPage) (Sl
 		}
 		if err := c.call(ctx, session, "Page.createIsolatedWorld", map[string]any{
 			"frameId":              fr.ID,
-			"worldName":            "xbs-baxia",
+			"worldName":            "tulai-baxia",
 			"grantUniversalAccess": true,
 		}, &world); err != nil || world.ExecutionContextID == 0 {
 			continue

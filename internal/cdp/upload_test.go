@@ -13,7 +13,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"xbs/internal/browser"
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestUploadFilesChooser(t *testing.T) {
@@ -22,8 +22,8 @@ func TestUploadFilesChooser(t *testing.T) {
 	}
 	for _, backend := range []string{"Chrome", "Ego"} {
 		t.Run(backend, func(t *testing.T) {
-			if backend == "Ego" && os.Getenv("XBS_EGO_E2E") != "1" {
-				t.Skip("需显式 XBS_EGO_E2E=1；仅访问隔离 localhost")
+			if backend == "Ego" && os.Getenv("TULAI_EGO_E2E") != "1" {
+				t.Skip("需显式 TULAI_EGO_E2E=1；仅访问隔离 localhost")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`<!doctype html><html><body>

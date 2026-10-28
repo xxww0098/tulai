@@ -11,12 +11,12 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/browser"
-	"xbs/internal/cdp"
-	"xbs/internal/extbridge"
-	"xbs/internal/logging"
-	"xbs/internal/store"
-	"xbs/internal/strategy"
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/strategy"
 )
 
 const browserInstanceHint = "每个实例单独登录。同一平台再添加一个并登录后，额度用尽、限流或验证码会自动换号。扩展账号会在对应的浏览器配置文件连上后出现在这里。"

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"xbs/internal/logging"
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 func TestPreparePagePreservesVisibleVerificationBeforeRenew(t *testing.T) {
@@ -45,7 +45,7 @@ const source=` + strconv.Quote(verificationExpression) + `;
 for(const state of ['absent','none','visible','hidden','zero']){
  let actions=0;
  const el={getBoundingClientRect:()=>({width:state==='zero'?0:300,height:40}),click(){actions++},dispatchEvent(){actions++}};
- const window=state==='absent'?{}:{__xbsCaptcha:{detect:()=>state==='none'?null:el}};
+ const window=state==='absent'?{}:{__tulaiCaptcha:{detect:()=>state==='none'?null:el}};
  const result=vm.runInNewContext(source,{window,getComputedStyle:()=>({display:state==='hidden'?'none':'block',visibility:'visible',opacity:'1'})});
  assert.equal(result,state==='visible',state);assert.equal(actions,0,state+' must not alter challenge');
 }`

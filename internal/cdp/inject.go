@@ -19,7 +19,7 @@ func (s *Session) InjectBase() error {
 
 // EnsureBase 确保基础脚本就绪（幂等）。
 func (s *Session) EnsureBase() {
-	if !s.EvaluateBool("window.__xbsBaseInstalled === 3") {
+	if !s.EvaluateBool("window.__tulaiBaseInstalled === 3") {
 		_ = s.InjectBase()
 	}
 }

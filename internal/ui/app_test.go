@@ -11,10 +11,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/browser"
-	"xbs/internal/extbridge"
-	"xbs/internal/store"
-	"xbs/internal/tasks"
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {

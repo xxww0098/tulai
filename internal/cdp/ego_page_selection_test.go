@@ -30,7 +30,7 @@ async function check(tabs, expected, expectedReads, expectedAdopts=[]) {
   evaluate:async fn=>{
    reads.push(item.label??item.page);
    if(item.error)throw item.error;
-   globalThis.sessionStorage={getItem:key=>{assert.equal(key,'__xbsRetiredHookPage');return item.retired?'1':null}};
+   globalThis.sessionStorage={getItem:key=>{assert.equal(key,'__tulaiRetiredHookPage');return item.retired?'1':null}};
    return fn();
   },
  });

@@ -8,9 +8,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/heal"
-	"xbs/internal/store"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/heal"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 func TestCrashRelaunchesThenStopsAtCap(t *testing.T) {

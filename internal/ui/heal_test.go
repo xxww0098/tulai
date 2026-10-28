@@ -7,8 +7,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/store"
-	"xbs/internal/tasks"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 func TestLoginBannerAndAutoLog(t *testing.T) {

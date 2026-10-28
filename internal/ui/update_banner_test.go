@@ -6,9 +6,9 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/store"
-	"xbs/internal/tasks"
-	"xbs/internal/update"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
+	"github.com/xxww0098/tulai/internal/update"
 )
 
 func TestUpdateBannerAndSkip(t *testing.T) {

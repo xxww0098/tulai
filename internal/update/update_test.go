@@ -57,35 +57,35 @@ func TestCompareVersions(t *testing.T) {
 func TestSelectIgnoresExtensionAndAcceptsGitHubDots(t *testing.T) {
 	const version = "0.1.0"
 	assets := []Asset{
-		{Name: "xbs-extension-0.3.4.zip", State: "uploaded"},
+		{Name: "tulai-extension-0.3.4.zip", State: "uploaded"},
 		{Name: "SHA256SUMS", State: "uploaded"},
 		{Name: "install.sh", State: "uploaded"},
-		{Name: "xbs.0.1.0.dmg", State: "uploaded"},
-		{Name: "xbs.Setup.0.1.0.amd64.exe", State: "uploaded"},
-		{Name: "xbs.Setup.0.1.0.arm64.exe", State: "uploaded"},
-		{Name: "xbs-0.1.0-windows-amd64.exe", State: "uploaded"},
-		{Name: "xbs-0.1.0-windows-arm64.exe", State: "uploaded"},
-		{Name: "xbs-0.1.0-linux-amd64.tar.gz", State: "uploaded"},
-		{Name: "xbs-0.1.0-linux-arm64.tar.gz", State: "uploaded"},
-		{Name: "xbs_0.1.0_amd64.deb", State: "uploaded"},
-		{Name: "xbs_0.1.0_arm64.deb", State: "uploaded"},
+		{Name: "tulai.0.1.0.dmg", State: "uploaded"},
+		{Name: "tulai.Setup.0.1.0.amd64.exe", State: "uploaded"},
+		{Name: "tulai.Setup.0.1.0.arm64.exe", State: "uploaded"},
+		{Name: "tulai-0.1.0-windows-amd64.exe", State: "uploaded"},
+		{Name: "tulai-0.1.0-windows-arm64.exe", State: "uploaded"},
+		{Name: "tulai-0.1.0-linux-amd64.tar.gz", State: "uploaded"},
+		{Name: "tulai-0.1.0-linux-arm64.tar.gz", State: "uploaded"},
+		{Name: "tulai_0.1.0_amd64.deb", State: "uploaded"},
+		{Name: "tulai_0.1.0_arm64.deb", State: "uploaded"},
 	}
 	// Spaced build names normalize to the same GitHub asset names.
 	spaced := []Asset{
-		{Name: "xbs 0.1.0.dmg", State: "uploaded"},
-		{Name: "xbs Setup 0.1.0 amd64.exe", State: "uploaded"},
+		{Name: "tulai 0.1.0.dmg", State: "uploaded"},
+		{Name: "tulai Setup 0.1.0 amd64.exe", State: "uploaded"},
 	}
 	checks := []struct {
 		kind Kind
 		arch string
 		name string
 	}{
-		{KindMacDMG, "arm64", "xbs.0.1.0.dmg"},
-		{KindMacDMG, "amd64", "xbs.0.1.0.dmg"},
-		{KindWindowsSetup, "amd64", "xbs.Setup.0.1.0.amd64.exe"},
-		{KindWindowsExe, "arm64", "xbs-0.1.0-windows-arm64.exe"},
-		{KindLinuxTar, "amd64", "xbs-0.1.0-linux-amd64.tar.gz"},
-		{KindLinuxDeb, "arm64", "xbs_0.1.0_arm64.deb"},
+		{KindMacDMG, "arm64", "tulai.0.1.0.dmg"},
+		{KindMacDMG, "amd64", "tulai.0.1.0.dmg"},
+		{KindWindowsSetup, "amd64", "tulai.Setup.0.1.0.amd64.exe"},
+		{KindWindowsExe, "arm64", "tulai-0.1.0-windows-arm64.exe"},
+		{KindLinuxTar, "amd64", "tulai-0.1.0-linux-amd64.tar.gz"},
+		{KindLinuxDeb, "arm64", "tulai_0.1.0_arm64.deb"},
 	}
 	for _, tc := range checks {
 		asset, err := Select(assets, tc.kind, version, tc.arch)
@@ -100,11 +100,11 @@ func TestSelectIgnoresExtensionAndAcceptsGitHubDots(t *testing.T) {
 		}
 	}
 	dmg, err := Select(spaced, KindMacDMG, version, "amd64")
-	if err != nil || NormalizeAssetName(dmg.Name) != "xbs.0.1.0.dmg" {
+	if err != nil || NormalizeAssetName(dmg.Name) != "tulai.0.1.0.dmg" {
 		t.Fatalf("spaced dmg: %+v %v", dmg, err)
 	}
 	setup, err := Select(spaced, KindWindowsSetup, version, "amd64")
-	if err != nil || NormalizeAssetName(setup.Name) != "xbs.Setup.0.1.0.amd64.exe" {
+	if err != nil || NormalizeAssetName(setup.Name) != "tulai.Setup.0.1.0.amd64.exe" {
 		t.Fatalf("spaced setup: %+v %v", setup, err)
 	}
 	if _, err := Select(assets, KindLinuxTar, version, "386"); err == nil {
@@ -117,17 +117,17 @@ func TestDetectMode(t *testing.T) {
 		goos, exe string
 		want      Mode
 	}{
-		{"darwin", "/Applications/xbs.app/Contents/MacOS/xbs", ModeMacBundle},
-		{"darwin", "/tmp/go-build/xbs", ModeMacCopy},
-		{"windows", `C:\Users\a\AppData\Local\Programs\xbs\xbs.exe`, ModeWindowsSetup},
-		{"windows", `C:\Program Files\xbs\xbs.exe`, ModeWindowsSetup},
-		{"windows", `C:\Users\a\AppData\Local\Temp\go-build\xbs.exe`, ModeWindowsSetup},
-		{"windows", `D:\Portable\xbs.exe`, ModeWindowsExe},
-		{"linux", "/usr/bin/xbs", ModeLinuxDeb},
-		{"linux", "/opt/xbs/xbs", ModeLinuxDeb},
-		{"linux", "/home/a/xbs-0.1.2-linux-amd64.AppImage", ModeLinuxBinary},
-		{"linux", "/home/a/.local/xbs.app/xbs", ModeLinuxUser},
-		{"linux", "/tmp/go-build/xbs", ModeLinuxUser},
+		{"darwin", "/Applications/tulai.app/Contents/MacOS/tulai", ModeMacBundle},
+		{"darwin", "/tmp/go-build/tulai", ModeMacCopy},
+		{"windows", `C:\Users\a\AppData\Local\Programs\tulai\tulai.exe`, ModeWindowsSetup},
+		{"windows", `C:\Program Files\tulai\tulai.exe`, ModeWindowsSetup},
+		{"windows", `C:\Users\a\AppData\Local\Temp\go-build\tulai.exe`, ModeWindowsSetup},
+		{"windows", `D:\Portable\tulai.exe`, ModeWindowsExe},
+		{"linux", "/usr/bin/tulai", ModeLinuxDeb},
+		{"linux", "/opt/tulai/tulai", ModeLinuxDeb},
+		{"linux", "/home/a/tulai-0.1.2-linux-amd64.AppImage", ModeLinuxBinary},
+		{"linux", "/home/a/.local/tulai.app/tulai", ModeLinuxUser},
+		{"linux", "/tmp/go-build/tulai", ModeLinuxUser},
 	}
 	for _, tc := range cases {
 		if got := DetectMode(tc.goos, tc.exe); got != tc.want {
@@ -138,29 +138,29 @@ func TestDetectMode(t *testing.T) {
 
 func TestParseChecksumsWithSpaces(t *testing.T) {
 	text := "" +
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  xbs 0.1.0.dmg\n" +
-		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *xbs-0.1.0-linux-amd64.tar.gz\n" +
-		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc  xbs-extension-0.3.4.zip\n"
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  tulai 0.1.0.dmg\n" +
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *tulai-0.1.0-linux-amd64.tar.gz\n" +
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc  tulai-extension-0.3.4.zip\n"
 	sums, err := ParseChecksums(text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sums["xbs.0.1.0.dmg"] != strings.Repeat("a", 64) {
+	if sums["tulai.0.1.0.dmg"] != strings.Repeat("a", 64) {
 		t.Fatalf("dmg sum: %v", sums)
 	}
-	if sums["xbs-0.1.0-linux-amd64.tar.gz"] != strings.Repeat("b", 64) {
+	if sums["tulai-0.1.0-linux-amd64.tar.gz"] != strings.Repeat("b", 64) {
 		t.Fatalf("tar sum: %v", sums)
 	}
-	if sums["xbs-extension-0.3.4.zip"] == "" {
+	if sums["tulai-extension-0.3.4.zip"] == "" {
 		t.Fatal("extension checksum was dropped")
 	}
 }
 
 func TestPrepareDownloadsVerifiedAsset(t *testing.T) {
-	payload := []byte("xbs-update-test")
+	payload := []byte("tulai-update-test")
 	sum := sha256.Sum256(payload)
 	sumHex := hex.EncodeToString(sum[:])
-	sumsText := sumHex + "  xbs-0.2.0-linux-amd64.tar.gz\n"
+	sumsText := sumHex + "  tulai-0.2.0-linux-amd64.tar.gz\n"
 	sumsSum := sha256.Sum256([]byte(sumsText))
 	var sawAuth bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -174,12 +174,12 @@ func TestPrepareDownloadsVerifiedAsset(t *testing.T) {
 		case "/repos/xxww0098/tulai/releases/latest":
 			rel := Release{
 				Tag:  "v0.2.0",
-				Name: "xbs 0.2.0",
+				Name: "tulai 0.2.0",
 				Body: "notes",
 				Assets: []Asset{
-					{Name: "xbs-extension-0.9.9.zip", State: "uploaded", BrowserDownloadURL: serverURL(r, "/nope"), Size: 1},
+					{Name: "tulai-extension-0.9.9.zip", State: "uploaded", BrowserDownloadURL: serverURL(r, "/nope"), Size: 1},
 					{Name: "SHA256SUMS", State: "uploaded", BrowserDownloadURL: serverURL(r, "/sums"), Size: int64(len(sumsText)), Digest: "sha256:" + hex.EncodeToString(sumsSum[:])},
-					{Name: "xbs-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(payload)), Digest: "sha256:" + sumHex},
+					{Name: "tulai-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(payload)), Digest: "sha256:" + sumHex},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -202,7 +202,7 @@ func TestPrepareDownloadsVerifiedAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.UpToDate || got.Asset.Name != "xbs-0.2.0-linux-amd64.tar.gz" {
+	if got.UpToDate || got.Asset.Name != "tulai-0.2.0-linux-amd64.tar.gz" {
 		t.Fatalf("prepared %+v", got)
 	}
 	body, err := os.ReadFile(got.Path)
@@ -226,7 +226,7 @@ func TestPrepareRejectsBadChecksumAndForeignURL(t *testing.T) {
 	payload := []byte("nope")
 	sum := sha256.Sum256(payload)
 	sumHex := hex.EncodeToString(sum[:])
-	sumsText := strings.Repeat("ab", 32) + "  xbs-0.2.0-linux-amd64.tar.gz\n"
+	sumsText := strings.Repeat("ab", 32) + "  tulai-0.2.0-linux-amd64.tar.gz\n"
 	sumsSum := sha256.Sum256([]byte(sumsText))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -235,7 +235,7 @@ func TestPrepareRejectsBadChecksumAndForeignURL(t *testing.T) {
 				Tag: "v0.2.0",
 				Assets: []Asset{
 					{Name: "SHA256SUMS", State: "uploaded", BrowserDownloadURL: serverURL(r, "/sums"), Size: int64(len(sumsText)), Digest: "sha256:" + hex.EncodeToString(sumsSum[:])},
-					{Name: "xbs-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(payload)), Digest: "sha256:" + sumHex},
+					{Name: "tulai-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(payload)), Digest: "sha256:" + sumHex},
 				},
 			}
 			json.NewEncoder(w).Encode(rel)
@@ -255,13 +255,13 @@ func TestPrepareRejectsBadChecksumAndForeignURL(t *testing.T) {
 		t.Fatal("accepted a file whose digest disagreed with SHA256SUMS")
 	}
 
-	if err := client.allowAssetURL("https://evil.example/xbs.tar.gz", "v0.2.0", "xbs.tar.gz"); err == nil {
+	if err := client.allowAssetURL("https://evil.example/tulai.tar.gz", "v0.2.0", "tulai.tar.gz"); err == nil {
 		t.Fatal("accepted a download host outside GitHub")
 	}
-	if err := client.allowAssetURL("https://github.com/other/xbs/releases/download/v0.2.0/xbs.tar.gz", "v0.2.0", "xbs.tar.gz"); err == nil {
+	if err := client.allowAssetURL("https://github.com/other/tulai/releases/download/v0.2.0/tulai.tar.gz", "v0.2.0", "tulai.tar.gz"); err == nil {
 		t.Fatal("accepted another repository")
 	}
-	if err := client.allowAssetURL("http://github.com/xxww0098/tulai/releases/download/v0.2.0/xbs.tar.gz", "v0.2.0", "xbs.tar.gz"); err == nil {
+	if err := client.allowAssetURL("http://github.com/xxww0098/tulai/releases/download/v0.2.0/tulai.tar.gz", "v0.2.0", "tulai.tar.gz"); err == nil {
 		t.Fatal("accepted plain HTTP")
 	}
 }
@@ -282,11 +282,11 @@ func TestInstallLinuxUserArchive(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "app.tar.gz")
 	writeTar(t, archive, map[string]string{
-		"xbs":         "#!/bin/sh\necho updated\n",
-		"xbs.desktop": "[Desktop Entry]\nType=Application\nName=xbs\nExec=xbs\nIcon=\n",
+		"tulai":         "#!/bin/sh\necho updated\n",
+		"tulai.desktop": "[Desktop Entry]\nType=Application\nName=tulai\nExec=tulai\nIcon=\n",
 	})
 	home := filepath.Join(dir, "home")
-	exe := filepath.Join(home, ".local", "xbs.app", "xbs")
+	exe := filepath.Join(home, ".local", "tulai.app", "tulai")
 	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -307,23 +307,23 @@ func TestInstallLinuxUserArchive(t *testing.T) {
 	if !out.Quit || out.Helper != "/bin/sh" || out.Relaunch {
 		t.Fatalf("in-place user install did not arrange a restart: %+v", out)
 	}
-	body, err := os.ReadFile(filepath.Join(home, ".local", "xbs.app", "xbs"))
+	body, err := os.ReadFile(filepath.Join(home, ".local", "tulai.app", "tulai"))
 	if err != nil || !strings.Contains(string(body), "updated") {
 		t.Fatalf("installed binary %q err %v", body, err)
 	}
-	link, err := os.Readlink(filepath.Join(home, ".local", "bin", "xbs"))
-	if err != nil || link != filepath.Join(home, ".local", "xbs.app", "xbs") {
+	link, err := os.Readlink(filepath.Join(home, ".local", "bin", "tulai"))
+	if err != nil || link != filepath.Join(home, ".local", "tulai.app", "tulai") {
 		t.Fatalf("symlink %q err %v", link, err)
 	}
-	desktop, err := os.ReadFile(filepath.Join(home, ".local", "share", "applications", "xbs.desktop"))
+	desktop, err := os.ReadFile(filepath.Join(home, ".local", "share", "applications", "tulai.desktop"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantExec := `Exec="` + filepath.Join(home, ".local", "xbs.app", "xbs") + `"`
-	if !strings.Contains(string(desktop), wantExec) || !strings.Contains(string(desktop), "Name=tulai") || strings.Contains(string(desktop), "Name=xbs") {
+	wantExec := `Exec="` + filepath.Join(home, ".local", "tulai.app", "tulai") + `"`
+	if !strings.Contains(string(desktop), wantExec) || !strings.Contains(string(desktop), "Name=tulai") {
 		t.Fatalf("desktop entry:\n%s", desktop)
 	}
-	info, err := os.Stat(filepath.Join(home, ".local", "xbs.app", "xbs"))
+	info, err := os.Stat(filepath.Join(home, ".local", "tulai.app", "tulai"))
 	if err != nil || info.Mode()&0o111 == 0 {
 		t.Fatalf("binary is not executable: %v %v", info, err)
 	}
@@ -332,7 +332,7 @@ func TestInstallLinuxUserArchive(t *testing.T) {
 func TestInstallRejectsTarPathEscape(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "bad.tar.gz")
-	writeTar(t, archive, map[string]string{"../xbs": "nope"})
+	writeTar(t, archive, map[string]string{"../tulai": "nope"})
 	if _, err := Install(Options{
 		Mode:      ModeLinuxUser,
 		AssetPath: archive,
@@ -341,19 +341,19 @@ func TestInstallRejectsTarPathEscape(t *testing.T) {
 	}); err == nil {
 		t.Fatal("installed a tar that escapes the app directory")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "home", ".local", "xbs")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "home", ".local", "tulai")); err == nil {
 		t.Fatal("escaped file was written")
 	}
 }
 
 func TestInstallDebIsManual(t *testing.T) {
 	dir := t.TempDir()
-	deb := filepath.Join(dir, "xbs_0.2.0_amd64.deb")
+	deb := filepath.Join(dir, "tulai_0.2.0_amd64.deb")
 	if err := os.WriteFile(deb, []byte("deb"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
-	out, err := Install(Options{Mode: ModeLinuxDeb, AssetPath: deb, Version: "0.2.0", Executable: "/usr/bin/xbs"})
+	out, err := Install(Options{Mode: ModeLinuxDeb, AssetPath: deb, Version: "0.2.0", Executable: "/usr/bin/tulai"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestInstallDebIsManual(t *testing.T) {
 	if _, err := os.Stat(out.InstalledPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "home", ".local", "xbs.app")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "home", ".local", "tulai.app")); err == nil {
 		t.Fatal("deb install wrote a user app")
 	}
 }
@@ -375,14 +375,14 @@ func TestWindowsReplaceScript(t *testing.T) {
 			t.Fatalf("script missing %s:\n%s", needle, script)
 		}
 	}
-	args := WindowsHelperArgs("replace.ps1", 42, `D:\Portable\new.exe`, `D:\Portable\xbs.exe`, "")
+	args := WindowsHelperArgs("replace.ps1", 42, `D:\Portable\new.exe`, `D:\Portable\tulai.exe`, "")
 	joined := strings.Join(args, "\n")
-	if !strings.Contains(joined, "42") || !strings.Contains(joined, `D:\Portable\xbs.exe`) {
+	if !strings.Contains(joined, "42") || !strings.Contains(joined, `D:\Portable\tulai.exe`) {
 		t.Fatalf("args: %#v", args)
 	}
 	out, err := Install(Options{
 		Mode:       ModeWindowsExe,
-		Executable: `D:\Portable\xbs.exe`,
+		Executable: `D:\Portable\tulai.exe`,
 		AssetPath:  filepath.Join(t.TempDir(), "missing-not-read"),
 		Version:    "0.2.0",
 		PID:        42,
@@ -400,20 +400,20 @@ func TestWindowsReplaceScript(t *testing.T) {
 }
 
 func TestMacDestination(t *testing.T) {
-	bundle, inPlace := MacDestination("/Applications/xbs.app/Contents/MacOS/xbs", "/Users/a")
-	if bundle != "/Applications/xbs.app" || !inPlace {
+	bundle, inPlace := MacDestination("/Applications/tulai.app/Contents/MacOS/tulai", "/Users/a")
+	if bundle != "/Applications/tulai.app" || !inPlace {
 		t.Fatalf("bundle dest %s inPlace %v", bundle, inPlace)
 	}
-	copy, inPlace := MacDestination("/tmp/xbs", "/Users/a")
-	if copy != "/Users/a/Applications/xbs.app" || inPlace {
+	copy, inPlace := MacDestination("/tmp/tulai", "/Users/a")
+	if copy != "/Users/a/Applications/tulai.app" || inPlace {
 		t.Fatalf("copy dest %s inPlace %v", copy, inPlace)
 	}
 	root := t.TempDir()
-	app := filepath.Join(root, "mounted", "xbs.app")
+	app := filepath.Join(root, "mounted", "tulai.app")
 	if err := os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	found, err := FindBundle(root, "xbs.app")
+	found, err := FindBundle(root, "tulai.app")
 	if err != nil || found != app {
 		t.Fatalf("found %s err %v", found, err)
 	}
@@ -432,30 +432,42 @@ func TestLiveLatestRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	version, err := rel.Version()
-	if err != nil || version != "0.1.0" {
-		t.Fatalf("latest = %q (%v), release %+v", version, err, rel.Tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmp, err := Compare(version, "0.1.3")
+	if err != nil || cmp < 0 {
+		t.Fatalf("latest = %q, want >= 0.1.3 (%v)", version, err)
+	}
+	// 0.1.4 is the first release whose assets use the tulai names.
+	if cmp, err = Compare(version, "0.1.4"); err != nil || cmp < 0 {
+		return
 	}
 	for _, kind := range []Kind{KindLinuxTar, KindLinuxDeb, KindWindowsExe, KindWindowsSetup, KindMacDMG} {
-		arch := "amd64"
-		if _, err := Select(rel.Assets, kind, version, arch); err != nil {
+		if _, err := Select(rel.Assets, kind, version, "amd64"); err != nil {
 			t.Fatalf("live asset %s: %v", kind, err)
 		}
 	}
 	var ext Asset
 	for _, asset := range rel.Assets {
-		if strings.HasPrefix(asset.Name, "xbs-extension-") {
+		if strings.HasPrefix(asset.Name, "tulai-extension-") {
 			ext = asset
 		}
 	}
-	if ext.Name != "xbs-extension-0.3.4.zip" {
-		t.Fatalf("extension asset = %q", ext.Name)
+	if ext.Name == "" {
+		t.Fatal("missing extension zip")
 	}
 	sums, err := client.checksums(ctx, rel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"xbs.0.1.0.dmg", "xbs.Setup.0.1.0.amd64.exe", "xbs-0.1.0-linux-amd64.tar.gz", "xbs-extension-0.3.4.zip"} {
-		if len(sums[name]) != 64 {
+	for _, name := range []string{
+		"tulai." + version + ".dmg",
+		"tulai.Setup." + version + ".amd64.exe",
+		"tulai-" + version + "-linux-amd64.tar.gz",
+		ext.Name,
+	} {
+		if len(sums[NormalizeAssetName(name)]) != 64 {
 			t.Fatalf("SHA256SUMS missing %s: %v", name, sums)
 		}
 	}

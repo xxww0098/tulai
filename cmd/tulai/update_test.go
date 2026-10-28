@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"xbs/internal/update"
+	"github.com/xxww0098/tulai/internal/update"
 )
 
 func TestUpdateCheckCommand(t *testing.T) {
@@ -29,7 +29,7 @@ func TestUpdateCheckCommand(t *testing.T) {
 		json.NewEncoder(w).Encode(update.Release{
 			Tag:     "v0.2.0",
 			HTMLURL: "https://github.com/xxww0098/tulai/releases/tag/v0.2.0",
-			Assets:  []update.Asset{{Name: "xbs-extension-0.3.4.zip"}},
+			Assets:  []update.Asset{{Name: "tulai-extension-0.3.4.zip"}},
 		})
 	}))
 	defer srv.Close()
@@ -69,14 +69,14 @@ func TestUpdateInstallsUserArchive(t *testing.T) {
 	gz := gzip.NewWriter(&tarBuf)
 	tw := tar.NewWriter(gz)
 	body := "#!/bin/sh\necho from-release\n"
-	if err := tw.WriteHeader(&tar.Header{Name: "xbs", Mode: 0o755, Size: int64(len(body))}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: "tulai", Mode: 0o755, Size: int64(len(body))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tw.Write([]byte(body)); err != nil {
 		t.Fatal(err)
 	}
-	desktop := "[Desktop Entry]\nExec=xbs\n"
-	if err := tw.WriteHeader(&tar.Header{Name: "xbs.desktop", Mode: 0o644, Size: int64(len(desktop))}); err != nil {
+	desktop := "[Desktop Entry]\nExec=tulai\n"
+	if err := tw.WriteHeader(&tar.Header{Name: "tulai.desktop", Mode: 0o644, Size: int64(len(desktop))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tw.Write([]byte(desktop)); err != nil {
@@ -91,7 +91,7 @@ func TestUpdateInstallsUserArchive(t *testing.T) {
 	payload := tarBuf.Bytes()
 	sum := sha256.Sum256(payload)
 	sumHex := hex.EncodeToString(sum[:])
-	sumsText := sumHex + "  xbs-0.2.0-linux-amd64.tar.gz\n"
+	sumsText := sumHex + "  tulai-0.2.0-linux-amd64.tar.gz\n"
 	sumsSum := sha256.Sum256([]byte(sumsText))
 
 	var srv *httptest.Server
@@ -102,9 +102,9 @@ func TestUpdateInstallsUserArchive(t *testing.T) {
 				Tag:     "v0.2.0",
 				HTMLURL: "https://github.com/xxww0098/tulai/releases/tag/v0.2.0",
 				Assets: []update.Asset{
-					{Name: "xbs-extension-0.3.4.zip", State: "uploaded", BrowserDownloadURL: srv.URL + "/ext", Size: 1, Digest: "sha256:" + strings.Repeat("a", 64)},
+					{Name: "tulai-extension-0.3.4.zip", State: "uploaded", BrowserDownloadURL: srv.URL + "/ext", Size: 1, Digest: "sha256:" + strings.Repeat("a", 64)},
 					{Name: "SHA256SUMS", State: "uploaded", BrowserDownloadURL: srv.URL + "/sums", Size: int64(len(sumsText)), Digest: "sha256:" + hex.EncodeToString(sumsSum[:])},
-					{Name: "xbs-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: srv.URL + "/asset", Size: int64(len(payload)), Digest: "sha256:" + sumHex},
+					{Name: "tulai-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: srv.URL + "/asset", Size: int64(len(payload)), Digest: "sha256:" + sumHex},
 				},
 			})
 		case "/sums":
@@ -128,7 +128,7 @@ func TestUpdateInstallsUserArchive(t *testing.T) {
 		Stderr:     &stderr,
 		Home:       filepath.Join(root, "home"),
 		DataHome:   filepath.Join(root, "home", ".local", "share"),
-		Executable: filepath.Join(root, "dev", "xbs"),
+		Executable: filepath.Join(root, "dev", "tulai"),
 		GOOS:       "linux",
 		GOARCH:     "amd64",
 		Start: func(string, ...string) error {
@@ -139,14 +139,14 @@ func TestUpdateInstallsUserArchive(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
-	installed, err := os.ReadFile(filepath.Join(root, "home", ".local", "xbs.app", "xbs"))
+	installed, err := os.ReadFile(filepath.Join(root, "home", ".local", "tulai.app", "tulai"))
 	if err != nil || !strings.Contains(string(installed), "from-release") {
 		t.Fatalf("installed %q err %v\nstdout %s", installed, err, stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "没有 Apple 公证") {
 		t.Fatalf("missing unsigned warning: %s", stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(root, "home", ".local", "bin", "xbs")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "home", ".local", "bin", "tulai")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -156,7 +156,7 @@ func TestUpdateUsage(t *testing.T) {
 	if code := runUpdateWith([]string{"--bogus"}, updateRun{Stdout: &stdout, Stderr: &stderr}); code != 2 {
 		t.Fatalf("code %d", code)
 	}
-	if !strings.Contains(stderr.String(), "tulai") || !strings.Contains(stderr.String(), "xbs update") {
+	if !strings.Contains(stderr.String(), "tulai") || !strings.Contains(stderr.String(), "tulai update") {
 		t.Fatalf("stderr %s", stderr.String())
 	}
 }

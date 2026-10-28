@@ -16,10 +16,10 @@ func TestInstallRollsBackWhenBinaryFails(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "app.tar.gz")
 	writeTar(t, archive, map[string]string{
-		"xbs": "#!/bin/sh\nexit 1\n",
+		"tulai": "#!/bin/sh\nexit 1\n",
 	})
 	home := filepath.Join(dir, "home")
-	exe := filepath.Join(home, ".local", "xbs.app", "xbs")
+	exe := filepath.Join(home, ".local", "tulai.app", "tulai")
 	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -73,11 +73,11 @@ func TestRestartScriptRestoresFailedStart(t *testing.T) {
 		t.Skip("shell watcher")
 	}
 	root := t.TempDir()
-	app := filepath.Join(root, "xbs.app")
+	app := filepath.Join(root, "tulai.app")
 	if err := os.MkdirAll(app, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(app, "xbs")
+	target := filepath.Join(app, "tulai")
 	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestRestartScriptRestoresFailedStart(t *testing.T) {
 	if err := os.MkdirAll(backup, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(backup, "xbs"), []byte("#!/bin/sh\necho old\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(backup, "tulai"), []byte("#!/bin/sh\necho old\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	script := filepath.Join(root, "watch.sh")
@@ -116,7 +116,7 @@ func TestRestartScriptKeepsRunningBinary(t *testing.T) {
 		t.Skip("shell watcher")
 	}
 	root := t.TempDir()
-	target := filepath.Join(root, "xbs")
+	target := filepath.Join(root, "tulai")
 	if err := os.WriteFile(target, []byte("#!/bin/sh\necho ok > \"$STAMP\"\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

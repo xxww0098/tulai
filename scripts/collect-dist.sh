@@ -27,9 +27,9 @@ case "$kind" in
 linux)
   for arch in amd64 arm64; do
     dir="build/linux-$arch"
-    require "$dir/xbs-$version-linux-$arch.tar.gz"
-    require "$dir/xbs_${version}_${arch}.deb"
-    cp "$dir/xbs-$version-linux-$arch.tar.gz" "$dir/xbs_${version}_${arch}.deb" dist/
+    require "$dir/tulai-$version-linux-$arch.tar.gz"
+    require "$dir/tulai_${version}_${arch}.deb"
+    cp "$dir/tulai-$version-linux-$arch.tar.gz" "$dir/tulai_${version}_${arch}.deb" dist/
   done
   require build/linux-amd64/install.sh
   require build/linux-arm64/install.sh
@@ -42,10 +42,10 @@ linux)
 windows)
   for arch in amd64 arm64; do
     dir="build/windows-$arch"
-    require "$dir/xbs Setup $version $arch.exe"
-    require "$dir/xbs.exe"
-    cp "$dir/xbs Setup $version $arch.exe" dist/
-    cp "$dir/xbs.exe" "dist/xbs-$version-windows-$arch.exe"
+    require "$dir/tulai Setup $version $arch.exe"
+    require "$dir/tulai.exe"
+    cp "$dir/tulai Setup $version $arch.exe" dist/
+    cp "$dir/tulai.exe" "dist/tulai-$version-windows-$arch.exe"
   done
   ;;
 macos)

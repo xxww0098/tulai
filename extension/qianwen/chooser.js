@@ -1,13 +1,13 @@
 // 跑在页面主世界（manifest world: MAIN）。内容脚本改自己的 HTMLInputElement.prototype
 // 拦不到千问页面里的 showPicker：两边不共享 JS 原型。
 // 当前千问「上传图片」会临时创建 input，先 showPicker，失败再 click（qianwen-web 的 em()）。
-// 内容脚本把源图放进隐藏节点并派发 xbs-qianwen-arm 之后，这里在那一次调用里写入文件并派发 change，
+// 内容脚本把源图放进隐藏节点并派发 tulai-qianwen-arm 之后，这里在那一次调用里写入文件并派发 change，
 // 不打开系统文件框。没武装时走原来的 showPicker/click，用户自己选文件不受影响。
 (function () {
-  if (globalThis.__xbsQianwenChooser) return
-  const ARM = 'xbs-qianwen-arm'
-  const DISARM = 'xbs-qianwen-disarm'
-  const SLOT = 'xbs-qianwen-file-slot'
+  if (globalThis.__tulaiQianwenChooser) return
+  const ARM = 'tulai-qianwen-arm'
+  const DISARM = 'tulai-qianwen-disarm'
+  const SLOT = 'tulai-qianwen-file-slot'
   let pending = null
 
   function acceptsImage(input) {
@@ -47,8 +47,8 @@
     const file = pending
     pending = null
     const ok = assign(input, file)
-    setAttr('data-xbs-chooser-result', ok ? 'ok' : 'fail')
-    setAttr('data-xbs-chooser-armed', '0')
+    setAttr('data-tulai-chooser-result', ok ? 'ok' : 'fail')
+    setAttr('data-tulai-chooser-armed', '0')
     return true
   }
 
@@ -91,16 +91,16 @@
     const raw = slot ? String(slot.textContent || '') : ''
     if (slot) slot.textContent = ''
     pending = decode(raw)
-    setAttr('data-xbs-chooser-armed', pending ? '1' : '0')
+    setAttr('data-tulai-chooser-armed', pending ? '1' : '0')
   }
 
   function onDisarm() {
     pending = null
-    setAttr('data-xbs-chooser-armed', '0')
+    setAttr('data-tulai-chooser-armed', '0')
   }
 
   function install() {
-    if (globalThis.__xbsQianwenChooser) return
+    if (globalThis.__tulaiQianwenChooser) return
     if (!globalThis.HTMLInputElement || !document || !document.documentElement) return
     let ok = false
     if (typeof HTMLInputElement.prototype.showPicker === 'function') {
@@ -123,12 +123,12 @@
     if (!ok) return
     document.addEventListener(ARM, onArm, true)
     document.addEventListener(DISARM, onDisarm, true)
-    document.documentElement.setAttribute('data-xbs-chooser', 'qianwen')
-    globalThis.__xbsQianwenChooser = true
+    document.documentElement.setAttribute('data-tulai-chooser', 'qianwen')
+    globalThis.__tulaiQianwenChooser = true
   }
 
   install()
-  if (!globalThis.__xbsQianwenChooser && document && typeof document.addEventListener === 'function') {
+  if (!globalThis.__tulaiQianwenChooser && document && typeof document.addEventListener === 'function') {
     document.addEventListener('DOMContentLoaded', install, { once: true })
   }
 })()

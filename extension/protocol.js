@@ -1,5 +1,5 @@
 // 与 internal/extbridge 的 v1 信封共用字段名、命令名和错误码。
-globalThis.XBS = {
+globalThis.TULAI = {
   version: 1,
   platform: 'qianwen',
   pingEveryMs: 15000,
@@ -36,20 +36,20 @@ globalThis.XBS = {
   },
 }
 
-function xbsNewId() {
+function tulaiNewId() {
   if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID()
   return 'id-' + Date.now().toString(16) + Math.random().toString(16).slice(2)
 }
 
-globalThis.XBS.newId = xbsNewId
+globalThis.TULAI.newId = tulaiNewId
 
-globalThis.XBS.envelope = function envelope(type, fields) {
+globalThis.TULAI.envelope = function envelope(type, fields) {
   const env = {
-    v: globalThis.XBS.version,
-    id: xbsNewId(),
+    v: globalThis.TULAI.version,
+    id: tulaiNewId(),
     type,
     ts: Date.now(),
-    platform: globalThis.XBS.platform,
+    platform: globalThis.TULAI.platform,
   }
   if (fields) Object.assign(env, fields)
   return env
@@ -57,21 +57,21 @@ globalThis.XBS.envelope = function envelope(type, fields) {
 
 // platform 省略时仍是千问，和原先单个套接字的 hello 一样。豆包套接字传入 'doubao'。
 // account 是这个浏览器配置文件的稳定 id，旧扩展可以不传。
-globalThis.XBS.hello = function hello(token, platform, account) {
-  const payload = { token: token || '', version: '0.3.7' }
+globalThis.TULAI.hello = function hello(token, platform, account) {
+  const payload = { token: token || '', version: '0.3.8' }
   if (account) payload.account = String(account)
-  const env = globalThis.XBS.envelope('hello', { payload })
+  const env = globalThis.TULAI.envelope('hello', { payload })
   if (platform) env.platform = platform
   return env
 }
 
-globalThis.XBS.reply = function reply(request, type, payload) {
+globalThis.TULAI.reply = function reply(request, type, payload) {
   return {
-    v: globalThis.XBS.version,
+    v: globalThis.TULAI.version,
     id: request && request.id,
     type,
     ts: Date.now(),
-    platform: (request && request.platform) || globalThis.XBS.platform,
+    platform: (request && request.platform) || globalThis.TULAI.platform,
     sessionId: request && request.sessionId,
     taskId: request && request.taskId,
     idempotencyKey: request && request.idempotencyKey,
@@ -79,13 +79,13 @@ globalThis.XBS.reply = function reply(request, type, payload) {
   }
 }
 
-globalThis.XBS.ack = function ack(request, payload) {
-  return globalThis.XBS.reply(request, 'ack', payload)
+globalThis.TULAI.ack = function ack(request, payload) {
+  return globalThis.TULAI.reply(request, 'ack', payload)
 }
 
-globalThis.XBS.fail = function fail(request, code, message) {
+globalThis.TULAI.fail = function fail(request, code, message) {
   const name = request && request.payload && request.payload.name
-  return globalThis.XBS.ack(request, {
+  return globalThis.TULAI.ack(request, {
     name,
     ok: false,
     code,
@@ -94,7 +94,7 @@ globalThis.XBS.fail = function fail(request, code, message) {
 }
 
 // 与 internal/images.IsValidImageBytes 同一组魔数：PNG / JPEG / GIF / WebP。
-globalThis.XBS.looksLikeRaster = function looksLikeRaster(bytes) {
+globalThis.TULAI.looksLikeRaster = function looksLikeRaster(bytes) {
   if (!bytes || bytes.length < 3) return false
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47 && bytes[4] === 0x0D && bytes[5] === 0x0A && bytes[6] === 0x1A && bytes[7] === 0x0A) return true
   if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return true

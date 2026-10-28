@@ -21,13 +21,13 @@ import (
 	"testing"
 	"time"
 
-	"xbs/internal/captcha"
-	"xbs/internal/cdp"
-	"xbs/internal/extbridge"
-	"xbs/internal/images"
-	"xbs/internal/logging"
-	"xbs/internal/store"
-	"xbs/internal/strategy"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/images"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/strategy"
 )
 
 func TestBuildQueueSequentialCycle(t *testing.T) {

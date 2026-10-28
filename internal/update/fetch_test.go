@@ -18,7 +18,7 @@ func TestMirrorFallbackAndChecksum(t *testing.T) {
 	sum := sha256.Sum256(payload)
 	sumHex := hex.EncodeToString(sum[:])
 	bad := []byte("captive-portal")
-	sumsText := sumHex + "  xbs-0.2.0-linux-amd64.tar.gz\n"
+	sumsText := sumHex + "  tulai-0.2.0-linux-amd64.tar.gz\n"
 	sumsSum := sha256.Sum256([]byte(sumsText))
 
 	var mirrorHits int
@@ -40,7 +40,7 @@ func TestMirrorFallbackAndChecksum(t *testing.T) {
 				Tag: "v0.2.0",
 				Assets: []Asset{
 					{Name: "SHA256SUMS", State: "uploaded", BrowserDownloadURL: serverURL(r, "/sums"), Size: int64(len(sumsText)), Digest: "sha256:" + hex.EncodeToString(sumsSum[:])},
-					{Name: "xbs-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(payload)), Digest: "sha256:" + sumHex},
+					{Name: "tulai-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(payload)), Digest: "sha256:" + sumHex},
 				},
 			}
 			json.NewEncoder(w).Encode(rel)
@@ -76,7 +76,7 @@ func TestChecksumMismatchTriesMirror(t *testing.T) {
 	good := []byte("good-bytes")
 	sum := sha256.Sum256(good)
 	sumHex := hex.EncodeToString(sum[:])
-	sumsText := sumHex + "  xbs-0.2.0-linux-amd64.tar.gz\n"
+	sumsText := sumHex + "  tulai-0.2.0-linux-amd64.tar.gz\n"
 	sumsSum := sha256.Sum256([]byte(sumsText))
 	var mirrorHits int
 	var primary *httptest.Server
@@ -92,7 +92,7 @@ func TestChecksumMismatchTriesMirror(t *testing.T) {
 				Tag: "v0.2.0",
 				Assets: []Asset{
 					{Name: "SHA256SUMS", State: "uploaded", BrowserDownloadURL: serverURL(r, "/sums"), Size: int64(len(sumsText)), Digest: "sha256:" + hex.EncodeToString(sumsSum[:])},
-					{Name: "xbs-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(good)), Digest: "sha256:" + sumHex},
+					{Name: "tulai-0.2.0-linux-amd64.tar.gz", State: "uploaded", BrowserDownloadURL: serverURL(r, "/asset"), Size: int64(len(good)), Digest: "sha256:" + sumHex},
 				},
 			})
 		case "/sums":
@@ -170,8 +170,8 @@ func TestResumeDownload(t *testing.T) {
 		w.Write(payload[6:])
 	}))
 	defer srv.Close()
-	asset := Asset{Name: "xbs.bin", BrowserDownloadURL: srv.URL + "/xbs.bin", Size: int64(len(payload))}
-	dest := filepath.Join(t.TempDir(), "xbs.bin")
+	asset := Asset{Name: "tulai.bin", BrowserDownloadURL: srv.URL + "/tulai.bin", Size: int64(len(payload))}
+	dest := filepath.Join(t.TempDir(), "tulai.bin")
 	client := NewClient("0.1.2")
 	if err := client.downloadFile(context.Background(), "v0.2.0", asset, dest); err != nil {
 		t.Fatal(err)
@@ -194,11 +194,11 @@ func TestDownloadCleansUpOnFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 	dir := t.TempDir()
-	dest := filepath.Join(dir, "xbs.bin")
+	dest := filepath.Join(dir, "tulai.bin")
 	if err := os.WriteFile(dest+".partial", []byte("junk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	asset := Asset{Name: "xbs.bin", BrowserDownloadURL: srv.URL + "/xbs.bin", Size: 8}
+	asset := Asset{Name: "tulai.bin", BrowserDownloadURL: srv.URL + "/tulai.bin", Size: 8}
 	client := NewClient("0.1.2")
 	if err := client.downloadFile(context.Background(), "v0.2.0", asset, dest); err == nil {
 		t.Fatal("accepted a failed download")
@@ -212,14 +212,14 @@ func TestDownloadCleansUpOnFailure(t *testing.T) {
 }
 
 func TestSelectAppImageFallsBackToTar(t *testing.T) {
-	assets := []Asset{{Name: "xbs-0.2.0-linux-arm64.tar.gz", State: "uploaded"}}
+	assets := []Asset{{Name: "tulai-0.2.0-linux-arm64.tar.gz", State: "uploaded"}}
 	got, err := Select(assets, KindLinuxAppImage, "0.2.0", "arm64")
-	if err != nil || got.Name != "xbs-0.2.0-linux-arm64.tar.gz" {
+	if err != nil || got.Name != "tulai-0.2.0-linux-arm64.tar.gz" {
 		t.Fatalf("fallback %+v %v", got, err)
 	}
-	with := append(assets, Asset{Name: "xbs-0.2.0-linux-arm64.AppImage", State: "uploaded"})
+	with := append(assets, Asset{Name: "tulai-0.2.0-linux-arm64.AppImage", State: "uploaded"})
 	got, err = Select(with, KindLinuxAppImage, "0.2.0", "arm64")
-	if err != nil || got.Name != "xbs-0.2.0-linux-arm64.AppImage" {
+	if err != nil || got.Name != "tulai-0.2.0-linux-arm64.AppImage" {
 		t.Fatalf("appimage %+v %v", got, err)
 	}
 }

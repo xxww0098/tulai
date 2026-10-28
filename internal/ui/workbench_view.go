@@ -11,12 +11,12 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/captcha"
-	"xbs/internal/images"
-	"xbs/internal/logging"
-	"xbs/internal/prompts"
-	"xbs/internal/store"
-	"xbs/internal/tasks"
+	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/images"
+	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/prompts"
+	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 func (a *App) chrome(c *ui.Context) {

@@ -84,17 +84,17 @@ func BuiltinSupported(goos, goarch string) bool {
 	return ok
 }
 
-// ConfigDir 是应用数据根目录：<UserConfigDir>/xbs。
+// ConfigDir 是应用数据根目录：<UserConfigDir>/tulai。
 func ConfigDir() string {
 	dir, err := os.UserConfigDir()
 	if err != nil || dir == "" {
 		return ""
 	}
-	return filepath.Join(dir, "xbs")
+	return filepath.Join(dir, "tulai")
 }
 
 // Resolve 按系统顺序找可执行文件。backend 是用户的选择（Chrome、Edge、Builtin），空串表示按系统默认顺序。
-// dataDir 是 <UserConfigDir>/xbs，用来找已经下载的内置浏览器。
+// dataDir 是 <UserConfigDir>/tulai，用来找已经下载的内置浏览器。
 func Resolve(goos, backend, dataDir string) (Runtime, error) {
 	return resolve(hostLookup(goos, runtime.GOARCH), backend, dataDir)
 }
