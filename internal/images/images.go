@@ -59,6 +59,51 @@ func Thumb(path string, box int) (image.Image, error) {
 	return resize(img, nw, nh), nil
 }
 
+// CoverThumb 居中裁成正方形再缩小到 box，给出图页的缩略图。
+// 比例还在：裁的是两边多出来的部分，不是把图拉扁。
+func CoverThumb(path string, box int) (image.Image, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("解码 %s: %w", filepath.Base(path), err)
+	}
+	return coverBox(img, box), nil
+}
+
+func coverBox(src image.Image, box int) image.Image {
+	if box < 1 {
+		box = 1
+	}
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w < 1 || h < 1 {
+		return src
+	}
+	side := w
+	if h < side {
+		side = h
+	}
+	crop := src
+	if side != w || side != h {
+		x0 := b.Min.X + (w-side)/2
+		y0 := b.Min.Y + (h-side)/2
+		type sub interface {
+			SubImage(image.Rectangle) image.Image
+		}
+		if s, ok := src.(sub); ok {
+			crop = s.SubImage(image.Rect(x0, y0, x0+side, y0+side))
+		}
+	}
+	n := side
+	if n > box {
+		n = box
+	}
+	return resize(crop, n, n)
+}
+
 // resize 双线性缩放。
 func resize(src image.Image, w, h int) image.Image {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
