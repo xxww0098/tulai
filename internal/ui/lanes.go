@@ -31,17 +31,6 @@ func LaneHeader(slots, done, total int) string {
 	return fmt.Sprintf("%d 个账号同时出图 · 完成 %d / 共 %d", slots, done, total)
 }
 
-func queueDone(items []tasks.Task) (done, total int) {
-	total = len(items)
-	for _, task := range items {
-		switch task.Status {
-		case tasks.StatusSuccess, tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser:
-			done++
-		}
-	}
-	return done, total
-}
-
 func (a *App) liveParallel() int {
 	slots := a.parallelSlots()
 	if a == nil || a.concurrencyAuto {
@@ -129,22 +118,20 @@ func (a *App) laneClock(c *ui.Context, board tasks.Board) {
 	}
 }
 
-func (a *App) laneHeader(c *ui.Context, board tasks.Board) {
+func (a *App) laneHeader(c *ui.Context) {
 	tok := a.look
-	done, total := queueDone(a.queueItems())
-	line := LaneHeader(a.liveParallel(), done, total)
+	cards := ProgressCards(a.queueItems())
+	done, _, _, _, _ := ProgressTally(cards)
+	line := LaneHeader(a.liveParallel(), done, len(cards))
 	ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().
 		ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
-	if board.Active > 0 {
-		ui.Text(c, fmt.Sprintf("正在跑 %d 个", board.Active)).FontSize(tok.caption).TextColor(tok.muted)
-	}
 }
 
 func (a *App) laneStrip(c *ui.Context, board tasks.Board) {
 	tok := a.look
 	ui.Column(c.Key("lane-strip")).FillWidth().Gap(8).Padding(8, 10).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border).Transition(motionReveal()).Children(func() {
-		a.laneHeader(c, board)
+		a.laneHeader(c)
 		ui.Row(c).Wrap().Gap(8).Children(func() {
 			for i, ln := range board.Lanes {
 				a.laneChipRow(c, ln, i, true)
@@ -158,7 +145,7 @@ func (a *App) laneCards(c *ui.Context, board tasks.Board) {
 	ui.Column(c.Key("lane-board")).FillWidth().Gap(10).Padding(12, 14).Radius(tok.radiusL).
 		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
 		Transition(motionReveal()).Children(func() {
-		a.laneHeader(c, board)
+		a.laneHeader(c)
 		width, _ := c.Size()
 		cols := int((width - 40) / 280)
 		if cols < 1 {

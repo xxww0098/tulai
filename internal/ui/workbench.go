@@ -301,6 +301,21 @@ func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs i
 	return done, running, queued, failed, needs
 }
 
+// RunSummary 是出图步骤左侧的一行：几张图，以及现在能同时出图的账号数。
+func RunSummary(images int, prompts bool, slots int) string {
+	if slots < 0 {
+		slots = 0
+	}
+	switch {
+	case images > 0:
+		return fmt.Sprintf("%d 张图 · %d 个账号同时出图", images, slots)
+	case prompts:
+		return fmt.Sprintf("按提示词 · %d 个账号同时出图", slots)
+	default:
+		return "先添加图片，或写一条提示词"
+	}
+}
+
 // FormatProgressTally 是进度条上的那一行。
 func FormatProgressTally(done, running, queued, failed, needs int) string {
 	parts := []string{
@@ -363,6 +378,10 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 			}
 		}
 		card.Status = DisplayStatus(statuses)
+		// 还在出或还在排队时，不把已经落下的图当成完成结果。
+		if card.Status == "生成中" || card.Status == "排队中" {
+			card.Shots = nil
+		}
 		if card.Status == "待验证" {
 			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)
 			card.Reason = hint.Sentence

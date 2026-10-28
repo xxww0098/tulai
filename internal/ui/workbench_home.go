@@ -413,25 +413,90 @@ func (a *App) stepRun(c *ui.Context, step flowStep) {
 		if plan.Action == StartWizard && !a.running {
 			a.accountCallout(c)
 		}
-		var b ui.Element
-		switch {
-		case a.running:
-			b = ui.Button(c, "").Height(48).FillWidth().OnClick(func() { a.stopTasks() })
-			b.Children(func() {
-				ui.Spinner(c).Size(18, 18)
-				ui.Text(c, "停止").FontSize(tok.title)
+		ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				summary := RunSummary(len(a.sources), len(a.taskPromptList()) > 0, a.liveParallel())
+				ui.Text(c, summary).FontSize(tok.body).SingleLine().Tooltip(summary)
+				if note := a.runNote(); note != "" {
+					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(note)
+				}
+				path := a.resolvedOutputDir()
+				ui.Text(c, path).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(path)
 			})
-		case plan.Action == StartNone:
-			b = ui.Button(c, "开始出图").Height(48).FontSize(tok.title).FillWidth().Disabled(true)
-		default:
-			b = ui.PrimaryButton(c, "开始出图").Height(48).FontSize(tok.title).FillWidth().OnClick(func() { a.startTasks() })
+			a.runButton(c, plan)
+		})
+	})
+}
+
+// runButton 是出图步骤右侧的按钮。开始是主按钮，跑起来以后同一位置换成「停止」，文字交叉淡出。
+func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
+	tok := a.look
+	th := c.Theme()
+	running := a.running
+	disabled := !running && plan.Action == StartNone
+	label := "开始出图"
+	if running {
+		label = "停止"
+	}
+	b := ui.ButtonBase(c.Key("run-go")).Padding(8, 16).Gap(8).Radius(th.Radius).Shrink(0).AlignItems(ui.Center)
+	bg, fg := th.Accent, th.AccentText
+	border := ui.Color{}
+	switch {
+	case disabled:
+		bg, fg, border = th.Surface, th.TextMuted, th.Border
+	case running:
+		bg, fg, border = th.Surface, th.Text, th.Border
+	}
+	if !disabled {
+		switch {
+		case b.Pressed():
+			if running {
+				bg = th.SurfacePressed
+			} else {
+				bg = th.AccentPressed
+			}
+		case b.Hovered():
+			if running {
+				bg = th.SurfaceHover
+			} else {
+				bg = th.AccentHover
+			}
 		}
-		pressPose(b)
-		if hint := a.startHint(plan); hint != "" {
-			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(hint)
+	}
+	if border.A == 0 {
+		border = bg
+	}
+	b.Background(b.AnimateColor("face", bg, motionEaseFast)).TextColor(fg).Border(1, border)
+	if !disabled {
+		hoverPressPose(b)
+	}
+	b.Disabled(disabled)
+	if running {
+		b.OnClick(func() { a.stopTasks() })
+	} else if !disabled {
+		b.OnClick(func() { a.startTasks() })
+	}
+	b.Children(func() {
+		runGlyph(c, running, fg)
+		ui.Text(c.Key("run-label"), label).FontSize(tok.body).
+			ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
+	})
+}
+
+func runGlyph(c *ui.Context, stop bool, ink ui.Color) {
+	box := ui.Box(c.Key("run-glyph")).Size(12, 12).Shrink(0)
+	target := float32(0)
+	if stop {
+		target = 1
+	}
+	shown := box.AnimateTo("stop", target, motionEaseFast)
+	box.Draw(func(p *ui.Painter, r ui.Rect) {
+		if shown < 0.98 {
+			play := (&ui.Path{}).MoveTo(r.X+2, r.Y+1).LineTo(r.X+2, r.Y+r.H-1).LineTo(r.X+r.W-1, r.Y+r.H/2).Close()
+			p.FillPath(play, ink.Alpha(1-shown))
 		}
-		if a.running || a.progress > 0 {
-			motionProgress(c, "run-progress", a.progress, a.running && a.progress <= 0)
+		if shown > 0.02 {
+			p.Fill(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, ink.Alpha(shown), 1.5)
 		}
 	})
 }
@@ -446,36 +511,17 @@ func (a *App) accountCallout(c *ui.Context) {
 	})
 }
 
-func (a *App) startHint(plan WorkbenchPlan) string {
-	if !a.running && hasNeedsUser(a.queueItems()) {
+// runNote 是出图步骤上的一行进度。待验证已经写在卡片上，这里不再重复成一条失败。
+func (a *App) runNote() string {
+	if a == nil || a.progText == "" {
 		return ""
 	}
-	if a.running {
-		if a.progText != "" {
-			return a.progText
-		}
-		return "正在出图"
-	}
-	if a.progText != "" && plan.Action != StartWizard {
-		return a.progText
-	}
-	switch plan.Action {
-	case StartNone:
-		return "先添加图片，或写一条提示词。不放图片也可以只按提示词出图"
-	case StartGenerate:
-		return "将使用" + strings.Join(plan.Platforms, "、") + "，账号自动轮换 · 保存到 " + a.resolvedOutputDir()
-	default:
-		return ""
-	}
-}
-
-func hasNeedsUser(items []tasks.Task) bool {
-	for _, task := range items {
+	for _, task := range a.queueItems() {
 		if task.Status == tasks.StatusNeedsUser {
-			return true
+			return ""
 		}
 	}
-	return false
+	return a.progText
 }
 
 func (a *App) loginBanner(c *ui.Context) {

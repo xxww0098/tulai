@@ -46,6 +46,41 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	}
 }
 
+func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
+	a := &App{
+		platformAuto:    true,
+		concurrencyAuto: true,
+		prompts:         "一只猫",
+		outputPath:      "图片/输出结果",
+		sources:         []sourceImage{{Path: "风景.png"}},
+		browserRows:     []store.Browser{loggedLane(1, "豆包主力", "豆包")},
+	}
+	tt := ui.NewTester(a.view, 1280, 900)
+	tt.Advance(300 * time.Millisecond)
+	start, ok := tt.Find("开始出图")
+	if !ok || start.W > 220 || start.W < 48 {
+		t.Fatalf("start button %+v", start)
+	}
+	for _, label := range []string{"1 张图 · 1 个账号同时出图", "图片/输出结果"} {
+		if !tt.HasText(label) {
+			t.Fatalf("missing %q", label)
+		}
+	}
+	a.running = true
+	tt.Frame()
+	tt.Advance(motionFast + 40*time.Millisecond)
+	if tt.HasText("开始出图") {
+		t.Fatal("start label stayed after the crossfade")
+	}
+	stop, ok := tt.Find("停止")
+	if !ok || stop.W > 220 {
+		t.Fatalf("stop button %+v", stop)
+	}
+	if tt.FramePending() {
+		t.Fatal("stop button kept asking for frames")
+	}
+}
+
 func TestLaneStripWhenStepIsNotCurrent(t *testing.T) {
 	a := &App{platformAuto: true, concurrencyAuto: true, browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")}}
 	tt := ui.NewTester(a.view, 1280, 800)

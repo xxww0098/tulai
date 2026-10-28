@@ -77,10 +77,12 @@ func TestExportWorkbenchShots(t *testing.T) {
 		}
 	}
 
-	save("after-empty", &App{platformAuto: true})
+	const shotOut = "图片/输出结果"
+	save("after-empty", &App{platformAuto: true, outputPath: shotOut})
 
 	picked := &App{
 		platformAuto: true,
+		outputPath:   shotOut,
 		sources: []sourceImage{
 			{Path: land, Hash: "land"},
 			{Path: face, Hash: "face"},
@@ -90,10 +92,12 @@ func TestExportWorkbenchShots(t *testing.T) {
 	save("after-selected", picked)
 
 	run := &App{
-		platformAuto: true,
-		platDoubao:   true,
-		outputPath:   "输出结果",
-		prompts:      "水彩，保留构图",
+		platformAuto:    true,
+		concurrencyAuto: true,
+		running:         true,
+		platDoubao:      true,
+		outputPath:      shotOut,
+		prompts:         "水彩，保留构图",
 		browserRows: []store.Browser{
 			{ID: 1, Name: "豆包主力", Platform: "豆包", IsLoggedIn: true, Health: store.HealthReady},
 			{ID: 2, Name: "千问备用", Platform: "千问", IsLoggedIn: true, Health: store.HealthReady},
@@ -129,6 +133,7 @@ func TestExportWorkbenchShots(t *testing.T) {
 	idle := &App{
 		platformAuto:    true,
 		concurrencyAuto: true,
+		outputPath:      shotOut,
 		prompts:         "水彩，保留构图",
 		sources:         []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}},
 		browserRows: []store.Browser{
@@ -142,6 +147,8 @@ func TestExportWorkbenchShots(t *testing.T) {
 	running := &App{
 		platformAuto:    true,
 		concurrencyAuto: true,
+		running:         true,
+		outputPath:      shotOut,
 		prompts:         "水彩，保留构图",
 		sources:         []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}},
 		browserRows: []store.Browser{
@@ -153,7 +160,6 @@ func TestExportWorkbenchShots(t *testing.T) {
 			{Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusRunning, Images: []string{land}, Prompt: "水彩，保留构图，傍晚的光"},
 			{Index: 2, Platform: "豆包", BrowserID: 2, Status: tasks.StatusRunning, Images: []string{face}, Prompt: "人像改成胶片色"},
 			{Index: 3, Platform: "千问", BrowserID: 3, Status: tasks.StatusRunning, Images: []string{still}, Prompt: "静物换成暖光"},
-			{Index: 4, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess, Images: []string{land}, Prompt: "水彩", Results: []string{out}},
 		},
 	}
 	running.preloadThumbs([]string{land, face, still, out})
@@ -162,6 +168,7 @@ func TestExportWorkbenchShots(t *testing.T) {
 	blocked := &App{
 		platformAuto:    true,
 		concurrencyAuto: true,
+		outputPath:      shotOut,
 		dailyCap:        20,
 		prompts:         "一只猫",
 		sources:         []sourceImage{{Path: land, Hash: "land"}},
