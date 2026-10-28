@@ -62,7 +62,7 @@ func (a *App) updateBanner(c *ui.Context) {
 	if a.updateNotice == "" {
 		return
 	}
-	ui.Column(c).FillWidth().Padding(10, 12).Gap(6).Radius(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+	ui.Column(c.Key("update-banner")).FillWidth().Padding(10, 12).Gap(6).Radius(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Transition(motionBanner()).Children(func() {
 		ui.Text(c, "发现新版本 "+a.updateNotice).FontSize(14).Bold()
 		if a.updateNotes != "" {
 			ui.Text(c, a.updateNotes).FontSize(12).TextColor(c.Theme().TextMuted)
@@ -74,7 +74,8 @@ func (a *App) updateBanner(c *ui.Context) {
 			ui.Text(c, a.updateErr).FontSize(12).TextColor(c.Theme().Danger)
 		}
 		if a.updateDownloading {
-			ui.Progress(c, a.updateFraction).FillWidth().Height(6)
+			installing := strings.Contains(a.updateProgressText, "正在安装")
+			motionProgress(c, "update-progress", a.updateFraction, installing || a.updateFraction <= 0)
 			if a.updateProgressText != "" {
 				ui.Text(c, a.updateProgressText).FontSize(12).TextColor(c.Theme().TextMuted)
 			}
@@ -357,6 +358,11 @@ func (a *App) downloadAndInstall() {
 			return
 		}
 	}
+	a.onUI(func() {
+		a.updateDownloading = true
+		a.updateProgressText = "正在安装…"
+		a.updateFraction = 1
+	})
 	out, err := update.Install(update.Options{
 		Mode:       mode,
 		Executable: exe,

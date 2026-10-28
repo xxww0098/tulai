@@ -67,8 +67,7 @@ func (a *App) dropZone(c *ui.Context) {
 	if busy {
 		pad = 10
 	}
-	zone := ui.Column(c.Key("drop-zone")).FillWidth().Padding(pad).Gap(12).
-		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(16)
+	zone := ui.Column(c.Key("drop-zone")).FillWidth().Padding(pad).Gap(12).Radius(16)
 	if !busy {
 		zone.Grow(1).MinHeight(280)
 	}
@@ -78,9 +77,22 @@ func (a *App) dropZone(c *ui.Context) {
 			logging.Log.Info("添加 %d 张源图", n)
 		}
 	}
-	if zone.FileDragOver() {
-		zone.Border(2, c.Theme().Accent)
+	edge, fill := c.Theme().Border, c.Theme().Surface
+	borderW := float32(1)
+	var pose ui.Pose
+	switch {
+	case zone.FileDragOver():
+		edge = c.Theme().Accent
+		fill = c.Theme().Accent.Alpha(0.1)
+		borderW = 2
+		pose.Scale = 1.012
+	case zone.Hovered():
+		edge = c.Theme().Accent.Alpha(0.55)
+		pose.Scale = 1.006
 	}
+	zone.Border(borderW, zone.AnimateColor("edge", edge, motionEaseFast))
+	zone.Background(zone.AnimateColor("fill", fill, motionEaseFast))
+	zone.AnimatePose(pose, motionEaseFast)
 	empty := len(a.sources) == 0
 	if empty && zone.Clicked() && !a.running {
 		a.addImages()
@@ -116,7 +128,7 @@ func (a *App) dropZone(c *ui.Context) {
 		ui.Grid(c).Columns(cols).Gap(12).Children(func() {
 			for i := range a.sources {
 				si := a.sources[i]
-				ui.Column(c.Key(si.Path)).Gap(6).Children(func() {
+				ui.Column(c.Key(si.Path)).Gap(6).Transition(motionItem()).Children(func() {
 					thumb := float32(120)
 					if busy {
 						thumb = 72
@@ -142,7 +154,7 @@ func (a *App) sourceStrip(c *ui.Context) {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				for i := range a.sources {
 					si := a.sources[i]
-					ui.Row(c.Key(si.Path)).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Row(c.Key(si.Path)).Gap(6).AlignItems(ui.Center).Transition(motionItem()).Children(func() {
 						if si.Thumb != nil {
 							ui.Image(c, si.Thumb).Size(40, 40).Radius(6)
 						}
@@ -168,27 +180,33 @@ func (a *App) promptPicker(c *ui.Context) {
 	ui.Column(c).FillWidth().Gap(8).Children(func() {
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "提示词").FontSize(15).Bold()
-			ui.Select(c.Key("prompt-template"), &a.promptChoice, labels).Grow(1).MinWidth(0).Disabled(a.running).OnChange(func() {
+			motionSelect(c.Key("prompt-template"), &a.promptChoice, labels).Grow(1).MinWidth(0).Disabled(a.running).OnChange(func() {
 				a.applyPromptChoice()
 			})
 			ui.Button(c, "编辑提示词").Disabled(a.running).OnClick(func() { a.tab = pagePrompts })
 		})
-		if a.promptPick == "" {
-			h := float32(72)
-			if len(a.queueItems()) > 0 {
-				h = 48
-			}
-			ui.TextArea(c, &a.prompts).Height(h).FillWidth().Label("提示词内容").Placeholder("不放图片时，每行一条。选了模板就整段发送")
-		} else {
-			preview := oneLine(a.prompts)
-			rs := []rune(preview)
-			if len(rs) > 48 {
-				preview = string(rs[:48]) + "…"
-			}
-			if preview != "" {
-				ui.Text(c, preview).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(oneLine(a.prompts))
-			}
+		bodyKey := "prompt-free"
+		if a.promptPick != "" {
+			bodyKey = "prompt-picked"
 		}
+		ui.Column(c.Key(bodyKey)).FillWidth().Transition(motionReveal()).Children(func() {
+			if a.promptPick == "" {
+				h := float32(72)
+				if len(a.queueItems()) > 0 {
+					h = 48
+				}
+				ui.TextArea(c, &a.prompts).Height(h).FillWidth().Label("提示词内容").Placeholder("不放图片时，每行一条。选了模板就整段发送")
+			} else {
+				preview := oneLine(a.prompts)
+				rs := []rune(preview)
+				if len(rs) > 48 {
+					preview = string(rs[:48]) + "…"
+				}
+				if preview != "" {
+					ui.Text(c, preview).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(oneLine(a.prompts))
+				}
+			}
+		})
 		if a.promptNote != "" {
 			ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
@@ -203,8 +221,8 @@ func (a *App) loginBanner(c *ui.Context) {
 	if !ok || text == "" {
 		return
 	}
-	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
-		Background(c.Theme().Surface).Border(1, c.Theme().Warning).Radius(10).Children(func() {
+	ui.Row(c.Key("login-banner")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
+		Background(c.Theme().Surface).Border(1, c.Theme().Warning).Radius(10).Transition(motionBanner()).Children(func() {
 		ui.Text(c, text).FontSize(14).TextColor(c.Theme().Warning).Grow(1).MinWidth(0).SingleLine().Tooltip(text)
 		ui.Button(c, "去处理").OnClick(func() { a.openAttention(id) })
 	})
@@ -242,15 +260,21 @@ func (a *App) startBar(c *ui.Context) {
 	plan := a.workbenchPlan()
 	hint := a.startHint(plan)
 	ui.Column(c).FillWidth().Gap(8).Children(func() {
+		var b ui.Element
 		if a.running {
-			ui.Button(c, "停止").Height(56).FontSize(18).FillWidth().OnClick(func() { a.stopTasks() })
+			b = ui.Button(c, "").Height(56).FillWidth().OnClick(func() { a.stopTasks() })
+			b.Children(func() {
+				ui.Spinner(c).Size(18, 18)
+				ui.Text(c, "停止").FontSize(18)
+			})
 		} else {
-			ui.PrimaryButton(c, "开始出图").Height(56).FontSize(18).FillWidth().
+			b = ui.PrimaryButton(c, "开始出图").Height(56).FontSize(18).FillWidth().
 				Disabled(plan.Action == StartNone).OnClick(func() { a.startTasks() })
 		}
+		pressPose(b)
 		ui.Text(c, hint).FontSize(13).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(hint)
 		if a.running || a.progress > 0 {
-			ui.Progress(c, a.progress).FillWidth().Height(6)
+			motionProgress(c, "run-progress", a.progress, a.running && a.progress <= 0)
 		}
 	})
 }
@@ -302,7 +326,7 @@ func (a *App) progressPane(c *ui.Context) {
 			break
 		}
 	}
-	ui.Column(c).FillWidth().Padding(14).Gap(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(16).Children(func() {
+	ui.Column(c.Key("progress-pane")).FillWidth().Padding(14).Gap(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(16).Transition(motionReveal()).Children(func() {
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "出图进度").FontSize(16).Bold().Grow(1)
 			if len(failed) > 0 {
@@ -319,21 +343,27 @@ func (a *App) progressPane(c *ui.Context) {
 }
 
 func (a *App) progressCard(c *ui.Context, card ProgressCard) {
-	ui.Row(c.Key("card:"+card.Key)).Gap(12).AlignItems(ui.Start).Padding(8, 4).Children(func() {
+	ui.Row(c.Key("card:"+card.Key)).Gap(12).AlignItems(ui.Start).Padding(8, 4).Transition(motionItem()).Children(func() {
 		thumb := a.thumbFor(card.Source, 160)
 		if thumb != nil {
-			ui.Image(c, thumb).Size(72, 72).Radius(8)
+			shot := ui.Image(c, thumb).Size(72, 72).Radius(8)
+			if card.Status == "生成中" {
+				shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
+			}
 		} else if card.Source != "" {
 			ui.Text(c, "图片").Width(72).Height(72)
 		}
 		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, card.Title).Bold().Grow(1).MinWidth(0).SingleLine().Tooltip(card.Title)
-				ui.Badge(c, card.Status)
+				statusPill(c, card.Status)
 				if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 {
-					ui.Button(c, "重试").Disabled(a.running).OnClick(func() { a.retryTasks(card.Retry) })
+					ui.Button(c.Key("retry"), "重试").Disabled(a.running).Transition(motionReveal()).OnClick(func() { a.retryTasks(card.Retry) })
 				}
 			})
+			if card.Status == "生成中" {
+				motionProgress(c, "gen", 0, true)
+			}
 			if len(card.Platforms) > 0 {
 				ui.Text(c, strings.Join(card.Platforms, "、")).FontSize(12).TextColor(c.Theme().TextMuted)
 			}
@@ -342,7 +372,7 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 				if card.Status == "待验证" {
 					color = c.Theme().Warning
 				}
-				ui.Text(c, card.Reason).FontSize(13).TextColor(color).SingleLine().Tooltip(card.Reason)
+				ui.Text(c.Key("reason"), card.Reason).FontSize(13).TextColor(color).SingleLine().Tooltip(card.Reason).Transition(motionReveal())
 			}
 			if len(card.Results) > 0 {
 				ui.Row(c).Gap(8).Children(func() {
@@ -352,12 +382,27 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 					}
 					for _, path := range card.Results[:n] {
 						if bmp := a.thumbFor(path, 160); bmp != nil {
-							ui.Image(c.Key(path), bmp).Size(64, 64).Radius(6)
+							ui.Image(c.Key(path), bmp).Size(64, 64).Radius(6).Transition(motionItem()).
+								ContentTransition(ui.ContentTransition{Animation: &motionEaseOut})
 						}
 					}
 				})
 			}
 		})
+	})
+}
+
+// paintShimmer 在生成中的缩略图上扫一条高光。只重绘，不重建视图。
+func paintShimmer(c *ui.Context, p *ui.Painter, r ui.Rect) {
+	if c.Preferences().ReduceMotion {
+		return
+	}
+	p.AnimationFrame()
+	phase := float32(p.Now().UnixMilli()%1200) / 1200
+	w := r.W * 0.45
+	x := r.X - w + (r.W+w)*phase
+	p.Clip(r, 8, func() {
+		p.Fill(ui.Rect{X: x, Y: r.Y, W: w, H: r.H}, ui.RGBA(255, 255, 255, 0.28), 0)
 	})
 }
 
@@ -388,7 +433,7 @@ func (a *App) captchaFields(c *ui.Context) {
 	ui.Form(c, func() {
 		ui.Checkbox(c, &a.captchaEnabled, "自动求解验证码")
 		ui.Field(c, "求解后端", func() {
-			ui.Select(c, &a.captchaBackend, []string{"free", "custom", "ikunocr"})
+			motionSelect(c, &a.captchaBackend, []string{"free", "custom", "ikunocr"})
 		})
 		ui.Text(c, "free=纯CV离线（九宫格拖拽/拼图）；custom=视觉大模型；ikunocr=接码平台").FontSize(11)
 		ui.Fieldset(c, "custom 视觉大模型（OpenAI 兼容）", func() {
@@ -440,10 +485,10 @@ func (a *App) advancedFields(c *ui.Context) {
 			ui.Text(c, a.outputNote).FontSize(12).TextColor(c.Theme().Danger)
 		}
 		ui.Field(c, "保存方式", func() {
-			ui.Select(c, &a.saveMode, []string{"单文件夹汇总", "按源图片分文件夹"})
+			motionSelect(c, &a.saveMode, []string{"单文件夹汇总", "按源图片分文件夹"})
 		})
 		ui.Field(c, "命名规则", func() {
-			ui.Select(c, &a.namingRule, []string{"原文件名", "时间戳", "序号"})
+			motionSelect(c, &a.namingRule, []string{"原文件名", "时间戳", "序号"})
 		})
 		ui.Field(c, "文件名前缀", func() {
 			ui.Row(c).Gap(8).Children(func() {
@@ -465,7 +510,7 @@ func (a *App) advancedFields(c *ui.Context) {
 		ui.Text(c, "已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Text(c, "调度与等待").Bold().Margin(12, 0, 4, 0)
 		ui.Field(c, "发送策略", func() {
-			ui.Select(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
+			motionSelect(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
 		})
 		ui.Field(c, "并发数", func() {
 			ui.NumberInput(c, &a.concurrency, 1, 16, 1)
@@ -517,18 +562,21 @@ func (a *App) autoLogPane(c *ui.Context) {
 	if len(notes) > 6 {
 		start = len(notes) - 6
 	}
-	for _, line := range notes[start:] {
-		ui.Text(c, line).FontSize(12).SingleLine().Tooltip(line)
+	for i, line := range notes[start:] {
+		ui.Text(c.Key(noteLine{start + i}), line).FontSize(12).SingleLine().Tooltip(line).Transition(motionItem())
 	}
 }
+
+type noteLine struct{ i int }
 
 func (a *App) logPane(c *ui.Context) {
 	if len(a.logs) == 0 {
 		ui.Text(c, "操作与任务进展会记录在这里").FontSize(12).TextColor(c.Theme().TextMuted)
 		return
 	}
-	a.logList.Key = nil
+	a.logList.Key = func(i int) any { return i }
 	a.logList.FollowEnd = true
+	a.logList.FollowAnimation = &motionEaseOut
 	ui.List(c, &a.logList, len(a.logs), func(i int) {
 		e := a.logs[i]
 		color := c.Theme().TextMuted

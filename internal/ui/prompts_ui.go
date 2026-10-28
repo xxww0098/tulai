@@ -16,7 +16,7 @@ func (a *App) promptRow(c *ui.Context) {
 		a.promptChoice = prompts.LabelFor(a.promptPick, a.userPrompts)
 	}
 	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-		ui.Select(c.Key("prompt-template"), &a.promptChoice, labels).Grow(1).MinWidth(0).OnChange(func() {
+		motionSelect(c.Key("prompt-template"), &a.promptChoice, labels).Grow(1).MinWidth(0).OnChange(func() {
 			a.applyPromptChoice()
 		})
 		ui.Button(c, "保存提示词").Disabled(a.running).OnClick(func() { a.saveCurrentPrompt() })
