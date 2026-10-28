@@ -30,7 +30,7 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 `go.mod` 把 MyGo 工具固定在 **v0.6.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.4**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.4` 上发布，页面扩展 zip 是 **0.3.9**。步骤见下文「发布 0.1.4」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.5**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.5` 上发布，页面扩展 zip 是 **0.3.9**。步骤见下文「发布 0.1.5」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、标题栏、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。它请求 `https://api.github.com/repos/xxww0098/tulai/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`tulai version` 打印桌面端版本。
 
@@ -179,21 +179,19 @@ go run ./cmd/tulai-cdp-smoke   # Chrome CDP 连通性冒烟
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
-## 发布 0.1.4
+## 发布 0.1.5
 
-桌面端产品版本是 **0.1.4**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.9**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+桌面端产品版本是 **0.1.5**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.9**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
 
-0.1.4 把技术 id 改成 tulai（模块 `github.com/xxww0098/tulai`，可执行文件、安装路径、附件名、`TULAI_*` 和数据目录）。扩展是 0.3.8。
-
-相对已发布的 0.1.2：页面桥令牌可以在软件里查看和复制；用户可见名称定为 tulai，界面更宽，并带上内置提示词和自己保存的提示词；同一平台的多个免费账号会轮换，扩展可以自动配对；没有本机浏览器时可以下载内置浏览器；第一次打开走设置向导；出图页收成拖图、提示词和「开始出图」；掉线、崩溃和卡住会自动恢复；启动后会静默检查更新，一键下载并用 `SHA256SUMS` 校验后安装。扩展从 0.3.6 升到 0.3.7。完整说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。0.1.0 的安装包里还没有「检查更新」，要先手动装上带这个入口的版本。
+0.1.5 相对 0.1.4：界面过渡、登录窗口不再停在空白页、出图页三步流程和缩略图，以及页面桥扩展随软件打包。扩展版本仍是 0.3.9。完整说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 `.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet`，并上传 macOS、Windows、Linux 的安装包。合并进 `main` 之后，推送和 `mygo.json` 一致的标签，用 `GITHUB_TOKEN` 创建 GitHub Release。没有配置 Apple 公证或 Windows 代码签名。
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.4
-git push origin v0.1.4
+git tag v0.1.5
+git push origin v0.1.5
 ```
 
 附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。
