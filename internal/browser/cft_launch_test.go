@@ -38,7 +38,7 @@ func TestLaunchPinnedCfT(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 	userData := t.TempDir()
-	cmd := exec.Command(rt.Path, debugArgs(port, userData)...)
+	cmd := exec.Command(rt.Path, debugArgs(port, userData, "about:blank")...)
 	cmd.SysProcAttr = testProcAttr()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -182,6 +182,8 @@ type App struct {
 	wizardLaunch    func(store.Browser) (string, error)
 	wizardOpen      func(ws, rawURL string) error
 	wizardProbe     func(ctx context.Context, endpoint string) (string, error)
+	wizardNavFailed bool
+	accountOpen     func(store.Browser) error
 }
 
 type sourceImage struct {

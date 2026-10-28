@@ -509,9 +509,9 @@ func (a *App) openAttention(id int64) {
 		return
 	}
 	go func(b store.Browser) {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
-		_ = a.engine.FocusAccount(ctx, b)
+		_ = a.ensureAccountPage(ctx, b)
 	}(row)
 }
 

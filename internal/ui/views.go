@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -326,15 +327,22 @@ func (a *App) launchBrowser() {
 		return
 	}
 	go func() {
-		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, false)
-		if err != nil {
+		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, platform.HomeURL(), false)
+		if err != nil && !errors.Is(err, browser.ErrDebugPort) {
 			logging.Log.Errorf("启动失败: %v", err)
+			return
+		}
+		if errors.Is(err, browser.ErrDebugPort) {
+			a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
+			a.window.Update(func() { a.refreshBrowsers() })
 			return
 		}
 		err = cdp.OpenURL(ws, platform.HomeURL())
 		a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
-		if err != nil {
-			logging.Log.Errorf("浏览器[%s]已启动，但打开%s失败: %v", b.Name, b.Platform, err)
+		if err != nil && !errors.Is(err, cdp.ErrDebugUnavailable) {
+			logging.Log.Errorf("浏览器[%s] 打开登录页失败：%v", b.Name, err)
+		} else if err != nil {
+			logging.Log.Warning("浏览器[%s] 调试端口还没连上，已打开登录页", b.Name)
 		} else {
 			logging.Log.Success("浏览器[%s]已打开%s，可在浏览器中登录账号", b.Name, b.Platform)
 		}

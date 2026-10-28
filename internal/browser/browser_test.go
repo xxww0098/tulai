@@ -1,10 +1,15 @@
 package browser
 
 import (
+	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 func TestEdgeLocations(t *testing.T) {
@@ -84,26 +89,62 @@ func TestProfileDirSeparatesEdgeFromChrome(t *testing.T) {
 	}
 }
 
-func TestDebugArgsKeepProfileAndSkipAutomation(t *testing.T) {
+func TestDebugArgsUseLoginURLAndSkipAutomation(t *testing.T) {
 	userData := filepath.Join("BrowserData", "Edge", "千问")
-	args := debugArgs(9333, userData)
+	login := "https://www.doubao.com/chat/"
+	args := debugArgs(9333, userData, login)
+	if args[len(args)-1] != login {
+		t.Fatalf("start url = %q, args %v", args[len(args)-1], args)
+	}
 	joined := strings.Join(args, "\n")
 	for _, want := range []string{
 		"--remote-debugging-port=9333",
 		"--user-data-dir=" + userData,
 		"--no-first-run",
 		"--no-default-browser-check",
-		"--disable-features=Translate",
+		"--disable-sync",
+		"--disable-features=Translate,msImplicitSignin,msEdgeFirstRunExperience,EdgeSignInPromo",
 		"--disable-infobars",
+		"--hide-crash-restore-bubble",
+		"--disable-session-crashed-bubble",
+		"--no-service-autorun",
+		"--edge-skip-compat-layer-relaunch",
 		"--remote-allow-origins=*",
-		"about:blank",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s in %v", want, args)
 		}
 	}
-	if strings.Contains(joined, "--enable-automation") || strings.Contains(joined, "--headless") {
-		t.Fatalf("automation flag leaked: %v", args)
+	if strings.Contains(joined, "about:blank") || strings.Contains(joined, "--enable-automation") || strings.Contains(joined, "--headless") {
+		t.Fatalf("blank or automation flag leaked: %v", args)
+	}
+	withExtra := launchArgs(9333, userData, login, []string{"--disable-gpu"})
+	if withExtra[len(withExtra)-1] != login || !strings.Contains(strings.Join(withExtra, "\n"), "--disable-gpu") {
+		t.Fatalf("extra flags: %v", withExtra)
+	}
+}
+
+func TestStartReusesLiveDebuggerInsteadOfSpawning(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	mux := http.NewServeMux()
+	mux.HandleFunc("/json/version", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"webSocketDebuggerUrl": "ws://127.0.0.1/devtools/browser/already",
+		})
+	})
+	go http.Serve(ln, mux)
+	m := NewManager()
+	b := store.Browser{ID: 7, Name: "账号1", Port: port, UserDataDir: t.TempDir()}
+	ws, err := m.Start(b, t.TempDir(), KindEdge, "https://www.doubao.com/chat/", false)
+	if err != nil || ws != "ws://127.0.0.1/devtools/browser/already" {
+		t.Fatalf("reuse ws=%q err=%v", ws, err)
+	}
+	if m.IsRunning(7) || m.pid(7) != 0 {
+		t.Fatal("reused debugger should not spawn a browser")
 	}
 }
 

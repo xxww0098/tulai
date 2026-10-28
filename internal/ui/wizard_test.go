@@ -2,12 +2,15 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/wizard"
@@ -149,6 +152,63 @@ func TestWizardSkipsHealthyAccountAndCanReopen(t *testing.T) {
 		t.Fatal("settings did not reopen the wizard")
 	}
 	assertVisible(t, tt, "准备浏览器", 1280, 900)
+}
+
+func TestWizardReopenWhenLoginPageStaysBlank(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{
+		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
+		dataRoot: t.TempDir(), splitSz: 380, sourceHeight: 210,
+		wizardOn: true, wizardStep: wizard.StepPlatform, platDoubao: true,
+	}
+	var opens int
+	a.wizardLaunch = func(b store.Browser) (string, error) {
+		if b.Platform != "豆包" || b.Name == "" {
+			t.Fatalf("launch %+v", b)
+		}
+		return "http://127.0.0.1:9", nil
+	}
+	a.wizardOpen = func(ws, rawURL string) error {
+		opens++
+		if rawURL != "https://www.doubao.com/chat/" {
+			t.Fatalf("open %s", rawURL)
+		}
+		return errors.New("窗口仍停在空白页")
+	}
+	a.wizardProbe = func(context.Context, string) (string, error) {
+		t.Fatal("blank page should not be probed")
+		return "", nil
+	}
+	tt := ui.NewTester(a.view, 1280, 900)
+	if err := tt.Click("下一步"); err != nil {
+		t.Fatal(err)
+	}
+	if a.wizardStep != wizard.StepAccount || !a.wizardNavFailed || opens != 1 {
+		t.Fatalf("step=%v nav=%v opens=%d err=%s", a.wizardStep, a.wizardNavFailed, opens, a.wizardErr)
+	}
+	assertVisible(t, tt, "重新打开", 1280, 900)
+	if !strings.Contains(a.wizardErr, "打开登录页失败") || !strings.Contains(a.wizardErr, "空白页") {
+		t.Fatalf("wizard err %q", a.wizardErr)
+	}
+	found := false
+	for _, entry := range logging.Log.Entries() {
+		if strings.Contains(entry.Text, "打开登录页失败") && strings.Contains(entry.Text, "空白页") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("运行日志没有打开登录页失败")
+	}
+	if err := tt.Click("重新打开"); err != nil {
+		t.Fatal(err)
+	}
+	if opens != 2 {
+		t.Fatalf("重新打开 opens=%d", opens)
+	}
 }
 
 func TestWizardBlocksNextUntilBrowserIsReady(t *testing.T) {
