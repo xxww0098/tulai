@@ -366,6 +366,11 @@ async function dispatchCommand(link, env) {
     sendToHost(link, TULAI.ack(env, { name, ok: true, tabs: await snapshotTabs(link.platform) }))
     return
   }
+  if (name === TULAI.commands.reload) {
+    sendToHost(link, TULAI.ack(env, { name, ok: true }))
+    setTimeout(() => { try { chrome.runtime.reload() } catch (err) {} }, 150)
+    return
+  }
   if (name === TULAI.commands.cancel && !(await pickTab(link.platform))) {
     sendToHost(link, TULAI.ack(env, { name, ok: true, message: '没有进行中的页面任务' }))
     return

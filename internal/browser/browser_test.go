@@ -118,7 +118,18 @@ func TestDebugArgsUseLoginURLAndSkipAutomation(t *testing.T) {
 	if strings.Contains(joined, "about:blank") || strings.Contains(joined, "--enable-automation") || strings.Contains(joined, "--headless") {
 		t.Fatalf("blank or automation flag leaked: %v", args)
 	}
-	withExtra := launchArgs(9333, userData, login, []string{"--disable-gpu"})
+	withExtra := launchArgs(9333, userData, login, "", []string{"--disable-gpu"})
+	withExt := launchArgs(9333, userData, login, filepath.Join(userData, "ext"), nil)
+	if withExt[len(withExt)-1] != login {
+		t.Fatalf("extension flags ate the url: %v", withExt)
+	}
+	joinedExt := strings.Join(withExt, "\n")
+	if !strings.Contains(joinedExt, "--load-extension="+filepath.Join(userData, "ext")) || !strings.Contains(joinedExt, "--enable-unsafe-extension-debugging") {
+		t.Fatalf("extension flags: %v", withExt)
+	}
+	if strings.Contains(joinedExt, "--enable-automation") || strings.Contains(joinedExt, "--disable-extensions-except") || strings.Contains(joinedExt, "--disable-extensions\n") || strings.Contains(joinedExt, "--disable-extensions ") {
+		t.Fatalf("extension flags disabled extensions or automation: %v", withExt)
+	}
 	if withExtra[len(withExtra)-1] != login || !strings.Contains(strings.Join(withExtra, "\n"), "--disable-gpu") {
 		t.Fatalf("extra flags: %v", withExtra)
 	}

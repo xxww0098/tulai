@@ -66,6 +66,7 @@ type Session struct {
 	platform    string
 	account     string
 	accountName string
+	extVersion  string
 	conn        net.Conn
 	reader      io.Reader
 	srv         *Server
@@ -253,6 +254,14 @@ func (s *Session) Account() string {
 	return s.account
 }
 
+// ExtVersion 是 hello payload.version。
+func (s *Session) ExtVersion() string {
+	if s == nil {
+		return ""
+	}
+	return s.extVersion
+}
+
 // AccountName 是扩展上报的账号备注，可以为空。
 func (s *Session) AccountName() string {
 	if s == nil {
@@ -328,6 +337,7 @@ func (s *Server) handshake(conn net.Conn, reader *bufio.Reader) {
 		platform:    env.Platform,
 		account:     account,
 		accountName: accountName,
+		extVersion:  HelloVersion(env),
 		conn:        conn,
 		reader:      reader,
 		srv:         s,

@@ -1,6 +1,6 @@
 # 发布 tulai 0.1.4
 
-当前桌面端版本是 **0.1.4**，标签 **`v0.1.4`**。页面桥扩展是 **0.3.8**。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6，0.1.3 发布时是 0.3.7；0.3.8 只改技术 id。
+当前桌面端版本是 **0.1.4**，标签 **`v0.1.4`**。页面桥扩展是 **0.3.9**。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6，0.1.3 发布时是 0.3.7；0.3.8 只改技术 id；0.3.9 可以按桌面端的要求重新加载。
 
 ## 0.1.4
 
@@ -28,10 +28,10 @@
 |---|---|---|---|
 | 桌面端 | `0.1.4` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
 | Go 模块 | `v0.1.4` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.4` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.8` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 页面桥扩展 | `0.3.9` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，当前是 0.3.8。桌面端版本和扩展版本各自走。同一份 Release 里会同时放上桌面安装包和 `tulai-extension-0.3.8.zip`。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，当前是 0.3.9。桌面端版本和扩展版本各自走。同一份 Release 里会同时放上桌面安装包和 `tulai-extension-0.3.9.zip`。
 
 ## 流水线
 
@@ -69,7 +69,7 @@ git push origin v0.1.4
 | Windows | `tulai Setup 0.1.4 amd64.exe`、`tulai Setup 0.1.4 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.4-windows-amd64.exe` 和 `tulai-0.1.4-windows-arm64.exe`。 |
 | Linux | `tulai_0.1.4_amd64.deb`、`tulai_0.1.4_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
 | Linux | `tulai-0.1.4-linux-amd64.tar.gz`、`tulai-0.1.4-linux-arm64.tar.gz`、`install.sh` | 把脚本和本机架构的压缩包放在同一目录，执行 `sh install.sh`。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
-| 扩展 | `tulai-extension-0.3.8.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
+| 扩展 | `tulai-extension-0.3.9.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
 `SHA256SUMS` 覆盖上面这些文件，文件名是 `SHA256SUMS`（没有 `.txt`）。格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 里另有一份只覆盖该系统文件的 `SHA256SUMS.txt`，汇总进 Release 时会丢掉，避免和总校验文件撞名。标签任务在上传前检查这份 `SHA256SUMS` 非空，并且下面「从 GitHub 更新」里更新器会选的每个附件都有一行。缺了就不发布。
 
@@ -111,7 +111,7 @@ GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 
 发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。没有这份校验文件就拒绝安装。
 
-版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.8.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.9.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
 按当前系统选择附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 

@@ -92,6 +92,7 @@ const (
 	CmdCaptchaAssist = "captchaAssist"
 	CmdCancel        = "cancel"
 	CmdStatus        = "status"
+	CmdReload        = "reload"
 )
 
 // 稳定错误码。扩展和桌面端都只使用这些字符串。
@@ -173,7 +174,7 @@ func NormalizeBrowserBackend(v string) string {
 func Commands() []string {
 	return []string{
 		CmdPing, CmdHelloAck, CmdUpload, CmdSetPrompt, CmdSend,
-		CmdWaitResult, CmdDownload, CmdCaptchaAssist, CmdCancel, CmdStatus,
+		CmdWaitResult, CmdDownload, CmdCaptchaAssist, CmdCancel, CmdStatus, CmdReload,
 	}
 }
 
@@ -317,6 +318,20 @@ func HelloAccount(e Envelope) (id, name string) {
 		return "", ""
 	}
 	return strings.TrimSpace(body.Account), strings.TrimSpace(body.AccountName)
+}
+
+// HelloVersion 读取 hello payload.version。旧扩展没有这个字段时返回空字符串。
+func HelloVersion(e Envelope) string {
+	if len(e.Payload) == 0 {
+		return ""
+	}
+	var body struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(e.Payload, &body) != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.Version)
 }
 
 func helloToken(e Envelope) (string, bool) {

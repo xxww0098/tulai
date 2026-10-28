@@ -90,8 +90,17 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	if err := tt.Click("已登录? 重新检测"); err != nil {
 		t.Fatal(err)
 	}
-	if a.wizardStep != wizard.StepDone || probes < 3 {
+	if a.wizardStep != wizard.StepPlugin || probes < 3 {
 		t.Fatalf("after login step=%v probes=%d", a.wizardStep, probes)
+	}
+	for _, label := range []string{"安装浏览器插件", "打开「开发者模式」", "加载已解压的扩展程序", "选这个文件夹", "打开扩展页面", "跳过"} {
+		assertVisible(t, tt, label, 1280, 900)
+	}
+	if err := tt.Click("跳过"); err != nil {
+		t.Fatal(err)
+	}
+	if a.wizardStep != wizard.StepDone {
+		t.Fatalf("skip plugin step=%v", a.wizardStep)
 	}
 	for _, label := range []string{"拖入图片 → 选提示词 → 开始", "拖入图片", "选提示词", "开始", "进入主页", "再添加一个账号"} {
 		assertVisible(t, tt, label, 1280, 900)
@@ -103,8 +112,11 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	if err := tt.Click("再添加豆包"); err != nil {
 		t.Fatal(err)
 	}
-	if a.wizardStep != wizard.StepDone {
+	if a.wizardStep != wizard.StepPlugin {
 		t.Fatalf("extra account did not finish login, step=%v phase=%s err=%s", a.wizardStep, a.wizardPhase, a.wizardErr)
+	}
+	if err := tt.Click("跳过"); err != nil {
+		t.Fatal(err)
 	}
 	rows := st.Browsers()
 	if len(rows) != 3 || rows[0].Name != "账号1" || rows[0].Platform != "豆包" || !rows[0].IsLoggedIn || rows[1].Name != "账号2" || rows[1].Platform != "千问" || !rows[1].IsLoggedIn || rows[2].Name != "账号3" || rows[2].Platform != "豆包" || !rows[2].IsLoggedIn {

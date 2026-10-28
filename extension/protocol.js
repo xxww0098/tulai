@@ -14,6 +14,7 @@ globalThis.TULAI = {
     captchaAssist: 'captchaAssist',
     cancel: 'cancel',
     status: 'status',
+    reload: 'reload',
   },
   pageCommands: ['upload', 'setPrompt', 'send', 'waitResult', 'download', 'captchaAssist'],
   errors: {
@@ -58,7 +59,7 @@ globalThis.TULAI.envelope = function envelope(type, fields) {
 // platform 省略时仍是千问，和原先单个套接字的 hello 一样。豆包套接字传入 'doubao'。
 // account 是这个浏览器配置文件的稳定 id，旧扩展可以不传。
 globalThis.TULAI.hello = function hello(token, platform, account) {
-  const payload = { token: token || '', version: '0.3.8' }
+  const payload = { token: token || '', version: '0.3.9' }
   if (account) payload.account = String(account)
   const env = globalThis.TULAI.envelope('hello', { payload })
   if (platform) env.platform = platform

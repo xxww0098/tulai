@@ -29,6 +29,7 @@ const (
 	StepBrowser Step = iota
 	StepPlatform
 	StepAccount
+	StepPlugin
 	StepDone
 )
 
@@ -45,6 +46,8 @@ func (s Step) Title() string {
 		return "选择平台"
 	case StepAccount:
 		return "登录账号"
+	case StepPlugin:
+		return "安装浏览器插件"
 	case StepDone:
 		return "可以开始了"
 	default:
