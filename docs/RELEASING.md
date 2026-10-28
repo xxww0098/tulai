@@ -1,6 +1,13 @@
-# 发布 tulai 0.1.6
+# 发布 tulai 0.1.7
 
-当前桌面端版本是 **0.1.6**，标签 **`v0.1.6`**。页面桥扩展是 **0.3.10**。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6，0.1.3 发布时是 0.3.7；0.3.8 只改技术 id；0.3.9 可以按桌面端的要求重新加载。0.3.10 加上豆包和千问的审核话术。0.1.5 和 0.1.6 发布时扩展还是 0.3.9。
+当前桌面端版本是 **0.1.7**，标签 **`v0.1.7`**。页面桥扩展是 **0.3.10**。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6，0.1.3 发布时是 0.3.7；0.3.8 只改技术 id；0.3.9 可以按桌面端的要求重新加载。0.3.10 加上豆包和千问的审核话术，随 0.1.7 一起发布。0.1.5 和 0.1.6 发布时扩展还是 0.3.9。
+
+## 0.1.7
+
+相对已发布的 0.1.6。页面桥扩展是 0.3.10。
+
+- **自动并发（#46）**。同时出图的名额按当前可用账号数计算。不同浏览器里的页面桥扩展各自占一个名额，可以并行。
+- **失败分类和风控默认（#47）**。失败自动分类，卡片上一句话加一个处理按钮。审核不通过时自动改写提示词，最多重试 2 次。发送间隔在设定值上下随机抖动。每个账号每天默认最多 20 次，到了上限自动换号。
 
 ## 0.1.6
 
@@ -41,8 +48,8 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.6` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.6` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.6` 之后，模块版本就是这个标签。 |
+| 桌面端 | `0.1.7` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.7` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.7` 之后，模块版本就是这个标签。 |
 | 页面桥扩展 | `0.3.10` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
@@ -59,31 +66,31 @@
 
 macOS 包在 `macos-latest` 上构建，才能做出磁盘映像并做 ad-hoc 签名。Windows 安装器在 Ubuntu 上用 NSIS 交叉制作。Linux 同时打 amd64 和 arm64。这些都是 `CGO_ENABLED=0` 的 `go tool mygo build`，和本机的 `./build.sh` 同一条命令。
 
-## 切 0.1.6
+## 切 0.1.7
 
-等这套流水线在 `main` 上是绿的，并且 `mygo.json` 与 `ProductVersion` 都是 `0.1.6`：
+等这套流水线在 `main` 上是绿的，并且 `mygo.json` 与 `ProductVersion` 都是 `0.1.7`：
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.6
-git push origin v0.1.6
+git tag v0.1.7
+git push origin v0.1.7
 ```
 
-推送标签会跑 CI。完成后 Release 页面出现 **tulai 0.1.6**。安装包文件名以 `tulai` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。
+推送标签会跑 CI。完成后 Release 页面出现 **tulai 0.1.7**。安装包文件名以 `tulai` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。
 
 再跑一次同一个标签的 workflow 会覆盖同名附件，不会另开一个 Release。
 
 ## 附件
 
-桌面版本记为 `0.1.6` 时，文件名是：
+桌面版本记为 `0.1.7` 时，文件名是：
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| macOS | `tulai 0.1.6.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `tulai.app` 拖进「应用程序」。 |
-| Windows | `tulai Setup 0.1.6 amd64.exe`、`tulai Setup 0.1.6 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.6-windows-amd64.exe` 和 `tulai-0.1.6-windows-arm64.exe`。 |
-| Linux | `tulai_0.1.6_amd64.deb`、`tulai_0.1.6_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
-| Linux | `tulai-0.1.6-linux-amd64.tar.gz`、`tulai-0.1.6-linux-arm64.tar.gz`、`install.sh` | 把脚本和本机架构的压缩包放在同一目录，执行 `sh install.sh`。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
+| macOS | `tulai 0.1.7.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `tulai.app` 拖进「应用程序」。 |
+| Windows | `tulai Setup 0.1.7 amd64.exe`、`tulai Setup 0.1.7 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.7-windows-amd64.exe` 和 `tulai-0.1.7-windows-arm64.exe`。 |
+| Linux | `tulai_0.1.7_amd64.deb`、`tulai_0.1.7_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
+| Linux | `tulai-0.1.7-linux-amd64.tar.gz`、`tulai-0.1.7-linux-arm64.tar.gz`、`install.sh` | 把脚本和本机架构的压缩包放在同一目录，执行 `sh install.sh`。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
 | 扩展 | `tulai-extension-0.3.10.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
 `SHA256SUMS` 覆盖上面这些文件，文件名是 `SHA256SUMS`（没有 `.txt`）。格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 里另有一份只覆盖该系统文件的 `SHA256SUMS.txt`，汇总进 Release 时会丢掉，避免和总校验文件撞名。标签任务在上传前检查这份 `SHA256SUMS` 非空，并且下面「从 GitHub 更新」里更新器会选的每个附件都有一行。缺了就不发布。
