@@ -57,6 +57,7 @@ type Engine struct {
 	extOnChange func()
 	pair        *extbridge.PairServer
 	pairErr     error
+	extNotice   string
 
 	loginProbe  func(context.Context, store.Browser) (string, error)
 	loginFocus  func(context.Context, store.Browser) error

@@ -105,6 +105,8 @@ func (a *App) wizardView(c *ui.Context) {
 						a.wizardPlatformStep(c)
 					case wizard.StepAccount:
 						a.wizardAccountStep(c)
+					case wizard.StepPlugin:
+						a.wizardPluginStep(c)
 					case wizard.StepDone:
 						a.wizardDoneStep(c)
 					default:
@@ -305,6 +307,9 @@ func (a *App) wizardFooter(c *ui.Context) {
 				ui.Button(c, "再添加一个账号").OnClick(func() { a.wizardAddAnother() })
 			}
 			ui.PrimaryButton(c, "进入主页").OnClick(func() { a.wizardFinish() })
+		case wizard.StepPlugin:
+			ui.Button(c, "跳过").OnClick(func() { a.goWizard(wizard.StepDone) })
+			ui.PrimaryButton(c, "下一步").OnClick(func() { a.goWizard(wizard.StepDone) })
 		case wizard.StepAccount:
 			if a.wizardNavFailed {
 				ui.Button(c, "重新打开").Disabled(a.wizardPhase == "launching").OnClick(func() { a.wizardRecheck() })
@@ -348,7 +353,7 @@ func (a *App) wizardBack() {
 	a.stopWizardLoop()
 	a.wizardPickExtra = false
 	switch a.wizardStep {
-	case wizard.StepDone, wizard.StepAccount:
+	case wizard.StepDone, wizard.StepPlugin, wizard.StepAccount:
 		a.goWizard(wizard.StepPlatform)
 	case wizard.StepPlatform:
 		a.goWizard(wizard.StepBrowser)
@@ -399,9 +404,7 @@ func (a *App) wizardEnterAccount(extra string) {
 	a.wizardAccount = store.Browser{}
 	a.wizardErr = ""
 	if a.wizardQueue.Done() {
-		a.goWizard(wizard.StepDone)
-		a.wizardPhase = "ready"
-		a.wizardNote = ""
+		a.enterPluginStep()
 		return
 	}
 	a.goWizard(wizard.StepAccount)
@@ -581,10 +584,7 @@ func (a *App) wizardPrepare(gen int) bool {
 			return
 		}
 		if a.wizardQueue.Done() {
-			a.goWizard(wizard.StepDone)
-			a.wizardPhase = "ready"
-			a.wizardNote = ""
-			a.wizardErr = ""
+			a.enterPluginStep()
 			return
 		}
 		account, err := a.ensureWizardAccount()
@@ -667,12 +667,102 @@ func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 		a.wizardErr = ""
 	}
 	if poll == wizard.PollDone {
-		a.goWizard(wizard.StepDone)
-		a.wizardPhase = "ready"
-		a.wizardNote = ""
-		a.wizardErr = ""
+		a.enterPluginStep()
 	}
 	return poll
+}
+
+func (a *App) enterPluginStep() {
+	a.wizardPhase = "ready"
+	a.wizardNote = ""
+	a.wizardErr = ""
+	a.pluginWasConnected = a.extensionConnected()
+	a.goWizard(wizard.StepPlugin)
+	a.watchPlugin()
+}
+
+func (a *App) extensionConnected() bool {
+	if a == nil || a.engine == nil {
+		return false
+	}
+	_, paired := a.engine.PairState()
+	st := a.engine.BridgeStatus()
+	return paired || st.Qianwen || st.Doubao
+}
+
+func (a *App) watchPlugin() {
+	if a.pluginWatch {
+		return
+	}
+	a.pluginWatch = true
+	go func() {
+		for i := 0; i < 180; i++ {
+			time.Sleep(time.Second)
+			var step wizard.Step
+			var connected, already bool
+			a.wizardUI(func() {
+				step = a.wizardStep
+				already = a.pluginWasConnected
+				connected = a.extensionConnected()
+				if step == wizard.StepPlugin && connected && !already {
+					a.goWizard(wizard.StepDone)
+				}
+			})
+			if step != wizard.StepPlugin || (connected && !already) {
+				a.wizardUI(func() { a.pluginWatch = false })
+				return
+			}
+		}
+		a.wizardUI(func() { a.pluginWatch = false })
+	}()
+}
+
+func (a *App) wizardPluginStep(c *ui.Context) {
+	ui.Text(c, "tulai 自己打开的浏览器会带上页面桥。日常使用的 Chrome 或 Edge 需要装一次。").FontSize(15).TextColor(c.Theme().TextMuted)
+	if a.extensionConnected() {
+		ui.Text(c, "扩展已连接").FontSize(16).TextColor(c.Theme().Accent)
+	}
+	if notice := a.extensionNotice(); notice != "" {
+		ui.Text(c, notice).FontSize(15).TextColor(c.Theme().Warning)
+	}
+	dir := a.extensionDir
+	if dir == "" {
+		dir = "扩展目录还没准备好"
+	}
+	ui.Text(c, dir).FontSize(13).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(dir)
+	for _, step := range []struct{ n, text string }{
+		{"1", "打开「开发者模式」"},
+		{"2", "加载已解压的扩展程序"},
+		{"3", "选这个文件夹"},
+	} {
+		ui.Row(c).Gap(16).AlignItems(ui.Center).Padding(14, 18).Radius(14).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+			ui.Text(c, step.n).FontSize(20).Bold().TextColor(c.Theme().Accent)
+			ui.Text(c, step.text).FontSize(16)
+		})
+	}
+	ui.Button(c, "打开扩展页面").OnClick(func() { a.openExtensionInstall() })
+}
+
+func (a *App) extensionNotice() string {
+	if a == nil || a.engine == nil {
+		return ""
+	}
+	return a.engine.ExtensionNotice()
+}
+
+func (a *App) openExtensionInstall() {
+	kind := a.browserBackend
+	if kind != browser.KindEdge {
+		kind = browser.KindChrome
+	}
+	if err := browser.OpenExtensionsPage(kind); err != nil {
+		logging.Log.Errorf("打开扩展页面失败：%v", err)
+	}
+	if a.extensionDir != "" {
+		if err := browser.OpenFolder(a.extensionDir); err != nil {
+			logging.Log.Errorf("打开扩展目录失败：%v", err)
+		}
+	}
 }
 
 func (a *App) launchWizardBrowser(b store.Browser) (string, error) {

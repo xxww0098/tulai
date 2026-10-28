@@ -141,6 +141,10 @@ type Manager struct {
 	procs map[int64]*runningProc
 	// extra 插在启动地址前面。正式路径留空。测试可加无头参数。
 	extra []string
+	// extDir 是页面桥扩展目录。非空时启动参数带上 --load-extension。
+	extDir string
+	// onExt 在调试端口就绪后补装扩展。品牌版浏览器会忽略 --load-extension。
+	onExt func(wsURL, dir string) error
 	// log 非空时收浏览器的标准错误，便于对照首次运行页。
 	log io.Writer
 }
@@ -189,9 +193,10 @@ func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, min
 	markFirstRunDone(userData)
 	m.mu.Lock()
 	extra := append([]string(nil), m.extra...)
+	extDir := m.extDir
 	stderr := m.log
 	m.mu.Unlock()
-	cmd := exec.Command(rt.Path, launchArgs(b.Port, userData, startURL, extra)...)
+	cmd := exec.Command(rt.Path, launchArgs(b.Port, userData, startURL, extDir, extra)...)
 	cmd.Stdout, cmd.Stderr = nil, stderr
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动%s失败: %w", ChoiceLabel(rt.Kind), err)
@@ -213,7 +218,35 @@ func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, min
 		noteDebugPort(b.Name, startURL)
 		return "", fmt.Errorf("%w：%v", ErrDebugPort, err)
 	}
+	m.mu.Lock()
+	onExt := m.onExt
+	m.mu.Unlock()
+	if extDir != "" && onExt != nil {
+		if extErr := onExt(ws, extDir); extErr != nil {
+			logging.Log.Warning("浏览器[%s] 页面桥扩展没有自动装上：%v", b.Name, extErr)
+		}
+	}
 	return ws, nil
+}
+
+// SetExtensionDir 让之后启动的 profile 自动带上页面桥扩展。
+func (m *Manager) SetExtensionDir(dir string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.extDir = dir
+	m.mu.Unlock()
+}
+
+// SetExtensionReady 在调试端口连上后调用。用来在 --load-extension 被忽略时补装扩展。
+func (m *Manager) SetExtensionReady(fn func(wsURL, dir string) error) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.onExt = fn
+	m.mu.Unlock()
 }
 
 func noteDebugPort(name, startURL string) {
@@ -227,7 +260,7 @@ func noteDebugPort(name, startURL string) {
 // launchArgs 是调试参数。startURL 必须放在最后，作为窗口的起始页。
 // 不带 --enable-automation，避免 navigator.webdriver 被打开。
 // --edge-skip-compat-layer-relaunch 让 Edge 不要在兼容层里再启动一次并把地址丢掉。
-func launchArgs(port int, userData, startURL string, extra []string) []string {
+func launchArgs(port int, userData, startURL, extDir string, extra []string) []string {
 	if strings.TrimSpace(startURL) == "" {
 		startURL = "about:blank"
 	}
@@ -245,6 +278,14 @@ func launchArgs(port int, userData, startURL string, extra []string) []string {
 		"--edge-skip-compat-layer-relaunch",
 		"--remote-allow-origins=*",
 	}
+	if dir := strings.TrimSpace(extDir); dir != "" {
+		// 品牌版 Chrome 137+ 和当前 Edge 会忽略 --load-extension。
+		// 调试端口连上后会再试 Extensions.loadUnpacked，那条需要这个开关。
+		args = append(args,
+			"--load-extension="+dir,
+			"--enable-unsafe-extension-debugging",
+		)
+	}
 	args = append(args, extra...)
 	args = append(args, startURL)
 	return args
@@ -252,7 +293,7 @@ func launchArgs(port int, userData, startURL string, extra []string) []string {
 
 // debugArgs 给仍直接拼命令行的测试用。
 func debugArgs(port int, userData, startURL string) []string {
-	return launchArgs(port, userData, startURL, nil)
+	return launchArgs(port, userData, startURL, "", nil)
 }
 
 // markFirstRunDone 写下 Chromium/Edge 的首次运行哨兵。
@@ -263,6 +304,41 @@ func markFirstRunDone(userData string) {
 		return
 	}
 	_ = os.WriteFile(path, nil, 0o644)
+}
+
+// OpenExtensionsPage 用日常浏览器打开扩展管理页，不带 tulai 的独立 profile。
+func OpenExtensionsPage(kind string) error {
+	var bin, page string
+	var err error
+	if CanonicalBackend(kind) == KindEdge {
+		bin, err = FindEdgePath()
+		page = "edge://extensions"
+	} else {
+		bin, err = FindChromePath()
+		page = "chrome://extensions"
+	}
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(bin, page)
+	return cmd.Start()
+}
+
+// OpenFolder 在系统文件管理器里打开扩展目录。
+func OpenFolder(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("没有扩展目录")
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
 }
 
 // Stop 停止指定浏览器进程。

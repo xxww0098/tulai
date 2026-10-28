@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	extbundle "github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/images"
@@ -224,6 +225,7 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 }
 
 func (e *Engine) noteHello(sess *extbridge.Session) {
+	e.noteExtensionVersion(sess)
 	if e == nil || e.store == nil || sess == nil || sess.Account() == "" {
 		return
 	}
@@ -234,6 +236,53 @@ func (e *Engine) noteHello(sess *extbridge.Session) {
 	if _, err := e.store.UpsertExtensionAccount(platform, sess.Account(), sess.AccountName()); err != nil {
 		logging.Log.Warning("登记扩展账号失败: %v", err)
 	}
+}
+
+const extensionReloadNotice = "插件有新版本，点「重新加载」即可"
+
+func (e *Engine) noteExtensionVersion(sess *extbridge.Session) {
+	if e == nil || sess == nil {
+		return
+	}
+	got := strings.TrimSpace(sess.ExtVersion())
+	want := extbundle.Version()
+	if got == "" || got == want {
+		e.setExtNotice("")
+		return
+	}
+	e.setExtNotice(extensionReloadNotice)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		cmd, err := extbridge.Command(extbridge.CmdReload, nil)
+		if err != nil {
+			return
+		}
+		_, _ = sess.Call(ctx, cmd)
+	}()
+}
+
+func (e *Engine) setExtNotice(text string) {
+	e.extMu.Lock()
+	prev := e.extNotice
+	e.extNotice = text
+	e.extMu.Unlock()
+	if text != "" && text != prev {
+		logging.Log.Warning("%s", text)
+	}
+	if text != prev {
+		e.fireBridgeChange()
+	}
+}
+
+// ExtensionNotice 是扩展版本和磁盘上的副本不一致时给界面的那句话。
+func (e *Engine) ExtensionNotice() string {
+	if e == nil {
+		return ""
+	}
+	e.extMu.Lock()
+	defer e.extMu.Unlock()
+	return e.extNotice
 }
 
 func (e *Engine) syncExtensionAccounts() {

@@ -53,6 +53,7 @@ jobs:
           rm -rf dist-extension
           mkdir -p dist-extension/tulai-extension
           cp -a extension/. dist-extension/tulai-extension/
+          find dist-extension/tulai-extension -name '*.go' -delete
           find dist-extension -name .DS_Store -delete
           (cd dist-extension && zip -r "tulai-extension-${ver}.zip" tulai-extension)
           (cd dist-extension && sha256sum "tulai-extension-${ver}.zip" > SHA256SUMS.txt)
@@ -68,7 +69,7 @@ jobs:
   edge:
     needs: guard
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -86,7 +87,7 @@ jobs:
         env:
           TULAI_EDGE_E2E: "1"
           TULAI_EDGE_EVIDENCE: ${{ github.workspace }}/edge-evidence
-        run: go test -count=1 -timeout 15m -run TestEdgeLoginLaunchLeavesVisiblePage ./internal/browser/
+        run: go test -count=1 -timeout 20m -run 'TestEdgeLoginLaunchLeavesVisiblePage|TestEdgeExtensionPairs|TestCfTExtensionPairs' ./internal/browser/
       - uses: actions/upload-artifact@v7
         if: always()
         with:

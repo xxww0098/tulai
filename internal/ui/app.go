@@ -14,8 +14,10 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	extbundle "github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -166,24 +168,27 @@ type App struct {
 	updateStop         chan struct{}
 	updateRel          update.Release
 
-	wizardOn        bool
-	wizardStep      wizard.Step
-	wizardDir       int
-	wizardPlan      wizard.BrowserPlan
-	wizardQueue     wizard.Queue
-	wizardAccount   store.Browser
-	wizardExtra     bool
-	wizardPickExtra bool
-	wizardPhase     string
-	wizardNote      string
-	wizardErr       string
-	wizardGen       int
-	wizardStop      chan struct{}
-	wizardLaunch    func(store.Browser) (string, error)
-	wizardOpen      func(ws, rawURL string) error
-	wizardProbe     func(ctx context.Context, endpoint string) (string, error)
-	wizardNavFailed bool
-	accountOpen     func(store.Browser) error
+	wizardOn           bool
+	wizardStep         wizard.Step
+	wizardDir          int
+	wizardPlan         wizard.BrowserPlan
+	wizardQueue        wizard.Queue
+	wizardAccount      store.Browser
+	wizardExtra        bool
+	wizardPickExtra    bool
+	wizardPhase        string
+	wizardNote         string
+	wizardErr          string
+	wizardGen          int
+	wizardStop         chan struct{}
+	wizardLaunch       func(store.Browser) (string, error)
+	wizardOpen         func(ws, rawURL string) error
+	wizardProbe        func(ctx context.Context, endpoint string) (string, error)
+	wizardNavFailed    bool
+	accountOpen        func(store.Browser) error
+	pluginWasConnected bool
+	pluginWatch        bool
+	extensionDir       string
 }
 
 type sourceImage struct {
@@ -207,6 +212,17 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		browserSel:   -1,
 	}
 	a.loadSettings()
+	if dir, err := extbundle.Install(browser.ConfigDir()); err != nil {
+		logging.Log.Warning("页面桥扩展没有解压：%v", err)
+	} else {
+		a.extensionDir = dir
+		if bm != nil {
+			bm.SetExtensionDir(dir)
+			bm.SetExtensionReady(func(wsURL, extDir string) error {
+				return cdp.EnsureExtension(context.Background(), wsURL, extDir)
+			})
+		}
+	}
 	a.applyWizardGate()
 	if a.engine != nil {
 		if err := a.engine.ServeLocal(); err != nil && a.extTokenNote == "" {

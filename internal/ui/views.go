@@ -121,6 +121,11 @@ func (a *App) extensionBridgeSection(c *ui.Context) {
 	}
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Text(c, "页面桥").FontSize(15).Bold()
+		if a.engine != nil {
+			if notice := a.engine.ExtensionNotice(); notice != "" {
+				ui.Text(c, notice).FontSize(13).TextColor(c.Theme().Warning)
+			}
+		}
 		ui.Text(c, summary).FontSize(12).TextColor(detailColor).SingleLine().Tooltip(detail)
 		ui.TextInput(c.Key("ext-bridge-token"), &a.extToken).ReadOnly(true).FontSize(12).Label("令牌")
 		ui.Row(c).Gap(8).Children(func() {
