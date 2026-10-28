@@ -28,7 +28,7 @@ func (a *App) browserPane(c *ui.Context) {
 		a.refreshDetected()
 	}
 	ui.Field(c, "网页方式", func() {
-		ui.Select(c.Key("browser-backend"), &a.browserChoice, []string{"Chrome", "Edge", "内置浏览器"}).Disabled(a.running).OnChange(func() {
+		motionSelect(c.Key("browser-backend"), &a.browserChoice, []string{"Chrome", "Edge", "内置浏览器"}).Disabled(a.running).OnChange(func() {
 			a.browserBackend = browser.CanonicalBackend(a.browserChoice)
 			if a.store != nil {
 				a.store.Set("browser_backend", a.browserBackend)
@@ -42,7 +42,7 @@ func (a *App) browserPane(c *ui.Context) {
 		ui.Text(c, browserInstanceHint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(browserInstanceHint)
 		// 新增行
 		ui.Row(c).Gap(8).Children(func() {
-			ui.Select(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Label("浏览器平台")
+			motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Label("浏览器平台")
 			ui.TextInput(c, &a.newBrowserName).Grow(1).MinWidth(0).Placeholder("名称（可选）").Label("浏览器名称")
 			ui.Button(c, "添加").Disabled(a.running).OnClick(func() { a.addBrowser() })
 		})
@@ -234,7 +234,7 @@ func (a *App) builtinBrowserSection(c *ui.Context) {
 		ui.Button(c, label).Disabled(a.running || a.cftBusy || !supported).OnClick(func() { a.downloadBuiltin() })
 	})
 	if a.cftBusy {
-		ui.Progress(c, a.cftPercent).FillWidth().Height(4)
+		motionProgress(c, "cft-progress", a.cftPercent, a.cftPercent <= 0)
 	}
 }
 

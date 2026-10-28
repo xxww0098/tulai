@@ -36,6 +36,7 @@ func (a *App) applyWizardGate() {
 func (a *App) openWizard() {
 	a.stopWizardLoop()
 	a.wizardOn = true
+	a.wizardDir = 1
 	a.wizardStep = wizard.StepBrowser
 	a.wizardExtra = false
 	a.wizardPickExtra = false
@@ -82,6 +83,7 @@ func (a *App) wizardView(c *ui.Context) {
 	ui.Column(c).Fill().Padding(36, 48).Gap(8).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(16).Children(func() {
 			ui.Text(c, "tulai").FontSize(22).Bold()
+			wizardSteps(c, a.wizardStep)
 			ui.Text(c, fmt.Sprintf("第 %d / %d 步", a.wizardStep.Index(), wizard.Count())).FontSize(13).TextColor(c.Theme().TextMuted).Grow(1)
 			ui.Text(c, "当前版本 "+currentVersion()).FontSize(13).TextColor(c.Theme().TextMuted)
 			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
@@ -89,17 +91,24 @@ func (a *App) wizardView(c *ui.Context) {
 		a.updateBanner(c)
 		ui.Scroll(c.Key("wizard-body")).Grow(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().MaxWidth(840).Gap(20).Padding(28, 8, 12, 8).Children(func() {
-				ui.Text(c, a.wizardStep.Title()).FontSize(28).Bold()
-				switch a.wizardStep {
-				case wizard.StepPlatform:
-					a.wizardPlatformStep(c)
-				case wizard.StepAccount:
-					a.wizardAccountStep(c)
-				case wizard.StepDone:
-					a.wizardDoneStep(c)
-				default:
-					a.wizardBrowserStep(c)
-				}
+				ui.Column(c.Key(a.wizardStep)).FillWidth().Gap(20).Transition(a.stepMotion()).Children(func() {
+					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+						if a.wizardStep == wizard.StepDone {
+							doneMark(c)
+						}
+						ui.Text(c, a.wizardStep.Title()).FontSize(28).Bold()
+					})
+					switch a.wizardStep {
+					case wizard.StepPlatform:
+						a.wizardPlatformStep(c)
+					case wizard.StepAccount:
+						a.wizardAccountStep(c)
+					case wizard.StepDone:
+						a.wizardDoneStep(c)
+					default:
+						a.wizardBrowserStep(c)
+					}
+				})
 			})
 		})
 		a.wizardFooter(c)
@@ -136,7 +145,7 @@ func (a *App) wizardBrowserStep(c *ui.Context) {
 	})
 	if a.cftBusy || (plan.NeedsDownload && a.cftStatus != "") {
 		if a.cftBusy {
-			ui.Progress(c, a.cftPercent).FillWidth().Height(6)
+			motionProgress(c, "cft-progress", a.cftPercent, a.cftPercent <= 0)
 		}
 		if a.cftStatus != "" {
 			ui.Text(c, a.cftStatus).FontSize(13).TextColor(c.Theme().TextMuted)
@@ -162,17 +171,21 @@ func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string, on *bool) {
 		border = c.Theme().Accent
 		width = 2
 	}
-	ui.Button(c.Key("wizard-"+name), "").Grow(1).MinHeight(200).Border(width, border).OnClick(func() {
+	card := ui.Button(c.Key("wizard-"+name), "").Grow(1).MinHeight(200).Border(width, border).OnClick(func() {
 		*on = !*on
-	}).Children(func() {
+	})
+	card.Transition(motionColors())
+	hoverPressPose(card)
+	card.Children(func() {
 		ui.Column(c).FillWidth().Gap(12).Padding(8, 4).Children(func() {
 			ui.Text(c, name).FontSize(26).Bold()
 			ui.Text(c, blurb).FontSize(14).TextColor(c.Theme().TextMuted)
+			label, color := "点击选择", c.Theme().TextMuted
 			if *on {
-				ui.Text(c, "已选择").FontSize(14).TextColor(c.Theme().Accent)
-			} else {
-				ui.Text(c, "点击选择").FontSize(14).TextColor(c.Theme().TextMuted)
+				label, color = "已选择", c.Theme().Accent
 			}
+			ui.Text(c.Key("pick"), label).FontSize(14).TextColor(color).
+				ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
 		})
 	})
 }
@@ -192,18 +205,29 @@ func (a *App) wizardAccountStep(c *ui.Context) {
 		ui.Text(c, line).FontSize(16).TextColor(c.Theme().TextMuted)
 	}
 	ui.Column(c).FillWidth().MinHeight(140).Padding(24, 28).Gap(8).Radius(16).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+		msg := "正在检测登录状态…"
+		color := c.Theme().Text
+		waiting := true
 		switch a.wizardPhase {
 		case "launching":
-			ui.Text(c, a.wizardNote).FontSize(15)
+			if a.wizardNote != "" {
+				msg = a.wizardNote
+			}
 		case "error":
-			msg := a.wizardErr
+			waiting = false
+			msg = a.wizardErr
 			if msg == "" {
 				msg = "还没检测到登录"
 			}
-			ui.Text(c, msg).FontSize(15).TextColor(c.Theme().Warning)
-		default:
-			ui.Text(c, "正在检测登录状态…").FontSize(15)
+			color = c.Theme().Warning
 		}
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			if waiting {
+				waitingDot(c)
+			}
+			ui.Text(c.Key("wizard-phase"), msg).FontSize(15).TextColor(color).
+				ContentTransition(ui.ContentTransition{Animation: &motionEaseOut})
+		})
 		ui.Text(c, "登录成功后会自动进入下一步。").FontSize(13).TextColor(c.Theme().TextMuted)
 	})
 }
@@ -228,14 +252,16 @@ func (a *App) wizardDoneStep(c *ui.Context) {
 	}
 	ui.Text(c, "再添加一个账号后，额度用尽、限流或验证码会自动换号。").FontSize(14).TextColor(c.Theme().TextMuted)
 	if a.wizardPickExtra {
-		ui.Text(c, "要给哪个平台再加一个账号？").FontSize(15)
-		ui.Row(c).Gap(12).Children(func() {
-			if a.platDoubao {
-				ui.Button(c, "再添加豆包").OnClick(func() { a.wizardEnterAccount("豆包") })
-			}
-			if a.platQianwen {
-				ui.Button(c, "再添加千问").OnClick(func() { a.wizardEnterAccount("千问") })
-			}
+		ui.Column(c.Key("extra-account")).FillWidth().Gap(12).Transition(motionReveal()).Children(func() {
+			ui.Text(c, "要给哪个平台再加一个账号？").FontSize(15)
+			ui.Row(c).Gap(12).Children(func() {
+				if a.platDoubao {
+					ui.Button(c, "再添加豆包").OnClick(func() { a.wizardEnterAccount("豆包") })
+				}
+				if a.platQianwen {
+					ui.Button(c, "再添加千问").OnClick(func() { a.wizardEnterAccount("千问") })
+				}
+			})
 		})
 	}
 }
@@ -303,7 +329,7 @@ func (a *App) wizardNext() {
 			return
 		}
 		a.wizardCommitChoices()
-		a.wizardStep = wizard.StepPlatform
+		a.goWizard(wizard.StepPlatform)
 	case wizard.StepPlatform:
 		if !a.wizardCanNext() {
 			return
@@ -318,9 +344,9 @@ func (a *App) wizardBack() {
 	a.wizardPickExtra = false
 	switch a.wizardStep {
 	case wizard.StepDone, wizard.StepAccount:
-		a.wizardStep = wizard.StepPlatform
+		a.goWizard(wizard.StepPlatform)
 	case wizard.StepPlatform:
-		a.wizardStep = wizard.StepBrowser
+		a.goWizard(wizard.StepBrowser)
 	}
 }
 
@@ -368,12 +394,12 @@ func (a *App) wizardEnterAccount(extra string) {
 	a.wizardAccount = store.Browser{}
 	a.wizardErr = ""
 	if a.wizardQueue.Done() {
-		a.wizardStep = wizard.StepDone
+		a.goWizard(wizard.StepDone)
 		a.wizardPhase = "ready"
 		a.wizardNote = ""
 		return
 	}
-	a.wizardStep = wizard.StepAccount
+	a.goWizard(wizard.StepAccount)
 	a.wizardPhase = "launching"
 	a.wizardNote = "正在打开登录页…"
 	a.wizardErr = ""
@@ -540,7 +566,7 @@ func (a *App) wizardPrepare(gen int) bool {
 			return
 		}
 		if a.wizardQueue.Done() {
-			a.wizardStep = wizard.StepDone
+			a.goWizard(wizard.StepDone)
 			a.wizardPhase = "ready"
 			a.wizardNote = ""
 			a.wizardErr = ""
@@ -625,7 +651,7 @@ func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 		a.wizardErr = ""
 	}
 	if poll == wizard.PollDone {
-		a.wizardStep = wizard.StepDone
+		a.goWizard(wizard.StepDone)
 		a.wizardPhase = "ready"
 		a.wizardNote = ""
 		a.wizardErr = ""

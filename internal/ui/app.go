@@ -138,6 +138,9 @@ type App struct {
 	running  bool
 
 	tab          int
+	tabSeen      int
+	tabTracked   bool
+	tabDir       int
 	splitSz      float32
 	sourceHeight float32
 	updateBusy   bool
@@ -158,6 +161,7 @@ type App struct {
 
 	wizardOn        bool
 	wizardStep      wizard.Step
+	wizardDir       int
 	wizardPlan      wizard.BrowserPlan
 	wizardQueue     wizard.Queue
 	wizardAccount   store.Browser
@@ -417,15 +421,19 @@ func (a *App) captchaConfig() captcha.Config {
 }
 
 // view 主视图。向导盖住全部页面；否则是出图、浏览器、提示词或设置。
+// 向导和主界面、以及四个页之间各走一段淡入位移，页内状态不变。
 func (a *App) view(c *ui.Context) {
 	if a.wizardOn {
-		a.wizardView(c)
+		ui.Column(c.Key("screen-wizard")).Fill().Transition(screenMotion()).Children(func() {
+			a.wizardView(c)
+		})
 		return
 	}
-	ui.Column(c).Fill().Children(func() {
+	a.noteTab()
+	ui.Column(c.Key("screen-main")).Fill().Transition(screenMotion()).Children(func() {
 		a.chrome(c)
 		ui.Divider(c)
-		ui.Column(c).Grow(1).MinHeight(0).Padding(4, 28, 16, 28).Children(func() {
+		ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinHeight(0).Padding(4, 28, 16, 28).Transition(a.pageMotion()).Children(func() {
 			switch a.tab {
 			case pageBrowser:
 				a.browserPane(c)
