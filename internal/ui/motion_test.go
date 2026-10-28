@@ -10,9 +10,9 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/prompts"
-	"xbs/internal/tasks"
-	"xbs/internal/wizard"
+	"github.com/xxww0098/tulai/internal/prompts"
+	"github.com/xxww0098/tulai/internal/tasks"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 func TestWizardStepSlidesInFromTheSide(t *testing.T) {

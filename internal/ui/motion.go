@@ -5,7 +5,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"xbs/internal/wizard"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 // 桌面界面的动效令牌。MyGo 把界面画在 GPU 上（macOS Metal、Windows
