@@ -179,6 +179,53 @@ func TestExportWorkbenchShots(t *testing.T) {
 	}
 	blocked.preloadThumbs([]string{land})
 	saveTall("lanes-blocked", blocked)
+
+	saveAt := func(name string, width, height int, app *App) {
+		t.Helper()
+		tt := ui.NewTester(app.view, width, height)
+		tt.Advance(450 * time.Millisecond)
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	extra := []string{"街景.png", "夜色.png", "花.png"}
+	var extraSrc []sourceImage
+	var extraQueue []tasks.Task
+	for i, name := range extra {
+		path := filepath.Join(pics, name)
+		writeShot(t, path, 320, 320, func(x, y, w, h int) color.NRGBA {
+			return color.NRGBA{R: uint8(40 + i*60), G: uint8(80 + x%80), B: uint8(120 + y%80), A: 255}
+		})
+		extraSrc = append(extraSrc, sourceImage{Path: path})
+		extraQueue = append(extraQueue, tasks.Task{
+			Index: 4 + i, Platform: "豆包", BrowserID: 1,
+			Status: tasks.StatusRunning, Images: []string{path}, Prompt: name,
+		})
+	}
+	six := &App{
+		platformAuto: running.platformAuto, concurrencyAuto: running.concurrencyAuto,
+		running: true, outputPath: running.outputPath, prompts: running.prompts,
+		browserRows: running.browserRows,
+		sources:     append(append([]sourceImage{}, running.sources...), extraSrc...),
+		queue:       append(append([]tasks.Task{}, running.queue...), extraQueue...),
+	}
+	six.preloadThumbs(extraPaths(six.sources))
+	saveAt("lanes-running-1024", 1024, 1100, running)
+	saveAt("lanes-running-6", 1280, 1200, six)
+	saveAt("lanes-running-6-1024", 1024, 1400, six)
+}
+
+func extraPaths(sources []sourceImage) []string {
+	out := make([]string, len(sources))
+	for i := range sources {
+		out[i] = sources[i].Path
+	}
+	return out
 }
 
 func writeShot(t *testing.T, path string, w, h int, px func(x, y, w, h int) color.NRGBA) {

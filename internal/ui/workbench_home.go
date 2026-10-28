@@ -533,7 +533,7 @@ func (a *App) stepLead(board tasks.Board) string {
 		}
 		return "还没有可用账号"
 	}
-	return RunSummary(len(a.sources), len(a.taskPromptList()) > 0, a.liveParallel())
+	return RunSummary(len(a.sources), len(a.taskPromptList()) > 0)
 }
 
 // runNote 是出图步骤上的一行进度。待验证已经写在卡片上，这里不再重复成一条失败。
@@ -617,15 +617,7 @@ func (a *App) progressPane(c *ui.Context) {
 		if needs > 0 {
 			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
 		}
-		width, _ := c.Size()
-		cols := int((width - 40) / 280)
-		if cols < 1 {
-			cols = 1
-		}
-		if cols > 3 {
-			cols = 3
-		}
-		ui.Grid(c).Columns(cols).Gap(12).Children(func() {
+		ui.Grid(c).Columns(progressCols(c)).FillWidth().Gap(12).AlignItems(ui.Stretch).Children(func() {
 			for _, card := range cards {
 				a.progressCard(c, card)
 			}
@@ -698,10 +690,24 @@ func (a *App) chooseReplacement() (string, error) {
 	return paths[0], nil
 }
 
+// progressCols 按窗口里出图进度实际能用的宽度分列，避免卡片比格子宽、叠出面板。
+func progressCols(c *ui.Context) int {
+	width, _ := c.Size()
+	inner := width - 28*2 - 14*2
+	cols := int(inner / 300)
+	if cols < 1 {
+		cols = 1
+	}
+	if cols > 3 {
+		cols = 3
+	}
+	return cols
+}
+
 func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 	tok := a.look
-	box := ui.Column(c.Key("card:"+card.Key)).FillWidth().Gap(8).Padding(10).Radius(tok.radiusM).
-		Background(tok.paper).Border(1, tok.border).AlignSelf(ui.Stretch).Transition(motionItem())
+	box := ui.Column(c.Key("card:"+card.Key)).MinWidth(0).Gap(8).Padding(10).Radius(tok.radiusM).
+		Background(tok.paper).Border(1, tok.border).Clip().Label("结果卡" + card.Title).Transition(motionItem())
 	if card.Status == "生成中" {
 		accent := c.Theme().Accent
 		reduce := c.Preferences().ReduceMotion
@@ -710,7 +716,7 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 		})
 	}
 	box.Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
 			a.inputThumb(c, card)
 			if len(card.Shots) > 0 {
 				ui.Row(c).Gap(6).Grow(1).MinWidth(0).Children(func() {
@@ -730,9 +736,9 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 			}
 			statusPill(c, card.Status)
 		})
-		ui.Text(c, card.Title).Bold().FontSize(tok.body).SingleLine().Tooltip(card.Title)
+		ui.Text(c, card.Title).Bold().FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(card.Title)
 		if line := a.siteLine(card); line != "" {
-			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
+			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(line)
 		}
 		if card.Status == "生成中" {
 			ui.Box(c.Key("gen-slot")).FillWidth().Height(6)

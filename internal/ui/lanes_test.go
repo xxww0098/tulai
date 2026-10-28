@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -24,10 +25,13 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	if got := LaneHeader(3, 1, 4); got != "3 个账号同时出图 · 完成 1 / 共 4" {
 		t.Fatal(got)
 	}
-	if got := LaneStatusLine(2, 0, 0, false); got != "2 个账号就绪" {
+	if got := LaneStatusLine(2, false); got != "2 个账号就绪" {
 		t.Fatal(got)
 	}
-	if got := LaneStatusLine(0, 0, 0, false); got != "暂无可用账号" {
+	if got := LaneStatusLine(0, false); got != "暂无可用账号" {
+		t.Fatal(got)
+	}
+	if got := LaneStatusLine(3, true); got != "3 个账号同时出图" {
 		t.Fatal(got)
 	}
 	a := &App{
@@ -67,12 +71,12 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	if !ok || start.W > 220 || start.W < 48 {
 		t.Fatalf("start button %+v", start)
 	}
-	for _, label := range []string{"1 张图 · 1 个账号同时出图", "图片/输出结果"} {
+	for _, label := range []string{"1 张图", "图片/输出结果", "1 个账号就绪"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
 	}
-	sum, ok := tt.Find("1 张图 · 1 个账号同时出图")
+	sum, ok := tt.Find("1 张图")
 	path, pathOK := tt.Find("图片/输出结果")
 	if !ok || !pathOK {
 		t.Fatal("summary lines missing")
@@ -142,6 +146,18 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	if d := left.H - right.H; d > 2 || d < -2 {
 		t.Fatalf("lane heights left %v right %v", left.H, right.H)
 	}
+	loginChip, okLogin := tt.Find("需要登录")
+	fullChip, okFull := tt.Find("今日已满")
+	relogin, okBtn := tt.Find("去重登")
+	if !okLogin || !okFull || !okBtn {
+		t.Fatal("chips or button missing")
+	}
+	if d := loginChip.Y - fullChip.Y; d > 3 || d < -3 {
+		t.Fatalf("title chips not aligned: login %v full %v", loginChip.Y, fullChip.Y)
+	}
+	if relogin.Y < loginChip.Y+loginChip.H {
+		t.Fatalf("relogin sits in the title row: button %v chip %v", relogin.Y, loginChip.Y)
+	}
 
 	a.running = true
 	a.queue = []tasks.Task{
@@ -152,6 +168,60 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	if got := a.stepLead(a.accountBoard(time.Now())); got != "正在出图 · 已完成 0/3" {
 		t.Fatal(got)
 	}
+}
+
+func TestProgressCardsDoNotOverflow(t *testing.T) {
+	for _, width := range []int{1024, 1280} {
+		for _, n := range []int{3, 6} {
+			t.Run(fmt.Sprintf("%dx%d", width, n), func(t *testing.T) {
+				queue := make([]tasks.Task, n)
+				sources := make([]sourceImage, n)
+				for i := range queue {
+					name := fmt.Sprintf("图%d.png", i+1)
+					queue[i] = tasks.Task{
+						Index: i + 1, Platform: "豆包", BrowserID: 1,
+						Status: tasks.StatusRunning, Images: []string{name}, Prompt: "水彩",
+					}
+					sources[i] = sourceImage{Path: name}
+				}
+				a := &App{
+					platformAuto: true, concurrencyAuto: true, running: true,
+					outputPath: "图片/输出结果", prompts: "水彩",
+					sources: sources,
+					browserRows: []store.Browser{
+						loggedLane(1, "豆包主力", "豆包"),
+						loggedLane(2, "豆包小号", "豆包"),
+						loggedLane(3, "千问备用", "千问"),
+					},
+					queue: queue,
+				}
+				tt := ui.NewTester(a.view, width, 1200)
+				tt.Advance(80 * time.Millisecond)
+				rects := make([]ui.Rect, n)
+				for i := 0; i < n; i++ {
+					r, ok := tt.Find(fmt.Sprintf("结果卡图%d.png", i+1))
+					if !ok {
+						t.Fatalf("card %d missing", i+1)
+					}
+					if r.X < 0 || r.X+r.W > float32(width)-8 {
+						t.Fatalf("card %d overflows %v in %d", i+1, r, width)
+					}
+					rects[i] = r
+				}
+				for i := 0; i < n; i++ {
+					for j := i + 1; j < n; j++ {
+						if rectsOverlap(rects[i], rects[j]) {
+							t.Fatalf("cards %d and %d overlap %v %v", i+1, j+1, rects[i], rects[j])
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func rectsOverlap(a, b ui.Rect) bool {
+	return a.X < b.X+b.W-1 && b.X < a.X+a.W-1 && a.Y < b.Y+b.H-1 && b.Y < a.Y+a.H-1
 }
 
 func TestLaneStripWhenStepIsNotCurrent(t *testing.T) {
@@ -202,10 +272,15 @@ func TestRunningLaneShowsTheJobAndFliesToTheResult(t *testing.T) {
 	if !ok {
 		t.Fatal("result badge left")
 	}
-	if early.Y > late.Y-4 {
-		t.Fatalf("result should travel down from the lane: early=%v late=%v", early.Y, late.Y)
+	tt.Advance(motionUI)
+	settled, ok := tt.Find("产出豆包主力")
+	if !ok {
+		t.Fatal("result badge left after settling")
 	}
-	tt.Advance(400 * time.Millisecond)
+	if dx, dy := late.X-settled.X, late.Y-settled.Y; dx > 1 || dx < -1 || dy > 1 || dy < -1 {
+		t.Fatalf("badge kept moving: mid %v settled %v (from %v)", late, settled, early)
+	}
+	tt.Advance(200 * time.Millisecond)
 	if tt.FramePending() {
 		t.Fatal("settled result kept asking for frames")
 	}

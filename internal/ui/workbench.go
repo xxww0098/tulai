@@ -301,16 +301,13 @@ func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs i
 	return done, running, queued, failed, needs
 }
 
-// RunSummary 是出图步骤左侧的一行：几张图，以及现在能同时出图的账号数。
-func RunSummary(images int, prompts bool, slots int) string {
-	if slots < 0 {
-		slots = 0
-	}
+// RunSummary 是出图步骤左侧的一行。账号数写在面板上，这里只说这一批有几张图。
+func RunSummary(images int, prompts bool) string {
 	switch {
 	case images > 0:
-		return fmt.Sprintf("%d 张图 · %d 个账号同时出图", images, slots)
+		return fmt.Sprintf("%d 张图", images)
 	case prompts:
-		return fmt.Sprintf("按提示词 · %d 个账号同时出图", slots)
+		return "按提示词"
 	default:
 		return "先添加图片，或写一条提示词"
 	}

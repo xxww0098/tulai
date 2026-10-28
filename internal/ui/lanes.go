@@ -31,21 +31,18 @@ func LaneHeader(slots, done, total int) string {
 	return fmt.Sprintf("%d 个账号同时出图 · 完成 %d / 共 %d", slots, done, total)
 }
 
-// LaneStatusLine 是账号面板的标题。还没开始时只说有几个账号就绪；跑起来以后才写完成数。
-func LaneStatusLine(slots, done, total int, started bool) string {
+// LaneStatusLine 是账号面板的标题。完成数只出现在第 ③ 步，这里不重复。
+func LaneStatusLine(slots int, started bool) string {
 	if slots < 0 {
 		slots = 0
 	}
 	if slots == 0 {
-		if started && total > 0 {
-			return fmt.Sprintf("暂无可用账号 · 完成 %d / 共 %d", done, total)
-		}
 		return "暂无可用账号"
 	}
 	if !started {
 		return fmt.Sprintf("%d 个账号就绪", slots)
 	}
-	return LaneHeader(slots, done, total)
+	return fmt.Sprintf("%d 个账号同时出图", slots)
 }
 
 // BlockedAccounts 把不能出图的账号收成一句原因。能用的状态不写进来。
@@ -180,9 +177,8 @@ func (a *App) laneClock(c *ui.Context, board tasks.Board) {
 
 func (a *App) laneHeader(c *ui.Context) {
 	tok := a.look
-	cards := ProgressCards(a.queueItems())
-	done, _, _, _, _ := ProgressTally(cards)
-	line := LaneStatusLine(a.liveParallel(), done, len(cards), a.running || len(cards) > 0)
+	started := a.running || len(ProgressCards(a.queueItems())) > 0
+	line := LaneStatusLine(a.liveParallel(), started)
 	ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).
 		ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 }
@@ -262,6 +258,11 @@ func (a *App) laneCard(c *ui.Context, ln tasks.AccountLane, i int) {
 		}
 		a.laneQuota(c, ln)
 		ui.Box(c).Grow(1)
+		if ln.Action != "" {
+			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+				a.laneAction(c, ln)
+			})
+		}
 	})
 }
 
@@ -288,12 +289,16 @@ func (a *App) laneChipRow(c *ui.Context, ln tasks.AccountLane, i int, compact bo
 		if ln.State == tasks.LaneGap {
 			gapRing(c, ln, tok)
 		}
-		if ln.Action != "" {
-			label := ln.Action
-			id := ln.ID
-			ui.Button(c.Key("act"), label).OnClick(func() { a.openLane(id) })
+		if compact && ln.Action != "" {
+			a.laneAction(c, ln)
 		}
 	})
+}
+
+func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
+	label := ln.Action
+	id := ln.ID
+	ui.Button(c.Key("act"), label).OnClick(func() { a.openLane(id) })
 }
 
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
@@ -421,13 +426,16 @@ func (a *App) laneQuota(c *ui.Context, ln tasks.AccountLane) {
 	fill := tok.accent
 	switch {
 	case used >= capN:
-		fill = tok.muted
+		fill = ui.Hex("#CBD5E1")
+		if tok.dark {
+			fill = ui.Hex("#64748B")
+		}
 	case used*5 >= capN*4:
 		fill = tok.warning
 	}
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "今日").FontSize(tok.caption).TextColor(tok.muted)
-		ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).TextColor(fill).
+		ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).TextColor(tok.text).
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 	})
 	quotaBar(c, "quota", frac, fill, tok.border)

@@ -218,7 +218,7 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if len(cards[0].Shots) != 1 || cards[0].Shots[0].Path != "out/a.png" {
 		t.Fatalf("results = %+v", cards[0].Shots)
 	}
-	if got := RunSummary(3, false, 3); got != "3 张图 · 3 个账号同时出图" {
+	if got := RunSummary(3, false); got != "3 张图" {
 		t.Fatal(got)
 	}
 	running := ProgressCards([]tasks.Task{
