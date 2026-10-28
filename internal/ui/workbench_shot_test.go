@@ -111,6 +111,67 @@ func TestExportWorkbenchShots(t *testing.T) {
 	}
 	run.preloadThumbs([]string{land, face, still, out})
 	save("after-run", run)
+
+	saveTall := func(name string, a *App) {
+		t.Helper()
+		tt := ui.NewTester(a.view, 1280, 1040)
+		tt.Advance(450 * time.Millisecond)
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	today := time.Now().Format("2006-01-02")
+	idle := &App{
+		platformAuto:    true,
+		concurrencyAuto: true,
+		prompts:         "水彩，保留构图",
+		sources:         []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}},
+		browserRows: []store.Browser{
+			{ID: 1, Name: "豆包主力", Platform: "豆包", IsLoggedIn: true, Health: store.HealthReady, DayKey: today, DayCount: 3},
+			{ID: 2, Name: "千问备用", Platform: "千问", IsLoggedIn: true, Health: store.HealthReady, DayKey: today, DayCount: 1},
+		},
+	}
+	idle.preloadThumbs([]string{land, face})
+	saveTall("lanes-idle", idle)
+
+	running := &App{
+		platformAuto:    true,
+		concurrencyAuto: true,
+		prompts:         "水彩，保留构图",
+		sources:         []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}},
+		browserRows: []store.Browser{
+			{ID: 1, Name: "豆包主力", Platform: "豆包", IsLoggedIn: true, Health: store.HealthReady, DayKey: today, DayCount: 4},
+			{ID: 2, Name: "豆包小号", Platform: "豆包", IsLoggedIn: true, Health: store.HealthReady, DayKey: today, DayCount: 2},
+			{ID: 3, Name: "千问备用", Platform: "千问", IsLoggedIn: true, Health: store.HealthReady, DayKey: today, DayCount: 6},
+		},
+		queue: []tasks.Task{
+			{Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusRunning, Images: []string{land}, Prompt: "水彩，保留构图，傍晚的光"},
+			{Index: 2, Platform: "豆包", BrowserID: 2, Status: tasks.StatusRunning, Images: []string{face}, Prompt: "人像改成胶片色"},
+			{Index: 3, Platform: "千问", BrowserID: 3, Status: tasks.StatusRunning, Images: []string{still}, Prompt: "静物换成暖光"},
+			{Index: 4, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess, Images: []string{land}, Prompt: "水彩", Results: []string{out}},
+		},
+	}
+	running.preloadThumbs([]string{land, face, still, out})
+	saveTall("lanes-running", running)
+
+	blocked := &App{
+		platformAuto:    true,
+		concurrencyAuto: true,
+		dailyCap:        20,
+		prompts:         "一只猫",
+		sources:         []sourceImage{{Path: land, Hash: "land"}},
+		browserRows: []store.Browser{
+			{ID: 1, Name: "豆包没登录", Platform: "豆包", Health: store.HealthExhausted, LastError: "未登录"},
+			{ID: 2, Name: "千问今天满了", Platform: "千问", IsLoggedIn: true, Health: store.HealthReady, DayKey: today, DayCount: 20},
+		},
+	}
+	blocked.preloadThumbs([]string{land})
+	saveTall("lanes-blocked", blocked)
 }
 
 func writeShot(t *testing.T, path string, w, h int, px func(x, y, w, h int) color.NRGBA) {

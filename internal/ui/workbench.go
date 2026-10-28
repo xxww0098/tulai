@@ -195,8 +195,16 @@ type ProgressCard struct {
 	Rewrite   string
 	Platforms []string
 	Sites     []CardSite
-	Results   []string
+	Shots     []CardShot
 	Retry     []tasks.Task
+}
+
+// CardShot 是结果格里的一张图，以及产出它的那一单。
+type CardShot struct {
+	Path      string
+	Task      int
+	BrowserID int64
+	Platform  string
 }
 
 // CardSite 是这张卡上的一个平台账号。
@@ -337,7 +345,11 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 				card.Platforms = append(card.Platforms, task.Platform)
 			}
 			card.addSite(task.Platform, task.BrowserID)
-			card.Results = append(card.Results, task.Results...)
+			for _, path := range task.Results {
+				card.Shots = append(card.Shots, CardShot{
+					Path: path, Task: task.Index, BrowserID: task.BrowserID, Platform: task.Platform,
+				})
+			}
 			if task.Rewritten && card.Rewrite == "" {
 				card.Rewrite = shortLine(task.Prompt, 36)
 			}

@@ -156,8 +156,13 @@ func hoverPressPose(e ui.Element) ui.Element {
 func motionProgress(c *ui.Context, key string, fraction float64, indeterminate bool) {
 	host := ui.Box(c.Key(key)).FillWidth().Height(6)
 	if indeterminate {
+		// 来回的光带会一直要帧。系统要求少动时改成一段静止的填充。
+		shown := -1.0
+		if c.Preferences().ReduceMotion {
+			shown = 0.35
+		}
 		host.Children(func() {
-			ui.Progress(c, -1).FillWidth().Height(6)
+			ui.Progress(c, shown).FillWidth().Height(6)
 		})
 		return
 	}

@@ -72,6 +72,9 @@ type Engine struct {
 	notes       []string
 	wake        chan struct{}
 	gap         func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
+
+	liveMu sync.Mutex
+	clock  laneClock
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。
@@ -209,9 +212,11 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	e.wake = nudge
 	e.mu.Unlock()
 	e.rotateExtBatch()
+	e.beginLanes()
 
 	defer func() {
 		cancel()
+		e.finishLanes()
 		e.mu.Lock()
 		e.running = false
 		e.cancel = nil
@@ -251,6 +256,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 						e.store.TouchBrowser(t.BrowserID, time.Now())
 					}
 				}
+				e.laneStart(e.slotKey(t.BrowserID), t.BrowserID, jobOf(t, time.Now()))
 				t.Status = StatusRunning
 				e.view.Update(t)
 				onTask(t)
@@ -259,8 +265,6 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 				if t.slot > 0 {
 					e.setActive(t.slot, false)
 				}
-				e.view.Update(t)
-				onTask(t)
 				completed <- t
 			}
 		}()
@@ -357,15 +361,24 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 			if resource == 0 {
 				resource = t.BrowserID
 			}
-			delete(busy, e.slotKey(resource))
+			busySlot := e.slotKey(resource)
+			delete(busy, busySlot)
 			used := t.ranOn
 			if used == 0 {
 				used = resource
 			}
-			readyAt[e.slotKey(used)] = time.Now().Add(e.sendGap(time.Duration(opts.SendWait) * time.Second))
+			readySlot := e.slotKey(used)
+			gap := e.sendGap(time.Duration(opts.SendWait) * time.Second)
+			readyAt[readySlot] = time.Now().Add(gap)
+			// 先收起账号上的这一单，再把结果写进队列，界面同一帧里才能从账号车道飞到结果。
+			e.laneFinish(busySlot, resource, readySlot, gap)
+			if e.view != nil {
+				e.view.Update(t)
+			}
 			if t.rotated && t.Status == StatusPending {
 				t.rotated = false
 				pending = append(pending, t)
+				onTask(t)
 				if timer != nil {
 					timer.Stop()
 					timer = nil
@@ -377,6 +390,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 				if t.Status == StatusNeedsUser && ctx.Err() != nil {
 					runErr = captcha.ErrVerificationRequired
 				}
+				onTask(t)
 				onProgress(Progress{Done: done, Total: total})
 				if t.Status == StatusSuccess {
 					logging.Log.Success("#%d [%s] 完成，保存 %d 张", t.Index, t.Platform, len(t.Results))
@@ -452,24 +466,7 @@ func (e *Engine) slotKey(id int64) int64 {
 	if e == nil || e.store == nil || id == 0 {
 		return id
 	}
-	rows := e.store.Browsers()
-	account := ""
-	for _, b := range rows {
-		if b.ID == id {
-			account = b.ExtAccount
-			break
-		}
-	}
-	if account == "" {
-		return id
-	}
-	slot := id
-	for _, b := range rows {
-		if b.ExtAccount == account && b.ID < slot {
-			slot = b.ID
-		}
-	}
-	return slot
+	return accountSlot(e.store.Browsers(), id)
 }
 
 // pickIdleAccount 在当前名额正忙或还在发送间隔里时，改派到同平台另一个空闲账号。

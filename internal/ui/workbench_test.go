@@ -215,8 +215,8 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if cards[0].Title != "风景.png" || cards[0].Status != "失败" || cards[0].Reason != "账号额度已用完" || cards[0].Action != "换账号重试" || len(cards[0].Retry) != 1 || cards[0].Retry[0].Platform != "千问" {
 		t.Fatalf("image card = %+v", cards[0])
 	}
-	if len(cards[0].Results) != 1 || cards[0].Results[0] != "out/a.png" {
-		t.Fatalf("results = %v", cards[0].Results)
+	if len(cards[0].Shots) != 1 || cards[0].Shots[0].Path != "out/a.png" {
+		t.Fatalf("results = %+v", cards[0].Shots)
 	}
 	if cards[1].Status != "排队中" || cards[1].Title != "画一只猫" || cards[1].Reason != "" {
 		t.Fatalf("text card = %+v", cards[1])

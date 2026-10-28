@@ -66,9 +66,15 @@ func (a *App) homePage(c *ui.Context) {
 		ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
 			a.loginBanner(c)
 			a.flowStepper(c, flow)
+			if flow.Run.State != stepCurrent {
+				a.accountPanel(c, true)
+			}
 			a.stepImages(c, flow.Images)
 			a.stepPrompt(c, flow.Prompt)
 			a.stepRun(c, flow.Run)
+			if flow.Run.State == stepCurrent {
+				a.accountPanel(c, false)
+			}
 			a.progressPane(c)
 			ui.Collapsible(c, "高级", &a.advancedOpen, func() {
 				a.advancedFields(c)
@@ -627,14 +633,19 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 		Background(tok.paper).Border(1, tok.border).Transition(motionItem()).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			a.inputThumb(c, card)
-			if len(card.Results) > 0 {
+			if len(card.Shots) > 0 {
 				ui.Row(c).Gap(6).Grow(1).MinWidth(0).Children(func() {
-					n := len(card.Results)
+					n := len(card.Shots)
 					if n > 3 {
 						n = 3
 					}
-					for _, path := range card.Results[:n] {
-						a.resultThumb(c, path, card.Status == "生成中")
+					flown := map[int]bool{}
+					for _, shot := range card.Shots[:n] {
+						fly := shot.Task > 0 && !flown[shot.Task]
+						if fly {
+							flown[shot.Task] = true
+						}
+						a.resultThumb(c, shot, card.Status == "生成中", fly)
 					}
 				})
 			}
@@ -658,7 +669,7 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 			line := "已改写：" + card.Rewrite
 			ui.Text(c.Key("rewrite"), line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
 		}
-		if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 || len(card.Results) > 0 {
+		if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 || len(card.Shots) > 0 {
 			ui.Row(c).Gap(8).Children(func() {
 				if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 {
 					label := card.Action
@@ -667,8 +678,8 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 					}
 					ui.Button(c.Key("retry"), label).Disabled(a.running).Transition(motionReveal()).OnClick(func() { a.failAction(card) })
 				}
-				if len(card.Results) > 0 {
-					path := card.Results[0]
+				if len(card.Shots) > 0 {
+					path := card.Shots[0].Path
 					ui.Button(c, "打开文件").OnClick(func() { a.openResult(path) })
 				}
 			})
@@ -693,22 +704,37 @@ func (a *App) inputThumb(c *ui.Context, card ProgressCard) {
 	})
 }
 
-func (a *App) resultThumb(c *ui.Context, path string, shimmer bool) {
+func (a *App) resultThumb(c *ui.Context, shot CardShot, shimmer, fly bool) {
 	tok := a.look
-	tile := ui.Box(c.Key(path)).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0).Transition(motionItem())
+	tile := ui.Box(c.Key(shot.Path)).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
+	if fly {
+		tile.Transition(ui.ElementTransition{
+			Animation: &motionEaseOut,
+			Position:  true,
+			Size:      true,
+			Match:     jobFly{shot.Task},
+		})
+	} else {
+		tile.Transition(motionItem())
+	}
 	tile.Children(func() {
-		bmp := a.cachedThumb(path)
-		if bmp == nil {
-			return
+		bmp := a.cachedThumb(shot.Path)
+		if bmp != nil {
+			img := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS).
+				ContentTransition(ui.ContentTransition{Animation: &motionEaseOut}).
+				Cursor(ui.CursorPointer).Label("预览")
+			if shimmer {
+				img.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
+			}
+			if img.Clicked() {
+				a.showPreview(shot.Path)
+			}
 		}
-		shot := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS).
-			ContentTransition(ui.ContentTransition{Animation: &motionEaseOut}).
-			Cursor(ui.CursorPointer).Label("预览")
-		if shimmer {
-			shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
-		}
-		if shot.Clicked() {
-			a.showPreview(path)
+		if badge := shotBadge(shot.Platform, a.accountName(shot.BrowserID)); badge != "" {
+			ui.Row(c).Label("产出"+badge).Absolute().Bottom(4).Left(4).Padding(1, 4).Radius(4).
+				Background(tok.accent.Alpha(0.92)).Children(func() {
+				ui.Text(c, badge).FontSize(10).TextColor(tok.onAccent).SingleLine()
+			})
 		}
 	})
 }
