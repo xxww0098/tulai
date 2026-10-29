@@ -866,7 +866,7 @@ func accountHealthLabel(b store.Browser, active, signedIn bool) string {
 	if !b.Usable(time.Now()) {
 		if b.Health == store.HealthCooling {
 			if strings.Contains(b.LastError, "验证") {
-				return "待验证"
+				return "需要人工验证"
 			}
 			return "冷却中"
 		}

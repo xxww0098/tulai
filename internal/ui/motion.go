@@ -275,7 +275,7 @@ func statusPill(c *ui.Context, status string) {
 		fg, bg = t.Accent, t.Accent.Alpha(0.14)
 	case "排队中":
 		fg, bg = t.TextMuted, t.Text.Alpha(0.08)
-	case "待验证":
+	case "待验证", "需要人工验证":
 		fg, bg = t.Warning, t.Warning.Alpha(0.16)
 	}
 	size := t.FontSize - 2

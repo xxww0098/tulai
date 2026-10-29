@@ -14,6 +14,19 @@ import (
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
+func TestCaptchaLaneSaysNeedsHuman(t *testing.T) {
+	if got := laneLabel(tasks.LaneCaptcha); got != "需要人工验证" {
+		t.Fatalf("lane = %s", got)
+	}
+	b := store.Browser{
+		Health: store.HealthCooling, CoolUntil: time.Now().Add(time.Minute).Unix(),
+		LastError: "需要人工验证", IsLoggedIn: true,
+	}
+	if got := accountHealthLabel(b, false, true); got != "需要人工验证" {
+		t.Fatalf("account = %s", got)
+	}
+}
+
 func loggedLane(id int64, name, platform string) store.Browser {
 	return store.Browser{
 		ID: id, Name: name, Platform: platform, IsLoggedIn: true, Health: store.HealthReady,

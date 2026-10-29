@@ -210,6 +210,25 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 	return s, nil
 }
 
+// PresentForCaptcha 把这个账号的窗口拿回屏幕并抢到前台。
+// 出图过程中只有等人完成验证码可以走这里，平时的导航和点击仍留在屏幕外。
+func (s *Session) PresentForCaptcha() {
+	if s == nil || s.ego != nil || s.client == nil || s.client.wsURL == "" {
+		return
+	}
+	// 先占住前台，park 循环才不会在激活完成前把窗口又送出去。
+	// 激活本身同步做完，避免验证很快通过时，迟到的激活把窗口又拉回来。
+	holdFront(s.client.wsURL)
+	presentForCaptcha(s.client.wsURL)
+}
+
+// presentForCaptcha 测试里换成空函数，避免去连一个不存在的调试端口。
+var presentForCaptcha = func(endpoint string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	_ = BringToFront(ctx, endpoint)
+}
+
 // KeepOffscreen 出图期间把窗口留在屏幕外，并把焦点还给 tulai。
 // 登录调用过 BringToFront / setWindowBounds 显示窗口时，这里才解除占用。
 func (s *Session) KeepOffscreen() {

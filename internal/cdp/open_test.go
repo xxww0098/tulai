@@ -58,6 +58,21 @@ func TestFrontHoldIsPerDebugPort(t *testing.T) {
 	}
 }
 
+func TestPresentForCaptchaHoldsFrontUntilParked(t *testing.T) {
+	prev := presentForCaptcha
+	presentForCaptcha = func(string) {}
+	t.Cleanup(func() { presentForCaptcha = prev })
+	s := &Session{client: &Client{wsURL: "http://127.0.0.1:9338"}}
+	s.PresentForCaptcha()
+	if !frontHeld(s.client.wsURL) {
+		t.Fatal("验证码是出图过程中唯一该把窗口拿回前台的情况")
+	}
+	s.KeepOffscreen()
+	if frontHeld(s.client.wsURL) {
+		t.Fatal("验证通过后要放开前台，窗口才能回到屏幕外")
+	}
+}
+
 func TestParkStepsDoesNotRestateNormalOffscreen(t *testing.T) {
 	if parkSteps("normal", -2400, -2400) != nil {
 		t.Fatal("已经在屏幕外的正常窗口不能再 setWindowBounds，否则会被激活到前台")

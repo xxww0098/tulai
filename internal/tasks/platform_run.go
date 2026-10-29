@@ -384,7 +384,8 @@ func (e *Engine) platformCap(platform string, now time.Time) int {
 }
 
 func (e *Engine) taskBudget() time.Duration {
-	return e.resultWait() + 3*time.Minute
+	// ponytail: 预算里只留一次人工验证。第二次再等满 5 分钟，外层时限仍可能先到。
+	return e.resultWait() + humanVerifyLimit + 3*time.Minute
 }
 
 func (e *Engine) accountName(id int64) string {

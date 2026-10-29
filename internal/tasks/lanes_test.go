@@ -24,6 +24,7 @@ func TestMapLaneStates(t *testing.T) {
 	}{
 		{name: "idle", fact: base, state: LaneIdle},
 		{name: "running", fact: func() LaneFact { f := base; f.Busy = true; f.Job = job; f.UsedToday = 20; return f }(), state: LaneRunning, job: true},
+		{name: "awaiting captcha", fact: func() LaneFact { f := base; f.Busy = true; f.Awaiting = true; f.Job = job; return f }(), state: LaneCaptcha, action: "去处理", job: true},
 		{name: "gap", fact: func() LaneFact {
 			f := base
 			f.NextReady = now.Add(4 * time.Second)

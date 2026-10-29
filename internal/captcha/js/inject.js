@@ -11,7 +11,7 @@
     maxRetries: 5,    // 失败重试上限（超限换题继续）
     reportMs: 1000,   // 阻塞状态上报间隔
   };
-  var st = { running: false, retries: 0, manual: false, loginMode: false };
+  var st = { running: false, retries: 0, manual: false, loginMode: false, kind: '' };
 
   function autoSolveEnabled() { return window.__tulaiCaptchaEnabled === true && !st.manual; }
 
@@ -556,7 +556,6 @@
     if (!el) return false;
     var type = captchaType(el);
     if (!type) return false;
-    log('检测到验证码: ' + type);
     return type === 'slider' ? solveSlider(el) : solveGrid(el);
   }
 
@@ -597,8 +596,13 @@
         }
       }
       var detected = detectCaptcha();
+      var kind = detected ? (captchaType(detected) || '') : '';
+      if (kind !== st.kind) {
+        st.kind = kind;
+        if (kind) log('检测到验证码: ' + kind);
+      }
       if (detected) {
-        if (!autoSolveEnabled() || st.manual || !captchaType(detected)) {
+        if (!autoSolveEnabled() || st.manual || !kind) {
           await sleep(CFG.pollMs);
           continue;
         }

@@ -357,6 +357,8 @@ func laneLabel(state tasks.LaneState) string {
 	switch state {
 	case tasks.LaneRunning:
 		return "出图中"
+	case tasks.LaneCaptcha:
+		return "需要人工验证"
 	case tasks.LaneLogin:
 		return "需登录"
 	case tasks.LaneIdle:

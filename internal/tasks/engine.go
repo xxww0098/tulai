@@ -348,6 +348,15 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		}
 		t.Attempts++
 		err := attempt(ctx, &t)
+		if errors.Is(err, errHumanGaveUp) && !errors.Is(ctx.Err(), context.Canceled) {
+			t.submitted = false
+			if e.maybeRotate(&t, err, time.Now()) {
+				return t
+			}
+			t.Status = StatusNeedsUser
+			t.Error = errHumanGaveUp.Error()
+			return t
+		}
 		if endedByTimeout(ctx, err) {
 			t.Status = StatusFailed
 			t.Error = "出图超时"
@@ -525,7 +534,7 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 			}
 		}
 	}
-	if err := e.submitTask(t, strat, sess); err != nil {
+	if err := e.submitTask(work, t, strat, sess); err != nil {
 		return err
 	}
 	if !e.opts.WaitResult {
@@ -534,7 +543,32 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	return e.waitAndSave(work, t, strat, sess)
 }
 
-func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session) error {
+func (e *Engine) submitTask(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session) error {
+	if t == nil || t.submitted {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := e.holdIfCaptcha(ctx, sess, t); err != nil {
+			return err
+		}
+		err := e.submitOnce(t, strat, sess)
+		if err == nil || t.submitted {
+			return err
+		}
+		blocked, _ := captchaVisible(sess)
+		if !blocked {
+			return err
+		}
+	}
+}
+
+func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session) error {
 	if t.submitted {
 		return nil
 	}
@@ -585,15 +619,39 @@ func (e *Engine) resultWait() time.Duration {
 }
 
 func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session) error {
-	deadline := time.Now().Add(e.resultWait())
+	budget := e.resultWait()
+	var used time.Duration
 	lastProgress := time.Now()
-	for time.Now().Before(deadline) {
+	for used < budget {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		results, waitErr := strat.WaitForResult(sess, time.Until(deadline))
+		held, err := e.holdIfCaptcha(ctx, sess, t)
+		if err != nil {
+			return err
+		}
+		if held {
+			lastProgress = time.Now()
+			if err := e.submitTask(ctx, t, strat, sess); err != nil {
+				return err
+			}
+		}
+		left := budget - used
+		start := time.Now()
+		results, waitErr := strat.WaitForResult(sess, left)
+		used += time.Since(start)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
+		}
+		if errors.Is(waitErr, captcha.ErrVisible) {
+			if err := e.holdForHuman(ctx, sess, t); err != nil {
+				return err
+			}
+			lastProgress = time.Now()
+			if err := e.submitTask(ctx, t, strat, sess); err != nil {
+				return err
+			}
+			continue
 		}
 		if errors.Is(waitErr, context.Canceled) || errors.Is(waitErr, context.DeadlineExceeded) || (waitErr != nil && len(results) == 0) {
 			return waitErr
@@ -628,11 +686,17 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 			return fmt.Errorf("%w", heal.ErrStuck)
 		}
 		logging.Log.Debugf("#%d 候选暂无有效生成图，继续等待", t.Index)
+		pause := min(1500*time.Millisecond, budget-used)
+		if pause < 0 {
+			pause = 0
+		}
+		sleepStart := time.Now()
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(min(1500*time.Millisecond, time.Until(deadline))):
+		case <-time.After(pause):
 		}
+		used += time.Since(sleepStart)
 	}
 	return fmt.Errorf("出图超时，没有可保存的图片")
 }
@@ -740,7 +804,8 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if err := strat.InstallHook(sess); err != nil {
 		return nil, closeFailedSession(ctx, sess, err)
 	}
-	captcha.Attach(sess, solver, e.store.GetBool("captcha_enabled"), func() {
+	// 出图不自动拖验证码。窗口在屏幕外，求解既点不中，也会和人工抢滑块。
+	captcha.Attach(sess, solver, false, func() {
 		e.store.UpdateBrowser(browserID, true, false)
 	})
 	sess.KeepAlive(ctx, 30*time.Second)
