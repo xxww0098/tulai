@@ -4,6 +4,7 @@ package cdp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -128,6 +129,38 @@ func (c *Client) NewSession(rawURL string, onLog func(string)) (*Session, error)
 	return c.finishSession(ctx, cancel, rawURL, onLog)
 }
 
+// consoleMessage 把控制台参数收成一行。没有值的对象，以及 null / undefined，不再记成「null」。
+func consoleMessage(args []*runtime.RemoteObject) string {
+	var parts []string
+	for _, arg := range args {
+		if text := consoleArgText(arg); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func consoleArgText(arg *runtime.RemoteObject) string {
+	if arg == nil || arg.Type == runtime.TypeUndefined || arg.Subtype == runtime.SubtypeNull || len(arg.Value) == 0 {
+		return ""
+	}
+	if arg.Type == runtime.TypeString {
+		var text string
+		if json.Unmarshal([]byte(arg.Value), &text) == nil {
+			text = strings.TrimSpace(text)
+			if text == "" || text == "null" || text == "undefined" {
+				return ""
+			}
+			return text
+		}
+	}
+	text := strings.TrimSpace(arg.Value.String())
+	if text == "" || text == "null" || text == "undefined" {
+		return ""
+	}
+	return text
+}
+
 func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, rawURL string, onLog func(string)) (*Session, error) {
 	s := &Session{client: c, ctx: ctx, cancel: cancel, hooks: map[string]func(data string) string{}, onLog: onLog}
 	// 桥事件监听：页面 → Go
@@ -143,14 +176,12 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 				}()
 			}
 		case *runtime.EventConsoleAPICalled:
-			if onLog != nil && len(e.Args) > 0 {
-				var parts []string
-				for _, a := range e.Args {
-					parts = append(parts, a.Value.String())
+			if onLog != nil {
+				if line := consoleMessage(e.Args); line != "" {
+					stop := s.bindLog()
+					onLog(line)
+					stop()
 				}
-				stop := s.bindLog()
-				onLog(strings.Join(parts, " "))
-				stop()
 			}
 		}
 	})
