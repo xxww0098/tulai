@@ -6,6 +6,33 @@ import (
 	"testing"
 )
 
+func TestRegionBlockedURL(t *testing.T) {
+	blocked := []string{
+		"https://www.doubao.com/security/doubao-region-ban?source=1",
+		"https://www.doubao.com/chat/security/doubao-region-ban",
+		"https://www.qianwen.com/security/qianwen-region-ban",
+		"https://www.tongyi.com/security/tongyi-region-ban",
+		"https://chat.qwen.ai/security/qwen-region-ban",
+	}
+	for _, raw := range blocked {
+		if !RegionBlockedURL(raw) {
+			t.Fatalf("expected region ban: %s", raw)
+		}
+	}
+	open := []string{
+		"",
+		"https://www.doubao.com/chat/",
+		"https://www.tongyi.com/",
+		"https://www.qianwen.com/",
+		"https://example.com/security/not-a-ban",
+	}
+	for _, raw := range open {
+		if RegionBlockedURL(raw) {
+			t.Fatalf("not a region ban: %s", raw)
+		}
+	}
+}
+
 func TestPickLoginTargetPrefersTheOpenSite(t *testing.T) {
 	list := []sliderTarget{
 		{ID: "blank", Type: "page", URL: "about:blank"},
@@ -30,7 +57,7 @@ func TestPickLoginTargetPrefersTheOpenSite(t *testing.T) {
 }
 
 func TestLoginProbeUsesComposerAndScanLogin(t *testing.T) {
-	for _, needle := range []string{"contenteditable", "扫码登录", "state:'in'", "state:'out'", "state:'unknown'", "state:'challenge'", "安全验证", "拖动滑块"} {
+	for _, needle := range []string{"contenteditable", "扫码登录", "state:'in'", "state:'out'", "state:'unknown'", "state:'challenge'", "state:'region'", "/security/doubao-region-ban", "qianwen-region-ban", "受区域限制", "安全验证", "拖动滑块"} {
 		if !strings.Contains(loginProbeJS, needle) {
 			t.Fatalf("probe script missing %q", needle)
 		}
@@ -48,6 +75,8 @@ func TestNormalizeLoginState(t *testing.T) {
 		string(encoded):         "out",
 		"in":                    "in",
 		"challenge":             "challenge",
+		"region":                "region",
+		`{"state":"region"}`:    "region",
 		"":                      "unknown",
 		"nope":                  "unknown",
 	}

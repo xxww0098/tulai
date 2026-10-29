@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -16,6 +17,15 @@ import (
 	"github.com/xxww0098/tulai/internal/strategy"
 	"github.com/xxww0098/tulai/internal/wizard"
 )
+
+const scanLoginTitle = "用手机扫码登录"
+
+const regionProxyHint = "当前地区打不开这个站点。请到设置的「网络」里选择自定义代理，填写 http://主机:端口 或 socks5://主机:端口，然后重新打开登录页。"
+
+type loginShot struct {
+	state string
+	bmp   *ui.Bitmap
+}
 
 // applyWizardGate 在启动时决定要不要盖住主界面。
 // 已经有登录过且还能恢复的账号时写下完成标记并跳过。
@@ -46,6 +56,8 @@ func (a *App) openWizard() {
 	a.wizardNote = ""
 	a.wizardErr = ""
 	a.wizardAccount = store.Browser{}
+	a.wizardName = ""
+	a.wizardNameFor = 0
 	a.refreshWizardPlan()
 }
 
@@ -195,23 +207,60 @@ func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string, on *bool) {
 }
 
 func (a *App) wizardAccountStep(c *ui.Context) {
+	a.syncWizardName()
 	platform := a.wizardQueue.Current()
 	if platform == "" {
 		platform = a.wizardAccount.Platform
 	}
-	title := "请在弹出的浏览器中扫码登录"
-	ui.Text(c, title).FontSize(18).Bold()
-	if platform != "" {
-		line := platform
-		if a.wizardAccount.Name != "" {
-			line += " · " + a.wizardAccount.Name
-		}
-		ui.Text(c, line).FontSize(16).TextColor(c.Theme().TextMuted)
+	ui.Text(c, scanLoginTitle).FontSize(18).Bold()
+	ui.Text(c, "二维码显示在下面，浏览器可以留在后台。过期会自动刷新。").FontSize(14).TextColor(c.Theme().TextMuted)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "账号名称").FontSize(13).TextColor(c.Theme().TextMuted)
+		ui.TextInput(c, &a.wizardName).Width(220).Placeholder("例如工作号")
+	})
+	name := strings.TrimSpace(a.wizardName)
+	if name == "" {
+		name = a.wizardAccount.Name
 	}
-	ui.Column(c).FillWidth().MinHeight(140).Padding(24, 28).Gap(8).Radius(16).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
-		msg := "正在检测登录状态…"
-		color := c.Theme().Text
-		waiting := true
+	line := platform
+	if name != "" {
+		if line != "" {
+			line += " · "
+		}
+		line += name
+	}
+	ui.Column(c).Width(320).Padding(16, 16).Gap(10).Radius(16).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+		if line != "" {
+			ui.Text(c, line).FontSize(15).Bold().SingleLine()
+		}
+		a.loginQRBody(c, a.wizardAccount, true)
+	})
+}
+
+func (a *App) loginQRBody(c *ui.Context, b store.Browser, inWizard bool) {
+	shot := a.loginShots[b.ID]
+	loggedIn := b.IsLoggedIn || shot.state == wizard.ProbeIn || (inWizard && a.wizardPhase == "in")
+	if loggedIn {
+		ui.Text(c, "已登录").FontSize(15).TextColor(c.Theme().Success)
+		return
+	}
+	if shot.state == wizard.ProbeRegion || (inWizard && a.wizardPhase == "region") {
+		msg := regionProxyHint
+		if inWizard && a.wizardErr != "" {
+			msg = a.wizardErr
+		}
+		ui.Text(c, msg).FontSize(13).TextColor(c.Theme().Warning)
+		return
+	}
+	if shot.bmp != nil {
+		ui.Image(c, shot.bmp).Size(168, 168).Fit(ui.Contain).Radius(8)
+		ui.Text(c, "用手机扫码").FontSize(12).TextColor(c.Theme().TextMuted)
+		return
+	}
+	msg := "正在获取二维码…"
+	color := c.Theme().Text
+	waiting := true
+	if inWizard {
 		switch a.wizardPhase {
 		case "launching":
 			if a.wizardNote != "" {
@@ -224,15 +273,17 @@ func (a *App) wizardAccountStep(c *ui.Context) {
 				msg = "还没检测到登录"
 			}
 			color = c.Theme().Warning
-		}
-		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			if waiting {
-				waitingDot(c)
+		case "waiting":
+			if a.wizardNote != "" {
+				msg = a.wizardNote
 			}
-			ui.Text(c.Key("wizard-phase"), msg).FontSize(15).TextColor(color).
-				ContentTransition(ui.ContentTransition{Animation: &motionEaseOut})
-		})
-		ui.Text(c, "登录成功后会自动进入下一步。").FontSize(13).TextColor(c.Theme().TextMuted)
+		}
+	}
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if waiting {
+			waitingDot(c)
+		}
+		ui.Text(c.Key("wizard-phase"), msg).FontSize(13).TextColor(color)
 	})
 }
 
@@ -495,7 +546,7 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 				a.wizardPhase = "error"
 				a.wizardNavFailed = false
 				a.wizardErr = "启动浏览器失败：" + err.Error()
-				a.wizardNote = "请在弹出的浏览器中扫码登录"
+				a.wizardNote = scanLoginTitle
 			})
 			return
 		}
@@ -529,18 +580,23 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			}
 			a.store.UpdateBrowser(account.ID, true, false)
 			a.wizardPhase = "waiting"
-			a.wizardNote = "请在弹出的浏览器中扫码登录"
+			a.wizardNote = scanLoginTitle
 			a.wizardErr = ""
 		})
 		for {
 			if a.wizardStale(gen, stop) {
 				return
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 			raw, probeErr := a.probeWizardLogin(ctx, ws)
+			var png []byte
+			if probeErr == nil && raw != wizard.ProbeIn && raw != wizard.ProbeRegion {
+				png, _, _ = a.grabLoginQR(ctx, ws)
+			}
 			cancel()
 			action := wizard.PollWait
 			a.wizardUI(func() {
+				a.setLoginShot(account.ID, raw, png)
 				action = a.noteProbe(gen, raw, probeErr)
 			})
 			switch action {
@@ -591,11 +647,12 @@ func (a *App) wizardPrepare(gen int) bool {
 		if err != nil {
 			a.wizardPhase = "error"
 			a.wizardErr = err.Error()
-			a.wizardNote = "请在弹出的浏览器中扫码登录"
+			a.wizardNote = scanLoginTitle
 			return
 		}
 		a.wizardAccount = account
 		a.wizardPhase = "launching"
+		a.pushProxy()
 		a.wizardNote = "正在打开" + account.Platform + "…"
 		a.wizardErr = ""
 		a.wizardNavFailed = false
@@ -638,16 +695,28 @@ func (a *App) ensureWizardAccount() (store.Browser, error) {
 	for _, row := range a.store.Browsers() {
 		names = append(names, row.Name)
 	}
-	return a.store.AddBrowser(platform, wizard.NextAccountName(names), "")
+	name := wizard.NextAccountName(names)
+	dir := ""
+	if strings.TrimSpace(a.dataRoot) != "" {
+		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
+	}
+	return a.store.AddBrowser(platform, name, dir)
 }
 
 func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 	if gen != a.wizardGen {
 		return wizard.PollStop
 	}
+	if strings.TrimSpace(raw) == wizard.ProbeRegion {
+		a.wizardPhase = "region"
+		a.wizardErr = regionProxyHint
+		a.wizardNote = "需要设置代理"
+		a.wizardNavFailed = true
+		return wizard.PollWait
+	}
 	if err != nil || !wizard.LoggedIn(raw) {
 		a.wizardPhase = "waiting"
-		a.wizardNote = "请在弹出的浏览器中扫码登录"
+		a.wizardNote = scanLoginTitle
 		a.wizardErr = ""
 		if err != nil {
 			a.wizardPhase = "error"
@@ -658,6 +727,14 @@ func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 	if a.store != nil && a.wizardAccount.ID != 0 {
 		a.store.UpdateBrowser(a.wizardAccount.ID, true, true)
 		a.store.ResetBrowserHealth(a.wizardAccount.ID)
+	}
+	if a.wizardPhase != "in" {
+		a.wizardPhase = "in"
+		a.wizardNote = "已登录"
+		a.wizardErr = ""
+		if a.wizardStop != nil {
+			return wizard.PollWait
+		}
 	}
 	next, poll := wizard.AfterLogin(a.wizardQueue, true)
 	a.wizardQueue = next
@@ -772,6 +849,7 @@ func (a *App) launchWizardBrowser(b store.Browser) (string, error) {
 	if a.manager == nil {
 		return "", fmt.Errorf("没有浏览器")
 	}
+	a.pushProxy()
 	return a.manager.Start(b, a.dataRoot, a.browserBackend, accountHomeURL(b), false)
 }
 
@@ -786,7 +864,7 @@ func (a *App) openWizardPage(ws, rawURL string) error {
 	if a.wizardOpen != nil {
 		return a.wizardOpen(ws, rawURL)
 	}
-	return cdp.OpenURL(ws, rawURL)
+	return cdp.OpenURLBackground(context.Background(), ws, rawURL)
 }
 
 func (a *App) probeWizardLogin(ctx context.Context, endpoint string) (string, error) {
@@ -794,4 +872,106 @@ func (a *App) probeWizardLogin(ctx context.Context, endpoint string) (string, er
 		return a.wizardProbe(ctx, endpoint)
 	}
 	return cdp.ProbeLogin(ctx, endpoint)
+}
+
+func (a *App) grabLoginQR(ctx context.Context, endpoint string) ([]byte, bool, error) {
+	if a.wizardQR != nil {
+		return a.wizardQR(ctx, endpoint)
+	}
+	if a.wizardProbe != nil {
+		return nil, false, nil
+	}
+	return cdp.CaptureLoginQR(ctx, endpoint)
+}
+
+func (a *App) setLoginShot(id int64, state string, png []byte) {
+	if a == nil || id == 0 {
+		return
+	}
+	if a.loginShots == nil {
+		a.loginShots = map[int64]loginShot{}
+	}
+	shot := a.loginShots[id]
+	if state != "" {
+		shot.state = state
+	}
+	if state == wizard.ProbeIn || state == wizard.ProbeRegion {
+		shot.bmp = nil
+	} else if len(png) > 0 {
+		if bmp, err := ui.DecodeBitmap(png); err == nil {
+			shot.bmp = bmp
+		}
+	}
+	a.loginShots[id] = shot
+}
+
+func (a *App) syncWizardName() {
+	if a == nil || a.wizardAccount.ID == 0 {
+		return
+	}
+	if a.wizardNameFor != a.wizardAccount.ID {
+		a.wizardName = a.wizardAccount.Name
+		a.wizardNameFor = a.wizardAccount.ID
+		return
+	}
+	name := strings.TrimSpace(a.wizardName)
+	if name == "" || name == a.wizardAccount.Name || a.store == nil {
+		return
+	}
+	a.store.RenameBrowser(a.wizardAccount.ID, name)
+	a.wizardAccount.Name = name
+}
+
+func (a *App) followLogin(b store.Browser, ws string) {
+	if a == nil || b.ID == 0 || ws == "" {
+		return
+	}
+	a.mu.Lock()
+	if a.loginWatchGen == nil {
+		a.loginWatchGen = map[int64]int{}
+	}
+	a.loginWatchGen[b.ID]++
+	gen := a.loginWatchGen[b.ID]
+	a.mu.Unlock()
+	go func() {
+		for i := 0; i < 150; i++ {
+			a.mu.Lock()
+			current := a.loginWatchGen[b.ID]
+			a.mu.Unlock()
+			if current != gen {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+			state, err := cdp.ProbeLogin(ctx, ws)
+			var png []byte
+			if err == nil && state != cdp.RegionBlocked && state != wizard.ProbeIn {
+				png, _, _ = cdp.CaptureLoginQR(ctx, ws)
+			}
+			cancel()
+			if a.window == nil {
+				return
+			}
+			done := make(chan struct{})
+			a.window.Update(func() {
+				defer close(done)
+				a.mu.Lock()
+				still := a.loginWatchGen[b.ID] == gen
+				a.mu.Unlock()
+				if !still {
+					return
+				}
+				a.setLoginShot(b.ID, state, png)
+				if state == wizard.ProbeIn && a.store != nil {
+					a.store.UpdateBrowser(b.ID, true, true)
+					a.store.ResetBrowserHealth(b.ID)
+					a.refreshBrowsers()
+				}
+			})
+			<-done
+			if state == wizard.ProbeIn {
+				return
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}()
 }

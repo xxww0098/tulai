@@ -20,6 +20,7 @@ const (
 	ProbeIn      = "in"
 	ProbeOut     = "out"
 	ProbeUnknown = "unknown"
+	ProbeRegion  = "region"
 )
 
 // Step 是向导的四步。

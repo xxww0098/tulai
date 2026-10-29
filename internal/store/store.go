@@ -95,6 +95,8 @@ var defaults = map[string]string{
 	"auto_check_updates":      "1",
 	"update_mirror":           "",
 	"update_skipped_version":  "",
+	"proxy_mode":              "system",
+	"proxy_server":            "",
 	"daily_cap":               "20",
 	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
 }
@@ -252,6 +254,20 @@ func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
 	}
 	id, _ := res.LastInsertId()
 	return Browser{ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir}, nil
+}
+
+// RenameBrowser 只改显示名。用户数据目录保持创建时的路径。
+func (s *Store) RenameBrowser(id int64, name string) {
+	if s == nil || id <= 0 {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`UPDATE browsers SET name=? WHERE id=?`, name, id)
 }
 
 // UpdateBrowser 更新浏览器运行/登录状态。

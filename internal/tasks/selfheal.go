@@ -222,7 +222,7 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 		e.loginPrev = map[int64]string{}
 	}
 	prev := e.loginPrev[b.ID]
-	if state == heal.StateIn || state == heal.StateOut || state == heal.StateChallenge {
+	if state == heal.StateIn || state == heal.StateOut || state == heal.StateChallenge || state == heal.StateRegion {
 		e.loginPrev[b.ID] = state
 	}
 	e.mu.Unlock()

@@ -77,7 +77,7 @@ func pairExtension(t *testing.T, bin string, extra []string, label string) {
 	profile := t.TempDir()
 	port := freePort(t)
 	var stderr bytes.Buffer
-	cmd := exec.Command(bin, launchArgs(port, profile, "about:blank", extDir, extra)...)
+	cmd := exec.Command(bin, launchArgs(port, profile, "about:blank", extDir, "", extra)...)
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

@@ -34,7 +34,7 @@ func TestEdgeLoadUnpacked(t *testing.T) {
 	}
 	profile := t.TempDir()
 	port := freePort(t)
-	args := launchArgs(port, profile, "about:blank", "", nil)
+	args := launchArgs(port, profile, "about:blank", "", "", nil)
 	args = append(args[:len(args)-1], "--enable-unsafe-extension-debugging", args[len(args)-1])
 	var stderr bytes.Buffer
 	cmd := exec.Command(edge, args...)
@@ -127,7 +127,7 @@ func TestCfTMultiAccount(t *testing.T) {
 		profile := t.TempDir()
 		port := freePort(t)
 		start := page.URL + path
-		args := launchArgs(port, profile, start, extDir, []string{"--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"})
+		args := launchArgs(port, profile, start, extDir, "", []string{"--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"})
 		cmd := exec.Command(rt.Path, args...)
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)

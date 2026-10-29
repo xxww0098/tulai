@@ -126,6 +126,9 @@ type App struct {
 	customKey      string
 	customModel    string
 	ikunocrKey     string
+	proxyCustom    bool
+	proxyURL       string
+	proxySaved     string
 
 	// 源图片
 	sources []sourceImage
@@ -190,6 +193,11 @@ type App struct {
 	wizardOpen         func(ws, rawURL string) error
 	wizardProbe        func(ctx context.Context, endpoint string) (string, error)
 	wizardNavFailed    bool
+	wizardName         string
+	wizardNameFor      int64
+	loginShots         map[int64]loginShot
+	loginWatchGen      map[int64]int
+	wizardQR           func(ctx context.Context, endpoint string) ([]byte, bool, error)
 	accountOpen        func(store.Browser) error
 	pluginWasConnected bool
 	pluginWatch        bool
@@ -354,6 +362,10 @@ func (a *App) loadSettings() {
 	a.customKey = s.Get("captcha_custom_key")
 	a.customModel = s.Get("captcha_custom_model")
 	a.ikunocrKey = s.Get("captcha_ikunocr_key")
+	a.proxyCustom = s.Get("proxy_mode") == "custom"
+	a.proxyURL = strings.TrimSpace(s.Get("proxy_server"))
+	a.proxySaved = a.proxyURL
+	a.pushProxy()
 
 	a.refreshBrowsers()
 	a.newBrowserPlat = "豆包"
@@ -444,6 +456,7 @@ func (a *App) saveSettings() {
 	s.Set("captcha_custom_key", a.customKey)
 	s.Set("captcha_custom_model", a.customModel)
 	s.Set("captcha_ikunocr_key", a.ikunocrKey)
+	a.persistProxy()
 	// 源图列表持久化
 	var paths []string
 	for _, si := range a.sources {
@@ -451,6 +464,30 @@ func (a *App) saveSettings() {
 	}
 	s.Set("source_images", joinPaths(paths))
 	a.persistUpdatePrefs()
+}
+
+func (a *App) pushProxy() {
+	raw := ""
+	if a != nil && a.proxyCustom {
+		raw = strings.TrimSpace(a.proxyURL)
+	}
+	browser.SetProxy(raw)
+}
+
+func (a *App) persistProxy() {
+	if a == nil {
+		return
+	}
+	a.pushProxy()
+	if a.store == nil {
+		return
+	}
+	mode := "system"
+	if a.proxyCustom {
+		mode = "custom"
+	}
+	a.store.Set("proxy_mode", mode)
+	a.store.Set("proxy_server", strings.TrimSpace(a.proxyURL))
 }
 
 // captchaConfig 由当前 UI 状态构造求解配置。

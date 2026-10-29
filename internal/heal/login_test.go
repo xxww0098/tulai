@@ -2,6 +2,7 @@ package heal
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,5 +77,15 @@ func TestObserveIgnoresUnknownAndDialErrors(t *testing.T) {
 	}
 	if got := NormalizeState("  challenge ", nil); got != StateChallenge {
 		t.Fatalf("trim = %q", got)
+	}
+	region := Observe(StateIn, StateRegion, "豆包")
+	if region.Mark != "region" || region.Focus || !strings.Contains(region.Notice, "代理") {
+		t.Fatalf("region = %+v", region)
+	}
+	if again := Observe(StateRegion, StateRegion, "豆包"); again.Notice != "" {
+		t.Fatalf("repeat region = %+v", again)
+	}
+	if back := Observe(StateRegion, StateIn, "豆包"); back.Mark != "restore" || !back.ClearNotice {
+		t.Fatalf("region cleared = %+v", back)
 	}
 }

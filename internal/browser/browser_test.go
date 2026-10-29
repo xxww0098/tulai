@@ -118,8 +118,8 @@ func TestDebugArgsUseLoginURLAndSkipAutomation(t *testing.T) {
 	if strings.Contains(joined, "about:blank") || strings.Contains(joined, "--enable-automation") || strings.Contains(joined, "--headless") {
 		t.Fatalf("blank or automation flag leaked: %v", args)
 	}
-	withExtra := launchArgs(9333, userData, login, "", []string{"--disable-gpu"})
-	withExt := launchArgs(9333, userData, login, filepath.Join(userData, "ext"), nil)
+	withExtra := launchArgs(9333, userData, login, "", "", []string{"--disable-gpu"})
+	withExt := launchArgs(9333, userData, login, filepath.Join(userData, "ext"), "", nil)
 	if withExt[len(withExt)-1] != login {
 		t.Fatalf("extension flags ate the url: %v", withExt)
 	}

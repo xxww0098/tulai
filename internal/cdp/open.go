@@ -13,12 +13,36 @@ import (
 // ErrDebugUnavailable 表示调试端口暂时连不上。浏览器若已带着登录地址启动，页面可以留着。
 var ErrDebugUnavailable = errors.New("连不上调试端口")
 
+// stayBackKey 为真时导航不把窗口拉到前面。登录二维码显示在 tulai 里，浏览器可以留在后台。
+type stayBackKey struct{}
+
+func stayBack(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	back, _ := ctx.Value(stayBackKey{}).(bool)
+	return back
+}
+
 // OpenURL 把已经打开的可见页面导航到 url，并确认地址离开了 about:blank。
 // 控制连接退出后标签页仍由浏览器保留。已经在目标站点上时只把窗口拉到前面，不重新加载。
 func OpenURL(wsURL, rawURL string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return OpenURLContext(ctx, wsURL, rawURL)
+}
+
+// OpenURLBackground 同 OpenURLContext，但不把窗口拉到前面。
+func OpenURLBackground(ctx context.Context, endpoint, rawURL string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+	}
+	return OpenURLContext(context.WithValue(ctx, stayBackKey{}, true), endpoint, rawURL)
 }
 
 // OpenURLContext 同 OpenURL，使用调用方的超时。
@@ -373,7 +397,7 @@ func (c *SliderConn) createPage(ctx context.Context, rawURL string) (string, err
 	}
 	if err := c.call(ctx, "", "Target.createTarget", map[string]any{
 		"url":        rawURL,
-		"background": false,
+		"background": stayBack(ctx),
 		"newWindow":  false,
 	}, &out); err != nil {
 		return "", err
@@ -385,6 +409,9 @@ func (c *SliderConn) createPage(ctx context.Context, rawURL string) (string, err
 }
 
 func (c *SliderConn) activate(ctx context.Context, id string) error {
+	if stayBack(ctx) {
+		return nil
+	}
 	if err := c.Activate(ctx, id); err != nil {
 		return err
 	}

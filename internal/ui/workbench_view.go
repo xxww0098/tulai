@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -56,17 +57,16 @@ func (a *App) settingsPage(c *ui.Context) {
 		ui.Column(c).MaxWidth(920).Gap(16).Padding(4, 0, 20, 0).Children(func() {
 			ui.Text(c, "设置").FontSize(22).Bold()
 			ui.Text(c, "验证码在这里调。平台、并发和输出文件夹在出图页的「高级」里。").FontSize(13).TextColor(c.Theme().TextMuted)
-			if homeSplit(w) {
-				ui.Row(c).Gap(16).AlignItems(ui.Start).Children(func() {
-					a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
-					a.settingsCard(c, "验证码", "出图遇到验证时怎么处理。", func() { a.captchaFields(c) })
-				})
-				return
-			}
-			ui.Column(c).FillWidth().Gap(16).Children(func() {
+			cards := func() {
 				a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
 				a.settingsCard(c, "验证码", "出图遇到验证时怎么处理。", func() { a.captchaFields(c) })
-			})
+				a.settingsCard(c, "网络", "浏览器和内置浏览器下载走同一条代理。", func() { a.proxyFields(c) })
+			}
+			if homeSplit(w) {
+				ui.Row(c).Gap(16).AlignItems(ui.Start).Children(cards)
+				return
+			}
+			ui.Column(c).FillWidth().Gap(16).Children(cards)
 		})
 	})
 }
@@ -127,6 +127,46 @@ func captchaLabels() []string {
 		out[i] = opt.label
 	}
 	return out
+}
+
+func (a *App) proxyFields(c *ui.Context) {
+	if a.proxyURL != a.proxySaved {
+		a.proxySaved = a.proxyURL
+		a.persistProxy()
+	}
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		a.proxyModeButton(c, "跟随系统", false)
+		a.proxyModeButton(c, "自定义代理", true)
+	})
+	if !a.proxyCustom {
+		ui.Text(c, "未填写时使用 HTTPS_PROXY、ALL_PROXY 或 HTTP_PROXY。").FontSize(12).TextColor(c.Theme().TextMuted)
+		return
+	}
+	ui.TextInput(c, &a.proxyURL).Width(280).Placeholder("http://127.0.0.1:7890")
+	raw := strings.TrimSpace(a.proxyURL)
+	if raw != "" {
+		if _, ok := browser.NormalizeProxy(raw); !ok {
+			ui.Text(c, "格式应为 http://主机:端口 或 socks5://主机:端口").FontSize(12).TextColor(c.Theme().Warning)
+		}
+	} else {
+		ui.Text(c, "例如 socks5://127.0.0.1:1080。改完后重新打开浏览器。").FontSize(12).TextColor(c.Theme().TextMuted)
+	}
+}
+
+func (a *App) proxyModeButton(c *ui.Context, label string, custom bool) {
+	on := a.proxyCustom == custom
+	b := ui.Button(c, label)
+	if on {
+		b.Border(1, c.Theme().Accent).TextColor(c.Theme().Accent)
+	}
+	b.OnClick(func() {
+		if a.proxyCustom == custom {
+			return
+		}
+		a.proxyCustom = custom
+		a.proxySaved = a.proxyURL
+		a.persistProxy()
+	})
 }
 
 func (a *App) captchaFields(c *ui.Context) {

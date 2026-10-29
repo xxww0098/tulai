@@ -34,7 +34,7 @@ var errIncomplete = errors.New("下载未完成")
 
 var downloadClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 downloadProxy,
 		ResponseHeaderTimeout: 45 * time.Second,
 		TLSHandshakeTimeout:   20 * time.Second,
 		IdleConnTimeout:       30 * time.Second,
