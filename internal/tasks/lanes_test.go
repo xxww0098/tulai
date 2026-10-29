@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
@@ -218,5 +219,33 @@ func TestAccountBoardCountsTodayAndReturnsIdle(t *testing.T) {
 	board := e.AccountBoard(time.Now(), 20)
 	if len(board.Lanes) != 1 || board.Lanes[0].State != LaneIdle || board.Lanes[0].UsedToday != 1 || board.Lanes[0].Job != nil {
 		t.Fatalf("after run %+v", board.Lanes)
+	}
+}
+
+func TestRenameUpdatesLogAccount(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	first, err := st.AddBrowser("千问", "浏览器3", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.AddBrowser("千问", "浏览器4", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 没有旧用户，直接改库里的名字，不做读的时候翻译。
+	st.RenameBrowser(first.ID, "千问1")
+	st.RenameBrowser(second.ID, "千问2")
+	e := NewEngine(st, nil, nil, "")
+	line := logging.Line{Platform: "千问", Account: e.accountName(second.ID)}
+	if line.Account != "千问2" {
+		t.Fatalf("account field = %q", line.Account)
+	}
+	board := e.AccountBoard(time.Now(), 20)
+	if len(board.Lanes) != 2 || board.Lanes[0].Name != "千问1" || board.Lanes[1].Name != "千问2" {
+		t.Fatalf("lanes = %+v", board.Lanes)
 	}
 }

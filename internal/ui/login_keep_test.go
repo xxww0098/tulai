@@ -165,7 +165,7 @@ func TestProbeAndRestorePersistLogin(t *testing.T) {
 				browserBackend: browser.KindChrome,
 				loginWatchGen:  map[int64]int{row.ID: 1},
 			}
-			if !a.publishLogin(row.ID, 1, wizard.ProbeIn, nil, "") {
+			if !a.publishLogin(row.ID, 1, wizard.ProbeIn, "") {
 				t.Fatal("publish")
 			}
 			if got := keepBrowser(t, st, row.ID); !got.IsLoggedIn {

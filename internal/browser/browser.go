@@ -115,7 +115,7 @@ func pageBackend(backend string) string {
 }
 
 // ErrDebugPort 表示浏览器进程已经拉起，命令行上的登录页还在，但调试端口没连上。
-// 调用方应留着窗口让用户扫码，不要当成「没打开浏览器」。
+// 调用方应留着窗口让用户在网页里登录，不要当成「没打开浏览器」。
 var ErrDebugPort = errors.New("调试端口未就绪")
 
 type runningProc struct {

@@ -18,7 +18,7 @@ import (
 // ErrDebugUnavailable 表示调试端口暂时连不上。浏览器若已带着登录地址启动，页面可以留着。
 var ErrDebugUnavailable = errors.New("连不上调试端口")
 
-// stayBackKey 为真时导航不把窗口拉到前面。登录二维码显示在 tulai 里，浏览器可以留在后台。
+// stayBackKey 为真时导航不把窗口拉到前面。出图留在屏幕外；登录要把窗口拿回屏幕。
 type stayBackKey struct{}
 
 func stayBack(ctx context.Context) bool {
@@ -575,6 +575,10 @@ func releaseFront(endpoint string) {
 		frontHold.Delete(key)
 	}
 }
+
+// ReleaseLoginFront 在登录窗口关掉之后调用。
+// 同一端口接着出图时，才能再把窗口放到屏幕外。
+func ReleaseLoginFront(endpoint string) { releaseFront(endpoint) }
 
 func frontHeld(endpoint string) bool {
 	key := frontKey(endpoint)
