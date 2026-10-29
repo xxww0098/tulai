@@ -308,6 +308,35 @@ func TestHumanReason(t *testing.T) {
 	}
 }
 
+func TestResultCardShowsEveryShot(t *testing.T) {
+	four := &App{queue: []tasks.Task{{
+		Index: 2, Platform: "豆包", BrowserID: 2, Status: tasks.StatusSuccess,
+		Images: []string{"小屋.png"}, Prompt: "雪山下的小屋",
+		Results: []string{"a.png", "b.png", "c.png", "d.png"},
+	}}}
+	tt := ui.NewTester(four.view, 1280, 900)
+	n := 0
+	for _, text := range tt.Texts() {
+		if text == "结果图" {
+			n++
+		}
+	}
+	if n != 4 {
+		t.Fatalf("4 张结果应都出现在卡片上，看到 %d 个，文本 %v", n, tt.Texts())
+	}
+	if tt.HasText("+1") {
+		t.Fatal("4 张不该收成 +1")
+	}
+	many := &App{queue: []tasks.Task{{
+		Index: 3, Platform: "豆包", Status: tasks.StatusSuccess, Prompt: "一组",
+		Results: []string{"1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png"},
+	}}}
+	more := ui.NewTester(many.view, 1280, 900)
+	if !more.HasText("+2") {
+		t.Fatalf("超过 6 张应显示 +N，文本 %v", more.Texts())
+	}
+}
+
 func TestFailCardShowsOneAction(t *testing.T) {
 	a := &App{queue: []tasks.Task{
 		{Platform: "豆包", Status: tasks.StatusFailed, Prompt: "一张温和的插画。画面温和、健康，适合公开展示", Error: "审核不通过: 内容不符合规范", Rewritten: true},

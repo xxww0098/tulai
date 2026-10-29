@@ -605,6 +605,33 @@ globalThis.TULAIPage = (function () {
     return newAssistants(doc, state).some(busy)
   }
 
+  // 完成只认这一轮回复：生成指示消失，并且出现重新生成/复制，或格子达到声明张数。
+  function replyDone(doc, state) {
+    const messages = newAssistants(doc, state)
+    const images = resultImages(doc, state).filter(function (item) {
+      return item && item.url && !isPlaceholderURL(item.url)
+    })
+    let bar = false
+    let expect = 0
+    function takeCount(el) {
+      if (!el || !el.getAttribute) return
+      ;['data-count', 'data-total', 'data-image-count'].forEach(function (name) {
+        const v = parseInt(el.getAttribute(name) || '', 10)
+        if (v > expect) expect = v
+      })
+    }
+    messages.forEach(function (message) {
+      takeCount(message)
+      all(message, '[data-count],[data-total],[data-image-count]').forEach(takeCount)
+      all(message, 'button,[role="button"],a').forEach(function (el) {
+        const label = String((el.innerText || (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title')))) || '').replace(/\s+/g, '')
+        if (/重新生成|再次生成|再试一次|复制|拷贝|^copy$/i.test(label)) bar = true
+      })
+    })
+    const gridFull = expect > 0 && images.length >= expect
+    return { done: !messages.some(busy) && images.length > 0 && (bar || gridFull) }
+  }
+
   function assistantText(doc, state) {
     return newAssistants(doc, state).map(function (node) {
       return String((node && (node.innerText || node.textContent)) || '').replace(/\s+/g, ' ').trim()
@@ -867,6 +894,7 @@ globalThis.TULAIPage = (function () {
     resultImages,
     revealResults,
     resultsBusy,
+    replyDone,
     assistantText,
     composerCleared,
     sendAccepted,

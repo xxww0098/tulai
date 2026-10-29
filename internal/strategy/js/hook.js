@@ -7,6 +7,10 @@
   var results = [];
   var existingImages = new WeakSet();
   var ignoredURLs = new Set();
+  var baselineURLs = new Set();
+  var baselineIDs = new Set();
+  var baselineActions = new WeakSet();
+  var idSeq = 0;
   var taskNumber = 0, pendingGeneration = 0;
   function generationURL(url) { return /sse|event-stream|chat|completion|stream|message|segment|generation/i.test(url); }
   function beginGeneration() {
@@ -131,6 +135,119 @@
     if (/avatar|icon|logo|emoji|sprite/i.test(value)) return true;
     return false;
   }
+  function imageID(img) {
+    if (!img) return '';
+    var id = img.getAttribute && (img.getAttribute('data-tulai-id') || img.id || img.getAttribute('data-id') || '');
+    return String(id || '');
+  }
+  function rememberID(img) {
+    var id = imageID(img);
+    if (id || !img || typeof img.setAttribute !== 'function') return id;
+    id = 'tulai-' + (++idSeq);
+    try { img.setAttribute('data-tulai-id', id); } catch (e) {}
+    return id;
+  }
+  function pushURL(list, url) {
+    var value = String(url || '').trim();
+    if (!value || junkURL(value) || list.indexOf(value) !== -1) return;
+    list.push(value);
+  }
+  function urlsOf(img) {
+    var out = [];
+    if (!img) return out;
+    pushURL(out, img.currentSrc);
+    pushURL(out, img.src);
+    if (img.getAttribute) {
+      pushURL(out, img.getAttribute('src'));
+      ;['data-src', 'data-original', 'data-original-src', 'data-url', 'data-actualsrc'].forEach(function (name) {
+        pushURL(out, img.getAttribute(name));
+      });
+    }
+    var link = img.closest && img.closest('a');
+    if (link && link.getAttribute) pushURL(out, link.getAttribute('href') || link.getAttribute('data-href'));
+    return out;
+  }
+  function urlRank(url, width) {
+    var rank = width || 0;
+    if (/^https?:/i.test(url)) rank += 1000000;
+    if (/cgen_lwm|\/orig(?:in)?\b/i.test(url)) rank += 50000;
+    if (/cthumb|thumbnail|downsize/i.test(url)) rank -= 20000;
+    if (/~tplv-/i.test(url)) rank -= 1000;
+    return rank;
+  }
+  // 页面上同时有缩略图和原图时用原图。缩略图地址重新拉取经常 403。
+  function bestURL(img) {
+    var best = '', score = -1e15, width = img && img.naturalWidth > 0 ? img.naturalWidth : 0;
+    urlsOf(img).forEach(function (url) {
+      var next = urlRank(url, width);
+      if (next > score) { score = next; best = url; }
+    });
+    return best;
+  }
+  function isBaselineImage(img) {
+    var id = imageID(img);
+    if (id && baselineIDs.has(id)) return true;
+    var urls = urlsOf(img);
+    if (!urls.length) return false;
+    for (var i = 0; i < urls.length; i++) if (!baselineURLs.has(urls[i])) return false;
+    return true;
+  }
+  function assistantNodes() {
+    return Array.prototype.slice.call(document.querySelectorAll(window.__tulaiAssistantQuery));
+  }
+  // 新助手节点是这一轮回复。豆包有时把新图追加进最后一条消息，那种情况只认基准之外的图。
+  function replyNodes() {
+    var nodes = assistantNodes();
+    var floor = window.__tulaiAssistantBaseline || 0;
+    if (floor < 0) floor = 0;
+    var fresh = nodes.slice(floor);
+    if (fresh.length) return fresh;
+    if (nodes.length) return [nodes[nodes.length - 1]];
+    return [];
+  }
+  function labelOf(el) {
+    return String((el && (el.innerText || (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))))) || '').replace(/\s+/g, '');
+  }
+  function actionBar(root) {
+    var buttons = root.querySelectorAll('button,[role="button"],a');
+    for (var i = 0; i < buttons.length; i++) {
+      if (baselineActions.has(buttons[i])) continue;
+      if (/重新生成|再次生成|再试一次|复制|拷贝|^copy$/i.test(labelOf(buttons[i]))) return true;
+    }
+    return false;
+  }
+  function replyBusy(root) {
+    var text = String((root && root.innerText) || '');
+    if (/正在生成|生成中|绘制中|停止生成|\bGenerating\b|\bStop generating\b/.test(text)) return true;
+    if (root.querySelector('[aria-busy="true"],[role="progressbar"]')) return true;
+    var stops = root.querySelectorAll('[aria-label*="停止"],[data-testid*="stop"],[data-testid*="break"]');
+    for (var i = 0; i < stops.length; i++) if (!baselineActions.has(stops[i])) return true;
+    return false;
+  }
+  function composerStopping() {
+    var nodes = document.querySelectorAll('button,[role="button"]');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (baselineActions.has(el)) continue;
+      if (!/停止生成|^停止$|停止响应|Stop generating/i.test(labelOf(el))) continue;
+      var box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 1, height: 1 };
+      if (box.width > 8 && box.height > 8) return true;
+    }
+    return false;
+  }
+  function declaredCount(root) {
+    var n = 0;
+    function take(el) {
+      if (!el || !el.getAttribute) return;
+      ;['data-count', 'data-total', 'data-image-count', 'data-expect'].forEach(function (name) {
+        var v = parseInt(el.getAttribute(name) || '', 10);
+        if (v > n) n = v;
+      });
+    }
+    take(root);
+    root.querySelectorAll('[data-count],[data-total],[data-image-count],[data-expect]').forEach(take);
+    return n;
+  }
   function inResult(img) {
     if (!img || !img.closest) return false;
     if (img.closest('nav,header,button,[role="button"],svg')) return false;
@@ -159,7 +276,7 @@
         ignoredURLs.add(img.currentSrc);
         return;
       }
-      if (realImg(img)) window.__tulaiAddResult(img.currentSrc || img.src, 'dom');
+      if (realImg(img) && !isBaselineImage(img)) window.__tulaiAddResult(bestURL(img) || img.currentSrc || img.src, 'dom');
     } catch (e) {}
   }
   window.__tulaiDismissPopups = function () {
@@ -183,24 +300,51 @@
     }
     return n;
   };
+  // 完成只认这一轮回复自己的信号：停止/生成指示消失，并且出现重新生成或复制，
+  // 或者图片格子已经达到页面声明的最终张数。张数稳定几百毫秒不算完成。
   window.__tulaiLiveImages = function () {
-    var out = [];
+    var replies = replyNodes();
+    var images = [];
     var seen = {};
-    var busy = false;
-    var nodes = document.querySelectorAll('[data-testid="mdbox_image"],[data-testid="receive_message"],[data-message-author-role="assistant"],#qk-markdown-react');
-    for (var i = 0; i < nodes.length; i++) {
-      var text = String(nodes[i].innerText || '');
-      if (/正在生成|生成中|绘制中/.test(text)) busy = true;
-      var imgs = nodes[i].querySelectorAll('img');
-      for (var j = 0; j < imgs.length; j++) {
-        if (!realImg(imgs[j])) continue;
-        var src = imgs[j].currentSrc || imgs[j].src;
-        if (!src || seen[src]) continue;
+    var busy = composerStopping();
+    var bar = false;
+    var expect = 0;
+    replies.forEach(function (root) {
+      if (replyBusy(root)) busy = true;
+      if (actionBar(root)) bar = true;
+      var declared = declaredCount(root);
+      if (declared > expect) expect = declared;
+      root.querySelectorAll('img').forEach(function (img) {
+        if (!realImg(img) || isBaselineImage(img)) return;
+        var src = bestURL(img);
+        if (!src || seen[src] || baselineURLs.has(src)) return;
         seen[src] = true;
-        out.push({ url: src, src: 'dom', w: imgs[j].naturalWidth || 0, h: imgs[j].naturalHeight || 0 });
+        images.push({ url: src, src: 'dom', w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+      });
+    });
+    var gridFull = expect > 0 && images.length >= expect;
+    return { busy: busy, done: !busy && images.length > 0 && (bar || gridFull), expect: expect, images: images };
+  };
+  window.__tulaiFreshChat = function () {
+    var host = String(location.hostname || '');
+    var labels = /(^|\.)doubao\.com$/i.test(host) ? ['新对话', '新建对话'] : ['新建对话', '新对话', '新建聊天'];
+    var nodes = document.querySelectorAll('a,button,[role="button"]');
+    for (var i = 0; i < nodes.length; i++) {
+      var text = labelOf(nodes[i]);
+      for (var k = 0; k < labels.length; k++) {
+        if (text === labels[k] || text.indexOf(labels[k]) === 0) {
+          try { nodes[i].click(); } catch (e) {}
+          return 'button';
+        }
       }
     }
-    return { busy: busy, images: out };
+    var url = /(qianwen|tongyi|qwen)/i.test(host) ? 'https://www.qianwen.com/' : 'https://www.doubao.com/chat/';
+    var here = String(location.href || '').split('?')[0].replace(/\/$/, '');
+    if (here !== url.replace(/\/$/, '')) {
+      location.assign(url);
+      return 'url';
+    }
+    return 'ready';
   };
   function start() {
     try { mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] }); } catch (e) {}
@@ -216,11 +360,21 @@
     taskNumber++;
     pendingGeneration = 0;
     window.__tulaiMark = Date.now();
-    window.__tulaiAssistantBaseline = document.querySelectorAll(window.__tulaiAssistantQuery).length;
+    window.__tulaiAssistantBaseline = assistantNodes().length;
     existingImages = new WeakSet();
     ignoredURLs = new Set();
-    Array.from(document.images).forEach(function (img) {
+    baselineURLs = new Set();
+    baselineIDs = new Set();
+    baselineActions = new WeakSet();
+    document.querySelectorAll('button,[role="button"],a').forEach(function (el) { baselineActions.add(el); });
+    Array.from(document.images || document.querySelectorAll('img')).forEach(function (img) {
       existingImages.add(img);
+      var id = rememberID(img);
+      if (id) baselineIDs.add(id);
+      urlsOf(img).forEach(function (url) {
+        baselineURLs.add(url);
+        ignoredURLs.add(url);
+      });
       checkImg(img);
     });
   };

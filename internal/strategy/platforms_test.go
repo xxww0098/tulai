@@ -2,6 +2,21 @@ package strategy
 
 import "testing"
 
+func TestOriginalImageURLDropsThumbTemplate(t *testing.T) {
+	thumb := "https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/abc.jpeg~tplv-a9rns2rl98-cthumb-lwm3.png?x-expires=1&x-signature=abc"
+	if got, want := OriginalImageURL(thumb), "https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/abc.jpeg?x-expires=1&x-signature=abc"; got != want {
+		t.Fatalf("original = %s, want %s", got, want)
+	}
+	plain := "https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/abc.png?x-signature=abc"
+	if OriginalImageURL(plain) != plain {
+		t.Fatalf("plain url changed: %s", OriginalImageURL(plain))
+	}
+	marked := "https://p9.byteimg.com/a.png?watermark=1&x-expires=1"
+	if OriginalImageURL(marked) != "https://p9.byteimg.com/a.png" {
+		t.Fatalf("watermark query stayed: %s", OriginalImageURL(marked))
+	}
+}
+
 func TestPreferUnwatermarkedURL(t *testing.T) {
 	cases := []struct {
 		name string

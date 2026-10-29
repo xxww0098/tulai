@@ -441,6 +441,7 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 		}
 		return err
 	}
+	sess.KeepOffscreen()
 	work, workCancel := context.WithCancel(ctx)
 	defer workCancel()
 	// 调试连接断了就结束这一次尝试，整批任务继续，交给自愈重启。
@@ -514,6 +515,10 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session) error {
 	if t.submitted {
 		return nil
+	}
+	// 复用的标签还停在上一轮对话里。每单先开新对话，再记基准图。
+	if err := strategy.FreshChat(sess); err != nil {
+		return fmt.Errorf("新对话: %w", err)
 	}
 	// 清理上个任务残留
 	if err := strat.CleanComposer(sess); err != nil {

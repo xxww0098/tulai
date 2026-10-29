@@ -451,7 +451,17 @@ async function waitResult(env, payload) {
     }
     const busy = Page.resultsBusy(document, pageMark)
     const urls = images.map(function (item) { return item.url }).join('\n')
-    if (!busy && images.length) {
+    // 豆包会一张一张把图补齐。地址稳 400ms 只是中间态，要等页面自己的完成信号。
+    if (typeof Page.replyDone === 'function') {
+      const signal = Page.replyDone(document, pageMark)
+      if (signal && signal.done && images.length) {
+        return TULAI.ack(env, {
+          name: payload.name,
+          ok: true,
+          images: images.map(function (item) { return { url: item.url } }),
+        })
+      }
+    } else if (!busy && images.length) {
       stable = urls === lastURLs ? stable + 1 : 1
       lastURLs = urls
       if (stable >= 2) {

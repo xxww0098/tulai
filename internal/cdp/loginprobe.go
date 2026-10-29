@@ -209,6 +209,7 @@ func BringToFront(ctx context.Context, endpoint string) error {
 	if !ok {
 		return errors.New("没有可前置的页面")
 	}
+	_ = conn.moveWindow(ctx, id, true)
 	return conn.Activate(ctx, id)
 }
 

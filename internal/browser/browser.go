@@ -279,6 +279,9 @@ func launchArgs(port int, userData, startURL, extDir, proxy string, extra []stri
 		"--no-service-autorun",
 		"--edge-skip-compat-layer-relaunch",
 		"--remote-allow-origins=*",
+		// 出图时窗口不要盖住 tulai。登录需要看屏幕时再把窗口挪回来。
+		"--window-position=-2400,-2400",
+		"--window-size=1280,900",
 	}
 	if dir := strings.TrimSpace(extDir); dir != "" {
 		// 品牌版 Chrome 137+ 和当前 Edge 会忽略 --load-extension。
