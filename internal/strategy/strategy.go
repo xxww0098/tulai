@@ -309,6 +309,15 @@ type liveShot struct {
 	Images  []Result `json:"images"`
 }
 
+func detectKey(live liveShot) string {
+	return fmt.Sprintf("%d %t %t %d %d %s", len(live.Images), live.Busy, live.Bar, live.Expect, live.Replies, live.Reason)
+}
+
+func detectLine(live liveShot, stable time.Duration) string {
+	return fmt.Sprintf("检测 images=%d busy=%t bar=%t expect=%d replies=%d stable_ms=%d reason=%s",
+		len(live.Images), live.Busy, live.Bar, live.Expect, live.Replies, stable.Milliseconds(), live.Reason)
+}
+
 func liveKey(images []Result) string {
 	var b strings.Builder
 	for _, image := range images {
@@ -331,9 +340,13 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 	var since time.Time
 	var key string
 	var held []Result
+	var lastDetect, lastFail string
 	for {
 		if err := s.Ctx().Err(); err != nil {
 			return nil, err
+		}
+		if blocked, vErr := captcha.Visible(s); vErr == nil && blocked {
+			return nil, captcha.ErrVisible
 		}
 		if err := pageAccountFault(s); err != nil {
 			return nil, err
@@ -360,10 +373,15 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 				since = time.Time{}
 				key = ""
 			}
-			logging.Log.Debugf("检测 images=%d busy=%t bar=%t expect=%d replies=%d stable_ms=%d reason=%s",
-				len(live.Images), live.Busy, live.Bar, live.Expect, live.Replies, stable.Milliseconds(), live.Reason)
+			if sig := detectKey(live); sig != lastDetect {
+				lastDetect = sig
+				logging.Log.Debugf("%s", detectLine(live, stable))
+			}
 		} else if err != nil {
-			logging.Log.Debugf("检测失败 %s", err.Error())
+			if msg := err.Error(); msg != lastFail {
+				lastFail = msg
+				logging.Log.Debugf("检测失败 %s", msg)
+			}
 		}
 		if !time.Now().Before(deadline) {
 			break

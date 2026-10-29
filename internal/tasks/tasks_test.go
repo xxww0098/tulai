@@ -189,7 +189,7 @@ func TestRunTextOnlySkipsUpload(t *testing.T) {
 		if len(task.Images) != 0 {
 			return fmt.Errorf("文生图任务带了源图: %v", task.Images)
 		}
-		return e.submitTask(task, strat, nil)
+		return e.submitTask(context.Background(), task, strat, nil)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -505,7 +505,7 @@ func (s *submitStrategy) SendPrompt(*cdp.Session, string) error {
 
 func TestSubmitTaskSkipsUploadWithoutImages(t *testing.T) {
 	strat := &submitStrategy{}
-	err := (&Engine{}).submitTask(&Task{Prompt: "画一只猫"}, strat, nil)
+	err := (&Engine{}).submitTask(context.Background(), &Task{Prompt: "画一只猫"}, strat, nil)
 	if err != nil || strings.Join(strat.calls, ",") != "clean,mark,send" {
 		t.Fatalf("err=%v calls=%v", err, strat.calls)
 	}
@@ -515,7 +515,7 @@ func TestSubmitTaskStopsAfterCleanFailure(t *testing.T) {
 	cleanErr := errors.New("关闭客户端推广失败")
 	for _, failure := range []error{cleanErr, nil} {
 		strat := &submitStrategy{cleanErr: failure}
-		err := (&Engine{}).submitTask(&Task{Images: []string{"source.png"}}, strat, nil)
+		err := (&Engine{}).submitTask(context.Background(), &Task{Images: []string{"source.png"}}, strat, nil)
 		wantCalls := "clean"
 		if failure == nil {
 			wantCalls = "clean,upload,mark,send"
@@ -539,7 +539,7 @@ func TestRunVerificationStopsBatchWithoutResend(t *testing.T) {
 	var attempts int
 	err = e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
 		attempts++
-		return e.submitTask(task, strat, nil)
+		return e.submitTask(context.Background(), task, strat, nil)
 	})
 	if err != nil || attempts != 1 || strings.Join(strat.calls, ",") != "clean" {
 		t.Fatalf("verification must not be resent and must not cancel the run: %v attempts=%d calls=%v", err, attempts, strat.calls)

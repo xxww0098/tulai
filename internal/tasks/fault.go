@@ -41,7 +41,7 @@ func classifyFault(err error) faultKind {
 	if errors.Is(err, strategy.ErrSubmissionUncertain) || extbridge.CodeOf(err) == extbridge.ESendUncertain {
 		return faultUncertain
 	}
-	if errors.Is(err, captcha.ErrVerificationRequired) || errors.Is(err, errNeedsVerify) || extbridge.CodeOf(err) == extbridge.ECaptchaHuman {
+	if errors.Is(err, errHumanGaveUp) || errors.Is(err, captcha.ErrVerificationRequired) || errors.Is(err, errNeedsVerify) || extbridge.CodeOf(err) == extbridge.ECaptchaHuman {
 		return faultCaptcha
 	}
 	text := strings.ToLower(err.Error())

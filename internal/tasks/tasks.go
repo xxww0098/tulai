@@ -22,6 +22,7 @@ const (
 	StatusFailed    Status = "失败"
 	StatusSkipped   Status = "跳过"
 	StatusNeedsUser Status = "待验证"
+	StatusAwaitUser Status = "需要人工验证"
 )
 
 // Task 一条批量任务：一个平台 × 一条提示词。图生图另带一张源图；文生图 Images 为空。

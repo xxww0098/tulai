@@ -54,19 +54,19 @@ func TestSubmitTaskResumesOnlyAfterConfirmedSend(t *testing.T) {
 			strat := &resumeStrategy{failure: stage, err: failure}
 			e := NewEngine(nil, nil, nil, "")
 			task := &Task{Images: []string{"source.png"}}
-			if err := e.submitTask(task, strat, nil); !errors.Is(err, failure) || task.submitted {
+			if err := e.submitTask(context.Background(), task, strat, nil); !errors.Is(err, failure) || task.submitted {
 				t.Fatalf("failed submission must remain retryable: submitted=%v err=%v", task.submitted, err)
 			}
 			strat.calls = nil
 			for range 2 {
-				if err := e.submitTask(task, strat, nil); err != nil {
+				if err := e.submitTask(context.Background(), task, strat, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if !task.submitted || strings.Join(strat.calls, ",") != "clean,upload,mark,send" {
 				t.Fatalf("confirmed send must execute once: submitted=%v calls=%v", task.submitted, strat.calls)
 			}
-			if err := e.submitTask(&Task{Images: task.Images}, strat, nil); err != nil || strings.Join(strat.calls, ",") != "clean,upload,mark,send,clean,upload,mark,send" {
+			if err := e.submitTask(context.Background(), &Task{Images: task.Images}, strat, nil); err != nil || strings.Join(strat.calls, ",") != "clean,upload,mark,send,clean,upload,mark,send" {
 				t.Fatalf("a different task must still submit: calls=%v err=%v", strat.calls, err)
 			}
 		})
@@ -95,7 +95,7 @@ func TestResultRetryContinuesOriginalTask(t *testing.T) {
 					return results, nil
 				}
 				got := e.execute(context.Background(), Task{Images: []string{"source.png"}}, func(ctx context.Context, task *Task) error {
-					if err := e.submitTask(task, strat, nil); err != nil {
+					if err := e.submitTask(context.Background(), task, strat, nil); err != nil {
 						return err
 					}
 					return e.waitAndSave(ctx, task, strat, nil)
@@ -132,7 +132,7 @@ func TestResultRetryErrorsBeatSavedPartial(t *testing.T) {
 					return []strategy.Result{{Src: "download", Data: data}}, failure
 				}
 				got := e.execute(context.Background(), Task{Images: []string{"source.png"}}, func(ctx context.Context, task *Task) error {
-					if err := e.submitTask(task, strat, nil); err != nil {
+					if err := e.submitTask(context.Background(), task, strat, nil); err != nil {
 						return err
 					}
 					return e.waitAndSave(ctx, task, strat, nil)
@@ -220,7 +220,7 @@ func TestResultRetryAfterDiskFailureDoesNotResend(t *testing.T) {
 			if task.Attempts == 2 {
 				e.opts.OutputPath = output
 			}
-			if err := e.submitTask(task, strat, nil); err != nil {
+			if err := e.submitTask(context.Background(), task, strat, nil); err != nil {
 				return err
 			}
 			return e.waitAndSave(ctx, task, strat, nil)

@@ -42,6 +42,7 @@ type LaneLive struct {
 	Jobs    map[int64]LaneJob
 	Ready   map[int64]SendWindow
 	Offline map[int64]bool
+	Verify  map[int64]bool
 }
 
 // AccountLane 是界面上一张账号卡。
@@ -82,16 +83,31 @@ type LaneFact struct {
 	NextReady time.Time
 	Gap       time.Duration
 	Job       *LaneJob
+	Awaiting  bool
 }
 
 type laneClock struct {
-	busy  map[int64]int64
-	jobs  map[int64]LaneJob
-	ready map[int64]SendWindow
+	busy   map[int64]int64
+	jobs   map[int64]LaneJob
+	ready  map[int64]SendWindow
+	verify map[int64]bool
 }
 
 func (c laneClock) snapshot() LaneLive {
-	return LaneLive{Busy: cloneMap(c.busy), Jobs: cloneJobs(c.jobs), Ready: cloneGaps(c.ready)}
+	return LaneLive{Busy: cloneMap(c.busy), Jobs: cloneJobs(c.jobs), Ready: cloneGaps(c.ready), Verify: cloneBool(c.verify)}
+}
+
+func cloneBool(in map[int64]bool) map[int64]bool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[int64]bool, len(in))
+	for k, v := range in {
+		if v {
+			out[k] = true
+		}
+	}
+	return out
 }
 
 func cloneMap(in map[int64]int64) map[int64]int64 {
@@ -152,7 +168,7 @@ func accountSlot(rows []store.Browser, id int64) int64 {
 	return slot
 }
 
-// MapLane 把一条账号收成界面上的状态。出图中优先于其余；扩展没连上是离线，
+// MapLane 把一条账号收成界面上的状态。等人验证优先于出图中；扩展没连上是离线，
 // 本机没登录是需要登录；满额、验证码、冷却都比发送间隔优先。
 func MapLane(f LaneFact, now time.Time) AccountLane {
 	cap := f.Cap
@@ -168,6 +184,10 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 		UsedToday: f.UsedToday, Cap: cap, NextReadyAt: f.NextReady, Gap: f.Gap,
 	}
 	switch {
+	case f.Awaiting:
+		ln.State = LaneCaptcha
+		ln.Action = "去处理"
+		ln.Job = f.Job
 	case f.Busy || f.Job != nil:
 		ln.State = LaneRunning
 		ln.Job = f.Job
@@ -258,6 +278,9 @@ func Assemble(rows []store.Browser, live LaneLive, cap int, now time.Time) Board
 			fact.NextReady = g.Until
 			fact.Gap = g.Span
 		}
+		if live.Verify[b.ID] {
+			fact.Awaiting = true
+		}
 		if worker, ok := live.Busy[slot]; ok {
 			fact.Busy = true
 			if worker == b.ID {
@@ -280,7 +303,7 @@ func Assemble(rows []store.Browser, live LaneLive, cap int, now time.Time) Board
 func BoardFrom(rows []store.Browser, items []Task, cap int, now time.Time) Board {
 	live := LaneLive{Busy: map[int64]int64{}, Jobs: map[int64]LaneJob{}}
 	for _, task := range items {
-		if task.Status != StatusRunning && task.Status != StatusRetry {
+		if task.Status != StatusRunning && task.Status != StatusRetry && task.Status != StatusAwaitUser {
 			continue
 		}
 		if task.BrowserID <= 0 {
@@ -288,6 +311,12 @@ func BoardFrom(rows []store.Browser, items []Task, cap int, now time.Time) Board
 		}
 		live.Busy[accountSlot(rows, task.BrowserID)] = task.BrowserID
 		live.Jobs[task.BrowserID] = jobOf(task, now.Add(-time.Duration(4+task.Index)*time.Second))
+		if task.Status == StatusAwaitUser {
+			if live.Verify == nil {
+				live.Verify = map[int64]bool{}
+			}
+			live.Verify[task.BrowserID] = true
+		}
 	}
 	return Assemble(rows, live, cap, now)
 }
@@ -305,6 +334,7 @@ func (e *Engine) beginLanes() {
 	e.clock.busy = map[int64]int64{}
 	e.clock.jobs = map[int64]LaneJob{}
 	e.clock.ready = map[int64]SendWindow{}
+	e.clock.verify = map[int64]bool{}
 	e.liveMu.Unlock()
 }
 
@@ -313,6 +343,7 @@ func (e *Engine) finishLanes() {
 	e.clock.busy = nil
 	e.clock.jobs = nil
 	e.clock.ready = nil
+	e.clock.verify = nil
 	e.liveMu.Unlock()
 }
 

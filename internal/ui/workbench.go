@@ -171,13 +171,15 @@ func EnsureOutputDir(path string) (string, error) {
 
 // DisplayStatus 把一批任务收成出图页上的四个状态。待验证单独保留。
 func DisplayStatus(statuses []tasks.Status) string {
-	var running, pending, needs, failed, success bool
+	var running, pending, needs, failed, success, awaiting bool
 	for _, status := range statuses {
 		switch status {
 		case tasks.StatusRunning, tasks.StatusRetry:
 			running = true
 		case tasks.StatusPending:
 			pending = true
+		case tasks.StatusAwaitUser:
+			awaiting = true
 		case tasks.StatusNeedsUser:
 			needs = true
 		case tasks.StatusFailed, tasks.StatusSkipped:
@@ -187,6 +189,8 @@ func DisplayStatus(statuses []tasks.Status) string {
 		}
 	}
 	switch {
+	case awaiting:
+		return "需要人工验证"
 	case running:
 		return "生成中"
 	case pending:
@@ -312,6 +316,8 @@ func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs i
 			running++
 		case "排队中":
 			queued++
+		case "需要人工验证":
+			running++
 		case "失败":
 			failed++
 		case "待验证":
@@ -422,6 +428,8 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 			if !strings.Contains(waiting, "等待") {
 				card.Reason = HumanReason(waiting)
 			}
+		} else if card.Status == "需要人工验证" {
+			card.Reason = "请在弹出的窗口里完成验证"
 		} else if card.Status == "待验证" {
 			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)
 			card.Reason = hint.Sentence

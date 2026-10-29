@@ -248,6 +248,9 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if got := DisplayStatus([]tasks.Status{tasks.StatusFailed, tasks.StatusSuccess}); got != "失败" {
 		t.Fatalf("failed = %s", got)
 	}
+	if got := DisplayStatus([]tasks.Status{tasks.StatusRunning, tasks.StatusAwaitUser}); got != "需要人工验证" {
+		t.Fatalf("验证码等待要盖过生成中: %s", got)
+	}
 	if got := DisplayStatus([]tasks.Status{tasks.StatusNeedsUser}); got != "待验证" {
 		t.Fatalf("needs user = %s", got)
 	}

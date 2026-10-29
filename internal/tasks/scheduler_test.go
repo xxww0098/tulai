@@ -246,7 +246,7 @@ func TestRunUncertainSubmissionDoesNotStopTheBatch(t *testing.T) {
 	calls := 0
 	err = e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
 		calls++
-		return e.submitTask(task, strat, nil)
+		return e.submitTask(context.Background(), task, strat, nil)
 	})
 	queue := e.View().Snapshot()
 	if err != nil || calls != 4 || queue[0].Status != StatusFailed || queue[0].Attempts != 1 || queue[0].submitted {

@@ -1021,7 +1021,7 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 		}
 		if card.Reason != "" {
 			color := tok.danger
-			if card.Status == "待验证" {
+			if card.Status == "待验证" || card.Status == "需要人工验证" {
 				color = tok.warning
 			}
 			ui.Text(c.Key("reason"), card.Reason).FontSize(tok.caption).TextColor(color).SingleLine().Tooltip(card.Reason).Transition(motionReveal())
