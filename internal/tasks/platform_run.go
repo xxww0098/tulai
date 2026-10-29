@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -189,7 +190,16 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				t = e.execute(tctx, t, attempt)
 				cancel()
 				e.noteUse(t)
-				e.traceTask(&t, "done", "#"+itoa(t.Index)+" "+name+" 结束", len(t.Results), 0, nil)
+				stage, msg := "done", "#"+itoa(t.Index)+" "+name+" 结束"
+				if t.rotated && t.Status == StatusPending {
+					stage = "retry"
+					msg = "#" + itoa(t.Index) + " 发送未确认，等待空闲账号"
+				}
+				var logErr error
+				if t.Status != StatusSuccess && t.Error != "" {
+					logErr = fmt.Errorf("%s", t.Error)
+				}
+				e.traceTask(&t, stage, msg, len(t.Results), 0, logErr)
 				if t.slot > 0 {
 					e.setActive(t.slot, false)
 				}
@@ -363,14 +373,7 @@ func (e *Engine) platformCap(platform string, now time.Time) int {
 }
 
 func (e *Engine) taskBudget() time.Duration {
-	sec := 0
-	if e != nil {
-		sec = e.opts.WaitResultSeconds
-	}
-	if sec < 30 {
-		sec = 30
-	}
-	return time.Duration(sec)*time.Second + 3*time.Minute
+	return e.resultWait() + 3*time.Minute
 }
 
 func (e *Engine) accountName(id int64) string {

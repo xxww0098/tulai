@@ -378,13 +378,25 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 		card.Status = DisplayStatus(statuses)
 		// 还在出或还在排队时，不把已经落下的图当成完成结果。
 		// 排队的还没分到账号，不把构建队列时占的浏览器写上去。
+		var waiting string
 		if card.Status == "生成中" || card.Status == "排队中" {
 			card.Shots = nil
 		}
 		if card.Status == "排队中" {
 			card.Sites = nil
+			for _, task := range group {
+				if task.Status == tasks.StatusPending && task.Error != "" {
+					waiting = task.Error
+					break
+				}
+			}
 		}
-		if card.Status == "待验证" {
+		if card.Status == "排队中" && waiting != "" {
+			card.Reason = waiting
+			if !strings.Contains(waiting, "等待") {
+				card.Reason = HumanReason(waiting)
+			}
+		} else if card.Status == "待验证" {
 			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)
 			card.Reason = hint.Sentence
 			card.Action = hint.Button
@@ -463,7 +475,7 @@ func HumanReason(raw string) string {
 	switch {
 	case strings.Contains(s, "已停止"):
 		return "已停止"
-	case strings.Contains(s, "等待生成结果超时") || strings.Contains(s, "交还浏览器超时"):
+	case strings.Contains(s, "等待生成结果超时") || strings.Contains(s, "出图超时") || strings.Contains(s, "交还浏览器超时"):
 		return "等太久了，没有拿到新图片"
 	case strings.Contains(s, "没有配置浏览器"):
 		return "这个平台还没有可用账号"

@@ -302,7 +302,13 @@
     if (!visible(button)) return JSON.stringify({ attempted: false, error: '发送按钮仍被禁用，平台尚未就绪' });
     var beforeHref = String(location.href || '');
     var promptText = window.tulaiReadComposer(comp);
-    try { button.click(); } catch (e) { return JSON.stringify({ attempted: true, error: '点击发送失败: ' + String(e) }); }
+    var clicked = false;
+    if (window.tulaiClick) {
+      try { clicked = await window.tulaiClick(button); } catch (e) { clicked = false; }
+    }
+    if (!clicked) {
+      try { button.click(); clicked = true; } catch (e) { return JSON.stringify({ attempted: true, error: '点击发送失败: ' + String(e) }); }
+    }
     deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       if (window.tulaiSendAccepted(beforeHref, promptText)) return JSON.stringify({ sent: true });

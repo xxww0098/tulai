@@ -8,8 +8,8 @@
 // 这层壳不是结果。要等 http(s) 实图，或同一张卡片上的 srcset / data-src / picture / 背景图 / 下载链接。
 // 内容脚本读不到页面的 React fiber。本文件不碰 chrome.*，方便用 node 对锚点做夹具测试。
 globalThis.TULAIPage = (function () {
-  const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
-  const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"]'
+  const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"],[data-testid="send_message"],[data-testid="message_text_user"]'
+  const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"],[data-testid="receive_message"]'
   const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|verify (?:that )?you are human|human verification|security verification/i
 
   function hostOf(doc) {
@@ -605,31 +605,14 @@ globalThis.TULAIPage = (function () {
     return newAssistants(doc, state).some(busy)
   }
 
-  // 完成只认这一轮回复：生成指示消失，并且出现重新生成/复制，或格子达到声明张数。
+  // 完成候选：这一轮回复里有实图，并且没有生成指示。
+  // 重新生成/复制和声明张数在真实页面上经常没有。调用方再等地址稳住约 3 秒。
   function replyDone(doc, state) {
     const messages = newAssistants(doc, state)
     const images = resultImages(doc, state).filter(function (item) {
       return item && item.url && !isPlaceholderURL(item.url)
     })
-    let bar = false
-    let expect = 0
-    function takeCount(el) {
-      if (!el || !el.getAttribute) return
-      ;['data-count', 'data-total', 'data-image-count'].forEach(function (name) {
-        const v = parseInt(el.getAttribute(name) || '', 10)
-        if (v > expect) expect = v
-      })
-    }
-    messages.forEach(function (message) {
-      takeCount(message)
-      all(message, '[data-count],[data-total],[data-image-count]').forEach(takeCount)
-      all(message, 'button,[role="button"],a').forEach(function (el) {
-        const label = String((el.innerText || (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title')))) || '').replace(/\s+/g, '')
-        if (/重新生成|再次生成|再试一次|复制|拷贝|^copy$/i.test(label)) bar = true
-      })
-    })
-    const gridFull = expect > 0 && images.length >= expect
-    return { done: !messages.some(busy) && images.length > 0 && (bar || gridFull) }
+    return { done: !messages.some(busy) && images.length > 0 }
   }
 
   function assistantText(doc, state) {

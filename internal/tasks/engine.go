@@ -546,8 +546,22 @@ func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	return nil
 }
 
+const hardResultWait = 4 * time.Minute
+
+// resultWait 是这一单等图的上限。配置更长时收到 4 分钟，到点保存已有的图或明确失败。
+func (e *Engine) resultWait() time.Duration {
+	d := time.Duration(0)
+	if e != nil {
+		d = time.Duration(e.opts.WaitResultSeconds) * time.Second
+	}
+	if d <= 0 || d > hardResultWait {
+		return hardResultWait
+	}
+	return d
+}
+
 func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session) error {
-	deadline := time.Now().Add(time.Duration(e.opts.WaitResultSeconds) * time.Second)
+	deadline := time.Now().Add(e.resultWait())
 	lastProgress := time.Now()
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
@@ -596,7 +610,7 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 		case <-time.After(min(1500*time.Millisecond, time.Until(deadline))):
 		}
 	}
-	return fmt.Errorf("等待生成结果超时：未得到有效的新图片")
+	return fmt.Errorf("出图超时，没有可保存的图片")
 }
 
 // browsersOfPlatforms 返回每个平台可用的浏览器。

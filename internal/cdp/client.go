@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	cdpbrowser "github.com/chromedp/cdproto/browser"
 	cdprotoCDP "github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
@@ -96,7 +95,7 @@ func (c *Client) NewBackgroundSession(rawURL string, onLog func(string)) (*Sessi
 			return nil, err
 		}
 	}
-	_ = conn.moveWindow(ctx, id, false)
+	// 启动参数已经把窗口放在屏幕外。这里再 setWindowBounds 会把窗口激活到 tulai 前面。
 	tab, tabCancel := chromedp.NewContext(c.alloc, chromedp.WithTargetID(targetID(id)), chromedp.WithErrorf(quietCDP))
 	return c.finishSession(tab, tabCancel, "", onLog)
 }
@@ -157,46 +156,9 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 	return s, nil
 }
 
-// KeepOffscreen 把这个标签所在窗口放到屏幕外，并且不激活它。
-// 登录需要看屏幕时走 OpenURL，不走这里。
-func (s *Session) KeepOffscreen() {
-	if s == nil || s.ego != nil {
-		return
-	}
-	_ = s.exec(func(ctx context.Context) error {
-		id, bounds, err := cdpbrowser.GetWindowForTarget().Do(ctx)
-		if err != nil {
-			return err
-		}
-		state, left, top := "", 0, 0
-		if bounds != nil {
-			state = string(bounds.WindowState)
-			left, top = int(bounds.Left), int(bounds.Top)
-		}
-		for _, step := range parkSteps(state, left, top) {
-			next := &cdpbrowser.Bounds{}
-			if v, ok := step["windowState"].(string); ok {
-				next.WindowState = cdpbrowser.WindowState(v)
-			}
-			if v, ok := step["left"].(int); ok {
-				next.Left = int64(v)
-			}
-			if v, ok := step["top"].(int); ok {
-				next.Top = int64(v)
-			}
-			if v, ok := step["width"].(int); ok {
-				next.Width = int64(v)
-			}
-			if v, ok := step["height"].(int); ok {
-				next.Height = int64(v)
-			}
-			if err := cdpbrowser.SetWindowBounds(id, next).Do(ctx); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
+// KeepOffscreen 出图期间不再改窗口。启动参数已经把窗口放在屏幕外，
+// 再调 setWindowBounds / activateTarget / bringToFront 都会把 Chrome 拉到前面。
+func (s *Session) KeepOffscreen() {}
 
 // Close 关闭标签页会话。
 func (s *Session) Close() {

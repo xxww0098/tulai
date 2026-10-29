@@ -47,7 +47,7 @@ func Open(dir string) error {
 	if err != nil {
 		return err
 	}
-	h := slog.NewTextHandler(io.MultiWriter(os.Stderr, w), &slog.HandlerOptions{Level: slog.LevelInfo})
+	h := slog.NewTextHandler(io.MultiWriter(os.Stderr, w), &slog.HandlerOptions{Level: slog.LevelDebug})
 	traceMu.Lock()
 	traceLog = slog.New(h)
 	tracePath = path
@@ -138,7 +138,11 @@ func (l *Logger) addRaw(level Level, msg string) {
 
 func (l *Logger) add(level Level, msg string) {
 	l.addRaw(level, msg)
-	writeSlog(slog.LevelInfo, Line{Stage: "log", Msg: msg})
+	slogLevel := slog.LevelInfo
+	if level == Debug {
+		slogLevel = slog.LevelDebug
+	}
+	writeSlog(slogLevel, Line{Stage: "log", Msg: msg})
 }
 
 type rotator struct {

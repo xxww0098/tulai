@@ -71,7 +71,7 @@ func TestStuckReloads(t *testing.T) {
 	got := e.execute(context.Background(), Task{Platform: "千问", BrowserID: 3}, func(context.Context, *Task) error {
 		calls++
 		if calls == 1 {
-			return errors.New("等待生成结果超时：未得到有效的新图片")
+			return heal.ErrStuck
 		}
 		return nil
 	})
@@ -80,6 +80,38 @@ func TestStuckReloads(t *testing.T) {
 	}
 	if notes := strings.Join(e.AutoNotes(), "\n"); !strings.Contains(notes, "页面卡住，已刷新重试") {
 		t.Fatalf("notes = %v", e.AutoNotes())
+	}
+}
+
+func TestGenerateTimeoutDoesNotReload(t *testing.T) {
+	e := NewEngine(nil, nil, nil, "")
+	reload := 0
+	e.onRecover = func(action heal.Action, _ int64) {
+		if action == heal.ActionReload {
+			reload++
+		}
+	}
+	got := e.execute(context.Background(), Task{Platform: "豆包", BrowserID: 1}, func(context.Context, *Task) error {
+		return errors.New("出图超时，没有可保存的图片")
+	})
+	if reload != 0 || got.Status != StatusFailed || got.Error != "出图超时，没有可保存的图片" {
+		t.Fatalf("timeout must fail clearly: reload=%d task=%+v", reload, got)
+	}
+}
+
+func TestResultWaitHardCap(t *testing.T) {
+	e := NewEngine(nil, nil, nil, "")
+	e.opts.WaitResultSeconds = 1800
+	if e.resultWait() != 4*time.Minute {
+		t.Fatalf("cap = %s", e.resultWait())
+	}
+	e.opts.WaitResultSeconds = 30
+	if e.resultWait() != 30*time.Second {
+		t.Fatalf("short = %s", e.resultWait())
+	}
+	e.opts.WaitResultSeconds = 0
+	if e.resultWait() != 4*time.Minute {
+		t.Fatalf("default = %s", e.resultWait())
 	}
 }
 

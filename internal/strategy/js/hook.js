@@ -184,9 +184,9 @@
     });
     return best;
   }
+  // 同一个 img 壳会先占位再换成实图。只按标记时的地址排除，不按元素 id，
+  // 否则占位壳换上 http(s) 后永远进不了这一轮。
   function isBaselineImage(img) {
-    var id = imageID(img);
-    if (id && baselineIDs.has(id)) return true;
     var urls = urlsOf(img);
     if (!urls.length) return false;
     for (var i = 0; i < urls.length; i++) if (!baselineURLs.has(urls[i])) return false;
@@ -252,7 +252,10 @@
     if (!img || !img.closest) return false;
     if (img.closest('nav,header,button,[role="button"],svg')) return false;
     var host = String(location.hostname || '');
-    if (/(^|\.)doubao\.com$/.test(host)) return !!img.closest('[data-testid="mdbox_image"]');
+    if (/(^|\.)doubao\.com$/.test(host)) {
+      if (img.closest('[data-testid="message_image_content"]') || img.closest('[data-testid="attachment-image-card"]')) return false;
+      return !!(img.closest('[data-testid="mdbox_image"]') || img.closest('[data-testid="receive_message"]'));
+    }
     if (/(^|\.)(tongyi|qianwen)\.com$/.test(host) || /(^|\.)qwen\.ai$/.test(host)) {
       return !!img.closest('#qk-markdown-react,.markdown-pc-special-class,[data-message-author-role="assistant"],[data-message-role="assistant"]');
     }
@@ -264,6 +267,8 @@
     if (junkURL(src)) return false;
     var nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
     if (nw && nh && (nw < 128 || nh < 128)) return false;
+    // 窗口在屏幕外时布局盒可以是 0，已解码的大图仍然算数。
+    if (nw >= 128 && nh >= 128) return true;
     var box = img.getBoundingClientRect();
     if (box.width < 64 || box.height < 64) return false;
     if (!(nw && nh) && (box.width < 128 || box.height < 128)) return false;
@@ -300,8 +305,16 @@
     }
     return n;
   };
-  // 完成只认这一轮回复自己的信号：停止/生成指示消失，并且出现重新生成或复制，
-  // 或者图片格子已经达到页面声明的最终张数。张数稳定几百毫秒不算完成。
+  function pushLiveImage(images, seen, img) {
+    if (!realImg(img) || isBaselineImage(img)) return;
+    var src = bestURL(img);
+    if (!src || seen[src] || baselineURLs.has(src)) return;
+    seen[src] = true;
+    images.push({ url: src, src: 'dom', w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+  }
+  // 完成候选：这一轮回复里有实图，并且没有生成指示。
+  // 重新生成/复制和 data-count 在真实页面上经常没有，不能拿它们当完成条件。
+  // 地址要再稳大约 3 秒才由调用方收下；这里只报告这一拍的判断。
   window.__tulaiLiveImages = function () {
     var replies = replyNodes();
     var images = [];
@@ -314,16 +327,27 @@
       if (actionBar(root)) bar = true;
       var declared = declaredCount(root);
       if (declared > expect) expect = declared;
-      root.querySelectorAll('img').forEach(function (img) {
-        if (!realImg(img) || isBaselineImage(img)) return;
-        var src = bestURL(img);
-        if (!src || seen[src] || baselineURLs.has(src)) return;
-        seen[src] = true;
-        images.push({ url: src, src: 'dom', w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
-      });
+      root.querySelectorAll('img').forEach(function (img) { pushLiveImage(images, seen, img); });
     });
-    var gridFull = expect > 0 && images.length >= expect;
-    return { busy: busy, done: !busy && images.length > 0 && (bar || gridFull), expect: expect, images: images };
+    // 角色选择器对不上时，回复外的 mdbox 实图也算。标记时已经在的地址仍排除。
+    document.querySelectorAll('[data-testid="mdbox_image"] img').forEach(function (img) {
+      if (img.closest && (img.closest('[data-testid="message_image_content"]') || img.closest('[data-testid="attachment-image-card"]'))) return;
+      pushLiveImage(images, seen, img);
+    });
+    var reason = 'no-reply';
+    if (replies.length && !images.length) reason = 'no-new-image';
+    else if (!replies.length && !images.length) reason = 'no-reply';
+    else if (busy) reason = 'generating';
+    else reason = 'images-ready';
+    return {
+      busy: busy,
+      done: !busy && images.length > 0,
+      expect: expect,
+      bar: bar,
+      replies: replies.length,
+      reason: reason,
+      images: images,
+    };
   };
   // /chat/<id> 是已经打开的对话。/chat 或 /chat/ 才是新对话。
   window.__tulaiConversationKey = function (href) {
@@ -340,26 +364,36 @@
     var box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
     return box.width > 5 && box.height > 5;
   }
-  // 新对话可以打字：有一个还在的输入框，并且不在 loading。
+  function composerNode() {
+    var nodes = document.querySelectorAll('textarea,[contenteditable="true"]');
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      if (composerBox(nodes[i])) return nodes[i];
+    }
+    return null;
+  }
+  function composerText(el) {
+    if (!el) return '';
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return String(el.value || '').trim();
+    return String(el.innerText || el.textContent || '').trim();
+  }
+  // 能打字的新对话：文档完成、地址没有对话 id、没有上一轮回复、输入框是空的。
+  // 只看见一个 textarea 不够。上一轮没发出去的草稿还在时，点发送不会进对话。
   window.__tulaiChatReady = function () {
     var href = String(location.href || '');
-    var nodes = document.querySelectorAll('textarea,[contenteditable="true"]');
-    var comp = null;
-    for (var i = nodes.length - 1; i >= 0; i--) {
-      if (!composerBox(nodes[i])) continue;
-      comp = nodes[i];
-      break;
-    }
-    if (!comp || document.readyState === 'loading') {
-      return { ready: false, href: href, id: window.__tulaiConversationKey(href) };
-    }
-    if (!comp.__tulaiNode) comp.__tulaiNode = 'n' + Math.random().toString(36).slice(2);
-    return { ready: true, href: href, id: window.__tulaiConversationKey(href), node: comp.__tulaiNode };
+    var id = window.__tulaiConversationKey(href);
+    var comp = composerNode();
+    var messages = assistantNodes().length;
+    var chars = composerText(comp).length;
+    var ready = !!(comp && document.readyState === 'complete' && !id && messages === 0 && chars === 0);
+    if (comp && !comp.__tulaiNode) comp.__tulaiNode = 'n' + Math.random().toString(36).slice(2);
+    return { ready: ready, href: href, id: id, node: comp ? comp.__tulaiNode : '', messages: messages, chars: chars };
   };
   window.__tulaiFreshChat = function () {
     var host = String(location.hostname || '');
-    // 已经在新对话地址上就别再点。点下去会换掉正在用的输入框。
-    if (!window.__tulaiConversationKey(location.href)) return 'ready';
+    var id = window.__tulaiConversationKey(location.href);
+    var dirty = assistantNodes().length > 0 || composerText(composerNode()).length > 0;
+    // 空白的 /chat/ 不要再点。有旧回复或草稿时必须清掉，否则发送点在死输入框上。
+    if (!id && !dirty) return 'ready';
     var labels = /(^|\.)doubao\.com$/i.test(host) ? ['新对话', '新建对话'] : ['新建对话', '新对话', '新建聊天'];
     var nodes = document.querySelectorAll('a,button,[role="button"]');
     for (var i = 0; i < nodes.length; i++) {
@@ -374,6 +408,11 @@
       }
     }
     var url = /(qianwen|tongyi|qwen)/i.test(host) ? 'https://www.qianwen.com/' : 'https://www.doubao.com/chat/';
+    var here = String(location.href || '').split('?')[0].replace(/\/$/, '');
+    if (here === url.replace(/\/$/, '')) {
+      try { location.reload() } catch (e) {}
+      return 'reload';
+    }
     location.assign(url);
     return 'url';
   };

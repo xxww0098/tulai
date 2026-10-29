@@ -255,6 +255,18 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if cards[1].Status != "排队中" || cards[1].Title != "画一只猫" || cards[1].Reason != "" {
 		t.Fatalf("text card = %+v", cards[1])
 	}
+	waiting := ProgressCards([]tasks.Task{
+		{Platform: "豆包", Prompt: "油画风格", Status: tasks.StatusPending, Error: "发送状态未确认，等待「豆包1」空闲后再试"},
+	})
+	if waiting[0].Status != "排队中" || waiting[0].Reason != "发送状态未确认，等待「豆包1」空闲后再试" {
+		t.Fatalf("queued retry card = %+v", waiting[0])
+	}
+	failedSend := ProgressCards([]tasks.Task{
+		{Platform: "豆包", Prompt: "油画风格", Status: tasks.StatusFailed, Error: "发送状态未确认，请检查网页后再开始任务: 平台未接受消息"},
+	})
+	if failedSend[0].Status != "失败" || failedSend[0].Reason == "" {
+		t.Fatalf("failed send card = %+v", failedSend[0])
+	}
 	failed := FailedTasks([]tasks.Task{
 		{Status: tasks.StatusSuccess},
 		{Status: tasks.StatusFailed},

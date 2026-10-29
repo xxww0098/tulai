@@ -26,7 +26,7 @@ const (
 var (
 	netRe   = regexp.MustCompile(`(?i)connection refused|connection reset|broken pipe|i/o timeout|network is unreachable|no such host|temporary failure|网络中断|网络暂时`)
 	crashRe = regexp.MustCompile(`(?i)websocket: close|target closed|cdp 已断开|连接已断开|浏览器崩溃|browser has been closed|session closed`)
-	stuckRe = regexp.MustCompile(`等待生成结果超时|页面长时间没有进展|页面卡住|无进展`)
+	stuckRe = regexp.MustCompile(`页面长时间没有进展|页面卡住|无进展`)
 )
 
 func runtimeKind(err error) heal.Kind {
@@ -202,10 +202,7 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 		return
 	}
 	if e.accountBusy(id) {
-		logging.Event(logging.Line{
-			Stage: "probe", Platform: row.Platform, Account: accountLabel(row), Port: row.Port,
-			Msg: "账号正在出图，跳过登录探测",
-		})
+		logging.Log.Debugf("账号正在出图，跳过登录探测 platform=%s account=%s port=%d", row.Platform, accountLabel(row), row.Port)
 		return
 	}
 	e.mu.Lock()
