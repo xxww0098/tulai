@@ -394,6 +394,7 @@ func FreshChat(s *cdp.Session) error {
 	if s == nil || s.IsEgo() {
 		return nil
 	}
+	defer s.StayBack()
 	out, err := s.Evaluate(`window.__tulaiFreshChat ? __tulaiFreshChat() : "missing"`)
 	if err != nil {
 		return err

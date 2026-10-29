@@ -284,7 +284,40 @@ bare.appendChild(copy)
 bare.attrs['data-finished'] = 'false'
 state = live()
 assert.strictEqual(state.bar, true, 'message_action_copy 即使没有文案也是完成条')
-assert.strictEqual(state.done, true)
+assert.strictEqual(state.done, false, '复制按钮不能代替尚未全部 data-finished 的图格')
+bare.attrs['data-finished'] = 'true'
+state = live()
+assert.strictEqual(state.done, true, '图格重新 data-finished 后才能下载')
+
+context.__tulaiMarkTask()
+const batch = el('div')
+batch.attrs['data-testid'] = 'receive_message'
+body.appendChild(batch)
+const cells = []
+for (let i = 0; i < 4; i++) {
+  const item = el('div')
+  item.attrs.class = 'image-box-grid-item-FTeESI'
+  item.attrs['data-testid'] = 'message_image_content'
+  item.attrs['data-finished'] = 'false'
+  const made = imageCard(
+    'https://p3-flow-imagex-sign.byteimg.com/tos/rc_gen_image/p' + i + '.jpeg~tplv-a9rns2rl98-cthumb.png',
+    'https://p3-flow-imagex-sign.byteimg.com/tos/rc_gen_image/p' + i + '.jpeg~tplv-a9rns2rl98-cgen_lwm.png',
+  )
+  item.appendChild(made.card)
+  batch.appendChild(item)
+  cells.push(item)
+}
+cells[0].attrs['data-finished'] = 'true'
+state = live()
+assert.strictEqual(state.done, false, '四张里只有一张 data-finished 不能下载')
+assert.strictEqual(state.images.length, 4, '未完成时也要看见全部原图，不能只留 1 张')
+for (const item of cells) item.attrs['data-finished'] = 'true'
+state = live()
+assert.strictEqual(state.done, true, '四张 data-finished 之后才算完成')
+assert.strictEqual(state.images.length, 4)
+for (const url of urls(state)) {
+  assert.ok(url.includes('rc_gen_image') && url.includes('cgen_lwm') && !url.includes('cthumb'), url)
+}
 
 const button = el('button')
 button.innerText = '新对话'

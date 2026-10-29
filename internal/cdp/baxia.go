@@ -72,15 +72,16 @@ type SliderLook struct {
 
 // SliderConn 附着在已经打开远程调试的 Chrome 上。关闭时只 detach，不关掉用户的标签页。
 type SliderConn struct {
-	conn    net.Conn
-	reader  *bufio.Reader
-	writeMu sync.Mutex
-	mu      sync.Mutex
-	pending map[int64]chan cdpMsg
-	next    atomic.Int64
-	closed  chan struct{}
-	fail    error
-	sess    map[string]string
+	endpoint string
+	conn     net.Conn
+	reader   *bufio.Reader
+	writeMu  sync.Mutex
+	mu       sync.Mutex
+	pending  map[int64]chan cdpMsg
+	next     atomic.Int64
+	closed   chan struct{}
+	fail     error
+	sess     map[string]string
 }
 
 type cdpMsg struct {
@@ -152,11 +153,12 @@ func DialSlider(ctx context.Context, endpoint string) (*SliderConn, error) {
 		reader = bufio.NewReader(conn)
 	}
 	c := &SliderConn{
-		conn:    conn,
-		reader:  reader,
-		pending: map[int64]chan cdpMsg{},
-		closed:  make(chan struct{}),
-		sess:    map[string]string{},
+		endpoint: endpoint,
+		conn:     conn,
+		reader:   reader,
+		pending:  map[int64]chan cdpMsg{},
+		closed:   make(chan struct{}),
+		sess:     map[string]string{},
 	}
 	go c.readLoop()
 	return c, nil

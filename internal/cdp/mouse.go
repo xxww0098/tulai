@@ -25,6 +25,7 @@ func (s *Session) bridgeMouseClick(data string) string {
 		answer, _ := jsonMarshal(map[string]any{"success": false, "error": err.Error()})
 		return string(answer)
 	}
+	s.StayBack()
 	return `{"success":true}`
 }
 
@@ -46,5 +47,6 @@ func (s *Session) bridgeKeyEnter() string {
 		answer, _ := jsonMarshal(map[string]any{"success": false, "error": err.Error()})
 		return string(answer)
 	}
+	s.StayBack()
 	return `{"success":true}`
 }

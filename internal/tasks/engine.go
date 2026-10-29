@@ -718,6 +718,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if startErr != nil {
 		return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
 	}
+	cdp.ParkBrowser(ctx, ws)
 	client, clientErr := cdp.NewClient(ws)
 	if clientErr != nil {
 		return nil, clientErr
@@ -929,6 +930,8 @@ func prefetchResults(strat strategy.Strategy, sess *cdp.Session, results []strat
 func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) ([]string, error) {
 	t.matchedSavedResult = false
 	var saved []string
+	var dir, root string
+	seq := 0
 	batched := prefetchResults(strat, sess, results)
 	for i, r := range results {
 		if err := ctx.Err(); err != nil {
@@ -1006,20 +1009,35 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			logging.Log.Debugf("候选图 #%d 与源图或已保存结果重复", i+1)
 			continue
 		}
-		src := resultSource(t)
-		dir := e.opts.ResultDir(src)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			e.mu.Lock()
-			delete(e.seenHash, hash)
-			e.mu.Unlock()
-			return saved, err
-		}
 		ext := "." + format
 		if format == "jpeg" {
 			ext = ".jpg"
 		}
-		base := strings.TrimSuffix(e.opts.NameFor(src, i+1, len(results)), ".png")
+		seq++
+		src := resultSource(t)
+		base := e.opts.resultBase(t.Prompt, src, seq, len(results))
+		if dir == "" {
+			root = e.opts.ResultDir(src)
+			bases := make([]string, len(results))
+			for n := range bases {
+				bases[n] = e.opts.resultBase(t.Prompt, src, n+1, len(results))
+			}
+			dir, err = chooseBatchDir(root, bases)
+			if err != nil {
+				e.mu.Lock()
+				delete(e.seenHash, hash)
+				e.mu.Unlock()
+				return saved, err
+			}
+		}
 		path, err := writeResultFile(ctx, dir, base, ext, data)
+		for try := 0; errors.Is(err, os.ErrExist) && try < 5; try++ {
+			dir, err = timestampBatchDir(root)
+			if err != nil {
+				break
+			}
+			path, err = writeResultFile(ctx, dir, base, ext, data)
+		}
 		if err != nil {
 			e.mu.Lock()
 			delete(e.seenHash, hash)
@@ -1060,6 +1078,13 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			repairBase := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)) + "_去水印"
 			var repairPath string
 			repairPath, repairErr = writeResultFile(ctx, dir, repairBase, ".png", repairData)
+			if errors.Is(repairErr, os.ErrExist) && root != "" {
+				var sub string
+				sub, repairErr = timestampBatchDir(root)
+				if repairErr == nil {
+					repairPath, repairErr = writeResultFile(ctx, sub, repairBase, ".png", repairData)
+				}
+			}
 			if repairErr == nil {
 				saved[len(saved)-1] = repairPath
 				logging.Log.Success("#%d 图片 #%d 已另存去水印版本，原图已保留", t.Index, i+1)
@@ -1078,21 +1103,60 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 	return saved, nil
 }
 
-// writeResultFile 独占创建，取消或写入失败只清理本次未完成文件。
-func writeResultFile(ctx context.Context, dir, base, ext string, data []byte) (string, error) {
-	path := filepath.Join(dir, base+ext)
-	var file *os.File
-	var err error
-	for suffix := 1; ; suffix++ {
-		if err = ctx.Err(); err != nil {
+// chooseBatchDir 用结果目录。这一批文件名已经有了，就换到时间戳子目录，避免 _1、_108 这种后缀。
+func chooseBatchDir(root string, bases []string) (string, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	if namesFree(root, bases) {
+		return root, nil
+	}
+	return timestampBatchDir(root)
+}
+
+func timestampBatchDir(root string) (string, error) {
+	for i := 0; i < 20; i++ {
+		name := time.Now().Format("20060102_150405.000000000")
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", name, i)
+		}
+		dir := filepath.Join(root, name)
+		if _, err := os.Stat(dir); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", err
 		}
-		file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if !errors.Is(err, os.ErrExist) {
-			break
-		}
-		path = filepath.Join(dir, fmt.Sprintf("%s_%d%s", base, suffix, ext))
+		return dir, nil
 	}
+	return "", errors.New("结果目录重名")
+}
+
+func namesFree(dir string, bases []string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return true
+	}
+	have := map[string]bool{}
+	for _, entry := range entries {
+		have[strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))] = true
+	}
+	for _, base := range bases {
+		if have[base] {
+			return false
+		}
+	}
+	return true
+}
+
+// writeResultFile 独占创建，取消或写入失败只清理本次未完成文件。
+// 重名不改文件名，交给调用方换时间戳子目录。
+func writeResultFile(ctx context.Context, dir, base, ext string, data []byte) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, base+ext)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return "", err
 	}
