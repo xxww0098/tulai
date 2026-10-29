@@ -22,9 +22,15 @@ const scanLoginTitle = "用手机扫码登录"
 
 const regionProxyHint = "当前地区打不开这个站点。请到设置的「网络」里选择自定义代理，填写 http://主机:端口 或 socks5://主机:端口，然后重新打开登录页。"
 
+const (
+	loginQRWaitHint    = "正在获取二维码…"
+	loginQRExpiredHint = "二维码已过期，正在刷新"
+)
+
 type loginShot struct {
 	state string
 	bmp   *ui.Bitmap
+	hint  string
 }
 
 // applyWizardGate 在启动时决定要不要盖住主界面。
@@ -252,12 +258,16 @@ func (a *App) loginQRBody(c *ui.Context, b store.Browser, inWizard bool) {
 		ui.Text(c, msg).FontSize(13).TextColor(c.Theme().Warning)
 		return
 	}
+	if shot.hint != "" && shot.bmp == nil {
+		ui.Text(c, shot.hint).FontSize(13).TextColor(c.Theme().Warning)
+		return
+	}
 	if shot.bmp != nil {
 		ui.Image(c, shot.bmp).Size(168, 168).Fit(ui.Contain).Radius(8)
 		ui.Text(c, "用手机扫码").FontSize(12).TextColor(c.Theme().TextMuted)
 		return
 	}
-	msg := "正在获取二维码…"
+	msg := loginQRWaitHint
 	color := c.Theme().Text
 	waiting := true
 	if inWizard {
@@ -587,16 +597,28 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			if a.wizardStale(gen, stop) {
 				return
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			raw, probeErr := a.probeWizardLogin(ctx, ws)
-			var png []byte
-			if probeErr == nil && raw != wizard.ProbeIn && raw != wizard.ProbeRegion {
-				png, _, _ = a.grabLoginQR(ctx, ws)
-			}
 			cancel()
+			var png []byte
+			var hint string
+			if probeErr == nil && raw != wizard.ProbeIn && raw != wizard.ProbeRegion {
+				capCtx, capCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				var expired bool
+				var qrErr error
+				png, expired, qrErr = a.grabLoginQR(capCtx, ws)
+				capCancel()
+				if len(png) == 0 {
+					if qrErr != nil {
+						hint = cdp.LoginQRHint(qrErr)
+					} else if expired {
+						hint = loginQRExpiredHint
+					}
+				}
+			}
 			action := wizard.PollWait
 			a.wizardUI(func() {
-				a.setLoginShot(account.ID, raw, png)
+				a.setLoginShot(account.ID, raw, png, hint)
 				action = a.noteProbe(gen, raw, probeErr)
 			})
 			switch action {
@@ -884,10 +906,12 @@ func (a *App) grabLoginQR(ctx context.Context, endpoint string) ([]byte, bool, e
 	return cdp.CaptureLoginQR(ctx, endpoint)
 }
 
-func (a *App) setLoginShot(id int64, state string, png []byte) {
+func (a *App) setLoginShot(id int64, state string, png []byte, hint string) {
 	if a == nil || id == 0 {
 		return
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.loginShots == nil {
 		a.loginShots = map[int64]loginShot{}
 	}
@@ -895,14 +919,27 @@ func (a *App) setLoginShot(id int64, state string, png []byte) {
 	if state != "" {
 		shot.state = state
 	}
-	if state == wizard.ProbeIn || state == wizard.ProbeRegion {
+	shot.hint = hint
+	switch {
+	case state == wizard.ProbeIn || state == wizard.ProbeRegion:
 		shot.bmp = nil
-	} else if len(png) > 0 {
+		shot.hint = ""
+	case len(png) > 0:
 		if bmp, err := ui.DecodeBitmap(png); err == nil {
 			shot.bmp = bmp
+			shot.hint = ""
 		}
 	}
 	a.loginShots[id] = shot
+}
+
+func (a *App) loginShot(id int64) loginShot {
+	if a == nil {
+		return loginShot{}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.loginShots[id]
 }
 
 func (a *App) syncWizardName() {
@@ -922,6 +959,31 @@ func (a *App) syncWizardName() {
 	a.wizardAccount.Name = name
 }
 
+func loginEndpoint(b store.Browser) string {
+	if b.Port <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", b.Port)
+}
+
+// watchLogin 开始在账号卡片上刷新二维码。测试可换成 loginFollow。
+func (a *App) watchLogin(b store.Browser, ws string) {
+	if a == nil || b.ID == 0 {
+		return
+	}
+	if strings.TrimSpace(ws) == "" {
+		ws = loginEndpoint(b)
+	}
+	if ws == "" {
+		return
+	}
+	if a.loginFollow != nil {
+		a.loginFollow(b, ws)
+		return
+	}
+	a.followLogin(b, ws)
+}
+
 func (a *App) followLogin(b store.Browser, ws string) {
 	if a == nil || b.ID == 0 || ws == "" {
 		return
@@ -934,44 +996,90 @@ func (a *App) followLogin(b store.Browser, ws string) {
 	gen := a.loginWatchGen[b.ID]
 	a.mu.Unlock()
 	go func() {
+		a.publishLogin(b.ID, gen, wizard.ProbeOut, nil, "")
 		for i := 0; i < 150; i++ {
-			a.mu.Lock()
-			current := a.loginWatchGen[b.ID]
-			a.mu.Unlock()
-			if current != gen {
+			if !a.loginCurrent(b.ID, gen) {
 				return
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-			state, err := cdp.ProbeLogin(ctx, ws)
-			var png []byte
-			if err == nil && state != cdp.RegionBlocked && state != wizard.ProbeIn {
-				png, _, _ = cdp.CaptureLoginQR(ctx, ws)
-			}
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			state, err := a.probeWizardLogin(ctx, ws)
 			cancel()
-			if a.window == nil {
+			var png []byte
+			var hint string
+			if err == nil && state != cdp.RegionBlocked && state != wizard.ProbeIn {
+				capCtx, capCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				var expired bool
+				var qrErr error
+				png, expired, qrErr = a.grabLoginQR(capCtx, ws)
+				capCancel()
+				if len(png) == 0 {
+					if qrErr != nil && qrErr.Error() != "地区限制" {
+						hint = cdp.LoginQRHint(qrErr)
+					} else if expired {
+						hint = loginQRExpiredHint
+					}
+				}
+			}
+			if !a.publishLogin(b.ID, gen, state, png, hint) {
 				return
 			}
-			done := make(chan struct{})
-			a.window.Update(func() {
-				defer close(done)
-				a.mu.Lock()
-				still := a.loginWatchGen[b.ID] == gen
-				a.mu.Unlock()
-				if !still {
-					return
-				}
-				a.setLoginShot(b.ID, state, png)
-				if state == wizard.ProbeIn && a.store != nil {
-					a.store.UpdateBrowser(b.ID, true, true)
-					a.store.ResetBrowserHealth(b.ID)
-					a.refreshBrowsers()
-				}
-			})
-			<-done
 			if state == wizard.ProbeIn {
 				return
 			}
-			time.Sleep(2 * time.Second)
+			if !a.loginSleep(b.ID, gen) {
+				return
+			}
 		}
 	}()
+}
+
+func (a *App) loginCurrent(id int64, gen int) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.loginWatchGen[id] == gen
+}
+
+func (a *App) loginSleep(id int64, gen int) bool {
+	gap := 2 * time.Second
+	if a.loginPoll > 0 {
+		gap = a.loginPoll
+	}
+	deadline := time.Now().Add(gap)
+	for {
+		if !a.loginCurrent(id, gen) {
+			return false
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (a *App) publishLogin(id int64, gen int, state string, png []byte, hint string) bool {
+	if !a.loginCurrent(id, gen) {
+		return false
+	}
+	run := func() {
+		if !a.loginCurrent(id, gen) {
+			return
+		}
+		a.setLoginShot(id, state, png, hint)
+		if state == wizard.ProbeIn && a.store != nil {
+			a.store.UpdateBrowser(id, true, true)
+			a.store.ResetBrowserHealth(id)
+			a.refreshBrowsers()
+		}
+	}
+	if a == nil || a.window == nil {
+		run()
+		return a.loginCurrent(id, gen)
+	}
+	done := make(chan struct{})
+	a.window.Update(func() {
+		defer close(done)
+		run()
+	})
+	<-done
+	return a.loginCurrent(id, gen)
 }

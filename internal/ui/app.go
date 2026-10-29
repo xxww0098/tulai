@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -137,7 +138,6 @@ type App struct {
 
 	// 浏览器
 	browserRows    []store.Browser
-	browserList    ui.ListState
 	browserSel     int
 	newBrowserPlat string
 	newBrowserName string
@@ -197,6 +197,8 @@ type App struct {
 	wizardNameFor      int64
 	loginShots         map[int64]loginShot
 	loginWatchGen      map[int64]int
+	loginPoll          time.Duration
+	loginFollow        func(store.Browser, string)
 	wizardQR           func(ctx context.Context, endpoint string) ([]byte, bool, error)
 	accountOpen        func(store.Browser) error
 	pluginWasConnected bool

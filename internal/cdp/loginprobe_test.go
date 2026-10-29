@@ -62,6 +62,11 @@ func TestLoginProbeUsesComposerAndScanLogin(t *testing.T) {
 			t.Fatalf("probe script missing %q", needle)
 		}
 	}
+	button := strings.Index(loginProbeJS, "loginDialog() || loginButton()")
+	loggedIn := strings.Index(loginProbeJS, "if (hasComposer) return {state:'in'}")
+	if button < 0 || loggedIn < button {
+		t.Fatal("a visible 登录 button must count as logged out before the composer counts as logged in")
+	}
 }
 
 func TestNormalizeLoginState(t *testing.T) {

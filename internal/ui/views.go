@@ -91,37 +91,32 @@ func (a *App) browserInstances(c *ui.Context) {
 		}
 		a.browserRows = rows
 	}
-	// 列表
-	a.browserList.Key = func(i int) any { return a.browserRows[i].ID }
-	a.browserList.Selected = &a.browserSel
-	ui.List(c, &a.browserList, len(a.browserRows), func(i int) {
-		b := a.browserRows[i]
-		ui.Column(c).Padding(12, 10).Gap(6).Children(func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, b.Name).Bold().Grow(1).SingleLine()
-				ui.Badge(c, accountHealthLabel(b, active[b.ID]))
+	if len(a.browserRows) > 0 {
+		ui.Scroll(c.Key("accounts")).FillWidth().Shrink(0).MaxHeight(420).Children(func() {
+			ui.Column(c).FillWidth().Border(1, c.Theme().Border).Radius(12).Children(func() {
+				for i := range a.browserRows {
+					b := a.browserRows[i]
+					idx := i
+					face := c.Theme().Background
+					if idx == a.browserSel {
+						face = c.Theme().Selection
+					}
+					ui.ButtonBase(c.Key(b.ID)).FillWidth().AlignItems(ui.Stretch).Justify(ui.Start).
+						Background(face).OnClick(func() { a.browserSel = idx }).Children(func() {
+						a.accountRow(c, b, active[b.ID])
+					})
+				}
 			})
-			line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
-			if b.ExtAccount != "" {
-				line = b.Platform + " · 扩展会话"
-			}
-			ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted)
-			ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
-			a.accountLoginLine(c, b)
-			if b.LastError != "" && !b.Usable(time.Now()) {
-				ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
-			}
 		})
-	}).Grow(1).MinHeight(56).Border(1, c.Theme().Border).Radius(12)
-	a.loginQRCard(c)
+	}
 	selected, hasSelection := a.selectedBrowser()
-	ui.Row(c).Gap(8).Children(func() {
-		ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
-		ui.Button(c, "停止选中").Disabled(a.running || !hasSelection || !selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.stopBrowser() })
-		ui.Button(c, "刷新列表").OnClick(func() { a.refreshBrowsers() })
-		ui.Button(c, "恢复选中").Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
+	ui.Row(c).Gap(8).AlignSelf(ui.Start).Children(func() {
+		ui.Button(c, "启动选中").Shrink(0).Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
+		ui.Button(c, "停止选中").Shrink(0).Disabled(a.running || !hasSelection || !selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.stopBrowser() })
+		ui.Button(c, "刷新列表").Shrink(0).OnClick(func() { a.refreshBrowsers() })
+		ui.Button(c, "恢复选中").Shrink(0).Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
 	})
-	ui.Button(c, "删除选中").AlignSelf(ui.Start).Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
+	ui.Button(c, "删除选中").Shrink(0).AlignSelf(ui.Start).Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
 	ui.Text(c, "想重新登录或再添加账号，点左侧导航栏里的设置向导。").FontSize(12).TextColor(c.Theme().TextMuted)
 }
 
@@ -350,67 +345,67 @@ func (a *App) selectedBrowser() (store.Browser, bool) {
 	return a.browserRows[a.browserSel], true
 }
 
-func (a *App) accountLoginLine(c *ui.Context, b store.Browser) {
-	if b.ExtAccount != "" {
-		return
+func accountNeedsQR(b store.Browser, shot loginShot) bool {
+	if b.ExtAccount != "" || shot.state == wizard.ProbeIn {
+		return false
 	}
-	shot := a.loginShots[b.ID]
-	if b.IsLoggedIn || shot.state == wizard.ProbeIn {
-		ui.Text(c, "已登录").FontSize(12).TextColor(c.Theme().Success)
+	switch shot.state {
+	case wizard.ProbeOut, wizard.ProbeUnknown, wizard.ProbeRegion:
+		return true
 	}
+	return shot.bmp != nil || shot.hint != ""
 }
 
-func (a *App) loginQRCard(c *ui.Context) {
-	b, shot, ok := a.pendingLogin()
-	if !ok {
-		return
+func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
+	shot := loginShot{}
+	if a.loginShots != nil {
+		shot = a.loginShots[b.ID]
 	}
-	ui.Column(c).Width(220).Shrink(0).Padding(12, 12).Gap(8).Radius(12).
-		Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
-		title := b.Name
-		if title == "" {
-			title = b.Platform
-		}
-		if b.Platform != "" && b.Name != "" {
-			title = b.Platform + " · " + b.Name
-		}
-		ui.Text(c, title).FontSize(14).Bold().SingleLine()
-		if shot.state == wizard.ProbeRegion {
-			ui.Text(c, regionProxyHint).FontSize(12).TextColor(c.Theme().Warning)
-			return
-		}
-		if shot.bmp != nil {
-			ui.Image(c, shot.bmp).Size(168, 168).Fit(ui.Contain).Radius(8)
-			ui.Text(c, "用手机扫码，过期会自动刷新").FontSize(12).TextColor(c.Theme().TextMuted)
-		}
+	ui.Column(c).FillWidth().Padding(10, 12).Gap(6).Children(func() {
+		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, b.Name).Bold().SingleLine()
+					ui.Badge(c, accountHealthLabel(b, active)).Shrink(0)
+				})
+				line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
+				if b.ExtAccount != "" {
+					line = b.Platform + " · 扩展会话"
+				}
+				ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+				ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
+				if b.LastError != "" && !b.Usable(time.Now()) {
+					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
+				}
+			})
+			if shot.bmp != nil && accountNeedsQR(b, shot) && shot.state != wizard.ProbeRegion {
+				ui.Image(c, shot.bmp).Size(132, 132).Shrink(0).Fit(ui.Contain).Radius(8).Border(1, c.Theme().Border)
+			}
+		})
+		a.accountLoginStatus(c, b, shot)
 	})
 }
 
-func (a *App) pendingLogin() (store.Browser, loginShot, bool) {
-	consider := func(b store.Browser) (store.Browser, loginShot, bool) {
-		if b.ExtAccount != "" || b.IsLoggedIn {
-			return store.Browser{}, loginShot{}, false
-		}
-		shot := a.loginShots[b.ID]
-		if shot.state == wizard.ProbeIn {
-			return store.Browser{}, loginShot{}, false
-		}
-		if shot.bmp != nil || shot.state == wizard.ProbeRegion {
-			return b, shot, true
-		}
-		return store.Browser{}, loginShot{}, false
+func (a *App) accountLoginStatus(c *ui.Context, b store.Browser, shot loginShot) {
+	if b.ExtAccount != "" {
+		return
 	}
-	if sel, ok := a.selectedBrowser(); ok {
-		if b, shot, ok := consider(sel); ok {
-			return b, shot, true
+	if accountNeedsQR(b, shot) {
+		switch {
+		case shot.state == wizard.ProbeRegion:
+			ui.Text(c, regionProxyHint).FontSize(12).TextColor(c.Theme().Warning)
+		case shot.hint != "":
+			ui.Text(c, shot.hint).FontSize(12).TextColor(c.Theme().Warning)
+		case shot.bmp != nil:
+			ui.Text(c, "用手机扫码，过期会自动刷新").FontSize(12).TextColor(c.Theme().TextMuted)
+		default:
+			ui.Text(c, loginQRWaitHint).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
+		return
 	}
-	for _, row := range a.browserRows {
-		if b, shot, ok := consider(row); ok {
-			return b, shot, true
-		}
+	if b.IsLoggedIn || shot.state == wizard.ProbeIn {
+		ui.Text(c, "已登录").FontSize(12).TextColor(c.Theme().Success)
 	}
-	return store.Browser{}, loginShot{}, false
 }
 
 func (a *App) launchBrowser() {
@@ -433,13 +428,14 @@ func (a *App) launchBrowser() {
 		}
 		if errors.Is(err, browser.ErrDebugPort) {
 			a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
+			a.watchLogin(b, loginEndpoint(b))
 			a.window.Update(func() { a.refreshBrowsers() })
 			return
 		}
 		err = cdp.OpenURLBackground(context.Background(), ws, platform.HomeURL())
 		a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
 		if err == nil || errors.Is(err, cdp.ErrDebugUnavailable) {
-			a.followLogin(b, ws)
+			a.watchLogin(b, ws)
 		}
 		if err != nil && !errors.Is(err, cdp.ErrDebugUnavailable) {
 			logging.Log.Errorf("浏览器[%s] 打开登录页失败：%v", b.Name, err)

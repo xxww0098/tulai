@@ -763,16 +763,13 @@ func (a *App) failAction(card ProgressCard) {
 }
 
 func (a *App) reloginCard(card ProgressCard) {
-	row := store.Browser{}
+	id := int64(0)
 	if len(card.Retry) > 0 {
-		row.ID = card.Retry[0].BrowserID
-		row.Platform = card.Retry[0].Platform
+		id = card.Retry[0].BrowserID
 	}
-	for _, b := range a.configuredBrowsers() {
-		if b.ID == row.ID && row.ID != 0 {
-			row = b
-			break
-		}
+	row := a.showBrowserAccount(id)
+	if row.Platform == "" && len(card.Retry) > 0 {
+		row.Platform = card.Retry[0].Platform
 	}
 	logging.Log.Info("请在「%s」的网页里重新登录", accountLabel(row))
 	go func(b store.Browser) {
@@ -780,6 +777,29 @@ func (a *App) reloginCard(card ProgressCard) {
 		defer cancel()
 		_ = a.ensureAccountPage(ctx, b)
 	}(row)
+}
+
+// showBrowserAccount 切到浏览器页并选中这个账号，方便二维码出现在它那一行。
+func (a *App) showBrowserAccount(id int64) store.Browser {
+	row := store.Browser{ID: id}
+	for _, b := range a.configuredBrowsers() {
+		if id != 0 && b.ID == id {
+			row = b
+			break
+		}
+	}
+	if id != 0 {
+		a.tab = pageBrowser
+	}
+	a.refreshBrowsers()
+	for i, b := range a.browserRows {
+		if id != 0 && b.ID == id {
+			a.browserSel = i
+			row = b
+			break
+		}
+	}
+	return row
 }
 
 func (a *App) replaceCardImage(card ProgressCard) {
