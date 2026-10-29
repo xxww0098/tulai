@@ -28,6 +28,27 @@ func (a *App) browserPane(c *ui.Context) {
 	if a.detectedNote == "" && !a.cftBusy {
 		a.refreshDetected()
 	}
+	w, _ := c.Size()
+	if homeSplit(w) {
+		ui.Row(c).Grow(1).MinHeight(0).Gap(16).AlignItems(ui.Stretch).Children(func() {
+			ui.Scroll(c.Key("browser-setup")).Width(340).Shrink(0).MinHeight(0).Children(func() {
+				ui.Column(c).Gap(12).Padding(0, 2, 12, 0).Children(func() {
+					a.browserSetup(c)
+				})
+			})
+			ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).MaxWidth(720).Gap(12).Children(func() {
+				a.browserInstances(c)
+			})
+		})
+		return
+	}
+	ui.Column(c).Grow(1).MinHeight(0).MaxWidth(720).Gap(12).Children(func() {
+		a.browserSetup(c)
+		a.browserInstances(c)
+	})
+}
+
+func (a *App) browserSetup(c *ui.Context) {
 	ui.Field(c, "网页方式", func() {
 		motionSelect(c.Key("browser-backend"), &a.browserChoice, []string{"Chrome", "Edge", "内置浏览器"}).Disabled(a.running).OnChange(func() {
 			a.browserBackend = browser.CanonicalBackend(a.browserChoice)
@@ -37,68 +58,68 @@ func (a *App) browserPane(c *ui.Context) {
 		})
 	})
 	a.extensionBridgeSection(c)
-	ui.Column(c).Grow(1).MinHeight(0).Gap(12).Children(func() {
-		a.builtinBrowserSection(c)
-		ui.Text(c, "浏览器实例").FontSize(15).Bold()
-		ui.Text(c, browserInstanceHint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(browserInstanceHint)
-		// 新增行
-		ui.Row(c).Gap(8).Children(func() {
-			motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Label("浏览器平台")
-			ui.TextInput(c, &a.newBrowserName).Grow(1).MinWidth(0).Placeholder("名称（可选）").Label("浏览器名称")
-			ui.Button(c, "添加").Disabled(a.running).OnClick(func() { a.addBrowser() })
-		})
-		if hint := missingBrowserHint(a.missingBrowserNames()); hint != "" {
-			ui.Text(c, hint).Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
-		} else if len(a.browserRows) == 0 {
-			ui.Text(c, "尚无浏览器。添加豆包或千问实例，启动并登录后再开始任务。").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
-		}
-		active := map[int64]bool{}
-		if a.engine != nil {
-			active = a.engine.ActiveAccounts()
-		}
-		if a.store != nil {
-			rows := a.store.Browsers()
-			for i := range rows {
-				if a.manager != nil {
-					rows[i].IsRunning = a.manager.IsRunning(rows[i].ID)
-				}
-				if active[rows[i].ID] {
-					rows[i].IsRunning = true
-				}
-			}
-			a.browserRows = rows
-		}
-		// 列表
-		a.browserList.Key = func(i int) any { return a.browserRows[i].ID }
-		a.browserList.Selected = &a.browserSel
-		ui.List(c, &a.browserList, len(a.browserRows), func(i int) {
-			b := a.browserRows[i]
-			ui.Column(c).Padding(12, 10).Gap(6).Children(func() {
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, b.Name).Bold().Grow(1).SingleLine()
-					ui.Badge(c, accountHealthLabel(b, active[b.ID]))
-				})
-				line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
-				if b.ExtAccount != "" {
-					line = b.Platform + " · 扩展会话"
-				}
-				ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted)
-				ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
-				if b.LastError != "" && !b.Usable(time.Now()) {
-					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
-				}
-			})
-		}).Grow(1).MinHeight(56).Border(1, c.Theme().Border).Radius(12)
-		selected, hasSelection := a.selectedBrowser()
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
-			ui.Button(c, "停止选中").Disabled(a.running || !hasSelection || !selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.stopBrowser() })
-			ui.Button(c, "刷新列表").OnClick(func() { a.refreshBrowsers() })
-			ui.Button(c, "恢复选中").Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
-		})
-		ui.Button(c, "删除选中").Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
-		ui.Text(c, "想重新登录或再添加账号，点右上角「设置向导」。").FontSize(12).TextColor(c.Theme().TextMuted)
+	a.builtinBrowserSection(c)
+}
+
+func (a *App) browserInstances(c *ui.Context) {
+	ui.Text(c, "浏览器实例").FontSize(15).Bold()
+	ui.Text(c, browserInstanceHint).FontSize(12).TextColor(c.Theme().TextMuted)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Shrink(0).Label("浏览器平台")
+		ui.TextInput(c, &a.newBrowserName).Grow(1).MinWidth(0).Placeholder("名称（可选）").Label("浏览器名称")
+		ui.Button(c, "添加").Shrink(0).Disabled(a.running).OnClick(func() { a.addBrowser() })
 	})
+	if hint := missingBrowserHint(a.missingBrowserNames()); hint != "" {
+		ui.Text(c, hint).Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
+	} else if len(a.browserRows) == 0 {
+		ui.Text(c, "尚无浏览器。添加豆包或千问实例，启动并登录后再开始任务。").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
+	}
+	active := map[int64]bool{}
+	if a.engine != nil {
+		active = a.engine.ActiveAccounts()
+	}
+	if a.store != nil {
+		rows := a.store.Browsers()
+		for i := range rows {
+			if a.manager != nil {
+				rows[i].IsRunning = a.manager.IsRunning(rows[i].ID)
+			}
+			if active[rows[i].ID] {
+				rows[i].IsRunning = true
+			}
+		}
+		a.browserRows = rows
+	}
+	// 列表
+	a.browserList.Key = func(i int) any { return a.browserRows[i].ID }
+	a.browserList.Selected = &a.browserSel
+	ui.List(c, &a.browserList, len(a.browserRows), func(i int) {
+		b := a.browserRows[i]
+		ui.Column(c).Padding(12, 10).Gap(6).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, b.Name).Bold().Grow(1).SingleLine()
+				ui.Badge(c, accountHealthLabel(b, active[b.ID]))
+			})
+			line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
+			if b.ExtAccount != "" {
+				line = b.Platform + " · 扩展会话"
+			}
+			ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
+			if b.LastError != "" && !b.Usable(time.Now()) {
+				ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
+			}
+		})
+	}).Grow(1).MinHeight(56).Border(1, c.Theme().Border).Radius(12)
+	selected, hasSelection := a.selectedBrowser()
+	ui.Row(c).Gap(8).Children(func() {
+		ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
+		ui.Button(c, "停止选中").Disabled(a.running || !hasSelection || !selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.stopBrowser() })
+		ui.Button(c, "刷新列表").OnClick(func() { a.refreshBrowsers() })
+		ui.Button(c, "恢复选中").Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
+	})
+	ui.Button(c, "删除选中").AlignSelf(ui.Start).Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
+	ui.Text(c, "想重新登录或再添加账号，点左侧导航栏里的设置向导。").FontSize(12).TextColor(c.Theme().TextMuted)
 }
 
 // extensionBridgeSection 展示页面桥令牌和端口。扩展弹出页要填同一组值。
@@ -127,7 +148,7 @@ func (a *App) extensionBridgeSection(c *ui.Context) {
 				ui.Text(c, notice).FontSize(13).TextColor(c.Theme().Warning)
 			}
 		}
-		ui.Text(c, summary).FontSize(12).TextColor(detailColor).SingleLine().Tooltip(detail)
+		ui.Text(c, summary).FontSize(12).TextColor(detailColor).Tooltip(detail)
 		ui.TextInput(c.Key("ext-bridge-token"), &a.extToken).ReadOnly(true).FontSize(12).Label("令牌")
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Button(c, "复制令牌").OnClick(func() {

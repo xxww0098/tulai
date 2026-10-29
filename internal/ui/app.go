@@ -1,4 +1,4 @@
-// Package ui mygo 原生界面。出图页只有拖图、提示词和「开始出图」，
+// Package ui mygo 原生界面。左侧是图标导航；出图页左边写步骤，右边是账号和进度。
 // 平台、轮换和输出在「高级」里。浏览器、提示词和设置仍是单独的页。
 package ui
 
@@ -121,6 +121,7 @@ type App struct {
 	// 验证码设置
 	captchaEnabled bool
 	captchaBackend string
+	captchaChoice  string
 	customURL      string
 	customKey      string
 	customModel    string
@@ -477,18 +478,25 @@ func (a *App) view(c *ui.Context) {
 	a.noteTab()
 	a.look = applyWorkbenchTheme(c)
 	ui.Column(c.Key("screen-main")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
-		a.chrome(c)
-		ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinHeight(0).Padding(8, 28, 12, 28).Transition(a.pageMotion()).Children(func() {
-			switch a.tab {
-			case pageBrowser:
-				a.browserPane(c)
-			case pagePrompts:
-				a.promptsPage(c)
-			case pageSettings:
-				a.settingsPage(c)
-			default:
-				a.homePage(c)
-			}
+		slot := ui.Column(c.Key("update-slot"))
+		if a.updateNotice != "" {
+			slot.Padding(8, pagePadX, 0, pagePadX)
+		}
+		slot.Children(func() { a.updateBanner(c) })
+		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
+			a.navRail(c)
+			ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinWidth(0).MinHeight(0).Padding(12, pagePadX, 12, pagePadX).Transition(a.pageMotion()).Children(func() {
+				switch a.tab {
+				case pageBrowser:
+					a.browserPane(c)
+				case pagePrompts:
+					a.promptsPage(c)
+				case pageSettings:
+					a.settingsPage(c)
+				default:
+					a.homePage(c)
+				}
+			})
 		})
 	})
 }

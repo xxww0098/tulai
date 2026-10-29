@@ -141,7 +141,7 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"tulai", "豆包 / 千问", "检查更新", "开始出图", "出图进度", "排队中", "高级", "添加图片"} {
+				for _, label := range []string{"tulai", "检查更新", "开始出图", "出图进度", "排队中", "高级", "添加图片"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})
@@ -188,6 +188,15 @@ func TestSaveSettingsIncludesLatestBoundInput(t *testing.T) {
 	tt := ui.NewTester(a.view, 1280, 840)
 	if err := tt.Click("自动求解验证码"); err != nil {
 		t.Fatal(err)
+	}
+	if err := tt.Click("免费离线识别"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("自定义视觉模型"); err != nil {
+		t.Fatal(err)
+	}
+	if a.captchaBackend != "custom" {
+		t.Fatalf("backend = %q", a.captchaBackend)
 	}
 	if err := tt.Click("API 地址"); err != nil {
 		t.Fatal(err)

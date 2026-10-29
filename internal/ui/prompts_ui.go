@@ -11,22 +11,37 @@ func (a *App) taskPromptList() []string {
 }
 
 func (a *App) promptRow(c *ui.Context) {
+	a.promptControls(c, false)
+}
+
+func (a *App) promptControls(c *ui.Context, stacked bool) {
 	labels := prompts.Labels(a.userPrompts)
 	if !containsStr(labels, a.promptChoice) {
 		a.promptChoice = prompts.LabelFor(a.promptPick, a.userPrompts)
+	}
+	if stacked {
+		motionSelect(c.Key("prompt-template"), &a.promptChoice, labels).FillWidth().OnChange(func() {
+			a.applyPromptChoice()
+		})
+		ui.Row(c).Gap(8).Wrap().Children(func() { a.promptButtons(c) })
+		return
 	}
 	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 		motionSelect(c.Key("prompt-template"), &a.promptChoice, labels).Grow(1).MinWidth(0).OnChange(func() {
 			a.applyPromptChoice()
 		})
-		ui.Button(c, "保存提示词").Disabled(a.running).OnClick(func() { a.saveCurrentPrompt() })
-		if prompts.IsBuiltin(a.promptPick) {
-			ui.Button(c, "恢复内置").Disabled(a.running).OnClick(func() { a.restoreBuiltinPrompt() })
-		}
-		if a.promptPick != "" && !prompts.IsBuiltin(a.promptPick) {
-			ui.Button(c, "删除提示词").Disabled(a.running).OnClick(func() { a.deleteUserPrompt() })
-		}
+		a.promptButtons(c)
 	})
+}
+
+func (a *App) promptButtons(c *ui.Context) {
+	ui.Button(c, "保存提示词").Disabled(a.running).OnClick(func() { a.saveCurrentPrompt() })
+	if prompts.IsBuiltin(a.promptPick) {
+		ui.Button(c, "恢复内置").Disabled(a.running).OnClick(func() { a.restoreBuiltinPrompt() })
+	}
+	if a.promptPick != "" && !prompts.IsBuiltin(a.promptPick) {
+		ui.Button(c, "删除提示词").Disabled(a.running).OnClick(func() { a.deleteUserPrompt() })
+	}
 }
 
 func (a *App) applyPromptChoice() {

@@ -16,36 +16,135 @@ import (
 )
 
 func (a *App) promptsPage(c *ui.Context) {
-	ui.Column(c).Fill().Gap(14).Padding(16, 8).Children(func() {
-		ui.Text(c, "提示词").FontSize(22).Bold()
-		ui.Text(c, "内置模板和保存过的提示词。出图页会记住上次的选择。").FontSize(13).TextColor(c.Theme().TextMuted)
+	w, _ := c.Size()
+	if homeSplit(w) {
+		ui.Row(c).Grow(1).MinHeight(0).Gap(20).AlignItems(ui.Stretch).Children(func() {
+			ui.Column(c).Width(300).Shrink(1).MinWidth(240).Gap(12).Children(func() {
+				a.promptsHead(c)
+				a.promptControls(c, true)
+				a.promptNoteLine(c)
+			})
+			ui.Column(c).Grow(1).MinWidth(0).MaxWidth(640).MinHeight(0).Children(func() {
+				ui.TextArea(c, &a.prompts).Grow(1).MinHeight(220).FillWidth().Label("提示词内容").Placeholder("每行一条。选了模板后，整段一起发送")
+			})
+		})
+		return
+	}
+	ui.Column(c).Fill().MaxWidth(720).Gap(14).Children(func() {
+		a.promptsHead(c)
 		a.promptRow(c)
 		ui.TextArea(c, &a.prompts).Grow(1).MinHeight(220).Label("提示词内容").Placeholder("每行一条。选了模板后，整段一起发送")
-		if a.promptNote != "" {
-			ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
-		}
+		a.promptNoteLine(c)
 	})
+}
+
+func (a *App) promptsHead(c *ui.Context) {
+	ui.Text(c, "提示词").FontSize(22).Bold()
+	ui.Text(c, "内置模板和保存过的提示词。出图页会记住上次的选择。").FontSize(13).TextColor(c.Theme().TextMuted)
+}
+
+func (a *App) promptNoteLine(c *ui.Context) {
+	if a.promptNote == "" {
+		return
+	}
+	ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
 }
 
 func (a *App) settingsPage(c *ui.Context) {
+	w, _ := c.Size()
 	ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).Children(func() {
-		ui.Column(c).MaxWidth(760).FillWidth().Gap(16).Padding(16, 8, 24, 8).Children(func() {
+		ui.Column(c).MaxWidth(920).Gap(16).Padding(4, 0, 20, 0).Children(func() {
 			ui.Text(c, "设置").FontSize(22).Bold()
 			ui.Text(c, "验证码在这里调。平台、并发和输出文件夹在出图页的「高级」里。").FontSize(13).TextColor(c.Theme().TextMuted)
-			a.updateSettings(c)
-			a.captchaFields(c)
+			if homeSplit(w) {
+				ui.Row(c).Gap(16).AlignItems(ui.Start).Children(func() {
+					a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
+					a.settingsCard(c, "验证码", "出图遇到验证时怎么处理。", func() { a.captchaFields(c) })
+				})
+				return
+			}
+			ui.Column(c).FillWidth().Gap(16).Children(func() {
+				a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
+				a.settingsCard(c, "验证码", "出图遇到验证时怎么处理。", func() { a.captchaFields(c) })
+			})
 		})
 	})
 }
 
+func (a *App) settingsCard(c *ui.Context, title, blurb string, body func()) {
+	tok := a.look
+	ui.Column(c).Grow(1).MinWidth(280).Gap(10).Padding(14, 16).Radius(tok.radiusL).
+		Background(tok.card).Border(1, tok.border).Children(func() {
+		ui.Text(c, title).FontSize(tok.title).Bold()
+		ui.Text(c, blurb).FontSize(tok.caption).TextColor(tok.muted)
+		body()
+	})
+}
+
+type captchaOpt struct {
+	id, label, hint string
+}
+
+var captchaOpts = []captchaOpt{
+	{"free", "免费离线识别", "在本机识别九宫格和拼图，不联网。"},
+	{"custom", "自定义视觉模型", "把截图发给兼容 OpenAI 的视觉模型。"},
+	{"ikunocr", "ikunocr 接码平台", "交给 ikunocr 接码平台处理。"},
+}
+
+func captchaLabel(id string) string {
+	for _, opt := range captchaOpts {
+		if opt.id == id {
+			return opt.label
+		}
+	}
+	if id == "" {
+		return captchaOpts[0].label
+	}
+	return id
+}
+
+func captchaID(label string) string {
+	for _, opt := range captchaOpts {
+		if opt.label == label {
+			return opt.id
+		}
+	}
+	return "free"
+}
+
+func captchaHint(id string) string {
+	for _, opt := range captchaOpts {
+		if opt.id == id {
+			return opt.hint
+		}
+	}
+	return ""
+}
+
+func captchaLabels() []string {
+	out := make([]string, len(captchaOpts))
+	for i, opt := range captchaOpts {
+		out[i] = opt.label
+	}
+	return out
+}
+
 func (a *App) captchaFields(c *ui.Context) {
-	ui.Form(c, func() {
+	if label := captchaLabel(a.captchaBackend); a.captchaChoice != label {
+		a.captchaChoice = label
+	}
+	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Checkbox(c, &a.captchaEnabled, "自动求解验证码")
-		ui.Field(c, "求解后端", func() {
-			motionSelect(c, &a.captchaBackend, []string{"free", "custom", "ikunocr"})
+		ui.Field(c, "求解方式", func() {
+			motionSelect(c, &a.captchaChoice, captchaLabels()).FillWidth().OnChange(func() {
+				a.captchaBackend = captchaID(a.captchaChoice)
+			})
 		})
-		ui.Text(c, "free=纯CV离线（九宫格拖拽/拼图）；custom=视觉大模型；ikunocr=接码平台").FontSize(11)
-		ui.Fieldset(c, "custom 视觉大模型（OpenAI 兼容）", func() {
+		if hint := captchaHint(a.captchaBackend); hint != "" {
+			ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted)
+		}
+		switch a.captchaBackend {
+		case "custom":
 			ui.Field(c, "API 地址", func() {
 				ui.TextInput(c, &a.customURL)
 			})
@@ -55,13 +154,12 @@ func (a *App) captchaFields(c *ui.Context) {
 			ui.Field(c, "模型", func() {
 				ui.TextInput(c, &a.customModel)
 			})
-		})
-		ui.Fieldset(c, "ikunocr 接码平台", func() {
+		case "ikunocr":
 			ui.Field(c, "API Key", func() {
 				ui.TextInput(c, &a.ikunocrKey).Password()
 			})
-		})
-	}).FillWidth().Gap(12)
+		}
+	})
 }
 
 // advancedFields 是出图页「高级」里的平台、轮换、输出和单次任务选项。

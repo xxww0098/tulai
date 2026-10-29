@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -222,6 +223,39 @@ func TestExportWorkbenchShots(t *testing.T) {
 	saveAt("lanes-running-1024", 1024, 1100, running)
 	saveAt("lanes-running-6", 1280, 1200, six)
 	saveAt("lanes-running-6-1024", 1024, 1400, six)
+
+	for _, sz := range [][2]int{{1280, 800}, {1024, 700}} {
+		tag := fmt.Sprintf("%dx%d", sz[0], sz[1])
+		saveAt("home-idle-"+tag, sz[0], sz[1], idle)
+		saveAt("home-running-"+tag, sz[0], sz[1], six)
+		saveAt("home-blocked-"+tag, sz[0], sz[1], blocked)
+		// 列表状态不能跨两个 Tester，每个尺寸用一份新的页面状态。
+		saveAt("browser-"+tag, sz[0], sz[1], &App{
+			tab: pageBrowser, platformAuto: true, browserChoice: "Chrome", newBrowserPlat: "豆包",
+			detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
+			browserRows: []store.Browser{
+				{ID: 1, Name: "豆包主力", Platform: "豆包", Port: 9333, IsLoggedIn: true, Health: store.HealthReady},
+				{ID: 2, Name: "千问备用", Platform: "千问", Port: 9334, IsLoggedIn: true, Health: store.HealthReady},
+			},
+		})
+		saveAt("settings-"+tag, sz[0], sz[1], &App{tab: pageSettings, autoCheck: true, captchaEnabled: true, captchaBackend: "free"})
+	}
+	tip := ui.NewTester(idle.view, 1280, 800)
+	tip.Advance(450 * time.Millisecond)
+	r, ok := tip.Find("检查更新")
+	if !ok {
+		t.Fatal("nav icon missing")
+	}
+	tip.Move(r.X+r.W/2, r.Y+r.H/2)
+	tip.Advance(700 * time.Millisecond)
+	f, err := os.Create(filepath.Join(dir, "nav-tooltip-1280x800.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, tip.Image()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func extraPaths(sources []sourceImage) []string {
