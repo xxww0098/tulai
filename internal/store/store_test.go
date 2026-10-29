@@ -153,11 +153,13 @@ func TestOnlyLoggedInAccountsAreKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	var confirmedOut []int64
 	for _, platform := range []string{"豆包", "千问"} {
 		junk, err := s.AddBrowser(platform, platform+"未登录", "")
 		if err != nil {
 			t.Fatal(err)
 		}
+		confirmedOut = append(confirmedOut, junk.ID)
 		stale, err := s.AddBrowser(platform, platform+"过期", "")
 		if err != nil {
 			t.Fatal(err)
@@ -202,16 +204,41 @@ func TestOnlyLoggedInAccountsAreKept(t *testing.T) {
 	if !held.IsLoggedIn || held.LastError != "额度已用尽" || held.CoolUntil != until {
 		t.Fatalf("quota should stay: %+v", held)
 	}
-	s.DropUnloggedExtensions()
-	dropped := s.DropUnloggedLocal(nil)
+	if dropped := s.DropUnloggedLocal(nil); len(dropped) != 0 {
+		t.Fatalf("stale flag deleted %+v", dropped)
+	}
+	var bare int
+	for _, row := range s.Browsers() {
+		if row.ExtAccount == "bare-豆包" || row.ExtAccount == "bare-千问" {
+			if row.IsLoggedIn {
+				t.Fatalf("bare extension marked logged in: %+v", row)
+			}
+			bare++
+		}
+	}
+	if bare != 2 {
+		t.Fatalf("unconfirmed extension rows = %d %+v", bare, s.Browsers())
+	}
+	dropped := s.DropUnloggedLocal(confirmedOut)
 	if len(dropped) != 2 {
-		t.Fatalf("unlogged locals = %+v", dropped)
+		t.Fatalf("confirmed-out locals = %+v", dropped)
 	}
 	for _, row := range dropped {
 		if row.IsLoggedIn || (row.Platform != "豆包" && row.Platform != "千问") {
 			t.Fatalf("dropped = %+v", row)
 		}
 	}
+	bare = 0
+	for _, row := range s.Browsers() {
+		if row.ExtAccount == "bare-豆包" || row.ExtAccount == "bare-千问" {
+			bare++
+		}
+	}
+	if bare != 2 {
+		t.Fatalf("confirmed-out local drop removed extensions: %+v", s.Browsers())
+	}
+	s.DropExtensionAccount("豆包", "bare-豆包")
+	s.DropExtensionAccount("千问", "bare-千问")
 	for _, row := range s.Browsers() {
 		if !row.IsLoggedIn {
 			t.Fatalf("unlogged row kept: %+v", row)

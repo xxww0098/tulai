@@ -239,6 +239,10 @@ func (b Browser) Usable(now time.Time) bool {
 
 // AddBrowser 新增浏览器（端口从 9333 起自动分配）。
 func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
+	return s.addBrowser(platform, name, dataDir, "", false)
+}
+
+func (s *Store) addBrowser(platform, name, dataDir, extAccount string, loggedIn bool) (Browser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var maxPort int
@@ -247,13 +251,20 @@ func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
 	if port < 9333 {
 		port = 9333
 	}
-	res, err := s.db.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir) VALUES(?,?,?,?)`,
-		platform, name, port, dataDir)
+	login := 0
+	if loggedIn {
+		login = 1
+	}
+	res, err := s.db.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, ext_account) VALUES(?,?,?,?,?,?,?)`,
+		platform, name, port, dataDir, login, login, extAccount)
 	if err != nil {
 		return Browser{}, err
 	}
 	id, _ := res.LastInsertId()
-	return Browser{ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir}, nil
+	return Browser{
+		ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir,
+		IsRunning: loggedIn, IsLoggedIn: loggedIn, ExtAccount: extAccount, Health: HealthReady,
+	}, nil
 }
 
 // RenameBrowser 只改显示名。用户数据目录保持创建时的路径。
@@ -282,6 +293,20 @@ func (s *Store) UpdateBrowser(id int64, running, loggedIn bool) {
 		l = 1
 	}
 	s.db.Exec(`UPDATE browsers SET is_running=?, is_logged_in=? WHERE id=?`, r, l, id)
+}
+
+// SetRunning 只改运行标记，不动登录标记。启动和停止不能把刚确认的登录写回去。
+func (s *Store) SetRunning(id int64, running bool) {
+	if s == nil || id <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := 0
+	if running {
+		r = 1
+	}
+	s.db.Exec(`UPDATE browsers SET is_running=? WHERE id=?`, r, id)
 }
 
 // DeleteBrowser 删除浏览器记录。
@@ -325,16 +350,16 @@ func (s *Store) ConfirmLogin(id int64) bool {
 	return err == nil
 }
 
-// DropUnloggedLocal 删掉还没登录成功的本机账号。
-// 扩展行和 keep 里的 id 留着（登录还在进行）。返回实际删掉的行，便于清配置目录。
-func (s *Store) DropUnloggedLocal(keep []int64) []Browser {
+// DropUnloggedLocal 只删除 confirmedOut 里、且库里仍是未登录的本机账号。
+// 不在列表里的行留下：is_logged_in=0 本身不能当退出。扩展行不在这里删。
+func (s *Store) DropUnloggedLocal(confirmedOut []int64) []Browser {
 	if s == nil {
 		return nil
 	}
-	hold := map[int64]struct{}{}
-	for _, id := range keep {
+	allow := map[int64]struct{}{}
+	for _, id := range confirmedOut {
 		if id > 0 {
-			hold[id] = struct{}{}
+			allow[id] = struct{}{}
 		}
 	}
 	var candidates []Browser
@@ -342,7 +367,7 @@ func (s *Store) DropUnloggedLocal(keep []int64) []Browser {
 		if b.ExtAccount != "" || b.IsLoggedIn {
 			continue
 		}
-		if _, ok := hold[b.ID]; ok {
+		if _, ok := allow[b.ID]; !ok {
 			continue
 		}
 		candidates = append(candidates, b)
@@ -428,7 +453,7 @@ func (s *Store) TouchBrowser(id int64, now time.Time) {
 // SaveLoggedInExtension 记下一个已经确认登录的扩展账号。豆包和千问同一规则。
 // 只是连上页面桥还不调用这里。已有行的冷却和今日次数保留，登录挂起会清掉。
 func (s *Store) SaveLoggedInExtension(platform, account, name string) (Browser, error) {
-	b, err := s.UpsertExtensionAccount(platform, account, name)
+	b, err := s.upsertExtension(platform, account, name, true)
 	if err != nil {
 		return Browser{}, err
 	}
@@ -460,31 +485,14 @@ func (s *Store) DropExtensionAccount(platform, account string) {
 	s.db.Exec(`DELETE FROM browsers WHERE platform=? AND ext_account=?`, platform, account)
 }
 
-// DropUnloggedExtensions 删掉还没确认登录的扩展账号，豆包和千问都算。
-func (s *Store) DropUnloggedExtensions() {
-	if s == nil {
-		return
-	}
-	var ids []int64
-	for _, b := range s.Browsers() {
-		if b.ExtAccount != "" && !b.IsLoggedIn {
-			ids = append(ids, b.ID)
-		}
-	}
-	if len(ids) == 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, id := range ids {
-		s.db.Exec(`DELETE FROM browsers WHERE id=? AND is_logged_in=0 AND COALESCE(ext_account,'')<>''`, id)
-	}
-}
-
 // UpsertExtensionAccount 按扩展 profile id 登记或取回账号。
 // 同一配置文件重连不会清掉冷却状态。hello 只是连上时不要调用它；
 // 确认登录后走 SaveLoggedInExtension。
 func (s *Store) UpsertExtensionAccount(platform, account, name string) (Browser, error) {
+	return s.upsertExtension(platform, account, name, false)
+}
+
+func (s *Store) upsertExtension(platform, account, name string, loggedIn bool) (Browser, error) {
 	if s == nil {
 		return Browser{}, fmt.Errorf("没有配置库")
 	}
@@ -519,19 +527,7 @@ func (s *Store) UpsertExtensionAccount(platform, account, name string) (Browser,
 	if err != sql.ErrNoRows {
 		return Browser{}, err
 	}
-	b, err := s.AddBrowser(platform, name, "")
-	if err != nil {
-		return Browser{}, err
-	}
-	s.mu.Lock()
-	_, err = s.db.Exec(`UPDATE browsers SET ext_account=? WHERE id=?`, account, b.ID)
-	s.mu.Unlock()
-	if err != nil {
-		return Browser{}, err
-	}
-	b.ExtAccount = account
-	b.Health = HealthReady
-	return b, nil
+	return s.addBrowser(platform, name, "", account, loggedIn)
 }
 
 func migrateBrowsers(db *sql.DB) error {

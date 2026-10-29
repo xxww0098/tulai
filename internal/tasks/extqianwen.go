@@ -210,7 +210,6 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 		OnHello: e.noteHello,
 		OnEvent: e.noteExtensionLogin,
 		OnChange: func() {
-			e.PruneIdleExtensions()
 			e.fireBridgeChange()
 		},
 	})
@@ -235,15 +234,6 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 func (e *Engine) noteHello(sess *extbridge.Session) {
 	e.rememberExtension(sess)
 	e.poke()
-}
-
-// PruneIdleExtensions 删掉还没确认登录的扩展账号。豆包和千问一样。
-// 已经登录的行留着，短暂断开不会清掉冷却和今日次数。
-func (e *Engine) PruneIdleExtensions() {
-	if e == nil || e.store == nil {
-		return
-	}
-	e.store.DropUnloggedExtensions()
 }
 
 func (e *Engine) rememberExtension(sess *extbridge.Session) {
