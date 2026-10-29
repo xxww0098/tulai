@@ -594,7 +594,7 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			if gen != a.wizardGen || a.store == nil {
 				return
 			}
-			a.store.UpdateBrowser(account.ID, true, account.IsLoggedIn)
+			a.store.SetRunning(account.ID, true)
 			a.wizardPhase = "waiting"
 			a.wizardNote = scanLoginTitle
 			a.wizardErr = ""
@@ -728,7 +728,11 @@ func (a *App) ensureWizardAccount() (store.Browser, error) {
 	if strings.TrimSpace(a.dataRoot) != "" {
 		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
 	}
-	return a.store.AddBrowser(platform, name, dir)
+	row, err := a.store.AddBrowser(platform, name, dir)
+	if err == nil {
+		a.markFreshLogin(row.ID)
+	}
+	return row, err
 }
 
 func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {

@@ -243,6 +243,34 @@ func (a *App) holdLogin(id int64) {
 	a.loginHold[id] = struct{}{}
 }
 
+// markFreshLogin 记下这一轮新建、还没登录过的档案。离开向导或停掉时可以删。
+// 库里已有的账号不是 fresh，标志过期也不能删。
+func (a *App) markFreshLogin(id int64) {
+	if a == nil || id <= 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.loginHold == nil {
+		a.loginHold = map[int64]struct{}{}
+	}
+	if a.loginFresh == nil {
+		a.loginFresh = map[int64]struct{}{}
+	}
+	a.loginHold[id] = struct{}{}
+	a.loginFresh[id] = struct{}{}
+}
+
+func (a *App) loginIsFresh(id int64) bool {
+	if a == nil || id <= 0 {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.loginFresh[id]
+	return ok
+}
+
 func (a *App) clearLoginHold(id int64) {
 	if a == nil || id <= 0 {
 		return
@@ -250,33 +278,97 @@ func (a *App) clearLoginHold(id int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.loginHold, id)
+	delete(a.loginFresh, id)
 }
 
-// dropAbandoned 去掉没登录成功、也没在登录过程中的本机账号。
-// 任务进行中不动。浏览器还开着或向导停在登录步时留着，方便扫码。
+// dropAbandoned 只删两类本机档案：这一轮新建后放弃的（走 abandonUnlogged），
+// 或探测明确返回 out 的未登录档案。标志是 0、端口没开、探测失败、地区或验证，都留下。
+// 扩展行同样不能凭 is_logged_in=0 删，要等 hello 明确说没登录。
+// ponytail: 端口开着时同步探测，每个账号每进程只探一次。要跟着页面变化再探，放到后台。
 func (a *App) dropAbandoned() {
 	if a == nil || a.store == nil || a.running {
 		return
 	}
-	keep := a.loginKeepIDs()
+	keep := map[int64]struct{}{}
+	for _, id := range a.loginKeepIDs() {
+		keep[id] = struct{}{}
+	}
 	if a.manager != nil {
 		for _, b := range a.store.Browsers() {
 			if b.ExtAccount == "" && a.manager.IsRunning(b.ID) {
-				keep = append(keep, b.ID)
+				keep[b.ID] = struct{}{}
 			}
 		}
 	}
-	for _, b := range a.store.DropUnloggedLocal(keep) {
+	var confirmedOut []int64
+	for _, b := range a.store.Browsers() {
+		if b.ExtAccount != "" || b.IsLoggedIn {
+			continue
+		}
+		if a.loginShot(b.ID).state == wizard.ProbeIn {
+			a.store.ConfirmLogin(b.ID)
+			a.clearLoginHold(b.ID)
+			continue
+		}
+		if _, held := keep[b.ID]; held {
+			continue
+		}
+		switch a.accountLoginState(b) {
+		case wizard.ProbeIn:
+			a.store.ConfirmLogin(b.ID)
+			a.clearLoginHold(b.ID)
+		case wizard.ProbeOut:
+			confirmedOut = append(confirmedOut, b.ID)
+		}
+	}
+	for _, b := range a.store.DropUnloggedLocal(confirmedOut) {
 		if err := browser.RemoveProfile(a.dataRoot, a.browserBackend, b); err != nil {
 			logging.Log.Warning("删除未登录账号 %s 的配置目录失败：%v", b.Name, err)
 		}
 	}
-	a.store.DropUnloggedExtensions()
 }
 
-// abandonUnlogged 停掉并删掉一个还没登录成功的本机账号。已经登录的不动。
+// accountLoginState 是删档案前的登录探测。出错、端口没开、地区和验证都不是 out。
+func (a *App) accountLoginState(b store.Browser) string {
+	if a != nil && a.accountProbe != nil {
+		state, err := a.accountProbe(b)
+		if err != nil {
+			return wizard.ProbeUnknown
+		}
+		return strings.TrimSpace(state)
+	}
+	if a != nil {
+		a.mu.Lock()
+		state, ok := a.loginProbed[b.ID]
+		a.mu.Unlock()
+		if ok {
+			return state
+		}
+	}
+	state := wizard.ProbeUnknown
+	if b.Port > 0 && debugPortOpen(b.Port) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		probed, err := cdp.ProbeLogin(ctx, loginEndpoint(b))
+		cancel()
+		if err == nil {
+			state = strings.TrimSpace(probed)
+		}
+	}
+	if a != nil {
+		a.mu.Lock()
+		if a.loginProbed == nil {
+			a.loginProbed = map[int64]string{}
+		}
+		a.loginProbed[b.ID] = state
+		a.mu.Unlock()
+	}
+	return state
+}
+
+// abandonUnlogged 停掉并删掉这一轮新建、还没登录成功的本机账号。
+// 库里原来就有的账号不动，哪怕登录标志是过期的 0。
 func (a *App) abandonUnlogged(b store.Browser) {
-	if a == nil || a.store == nil || b.ID <= 0 {
+	if a == nil || a.store == nil || b.ID <= 0 || !a.loginIsFresh(b.ID) {
 		return
 	}
 	a.clearLoginHold(b.ID)
@@ -435,7 +527,7 @@ func (a *App) addBrowser() {
 		return
 	}
 	a.newBrowserName = ""
-	a.holdLogin(row.ID)
+	a.markFreshLogin(row.ID)
 	logging.Log.Info("正在打开 %s（%s），登录成功后才会留在列表里", name, a.newBrowserPlat)
 	a.refreshBrowsers()
 	for i := range a.browserRows {
@@ -549,7 +641,7 @@ func (a *App) launchBrowser() {
 		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, platform.HomeURL(), false)
 		if err != nil && !errors.Is(err, browser.ErrDebugPort) {
 			logging.Log.Errorf("启动失败: %v", err)
-			if !b.IsLoggedIn {
+			if !b.IsLoggedIn && a.loginIsFresh(b.ID) {
 				a.onUI(func() {
 					a.abandonUnlogged(b)
 					a.browserSel = -1
@@ -559,14 +651,13 @@ func (a *App) launchBrowser() {
 			return
 		}
 		if errors.Is(err, browser.ErrDebugPort) {
-			a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
+			a.store.SetRunning(b.ID, true)
 			a.watchLogin(b, loginEndpoint(b))
 			a.onUI(func() { a.refreshBrowsers() })
 			return
 		}
-		a.clearLoginHold(b.ID)
 		err = cdp.OpenURLBackground(context.Background(), ws, platform.HomeURL())
-		a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
+		a.store.SetRunning(b.ID, true)
 		if err == nil || errors.Is(err, cdp.ErrDebugUnavailable) {
 			a.watchLogin(b, ws)
 		}
@@ -597,14 +688,16 @@ func (a *App) stopBrowser() {
 	if a.manager != nil {
 		a.manager.Stop(b.ID)
 	}
-	if !b.IsLoggedIn {
+	if !b.IsLoggedIn && a.loginIsFresh(b.ID) {
 		a.abandonUnlogged(b)
 		logging.Log.Info("浏览器[%s] 未登录，已从列表移除", b.Name)
 		a.browserSel = -1
 		a.refreshBrowsers()
 		return
 	}
-	a.store.UpdateBrowser(b.ID, false, true)
+	if a.store != nil {
+		a.store.SetRunning(b.ID, false)
+	}
 	logging.Log.Info("浏览器[%s] 已停止", b.Name)
 	a.refreshBrowsers()
 }
@@ -615,6 +708,12 @@ func (a *App) restoreBrowser() {
 		return
 	}
 	a.store.ResetBrowserHealth(b.ID)
+	running := b.IsRunning
+	if a.manager != nil {
+		running = a.manager.IsRunning(b.ID)
+	}
+	a.store.UpdateBrowser(b.ID, running, true)
+	a.clearLoginHold(b.ID)
 	if a.engine != nil {
 		a.engine.Wake()
 	}

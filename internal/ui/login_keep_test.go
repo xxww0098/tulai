@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,66 +14,205 @@ import (
 	"github.com/xxww0098/tulai/internal/wizard"
 )
 
-func TestStartupDropsUnloggedDoubaoAndQwen(t *testing.T) {
-	root := t.TempDir()
+func TestStartupKeepsStaleLoginWhenProbeUnknown(t *testing.T) {
+	probes := []struct {
+		name  string
+		probe func(store.Browser) (string, error)
+	}{
+		{name: "unknown", probe: func(store.Browser) (string, error) { return wizard.ProbeUnknown, nil }},
+		{name: "region", probe: func(store.Browser) (string, error) { return wizard.ProbeRegion, nil }},
+		{name: "challenge", probe: func(store.Browser) (string, error) { return "challenge", nil }},
+		{name: "down", probe: func(store.Browser) (string, error) { return "", fmt.Errorf("network down") }},
+		{name: "closed", probe: nil},
+	}
+	for _, tc := range probes {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			st := openKeepStore(t)
+			keptDir := filepath.Join(root, "豆包1")
+			if err := os.MkdirAll(keptDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			kept, err := st.AddBrowser("豆包", "豆包1", keptDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.UpdateBrowser(kept.ID, false, true)
+			dirs := map[int64]string{kept.ID: keptDir}
+			for _, platform := range []string{"豆包", "千问"} {
+				dir := filepath.Join(root, platform+"2")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				row, err := st.AddBrowser(platform, platform+"2", dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if row.IsLoggedIn {
+					t.Fatalf("new row already logged in: %+v", row)
+				}
+				dirs[row.ID] = dir
+				if _, err := st.UpsertExtensionAccount(platform, "bare-"+platform, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := &App{
+				store: st, manager: browser.NewManager(), dataRoot: root,
+				browserBackend: browser.KindChrome, accountProbe: tc.probe,
+			}
+			a.loadSettings()
+			rows := st.Browsers()
+			if len(rows) != 5 {
+				t.Fatalf("startup rows = %+v", rows)
+			}
+			for _, row := range rows {
+				if row.Name == "豆包1" && !row.IsLoggedIn {
+					t.Fatalf("logged-in row cleared: %+v", row)
+				}
+				if row.Name == "豆包2" || row.Name == "千问2" {
+					if row.IsLoggedIn {
+						t.Fatalf("unknown probe marked logged in: %+v", row)
+					}
+				}
+				if row.ExtAccount != "" && row.IsLoggedIn {
+					t.Fatalf("unconfirmed extension marked logged in: %+v", row)
+				}
+				if dir := dirs[row.ID]; dir != "" {
+					if _, err := os.Stat(dir); err != nil {
+						t.Fatalf("%s profile gone: %v", row.Name, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestStartupDropsConfirmedLoggedOutProfile(t *testing.T) {
+	for _, platform := range []string{"豆包", "千问"} {
+		t.Run(platform, func(t *testing.T) {
+			root := t.TempDir()
+			st := openKeepStore(t)
+			keepDir := filepath.Join(root, "kept")
+			dropDir := filepath.Join(root, "never")
+			for _, dir := range []string{keepDir, dropDir} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			kept, err := st.AddBrowser(platform, platform+"1", keepDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.UpdateBrowser(kept.ID, false, true)
+			junk, err := st.AddBrowser(platform, platform+"2", dropDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.UpsertExtensionAccount(platform, "bare-"+platform, ""); err != nil {
+				t.Fatal(err)
+			}
+			a := &App{
+				store: st, manager: browser.NewManager(), dataRoot: root,
+				browserBackend: browser.KindChrome,
+				accountProbe: func(b store.Browser) (string, error) {
+					if b.ID == kept.ID || b.IsLoggedIn {
+						t.Fatalf("probed a stored login: %+v", b)
+					}
+					return wizard.ProbeOut, nil
+				},
+			}
+			a.loadSettings()
+			var sawKept, sawBare bool
+			for _, row := range st.Browsers() {
+				if row.ID == junk.ID {
+					t.Fatalf("confirmed out kept: %+v", row)
+				}
+				if row.ID == kept.ID && row.IsLoggedIn {
+					sawKept = true
+				}
+				if row.ExtAccount == "bare-"+platform && !row.IsLoggedIn {
+					sawBare = true
+				}
+			}
+			if !sawKept || !sawBare {
+				t.Fatalf("rows = %+v", st.Browsers())
+			}
+			if _, err := os.Stat(keepDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(dropDir); !os.IsNotExist(err) {
+				t.Fatalf("logged-out profile kept: %v", err)
+			}
+		})
+	}
+}
+
+func TestProbeAndRestorePersistLogin(t *testing.T) {
+	for _, platform := range []string{"豆包", "千问"} {
+		t.Run(platform, func(t *testing.T) {
+			root := t.TempDir()
+			st := openKeepStore(t)
+			dir := filepath.Join(root, platform+"2")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			row, err := st.AddBrowser(platform, platform+"2", dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := &App{
+				store: st, manager: browser.NewManager(), dataRoot: root,
+				browserBackend: browser.KindChrome,
+				loginWatchGen:  map[int64]int{row.ID: 1},
+			}
+			if !a.publishLogin(row.ID, 1, wizard.ProbeIn, nil, "") {
+				t.Fatal("publish")
+			}
+			if got := keepBrowser(t, st, row.ID); !got.IsLoggedIn {
+				t.Fatalf("probe in did not persist: %+v", got)
+			}
+			st.UpdateBrowser(row.ID, false, false)
+			a.browserRows = []store.Browser{{ID: row.ID, Platform: platform, Name: row.Name, UserDataDir: dir}}
+			a.browserSel = 0
+			a.restoreBrowser()
+			if got := keepBrowser(t, st, row.ID); !got.IsLoggedIn {
+				t.Fatalf("restore did not persist: %+v", got)
+			}
+			if _, err := os.Stat(dir); err != nil {
+				t.Fatal(err)
+			}
+			st.UpdateBrowser(row.ID, false, false)
+			a.accountProbe = func(store.Browser) (string, error) { return wizard.ProbeIn, nil }
+			a.loadSettings()
+			if got := keepBrowser(t, st, row.ID); !got.IsLoggedIn {
+				t.Fatalf("startup probe in did not persist: %+v", got)
+			}
+			if _, err := os.Stat(dir); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func openKeepStore(t *testing.T) *store.Store {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
-	keepDir := filepath.Join(root, "kept")
-	if err := os.MkdirAll(keepDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	kept, err := st.AddBrowser("豆包", "账号1", keepDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st.UpdateBrowser(kept.ID, false, true)
-	if _, err := st.SaveLoggedInExtension("千问", "profile-q", "扩展千问"); err != nil {
-		t.Fatal(err)
-	}
-	for _, platform := range []string{"豆包", "千问"} {
-		dir := filepath.Join(root, "junk-"+platform)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.AddBrowser(platform, platform+"半成品", dir); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.UpsertExtensionAccount(platform, "bare-"+platform, ""); err != nil {
-			t.Fatal(err)
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+func keepBrowser(t *testing.T, st *store.Store, id int64) store.Browser {
+	t.Helper()
+	for _, row := range st.Browsers() {
+		if row.ID == id {
+			return row
 		}
 	}
-	a := &App{store: st, manager: browser.NewManager(), dataRoot: root, browserBackend: browser.KindChrome}
-	a.loadSettings()
-	rows := st.Browsers()
-	if len(rows) != 2 {
-		t.Fatalf("startup rows = %+v", rows)
-	}
-	var sawLocal, sawQwen bool
-	for _, row := range rows {
-		if !row.IsLoggedIn {
-			t.Fatalf("unlogged row kept: %+v", row)
-		}
-		if row.ExtAccount == "" && row.Platform == "豆包" {
-			sawLocal = true
-		}
-		if row.ExtAccount == "profile-q" && row.Platform == "千问" {
-			sawQwen = true
-		}
-	}
-	if !sawLocal || !sawQwen {
-		t.Fatalf("kept = %+v", rows)
-	}
-	if _, err := os.Stat(keepDir); err != nil {
-		t.Fatal(err)
-	}
-	for _, platform := range []string{"豆包", "千问"} {
-		if _, err := os.Stat(filepath.Join(root, "junk-"+platform)); !os.IsNotExist(err) {
-			t.Fatalf("%s junk profile still exists: %v", platform, err)
-		}
-	}
+	t.Fatalf("missing browser %d in %+v", id, st.Browsers())
+	return store.Browser{}
 }
 
 func TestWizardBackDropsUnloggedAccount(t *testing.T) {

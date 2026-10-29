@@ -198,6 +198,9 @@ type App struct {
 	loginShots         map[int64]loginShot
 	loginWatchGen      map[int64]int
 	loginHold          map[int64]struct{}
+	loginFresh         map[int64]struct{} // 这一轮新建、还没登录成功，离开时可以删
+	loginProbed        map[int64]string   // 本进程已经探过的结果，避免每次刷新再堵一次
+	accountProbe       func(store.Browser) (string, error)
 	loginPoll          time.Duration
 	loginFollow        func(store.Browser, string)
 	wizardQR           func(ctx context.Context, endpoint string) ([]byte, bool, error)
