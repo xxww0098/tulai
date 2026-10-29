@@ -554,36 +554,24 @@ console.log('doubao page.js anchors ok')
     img.currentSrc = url
   }
   card('https://cdn.example/n1.png')
-  assert.strictEqual(Page.replyDone(doc, marked).done, false, '1 张还没完成')
+  assert.strictEqual(Page.replyDone(doc, marked).done, true, '实图在、没有生成指示，就可以交给 3 秒稳定判断')
   card('https://cdn.example/n2.png')
   card('https://cdn.example/n3.png')
   card('https://cdn.example/n4.png')
-  assert.strictEqual(Page.replyDone(doc, marked).done, false, '4 张没有完成信号也不能结束')
+  assert.strictEqual(Page.replyDone(doc, marked).done, true, '没有重新生成按钮也要结束')
   assert.strictEqual(Page.resultImages(doc, marked).length, 4)
-  answer.append(new El('button')).addText('重新生成')
-  assert.strictEqual(Page.replyDone(doc, marked).done, true)
+  answer.innerText = '生成中'
+  assert.strictEqual(Page.replyDone(doc, marked).done, false, '还在生成时不能结束')
+  answer.innerText = ''
   const counted = makeDoc('www.doubao.com')
   const mark2 = Page.mark(counted, '格子')
   message(counted, 'user', '格子')
   const grid = message(counted, 'assistant', '')
-  grid.attrs = grid.attrs || {}
-  grid.attrs['data-count'] = '4'
-  for (let i = 0; i < 2; i++) {
-    const box = grid.append(new El('div', { 'data-testid': 'mdbox_image' }))
-    const img = box.append(new El('img'))
-    img.complete = true
-    img.naturalWidth = 1024
-    img.src = 'https://cdn.example/g' + i + '.png'
-    img.currentSrc = img.src
-  }
-  assert.strictEqual(Page.replyDone(counted, mark2).done, false, '声明 4 张时只有 2 张不能结束')
-  for (let i = 2; i < 4; i++) {
-    const box = grid.append(new El('div', { 'data-testid': 'mdbox_image' }))
-    const img = box.append(new El('img'))
-    img.complete = true
-    img.naturalWidth = 1024
-    img.src = 'https://cdn.example/g' + i + '.png'
-    img.currentSrc = img.src
-  }
-  assert.strictEqual(Page.replyDone(counted, mark2).done, true, '格子达到声明张数后结束')
+  const box = grid.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  const img = box.append(new El('img'))
+  img.complete = true
+  img.naturalWidth = 1024
+  img.src = 'https://cdn.example/g0.png'
+  img.currentSrc = img.src
+  assert.strictEqual(Page.replyDone(counted, mark2).done, true, '没有声明张数时，一张实图也算候选')
 }

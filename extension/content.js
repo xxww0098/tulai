@@ -451,15 +451,25 @@ async function waitResult(env, payload) {
     }
     const busy = Page.resultsBusy(document, pageMark)
     const urls = images.map(function (item) { return item.url }).join('\n')
-    // 豆包会一张一张把图补齐。地址稳 400ms 只是中间态，要等页面自己的完成信号。
+    // 豆包：实图还在、生成指示没了，同一组地址再稳约 3 秒。不看重新生成按钮。
     if (typeof Page.replyDone === 'function') {
       const signal = Page.replyDone(document, pageMark)
-      if (signal && signal.done && images.length) {
-        return TULAI.ack(env, {
-          name: payload.name,
-          ok: true,
-          images: images.map(function (item) { return { url: item.url } }),
-        })
+      if (signal && signal.done && images.length && !busy) {
+        const now = Date.now()
+        if (urls !== lastURLs || !pageMark.stableAt) {
+          lastURLs = urls
+          pageMark.stableAt = now
+        }
+        if (now - pageMark.stableAt >= 3000) {
+          return TULAI.ack(env, {
+            name: payload.name,
+            ok: true,
+            images: images.map(function (item) { return { url: item.url } }),
+          })
+        }
+      } else {
+        pageMark.stableAt = 0
+        lastURLs = urls
       }
     } else if (!busy && images.length) {
       stable = urls === lastURLs ? stable + 1 : 1

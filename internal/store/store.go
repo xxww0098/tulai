@@ -63,7 +63,7 @@ var defaults = map[string]string{
 	"send_wait_seconds":       "5",
 	"wait_before_sending":     "1",
 	"wait_result":             "1",
-	"wait_result_seconds":     "120",
+	"wait_result_seconds":     "240",
 	"task_switching":          "1",
 	"task_switching_count":    "50",
 	"start_browser_index":     "1",

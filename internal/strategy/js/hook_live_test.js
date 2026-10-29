@@ -34,7 +34,7 @@ function match(node, sel) {
       name = body
       op = 'has'
     }
-    const got = node.attrs[name]
+    const got = node.attrs && node.attrs[name]
     if (op === 'has' && (got == null || got === '')) return false
     if (op === '=' && String(got) !== value) return false
     if (op === '*=' && String(got || '').indexOf(value) < 0) return false
@@ -192,29 +192,19 @@ function addImage(src, href) {
 }
 addImage('https://p3-flow-imagex-sign.byteimg.com/tos/a.jpeg~tplv-a9rns2rl98-cthumb.png', 'https://p3-flow-imagex-sign.byteimg.com/tos/a.jpeg~tplv-a9rns2rl98-cgen_lwm.png')
 state = live()
-assert.strictEqual(state.done, false, '只有 1 张且没有完成信号，不能结束')
+assert.strictEqual(state.done, true, '实图在且没有生成指示，就是完成候选')
+assert.strictEqual(state.reason, 'images-ready')
 assert.strictEqual(state.images.length, 1)
 assert.ok(state.images[0].url.includes('cgen_lwm'), '应选用原图地址而不是缩略图: ' + state.images[0].url)
 
 addImage('https://cdn.example/new-2.png')
-state = live()
-assert.strictEqual(state.done, false, '2 张仍是半成品')
-assert.strictEqual(state.images.length, 2)
-
 addImage('https://cdn.example/new-3.png')
 addImage('https://cdn.example/new-4.png')
 state = live()
-assert.strictEqual(state.done, false, '4 张齐了但豆包还没给出完成信号，不能结束')
+assert.strictEqual(state.done, true, '没有重新生成按钮也要能结束')
+assert.strictEqual(state.bar, false)
 assert.strictEqual(state.images.length, 4)
 for (const url of urls(state)) assert.ok(!url.includes('/old-'), url)
-
-const again = el('button')
-again.innerText = '重新生成'
-current.appendChild(again)
-state = live()
-assert.strictEqual(state.done, true, '重新生成出现后才算这一轮完成')
-assert.strictEqual(state.images.length, 4)
-assert.deepStrictEqual(urls(state).filter((url) => url.includes('/old-')), [])
 
 const stop = el('button')
 stop.innerText = '停止'
@@ -231,28 +221,35 @@ const counted = reply([
 ], { count: 4 })
 body.appendChild(counted)
 state = live()
-assert.strictEqual(state.done, false, '声明 4 张时只有 2 张不能结束')
-counted.appendChild(imageCard('https://cdn.example/grid-3.png').card)
-counted.appendChild(imageCard('https://cdn.example/grid-4.png').card)
-state = live()
-assert.strictEqual(state.done, true, '格子达到声明的最终张数才结束')
-assert.strictEqual(state.images.length, 4)
+assert.strictEqual(state.done, true, '没有声明张数时，已有的实图就是候选')
 assert.deepStrictEqual(urls(state).filter((url) => url.includes('/old-') || url.includes('/new-')), [])
 
 context.__tulaiMarkTask()
-const reused = reply([{ src: 'https://cdn.example/kept.png' }], { action: '重新生成' })
-body.appendChild(reused)
+const shell = reply([])
+const shellCard = imageCard('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>')
+shell.appendChild(shellCard.card)
+body.appendChild(shell)
 context.__tulaiMarkTask()
-reused.appendChild(imageCard('https://cdn.example/appended.png').card)
+shellCard.img.src = 'https://p3-flow-imagex-sign.byteimg.com/tos/cat.png'
+shellCard.img.currentSrc = shellCard.img.src
 state = live()
-assert.strictEqual(state.done, false, '追加进旧回复的第一张不能靠旧的重新生成按钮结束')
-assert.deepStrictEqual(urls(state), ['https://cdn.example/appended.png'])
-const freshAction = el('button')
-freshAction.innerText = '复制'
-reused.appendChild(freshAction)
+assert.deepStrictEqual(urls(state), ['https://p3-flow-imagex-sign.byteimg.com/tos/cat.png'], '占位壳换成实图后不能被基准元素 id 丢掉')
+assert.strictEqual(state.done, true)
+
+const bare = el('div')
+bare.attrs['data-testid'] = 'receive_message'
+const bareCard = imageCard('https://cdn.example/bare-cat.png')
+bare.appendChild(bareCard.card)
+body.appendChild(bare)
 state = live()
-assert.strictEqual(state.done, true, '这一轮新出现的复制按钮才算完成')
-assert.deepStrictEqual(urls(state), ['https://cdn.example/appended.png'])
+assert.ok(urls(state).includes('https://cdn.example/bare-cat.png'), 'receive_message 里的图不能因为没有 author-role 被丢掉')
+
+const icon = el('button')
+icon.attrs['aria-label'] = ''
+bare.appendChild(icon)
+state = live()
+assert.strictEqual(state.done, true, '图标按钮没有重新生成文案也要结束')
+assert.strictEqual(state.bar, false)
 
 const button = el('button')
 button.innerText = '新对话'
@@ -262,20 +259,29 @@ assert.strictEqual(button.clicked, 1, '停在旧对话时才点新对话')
 assert.deepStrictEqual(assigned, [])
 
 location.href = 'https://www.doubao.com/chat/'
-assert.strictEqual(context.__tulaiFreshChat(), 'ready')
-assert.strictEqual(button.clicked, 1, '已经是新对话地址就不要再点，免得换掉输入框')
+assert.strictEqual(context.__tulaiFreshChat(), 'button', '地址是 /chat/ 但旧回复还在，仍要点新对话')
+assert.strictEqual(button.clicked, 2)
 
+body.childNodes = []
 const box = el('textarea')
+box.value = '雪山下的小木屋，油画风格'
 body.appendChild(box)
+assert.strictEqual(context.__tulaiChatReady().ready, false, '输入框里还有草稿不能打字')
+assert.strictEqual(context.__tulaiFreshChat(), 'reload', '草稿还在且没有新对话按钮时要重新打开空白页')
+
+box.value = ''
 let ready = context.__tulaiChatReady()
 assert.strictEqual(ready.ready, true)
 assert.strictEqual(ready.id, '')
+assert.strictEqual(ready.chars, 0)
 const node = ready.node
 ready = context.__tulaiChatReady()
 assert.strictEqual(ready.node, node, '输入框没被换掉时节点要稳定')
+assert.strictEqual(context.__tulaiFreshChat(), 'ready', '空白新对话不要再点')
 
 location.href = 'https://www.doubao.com/chat/still-old'
 ready = context.__tulaiChatReady()
+assert.strictEqual(ready.ready, false)
 assert.strictEqual(ready.id, 'still-old', '旧对话 id 还在就不能当成新对话已经准备好')
 
 console.log('hook live images ok')

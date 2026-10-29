@@ -297,17 +297,41 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	return nil
 }
 
-// WaitForResult 等这一轮回复自己的完成信号。
-// 豆包会先吐出 1 张、再补到 4 张。图片地址连续几百毫秒不变只是流式中间态，不能当成完成。
-// 完成要同时满足：停止/生成指示已经消失，并且出现重新生成或复制，或者格子达到页面声明的最终张数。
-// 到总超时之前不返回半成品。
+const imageStableFor = 3 * time.Second
+
+type liveShot struct {
+	Busy    bool     `json:"busy"`
+	Done    bool     `json:"done"`
+	Expect  int      `json:"expect"`
+	Bar     bool     `json:"bar"`
+	Replies int      `json:"replies"`
+	Reason  string   `json:"reason"`
+	Images  []Result `json:"images"`
+}
+
+func liveKey(images []Result) string {
+	var b strings.Builder
+	for _, image := range images {
+		b.WriteString(image.URL)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// WaitForResult 等这一轮回复里的实图停住。
+// 完成：标记之后的实图还在，生成指示没有了，同一组地址稳住约 3 秒。
+// 重新生成/复制和声明张数在真实豆包页面上经常没有，不能拿它们当门槛。
+// 到点还有实图就交回去保存；一张都没有就明确失败。
 func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
 	if s.IsEgo() {
 		return egoWaitForResult(s, timeout)
 	}
 	deadline := time.Now().Add(timeout)
 	poll := 300 * time.Millisecond
-	for time.Now().Before(deadline) {
+	var since time.Time
+	var key string
+	var held []Result
+	for {
 		if err := s.Ctx().Err(); err != nil {
 			return nil, err
 		}
@@ -315,16 +339,34 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 			return nil, err
 		}
 		_, _ = s.Evaluate(`window.__tulaiDismissPopups ? String(__tulaiDismissPopups()) : '0'`)
-		out, err := s.Evaluate(`JSON.stringify(window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false,done:false})`)
-		if err == nil {
-			var live struct {
-				Busy   bool     `json:"busy"`
-				Done   bool     `json:"done"`
-				Images []Result `json:"images"`
+		out, err := s.Evaluate(`JSON.stringify(window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false,done:false,reason:'missing'})`)
+		var live liveShot
+		if err == nil && cdp.ParseJSValue(out, &live) == nil {
+			if len(live.Images) > 0 {
+				held = live.Images
 			}
-			if cdp.ParseJSValue(out, &live) == nil && live.Done && len(live.Images) > 0 {
-				return live.Images, nil
+			stable := time.Duration(0)
+			urls := liveKey(live.Images)
+			if live.Done && len(live.Images) > 0 {
+				if urls != key {
+					key = urls
+					since = time.Now()
+				}
+				stable = time.Since(since)
+				if stable >= imageStableFor {
+					return live.Images, nil
+				}
+			} else {
+				since = time.Time{}
+				key = ""
 			}
+			logging.Log.Debugf("检测 images=%d busy=%t bar=%t expect=%d replies=%d stable_ms=%d reason=%s",
+				len(live.Images), live.Busy, live.Bar, live.Expect, live.Replies, stable.Milliseconds(), live.Reason)
+		} else if err != nil {
+			logging.Log.Debugf("检测失败 %s", err.Error())
+		}
+		if !time.Now().Before(deadline) {
+			break
 		}
 		select {
 		case <-s.Ctx().Done():
@@ -332,7 +374,11 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 		case <-time.After(min(poll, time.Until(deadline))):
 		}
 	}
-	return nil, fmt.Errorf("等待生成结果超时")
+	if len(held) > 0 && timeout >= imageStableFor {
+		logging.Log.Info("出图超时，先保存已有的 %d 张", len(held))
+		return held, nil
+	}
+	return nil, fmt.Errorf("出图超时，没有可保存的图片")
 }
 
 type chatReady struct {
@@ -377,7 +423,7 @@ func FreshChat(s *cdp.Session) error {
 				stable = 1
 				last = key
 			}
-			if stable >= 2 {
+			if stable >= 5 {
 				return nil
 			}
 		} else {

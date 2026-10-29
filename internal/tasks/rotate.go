@@ -122,7 +122,7 @@ func (e *Engine) rotateUncertain(task *Task, now time.Time) bool {
 		task.Attempts--
 	}
 	task.Status = StatusPending
-	task.Error = fmt.Sprintf("已换到「%s」", name)
+	task.Error = fmt.Sprintf("发送状态未确认，等待「%s」空闲后再试", name)
 	return true
 }
 
