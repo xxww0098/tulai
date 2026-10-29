@@ -99,6 +99,24 @@ func TestGenerateTimeoutDoesNotReload(t *testing.T) {
 	}
 }
 
+func TestQianwenRetryWaitsForGeneration(t *testing.T) {
+	e := NewEngine(nil, nil, nil, "")
+	e.opts.WaitResultSeconds = 30
+	if got := e.resultWaitFor(&Task{Platform: "千问", Attempts: 2}); got != 90*time.Second {
+		t.Fatalf("retry = %s", got)
+	}
+	if got := e.resultWaitFor(&Task{Platform: "千问", Attempts: 1}); got != 30*time.Second {
+		t.Fatalf("first = %s", got)
+	}
+	if got := e.resultWaitFor(&Task{Platform: "豆包", Attempts: 2}); got != 30*time.Second {
+		t.Fatalf("doubao = %s", got)
+	}
+	e.opts.WaitResultSeconds = 240
+	if got := e.resultWaitFor(&Task{Platform: "千问", Attempts: 2}); got != 240*time.Second {
+		t.Fatalf("longer config = %s", got)
+	}
+}
+
 func TestResultWaitHardCap(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts.WaitResultSeconds = 1800

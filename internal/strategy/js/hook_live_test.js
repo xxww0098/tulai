@@ -352,5 +352,38 @@ location.href = 'https://www.doubao.com/chat/still-old'
 ready = context.__tulaiChatReady()
 assert.strictEqual(ready.ready, false)
 assert.strictEqual(ready.id, 'still-old', '旧对话 id 还在就不能当成新对话已经准备好')
+assert.ok(String(ready.why).includes('url'), '没准备好要写明是地址还挂着旧对话: ' + ready.why)
+
+context.__tulaiPageHost = 'www.qianwen.com'
+location.hostname = 'www.qianwen.com'
+location.href = 'https://www.qianwen.com/chat/5e6b3a5d14dd4f25996b2abb4203c942'
+const beforeAssign = assigned.length
+const qwenShell = context.__tulaiChatReady()
+assert.strictEqual(qwenShell.ready, true, '千问地址挂着对话但没有问答卡，就是空白首页: ' + JSON.stringify(qwenShell))
+assert.strictEqual(qwenShell.why, '')
+assert.strictEqual(qwenShell.cards, 0)
+assert.strictEqual(context.__tulaiFreshChat(), 'ready')
+assert.strictEqual(assigned.length, beforeAssign, '空白首页不能再导航')
+
+const pair = el('div')
+pair.attrs.class = 'chat-answers-card-wrap'
+pair.setAttribute('data-chat-answers-wrap', '9d6za8GJXYrgCGrzLZb49-Jt_cRKc9nn')
+body.appendChild(pair)
+const blocked = context.__tulaiChatReady()
+assert.strictEqual(blocked.ready, false)
+assert.ok(String(blocked.why).includes('cards'), blocked.why)
+assert.strictEqual(context.__tulaiFreshChat(), 'url')
+assert.strictEqual(assigned[assigned.length - 1], 'https://www.qianwen.com/')
+
+location.href = 'https://www.qianwen.com/chat/78241e13b27e48a2868f7133437ca28f'
+context.__tulaiQwenURL = '78241e13b27e48a2868f7133437ca28f'
+context.__tulaiQwenChat = ''
+let shot = context.__tulaiLiveImages()
+assert.notStrictEqual(shot.reason, 'off-chat', '还在这条对话上就不能当成离开了')
+context.__tulaiQwenURL = 'ffffffffffffffffffffffffffffffff'
+shot = context.__tulaiLiveImages()
+assert.strictEqual(shot.reason, 'off-chat')
+assert.strictEqual(shot.replies, 0)
+assert.strictEqual(shot.images.length, 0)
 
 console.log('hook live images ok')

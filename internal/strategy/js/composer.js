@@ -403,7 +403,10 @@
     var entered = false;
     deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
-      if (window.tulaiSendAccepted(beforeHref, promptText, beforeMatches)) return JSON.stringify({ sent: true });
+      if (window.tulaiSendAccepted(beforeHref, promptText, beforeMatches)) {
+        var note = window.__tulaiQwenNote ? __tulaiQwenNote() : {};
+        return JSON.stringify({ sent: true, chat: (note && note.url) || '', wrap: (note && note.wrap) || '' });
+      }
       if (!entered && Date.now() >= enterAt) {
         entered = true;
         attempted = true;
@@ -419,7 +422,8 @@
     if (!attempted && !button) return JSON.stringify({ attempted: false, error: '未找到发送按钮', diagnostic: sendDiagnostic(comp) });
     var latest = findComposer();
     var remaining = window.tulaiReadComposer(latest);
-    return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后没有出现用户消息，地址也没有变成对话', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.tulaiComposerDiagnostic(latest)) });
+    var missed = window.__tulaiQwenNote ? __tulaiQwenNote() : {};
+    return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后没有出现用户消息，地址也没有变成对话', chat: (missed && missed.url) || '', wrap: (missed && missed.wrap) || '', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.tulaiComposerDiagnostic(latest)) });
   };
 
   // 文本由可信 InsertText 全文替换，只清理输入区附件。

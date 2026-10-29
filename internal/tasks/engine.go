@@ -544,7 +544,15 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 }
 
 func (e *Engine) submitTask(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session) error {
-	if t == nil || t.submitted {
+	if t == nil {
+		return nil
+	}
+	if t.sentURL != "" {
+		strategy.FocusQwenChat(sess, t.sentURL, t.sentWrap)
+		t.submitted = true
+		return nil
+	}
+	if t.submitted {
 		return nil
 	}
 	if ctx == nil {
@@ -597,14 +605,37 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	}
 	// 发送提示词
 	if err := strat.SendPrompt(sess, t.Prompt); err != nil {
+		if adoptSentChat(t, sess) {
+			t.submitted = true
+			return nil
+		}
 		return fmt.Errorf("发送: %w", err)
 	}
+	adoptSentChat(t, sess)
 	t.submitted = true
 	e.traceTask(t, "submit", fmt.Sprintf("#%d %s 已提交", t.Index, e.accountName(t.BrowserID)), 0, 0, nil)
 	return nil
 }
 
+func adoptSentChat(t *Task, sess *cdp.Session) bool {
+	if t == nil || sess == nil {
+		return false
+	}
+	urlID, wrapID := sess.BoundChat()
+	if urlID == "" {
+		return false
+	}
+	t.sentURL = urlID
+	if wrapID != "" {
+		t.sentWrap = wrapID
+	}
+	return true
+}
+
 const hardResultWait = 4 * time.Minute
+
+// qianwenRetryWait 盖住千问实际出图的 40–90 秒。重试是回到原对话再读，不是再等一个更短的时限。
+const qianwenRetryWait = 90 * time.Second
 
 // resultWait 是这一单等图的上限。配置更长时收到 4 分钟，到点保存已有的图或明确失败。
 func (e *Engine) resultWait() time.Duration {
@@ -618,8 +649,16 @@ func (e *Engine) resultWait() time.Duration {
 	return d
 }
 
+func (e *Engine) resultWaitFor(t *Task) time.Duration {
+	d := e.resultWait()
+	if t != nil && t.Platform == "千问" && t.Attempts > 1 && d < qianwenRetryWait {
+		return qianwenRetryWait
+	}
+	return d
+}
+
 func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session) error {
-	budget := e.resultWait()
+	budget := e.resultWaitFor(t)
 	var used time.Duration
 	lastProgress := time.Now()
 	for used < budget {

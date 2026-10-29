@@ -166,6 +166,7 @@ func (e *Engine) softenModeration(t *Task, err error) (again, stop bool) {
 	t.Rewritten = true
 	t.soften++
 	t.submitted = false
+	t.sentURL, t.sentWrap = "", ""
 	t.Error = ""
 	if t.Attempts > 0 {
 		t.Attempts--

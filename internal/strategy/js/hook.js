@@ -425,8 +425,42 @@
     if (/^https?:/i.test(prop)) return prop;
     return String((img && img.getAttribute && img.getAttribute('src')) || '').trim();
   }
+  function qwenBound() {
+    return {
+      url: String(window.__tulaiQwenURL || ''),
+      wrap: String(window.__tulaiQwenChat || '')
+    };
+  }
+  function qwenPair(id) {
+    var safe = String(id || '').replace(/["\\]/g, '');
+    return '.chat-question-card-wrap[data-chat-question-wrap="' + safe + '"],.chat-answers-card-wrap[data-chat-answers-wrap="' + safe + '"]';
+  }
+  // 发送时记下的对话还在当前文档里。地址对不上，或地址对了但首页壳把问答卡卸掉了，都不是。
+  function qwenOnChat() {
+    var bound = qwenBound();
+    if (!bound.url && !bound.wrap) return true;
+    var here = window.__tulaiConversationKey(location.href);
+    if (bound.url && here !== bound.url) return false;
+    if (bound.wrap) return !!document.querySelector(qwenPair(bound.wrap));
+    return document.querySelectorAll('.chat-question-card-wrap,.chat-answers-card-wrap').length > 0;
+  }
+  window.__tulaiQwenOnChat = qwenOnChat;
+  window.__tulaiQwenNote = function () {
+    var url = window.__tulaiConversationKey(location.href);
+    var nodes = document.querySelectorAll('.chat-question-card-wrap[data-chat-question-wrap]');
+    var wrap = nodes.length ? String(nodes[nodes.length - 1].getAttribute('data-chat-question-wrap') || '') : '';
+    if (!wrap) {
+      var answers = document.querySelectorAll('.chat-answers-card-wrap[data-chat-answers-wrap]');
+      wrap = answers.length ? String(answers[answers.length - 1].getAttribute('data-chat-answers-wrap') || '') : '';
+    }
+    return { url: url || '', wrap: wrap || '' };
+  };
   function qwenReplies() {
-    var nodes = Array.prototype.slice.call(document.querySelectorAll('.chat-answers-card-wrap[data-chat-answers-wrap]'));
+    var wrap = qwenBound().wrap;
+    var sel = '.chat-answers-card-wrap[data-chat-answers-wrap]';
+    if (wrap) sel = '.chat-answers-card-wrap[data-chat-answers-wrap="' + wrap.replace(/["\\]/g, '') + '"]';
+    var nodes = Array.prototype.slice.call(document.querySelectorAll(sel));
+    if (wrap) return nodes;
     var floor = window.__tulaiQwenReplyBaseline || 0;
     if (floor < 0) floor = 0;
     if (floor > nodes.length) floor = nodes.length;
@@ -435,6 +469,9 @@
   // 千问没有停止按钮。生成中是 receiving 卡或 card_status=processing。
   // 原图是 img[data-image-resource-id] 的 src，张数要对上 image_num。
   function qwenLiveImages() {
+    if (!qwenOnChat()) {
+      return { busy: false, done: false, expect: 0, bar: false, replies: 0, reason: 'off-chat', here: window.__tulaiConversationKey(location.href), images: [] };
+    }
     var replies = qwenReplies();
     var images = [];
     var seen = {};
@@ -472,7 +509,7 @@
     else if (!images.length) reason = 'no-new-image';
     else if (!done) reason = 'unfinished';
     else reason = 'images-ready';
-    return { busy: busy, done: done, expect: expect, bar: false, replies: replies.length, reason: reason, images: images };
+    return { busy: busy, done: done, expect: expect, bar: false, replies: replies.length, reason: reason, here: window.__tulaiConversationKey(location.href), images: images };
   }
   function gridOf(img) {
     var card = img.closest && img.closest('[id^="card_card_ai_generate_image_"]');
@@ -601,23 +638,39 @@
     }
     return null;
   }
-  // 能打字的新对话：文档完成、地址没有对话 id、没有上一轮回复、输入框是空的。
-  // 只看见一个 textarea 不够。上一轮没发出去的草稿还在时，点发送不会进对话。
+  // 能打字的新对话：文档完成、没有上一轮问答、输入框是空的。
+  // 千问首页壳会把地址留在 /chat/<id> 上，正文仍是「你好，我是千问」。没有问答卡就能打字。
+  // 豆包地址里还有旧 id 时不能打字。只看见一个 textarea 不够，草稿还在时点发送不会进对话。
   window.__tulaiChatReady = function () {
     var href = String(location.href || '');
     var id = window.__tulaiConversationKey(href);
     var comp = composerNode();
     var messages = assistantNodes().length;
+    var cards = document.querySelectorAll('.chat-question-card-wrap,.chat-answers-card-wrap').length;
     var chars = composerText(comp).length;
-    var ready = !!(comp && document.readyState === 'complete' && !id && messages === 0 && chars === 0);
+    var qwen = qwenPage();
+    var why = [];
+    if (!comp) why.push('no-composer');
+    if (document.readyState !== 'complete') why.push('loading');
+    if (chars) why.push('draft');
+    if (qwen) {
+      if (cards) why.push('cards');
+    } else {
+      if (messages) why.push('replies');
+      if (id) why.push('url');
+    }
+    var ready = why.length === 0;
     if (comp && !comp.__tulaiNode) comp.__tulaiNode = 'n' + Math.random().toString(36).slice(2);
-    return { ready: ready, href: href, id: id, node: comp ? comp.__tulaiNode : '', messages: messages, chars: chars };
+    return { ready: ready, href: href, id: id, node: comp ? comp.__tulaiNode : '', messages: messages, chars: chars, cards: cards, why: why.join(',') };
   };
   window.__tulaiFreshChat = function () {
     var host = pageHost();
     var id = window.__tulaiConversationKey(location.href);
-    var dirty = assistantNodes().length > 0 || composerText(composerNode()).length > 0;
-    // 空白的 /chat/ 不要再点。有旧回复或草稿时必须清掉，否则发送点在死输入框上。
+    var qwen = qwenPage();
+    var cards = document.querySelectorAll('.chat-question-card-wrap,.chat-answers-card-wrap').length;
+    var dirty = (qwen ? cards : assistantNodes().length) > 0 || composerText(composerNode()).length > 0;
+    // 空白首页不要再导航。千问地址还挂着旧 /chat/<id>、页面却没有问答卡时也是空白首页。
+    if (qwen && !dirty && composerNode()) return 'ready';
     if (!id && !dirty) return 'ready';
     // 点「新对话」会再开一个标签，Chrome 还把窗口拉到前面。同一张标签导航。
     var url = /(qianwen|tongyi|qwen)/i.test(host) ? 'https://www.qianwen.com/' : 'https://www.doubao.com/chat/';
