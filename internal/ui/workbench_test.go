@@ -71,6 +71,41 @@ func TestPlanWorkbenchPicksLoggedInPlatforms(t *testing.T) {
 	}
 }
 
+func TestPlanWorkbenchStaysOnTheOpenTab(t *testing.T) {
+	now := time.Now()
+	accounts := []AccountSnap{
+		{Platform: "豆包", LoggedIn: true, Health: store.HealthReady},
+		{Platform: "千问", LoggedIn: true, Health: store.HealthReady},
+	}
+	got := PlanWorkbench(WorkbenchInput{
+		HasPrompts: true, AutoPlatform: true, OnlyPlatform: "千问", Accounts: accounts, Now: now,
+	})
+	if got.Action != StartGenerate || len(got.Platforms) != 1 || got.Platforms[0] != "千问" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestPlatformCardsDoNotMixAccounts(t *testing.T) {
+	a := &App{
+		stageTab: 1,
+		browserRows: []store.Browser{
+			{ID: 1, Name: "豆包2", Platform: "豆包"},
+			{ID: 4, Name: "浏览器4", Platform: "千问"},
+		},
+		queue: []tasks.Task{
+			{Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusRunning, Images: []string{"a.png"}, Prompt: "同一句"},
+			{Index: 2, Platform: "千问", BrowserID: 4, Status: tasks.StatusRunning, Images: []string{"a.png"}, Prompt: "同一句"},
+		},
+	}
+	cards := a.platformCards()
+	if len(cards) != 1 || len(cards[0].Sites) != 1 || cards[0].Sites[0].Platform != "千问" || cards[0].Sites[0].BrowserID != 4 {
+		t.Fatalf("%+v", cards)
+	}
+	if line := a.siteLine(cards[0]); line != "千问 · 浏览器4" {
+		t.Fatalf("site line = %q", line)
+	}
+}
+
 func TestPlanWorkbenchStartButton(t *testing.T) {
 	now := time.Now()
 	ready := []AccountSnap{{Platform: "豆包", LoggedIn: true, Health: store.HealthReady}}
@@ -152,8 +187,12 @@ func TestConcurrencyDefaultsToAuto(t *testing.T) {
 	}
 	st.Set(extbridge.SettingBrowserBackend, "extension")
 	a.platformAuto = true
+	if slots := a.parallelSlots(); slots != 1 {
+		t.Fatalf("doubao tab only counts doubao: %d", slots)
+	}
+	a.stageTab = 1
 	if slots := a.parallelSlots(); slots != 2 {
-		t.Fatalf("same extension profile should count once: %d", slots)
+		t.Fatalf("qianwen tab counts its own accounts: %d", slots)
 	}
 	a.concurrencyAuto = false
 	a.concurrency = 4

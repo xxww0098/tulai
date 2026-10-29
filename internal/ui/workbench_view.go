@@ -254,7 +254,7 @@ func (a *App) advancedFields(c *ui.Context) {
 		ui.Field(c, "发送策略", func() {
 			motionSelect(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
 		})
-		ui.Text(c, "豆包、千问各同时出 2 张，两边可以一起跑。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "在豆包或千问页点开始，只跑这一边的账号，各同时出 2 张。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "失败重试", func() {
 			ui.NumberInput(c, &a.retryCount, 0, 20, 1)
 		})
@@ -364,6 +364,9 @@ func (a *App) carryingPlatforms(auto bool) []string {
 	in.HasImages = true
 	in.AutoPlatform = auto
 	in.Running = false
+	if a != nil {
+		in.OnlyPlatform = a.stagePlatform()
+	}
 	return PlanWorkbench(in).Platforms
 }
 
@@ -382,7 +385,11 @@ func (a *App) workbenchInput() WorkbenchInput {
 }
 
 func (a *App) workbenchPlan() WorkbenchPlan {
-	return PlanWorkbench(a.workbenchInput())
+	in := a.workbenchInput()
+	if a != nil {
+		in.OnlyPlatform = a.stagePlatform()
+	}
+	return PlanWorkbench(in)
 }
 
 func (a *App) taskConcurrency() int {
@@ -410,10 +417,17 @@ func (a *App) shownDailyCap() int {
 func (a *App) parallelSlots() int {
 	now := time.Now()
 	extension := a.extensionTasks()
+	stage := ""
+	if a != nil {
+		stage = a.stagePlatform()
+	}
 	wantDoubao := a.platformAuto || a.platDoubao
 	wantQianwen := a.platformAuto || a.platQianwen
 	var rows []store.Browser
 	for _, b := range a.configuredBrowsers() {
+		if stage != "" && b.Platform != stage {
+			continue
+		}
 		switch b.Platform {
 		case "豆包":
 			if !wantDoubao {

@@ -124,7 +124,7 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 980)
 	tt.Advance(300 * time.Millisecond)
-	for _, label := range []string{"没有可用账号：豆包需要重新登录，千问今日已满", "暂无可用账号", "去重登"} {
+	for _, label := range []string{"没有可用账号：豆包需要重新登录", "暂无可用账号", "去重登"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
@@ -137,6 +137,9 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	}
 	if a.running || a.wizardOn {
 		t.Fatal("disabled start still ran")
+	}
+	if !tt.HasText("还没有可用账号。先去设置登录，再开始出图。") {
+		t.Fatal("logged-out tab should still say to log in")
 	}
 	left, okL := tt.Find("车道豆包没登录")
 	if !okL {

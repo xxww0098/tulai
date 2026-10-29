@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -81,15 +82,24 @@ func Run() string {
 
 // Event 写一条带齐字段的日志，并把中文句子放进界面上的运行日志。
 func Event(line Line) {
+	Emit(Info, line)
+}
+
+// Emit 和 Event 一样带上平台和账号，界面上的颜色跟 level 走。
+func Emit(level Level, line Line) {
 	if line.RunID == "" {
 		line.RunID = Run()
 	}
 	if line.Stage == "" {
 		line.Stage = "log"
 	}
-	writeSlog(slog.LevelInfo, line)
+	slogLevel := slog.LevelInfo
+	if level == Debug {
+		slogLevel = slog.LevelDebug
+	}
+	writeSlog(slogLevel, line)
 	if line.Msg != "" {
-		Log.addRaw(Info, line.Msg)
+		Log.addRaw(level, line.Msg)
 	}
 }
 
@@ -136,13 +146,73 @@ func (l *Logger) addRaw(level Level, msg string) {
 	}
 }
 
+type boundAccount struct {
+	Platform string
+	Account  string
+	Port     int
+	TaskID   int
+}
+
+var bounds sync.Map
+
+func goid() uint64 {
+	var buf [48]byte
+	n := runtime.Stack(buf[:], false)
+	var id uint64
+	for _, c := range buf[:n] {
+		if c < '0' || c > '9' {
+			if id > 0 {
+				break
+			}
+			continue
+		}
+		id = id*10 + uint64(c-'0')
+	}
+	return id
+}
+
+// Bind 让当前 goroutine 之后的日志带上平台和账号。返回的函数结束这段绑定。
+func Bind(platform, account string, port, taskID int) func() {
+	id := goid()
+	prev, had := bounds.Load(id)
+	bounds.Store(id, boundAccount{Platform: platform, Account: account, Port: port, TaskID: taskID})
+	return func() {
+		if had {
+			bounds.Store(id, prev)
+			return
+		}
+		bounds.Delete(id)
+	}
+}
+
+func boundLine(line Line) Line {
+	v, ok := bounds.Load(goid())
+	if !ok {
+		return line
+	}
+	b := v.(boundAccount)
+	if line.Platform == "" {
+		line.Platform = b.Platform
+	}
+	if line.Account == "" {
+		line.Account = b.Account
+	}
+	if line.Port == 0 {
+		line.Port = b.Port
+	}
+	if line.TaskID == 0 {
+		line.TaskID = b.TaskID
+	}
+	return line
+}
+
 func (l *Logger) add(level Level, msg string) {
 	l.addRaw(level, msg)
 	slogLevel := slog.LevelInfo
 	if level == Debug {
 		slogLevel = slog.LevelDebug
 	}
-	writeSlog(slogLevel, Line{Stage: "log", Msg: msg})
+	writeSlog(slogLevel, boundLine(Line{Stage: "log", Msg: msg}))
 }
 
 type rotator struct {

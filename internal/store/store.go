@@ -142,11 +142,102 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := rewriteLegacyNames(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	s := &Store{db: db, path: path}
 	for k, v := range defaults {
 		s.db.Exec(`INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)`, k, v)
 	}
 	return s, nil
+}
+
+// rewriteLegacyNames 把旧的默认名「浏览器3」改成「千问1」。只改这一次数据，之后不再认旧名字。
+func rewriteLegacyNames(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, platform, name FROM browsers ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id       int64
+		platform string
+		name     string
+	}
+	var all []row
+	for rows.Next() {
+		var item row
+		if err := rows.Scan(&item.id, &item.platform, &item.name); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var used []string
+	var legacy []row
+	for _, item := range all {
+		if legacyDefaultName(item.name) {
+			legacy = append(legacy, item)
+			continue
+		}
+		used = append(used, item.name)
+	}
+	for _, item := range legacy {
+		name := nextPlatformName(item.platform, used)
+		if _, err := db.Exec(`UPDATE browsers SET name=? WHERE id=?`, name, item.id); err != nil {
+			return err
+		}
+		used = append(used, name)
+	}
+	return nil
+}
+
+func legacyDefaultName(name string) bool {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(name), "浏览器")
+	if !ok || rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func nextPlatformName(platform string, used []string) string {
+	prefix := strings.TrimSpace(platform)
+	if prefix == "" {
+		prefix = "账号"
+	}
+	taken := map[int]bool{}
+	for _, name := range used {
+		name = strings.TrimSpace(name)
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		n := 0
+		for _, r := range name[len(prefix):] {
+			if r < '0' || r > '9' {
+				n = 0
+				break
+			}
+			n = n*10 + int(r-'0')
+		}
+		if n > 0 {
+			taken[n] = true
+		}
+	}
+	for i := 1; i < 10000; i++ {
+		if !taken[i] {
+			return prefix + strconv.Itoa(i)
+		}
+	}
+	return prefix
 }
 
 // Close 关闭数据库。

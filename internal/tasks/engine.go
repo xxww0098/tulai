@@ -462,6 +462,7 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	if err != nil {
 		return err
 	}
+	sess.SetLogAccount(t.Platform, e.accountName(t.BrowserID), e.accountPort(t.BrowserID), t.Index)
 	sess.KeepOffscreen()
 	work, workCancel := context.WithCancel(ctx)
 	defer workCancel()
