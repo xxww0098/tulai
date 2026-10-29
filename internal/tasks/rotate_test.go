@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,11 +19,14 @@ func TestQuotaSwitchesToOtherAccount(t *testing.T) {
 	st := openRotateStore(t)
 	first, second := addNamed(t, st, "豆包", "甲"), addNamed(t, st, "豆包", "乙")
 	e := NewEngine(st, nil, nil, "")
+	var mu sync.Mutex
 	var used []int64
 	err := e.run(context.Background(), Options{
 		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 1,
 	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		mu.Lock()
 		used = append(used, task.BrowserID)
+		mu.Unlock()
 		if task.BrowserID == first.ID {
 			return strategy.ErrAccountQuota
 		}
