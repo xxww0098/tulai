@@ -44,7 +44,11 @@ func (a *App) focusAccount(ctx context.Context, b store.Browser) error {
 // 页面还停在 about:blank 或欢迎页时导航过去。已经在站点上则只把窗口拉到前面。
 func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	if a != nil && a.accountOpen != nil {
-		return a.accountOpen(b)
+		err := a.accountOpen(b)
+		if err == nil {
+			a.watchLogin(b, loginEndpoint(b))
+		}
+		return err
 	}
 	if a == nil || b.ExtAccount != "" || a.manager == nil {
 		return nil
@@ -52,6 +56,7 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	page := accountHomeURL(b)
 	ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, page, false)
 	if errors.Is(err, browser.ErrDebugPort) {
+		a.watchLogin(b, loginEndpoint(b))
 		return nil
 	}
 	if err != nil {
@@ -59,16 +64,19 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 		return err
 	}
 	if page == "" || ws == "" {
+		a.watchLogin(b, ws)
 		return nil
 	}
 	if navErr := cdp.OpenURLContext(ctx, ws, page); navErr != nil {
 		if errors.Is(navErr, cdp.ErrDebugUnavailable) {
 			logging.Log.Warning("%s 调试端口还没连上，已打开登录页，请在浏览器里扫码", accountLabel(b))
+			a.watchLogin(b, ws)
 			return nil
 		}
 		logging.Log.Errorf("%s 打开登录页失败：%v", accountLabel(b), navErr)
 		return navErr
 	}
+	a.watchLogin(b, ws)
 	return nil
 }
 

@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// loginProbeJS 跟页面桥的 loginWall、composer 的 hasComposer 用同一组信号：
-// 看得见输入框，并且没有扫码登录层，才算已登录。
+// loginProbeJS 跟页面桥的 loginWall、composer 的 hasComposer 用同一组信号。
+// 页面上还有「登录」按钮或扫码层就是没登录。豆包未登录时聊天框也在，
+// 但二维码要等点开右上角登录才出现，不能因为有输入框就当成已登录。
 // 滑块、安全验证或 punish 页是 challenge，不算退出登录。
 // 地区限制页是 region，不算退出登录。连接断开时不关用户的标签页。
 const loginProbeJS = `(function () {
@@ -64,10 +65,10 @@ const loginProbeJS = `(function () {
   }
   if (challenge()) return {state:'challenge'};
   var hasComposer = composer();
-  if (hasComposer && !loginDialog()) return {state:'in'};
   if (loginDialog() || loginButton()) return {state:'out'};
+  if (hasComposer) return {state:'in'};
   var body = String((document.body && document.body.innerText) || '').slice(0, 800);
-  if (!hasComposer && /扫码登录|手机号登录|短信登录/.test(body)) return {state:'out'};
+  if (/扫码登录|手机号登录|短信登录/.test(body)) return {state:'out'};
   return {state:'unknown'};
 })()`
 

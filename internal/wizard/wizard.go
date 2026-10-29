@@ -15,7 +15,7 @@ const KeyComplete = "wizard_complete"
 // CompleteYes 是向导已完成。
 const CompleteYes = "1"
 
-// 登录探测只认这三个结果。in 表示页面上已经有输入框，且没有扫码登录层。
+// 登录探测结果。in 表示已经登录。页面上还有「登录」或扫码层时是 out，即使聊天框还在。
 const (
 	ProbeIn      = "in"
 	ProbeOut     = "out"

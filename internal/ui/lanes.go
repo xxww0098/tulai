@@ -464,13 +464,7 @@ func shotBadge(platform, name string) string {
 }
 
 func (a *App) openLane(id int64) {
-	row := store.Browser{ID: id}
-	for _, b := range a.configuredBrowsers() {
-		if b.ID == id {
-			row = b
-			break
-		}
-	}
+	row := a.showBrowserAccount(id)
 	logging.Log.Info("请在「%s」的网页里处理", accountLabel(row))
 	go func(b store.Browser) {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
