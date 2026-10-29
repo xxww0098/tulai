@@ -475,7 +475,9 @@ func HumanReason(raw string) string {
 	switch {
 	case strings.Contains(s, "已停止"):
 		return "已停止"
-	case strings.Contains(s, "等待生成结果超时") || strings.Contains(s, "出图超时") || strings.Contains(s, "交还浏览器超时"):
+	case strings.Contains(s, "出图超时"):
+		return "出图超时"
+	case strings.Contains(s, "等待生成结果超时") || strings.Contains(s, "交还浏览器超时"):
 		return "等太久了，没有拿到新图片"
 	case strings.Contains(s, "没有配置浏览器"):
 		return "这个平台还没有可用账号"

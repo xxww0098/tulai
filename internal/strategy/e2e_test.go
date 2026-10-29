@@ -40,18 +40,26 @@ func (mockChat) HomeURL() string  { return "" } // 由测试注入 URL
 // launchChrome 启动无头 Chrome，返回关闭函数。
 func launchChrome(t *testing.T) (wsURL string, shutdown func()) {
 	t.Helper()
+	return launchChromeArgs(t, nil)
+}
+
+func launchChromeArgs(t *testing.T, extra []string) (wsURL string, shutdown func()) {
+	t.Helper()
 	chromePath, err := findChrome()
 	if err != nil {
 		t.Skip("本机无 Chrome，跳过 E2E")
 	}
 	port := freePort(t)
 	dir := t.TempDir()
-	cmd := exec.Command(chromePath,
+	args := []string{
 		fmt.Sprintf("--remote-debugging-port=%d", port),
-		"--user-data-dir="+dir,
+		"--user-data-dir=" + dir,
 		"--headless=new", "--disable-gpu", "--no-first-run",
 		"--remote-allow-origins=*", "--window-size=1280,900",
-		"about:blank")
+	}
+	args = append(args, extra...)
+	args = append(args, "about:blank")
+	cmd := exec.Command(chromePath, args...)
 	if err := cmd.Start(); err != nil {
 		t.Skipf("Chrome 启动失败: %v", err)
 	}

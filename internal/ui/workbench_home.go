@@ -348,19 +348,12 @@ func (a *App) runLog(c *ui.Context) {
 			ui.Text(c, "运行日志").FontSize(tok.body).Bold().Grow(1)
 			ui.Button(c, "打开日志文件").OnClick(func() { a.openLogFile() })
 		})
-		notes := logging.Log.Entries()
+		notes := logging.VisibleTail(logging.Log.Entries(), 6)
 		if len(notes) == 0 {
 			ui.Text(c, "每个任务的开始、提交和结束会写在这里").FontSize(tok.caption).TextColor(tok.muted)
 			return
 		}
-		start := 0
-		if len(notes) > 6 {
-			start = len(notes) - 6
-		}
-		for _, line := range notes[start:] {
-			if line.Level == logging.Debug {
-				continue
-			}
+		for _, line := range notes {
 			text := line.Text
 			ui.Text(c, text).FontSize(tok.caption).SingleLine().Tooltip(text)
 		}

@@ -348,14 +348,14 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		}
 		t.Attempts++
 		err := attempt(ctx, &t)
+		if endedByTimeout(ctx, err) {
+			t.Status = StatusFailed
+			t.Error = "出图超时"
+			return t
+		}
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			t.Status = StatusSkipped
 			t.Error = "已停止"
-			return t
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			t.Status = StatusFailed
-			t.Error = err.Error()
 			return t
 		}
 		if err == nil {
@@ -413,8 +413,24 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 	return t
 }
 
+// endedByTimeout 是这一单自己的时限到了。用户点停止是 Canceled，不能标成超时。
+func endedByTimeout(ctx context.Context, err error) bool {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return true
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
 // stoppedTask 是这一条任务自己的上下文结束了。不取消还在跑的其他任务。
 func stoppedTask(ctx context.Context, t Task) Task {
+	if endedByTimeout(ctx, nil) {
+		t.Status = StatusFailed
+		t.Error = "出图超时"
+		return t
+	}
 	if ctx.Err() != nil {
 		t.Status = StatusSkipped
 		t.Error = "已停止"

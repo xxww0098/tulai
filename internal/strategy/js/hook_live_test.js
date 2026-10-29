@@ -192,10 +192,14 @@ function addImage(src, href) {
 }
 addImage('https://p3-flow-imagex-sign.byteimg.com/tos/a.jpeg~tplv-a9rns2rl98-cthumb.png', 'https://p3-flow-imagex-sign.byteimg.com/tos/a.jpeg~tplv-a9rns2rl98-cgen_lwm.png')
 state = live()
-assert.strictEqual(state.done, true, '实图在且没有生成指示，就是完成候选')
-assert.strictEqual(state.reason, 'images-ready')
+assert.strictEqual(state.done, false, '图已经出来但格子还没 data-finished，不能结束')
+assert.strictEqual(state.reason, 'unfinished')
 assert.strictEqual(state.images.length, 1)
 assert.ok(state.images[0].url.includes('cgen_lwm'), '应选用原图地址而不是缩略图: ' + state.images[0].url)
+current.attrs['data-finished'] = 'true'
+state = live()
+assert.strictEqual(state.done, true, 'data-finished=true 后这一轮才算完成')
+assert.strictEqual(state.reason, 'images-ready')
 
 addImage('https://cdn.example/new-2.png')
 addImage('https://cdn.example/new-3.png')
@@ -221,7 +225,10 @@ const counted = reply([
 ], { count: 4 })
 body.appendChild(counted)
 state = live()
-assert.strictEqual(state.done, true, '没有声明张数时，已有的实图就是候选')
+assert.strictEqual(state.done, false, '声明张数不是完成信号，格子没写 data-finished 不能结束')
+counted.attrs['data-finished'] = 'true'
+state = live()
+assert.strictEqual(state.done, true, 'data-finished 之后不再等声明张数')
 assert.deepStrictEqual(urls(state).filter((url) => url.includes('/old-') || url.includes('/new-')), [])
 
 context.__tulaiMarkTask()
@@ -232,17 +239,35 @@ body.appendChild(shell)
 context.__tulaiMarkTask()
 shellCard.img.src = 'https://p3-flow-imagex-sign.byteimg.com/tos/cat.png'
 shellCard.img.currentSrc = shellCard.img.src
+shell.attrs['data-streaming'] = 'false'
 state = live()
 assert.deepStrictEqual(urls(state), ['https://p3-flow-imagex-sign.byteimg.com/tos/cat.png'], '占位壳换成实图后不能被基准元素 id 丢掉')
 assert.strictEqual(state.done, true)
 
 const bare = el('div')
 bare.attrs['data-testid'] = 'receive_message'
-const bareCard = imageCard('https://cdn.example/bare-cat.png')
-bare.appendChild(bareCard.card)
+bare.attrs['data-finished'] = 'true'
+const grid = el('div')
+grid.attrs.class = 'image-box-grid-item-FTeESI'
+grid.attrs['data-testid'] = 'message_image_content'
+const bareCard = imageCard('https://p3-flow-imagex-sign.byteimg.com/tos/rc_gen_image/bare.jpeg~tplv-a9rns2rl98-cthumb.png', 'https://p3-flow-imagex-sign.byteimg.com/tos/rc_gen_image/bare.jpeg~tplv-a9rns2rl98-cgen_lwm.png')
+grid.appendChild(bareCard.card)
+bare.appendChild(grid)
 body.appendChild(bare)
 state = live()
-assert.ok(urls(state).includes('https://cdn.example/bare-cat.png'), 'receive_message 里的图不能因为没有 author-role 被丢掉')
+assert.ok(urls(state).some((url) => url.includes('cgen_lwm') && url.includes('rc_gen_image')), 'receive_message 里 message_image_content 的原图要留下: ' + urls(state).join(','))
+
+const user = el('div')
+user.attrs['data-testid'] = 'send_message'
+user.attrs['data-message-role'] = 'user'
+const userMedia = el('div')
+userMedia.attrs['data-testid'] = 'message_image_content'
+const userCard = imageCard('https://cdn.example/user-upload.png')
+userMedia.appendChild(userCard.card)
+user.appendChild(userMedia)
+body.appendChild(user)
+state = live()
+assert.ok(!urls(state).includes('https://cdn.example/user-upload.png'), '用户消息上的 message_image_content 不是生成图')
 
 const icon = el('button')
 icon.attrs['aria-label'] = ''
@@ -250,6 +275,14 @@ bare.appendChild(icon)
 state = live()
 assert.strictEqual(state.done, true, '图标按钮没有重新生成文案也要结束')
 assert.strictEqual(state.bar, false)
+const copy = el('button')
+copy.attrs['data-testid'] = 'message_action_copy'
+copy.innerText = ''
+bare.appendChild(copy)
+bare.attrs['data-finished'] = 'false'
+state = live()
+assert.strictEqual(state.bar, true, 'message_action_copy 即使没有文案也是完成条')
+assert.strictEqual(state.done, true)
 
 const button = el('button')
 button.innerText = '新对话'
