@@ -1010,6 +1010,12 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 		if line := a.siteLine(card); line != "" {
 			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(line)
 		}
+		if card.Moved != "" {
+			ui.Text(c.Key("moved"), card.Moved).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(card.Moved)
+		}
+		if card.MoveWhy != "" {
+			ui.Text(c.Key("movewhy"), card.MoveWhy).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(card.MoveWhy)
+		}
 		switch card.Status {
 		case "生成中":
 			ui.Box(c.Key("gen-slot")).FillWidth().Height(6)

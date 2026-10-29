@@ -385,6 +385,9 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			return t
 		}
 		if errors.Is(err, strategy.ErrSubmissionUncertain) {
+			if t.ReassignWhy == "" {
+				t.ReassignWhy = err.Error()
+			}
 			if e.rotateUncertain(&t, time.Now()) {
 				return t
 			}
@@ -535,6 +538,10 @@ func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session)
 		return nil
 	}
 	// 复用的标签还停在上一轮对话里。每单先开新对话，再记基准图。
+	// 同一账号只留这一张标签，前面任务漏关的豆包页在这里关掉。
+	if sess != nil && strat != nil {
+		sess.KeepOnePage(strat.HomeURL())
+	}
 	if err := strategy.FreshChat(sess); err != nil {
 		return fmt.Errorf("新对话: %w", err)
 	}

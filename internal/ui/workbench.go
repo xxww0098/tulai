@@ -197,6 +197,8 @@ type ProgressCard struct {
 	Sites     []CardSite
 	Shots     []CardShot
 	Retry     []tasks.Task
+	Moved     string // 已改由豆包1
+	MoveWhy   string // 改派前的失败原因
 }
 
 // CardShot 是结果格里的一张图，以及产出它的那一单。
@@ -365,6 +367,12 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 			}
 			if task.Rewritten && card.Rewrite == "" {
 				card.Rewrite = shortLine(task.Prompt, 36)
+			}
+			if task.Reassigned != "" && card.Moved == "" {
+				card.Moved = "已改由" + task.Reassigned
+			}
+			if task.ReassignWhy != "" && card.MoveWhy == "" {
+				card.MoveWhy = HumanReason(task.ReassignWhy)
 			}
 			switch task.Status {
 			case tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser:

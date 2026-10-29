@@ -323,34 +323,71 @@
     return promptMatches(prompt) > floor;
   };
 
+  // InsertText 在失焦窗口里可能只改了 DOM。再用原生 setter 派发 input，React 才会打开发送。
+  function commitComposer(comp) {
+    if (!comp) return;
+    try { comp.focus(); } catch (e) {}
+    if (comp.tagName !== 'TEXTAREA' && comp.tagName !== 'INPUT') return;
+    var proto = comp.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(comp, comp.value);
+    try {
+      comp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: comp.value }));
+    } catch (e) {
+      comp.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  function realSendButton(comp) {
+    var exact = document.querySelector('button[data-testid="chat_input_send_button"]');
+    if (exact && !hiddenComposer(exact)) return exact;
+    return comp ? findSendButton(comp) : null;
+  }
+
   window.tulaiSendPrompt = async function () {
     var comp = document.querySelector('[data-tulai-composer="1"]');
     if (!comp) return JSON.stringify({ attempted: false, error: '未找到已定位的输入框' });
+    commitComposer(comp);
     var deadline = Date.now() + 5000, button;
     while (Date.now() < deadline) {
       if (!comp.isConnected) comp = findComposer();
       if (!comp) return JSON.stringify({ attempted: false, error: '输入框已消失' });
-      button = findSendButton(comp);
-      if (!button) return JSON.stringify({ attempted: false, error: '未找到发送按钮', diagnostic: sendDiagnostic(comp) });
-      if (visible(button)) break;
+      button = realSendButton(comp);
+      if (button && visible(button)) break;
       await sleep(100);
     }
-    if (!visible(button)) return JSON.stringify({ attempted: false, error: '发送按钮仍被禁用，平台尚未就绪' });
     var beforeHref = String(location.href || '');
     var promptText = window.tulaiReadComposer(comp);
     var beforeMatches = promptMatches(promptText);
-    var clicked = false;
-    if (window.tulaiClick) {
-      try { clicked = await window.tulaiClick(button); } catch (e) { clicked = false; }
+    var attempted = false;
+    if (button) {
+      var clicked = false;
+      if (window.tulaiClick) {
+        try { clicked = await window.tulaiClick(button); } catch (e) { clicked = false; }
+      }
+      if (!clicked) {
+        try { button.click(); clicked = true; } catch (e) {}
+      }
+      attempted = clicked;
     }
-    if (!clicked) {
-      try { button.click(); clicked = true; } catch (e) { return JSON.stringify({ attempted: true, error: '点击发送失败: ' + String(e) }); }
-    }
+    var enterAt = Date.now() + 1200;
+    var entered = false;
     deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       if (window.tulaiSendAccepted(beforeHref, promptText, beforeMatches)) return JSON.stringify({ sent: true });
+      if (!entered && Date.now() >= enterAt) {
+        entered = true;
+        attempted = true;
+        try { comp.focus(); } catch (e) {}
+        if (window.tulaiPressEnter) {
+          try { await window.tulaiPressEnter(); } catch (e) {}
+        } else {
+          try { comp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })); } catch (e) {}
+        }
+      }
       await sleep(100);
     }
+    if (!attempted && !button) return JSON.stringify({ attempted: false, error: '未找到发送按钮', diagnostic: sendDiagnostic(comp) });
     var latest = findComposer();
     var remaining = window.tulaiReadComposer(latest);
     return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后没有出现用户消息，地址也没有变成对话', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.tulaiComposerDiagnostic(latest)) });

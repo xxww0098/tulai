@@ -15,6 +15,13 @@ import (
 	"github.com/xxww0098/tulai/internal/browser"
 )
 
+func TestTaskTargetStaysInBackground(t *testing.T) {
+	p := pageTarget("https://www.doubao.com/chat/", true)
+	if p["background"] != true || p["newWindow"] != false {
+		t.Fatalf("出图新标签必须留在后台: %#v", p)
+	}
+}
+
 func TestParkStepsDoesNotRestateNormalOffscreen(t *testing.T) {
 	if parkSteps("normal", -2400, -2400) != nil {
 		t.Fatal("已经在屏幕外的正常窗口不能再 setWindowBounds，否则会被激活到前台")

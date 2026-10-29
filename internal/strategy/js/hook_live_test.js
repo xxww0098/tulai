@@ -149,7 +149,9 @@ const assigned = []
 const location = {
   hostname: 'www.doubao.com',
   href: 'https://www.doubao.com/chat/old-thread',
+  reloads: 0,
   assign(url) { assigned.push(url); this.href = url },
+  reload() { this.reloads++ },
 }
 
 class XMLHttpRequest {
@@ -287,13 +289,14 @@ assert.strictEqual(state.done, true)
 const button = el('button')
 button.innerText = '新对话'
 body.appendChild(button)
-assert.strictEqual(context.__tulaiFreshChat(), 'button')
-assert.strictEqual(button.clicked, 1, '停在旧对话时才点新对话')
-assert.deepStrictEqual(assigned, [])
+assert.strictEqual(context.__tulaiFreshChat(), 'url')
+assert.strictEqual(button.clicked, 0, '不能点新对话，那会再开一个标签并把窗口拉到前面')
+assert.deepStrictEqual(assigned, ['https://www.doubao.com/chat/'])
 
 location.href = 'https://www.doubao.com/chat/'
-assert.strictEqual(context.__tulaiFreshChat(), 'button', '地址是 /chat/ 但旧回复还在，仍要点新对话')
-assert.strictEqual(button.clicked, 2)
+assert.strictEqual(context.__tulaiFreshChat(), 'reload', '地址是 /chat/ 但旧回复还在，同一标签重新打开')
+assert.strictEqual(button.clicked, 0)
+assert.strictEqual(location.reloads, 1)
 
 body.childNodes = []
 const box = el('textarea')

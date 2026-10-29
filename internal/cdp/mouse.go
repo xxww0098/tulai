@@ -27,3 +27,24 @@ func (s *Session) bridgeMouseClick(data string) string {
 	}
 	return `{"success":true}`
 }
+
+func (s *Session) bridgeKeyEnter() string {
+	s.emulateFocus()
+	err := s.exec(func(ctx context.Context) error {
+		down := input.DispatchKeyEvent(input.KeyDown).
+			WithKey("Enter").WithCode("Enter").WithText("\r").
+			WithWindowsVirtualKeyCode(13).WithNativeVirtualKeyCode(13)
+		if err := down.Do(ctx); err != nil {
+			return err
+		}
+		up := input.DispatchKeyEvent(input.KeyUp).
+			WithKey("Enter").WithCode("Enter").
+			WithWindowsVirtualKeyCode(13).WithNativeVirtualKeyCode(13)
+		return up.Do(ctx)
+	})
+	if err != nil {
+		answer, _ := jsonMarshal(map[string]any{"success": false, "error": err.Error()})
+		return string(answer)
+	}
+	return `{"success":true}`
+}

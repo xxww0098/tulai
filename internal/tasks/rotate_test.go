@@ -173,6 +173,11 @@ func TestUncertainSendRetriesOnceOnAnotherAccount(t *testing.T) {
 	if err != nil || calls.Load() != 4 || failed != 2 {
 		t.Fatalf("each task may try the other account once, then fail: calls=%d failed=%d err=%v queue=%+v", calls.Load(), failed, err, queue)
 	}
+	for _, task := range queue {
+		if task.Reassigned == "" || task.ReassignWhy == "" {
+			t.Fatalf("换账号后要留下改派说明: %+v", task)
+		}
+	}
 }
 
 func TestAuthSwitchesAccount(t *testing.T) {

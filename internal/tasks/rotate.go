@@ -113,6 +113,7 @@ func (e *Engine) rotateUncertain(task *Task, now time.Time) bool {
 	}
 	name := browserName(e.store, next)
 	logging.Log.Warning("#%d 发送未确认，改用「%s」", task.Index, name)
+	task.Reassigned = name
 	task.avoidSend = current
 	task.BrowserID = next
 	task.submitted = false

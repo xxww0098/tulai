@@ -471,19 +471,7 @@
     var dirty = assistantNodes().length > 0 || composerText(composerNode()).length > 0;
     // 空白的 /chat/ 不要再点。有旧回复或草稿时必须清掉，否则发送点在死输入框上。
     if (!id && !dirty) return 'ready';
-    var labels = /(^|\.)doubao\.com$/i.test(host) ? ['新对话', '新建对话'] : ['新建对话', '新对话', '新建聊天'];
-    var nodes = document.querySelectorAll('a,button,[role="button"]');
-    for (var i = 0; i < nodes.length; i++) {
-      var text = labelOf(nodes[i]);
-      var box = nodes[i].getBoundingClientRect ? nodes[i].getBoundingClientRect() : { width: 1, height: 1 };
-      if (box.width <= 8 || box.height <= 8) continue;
-      for (var k = 0; k < labels.length; k++) {
-        if (text === labels[k] || (text.indexOf(labels[k]) === 0 && text.length <= labels[k].length + 12)) {
-          try { nodes[i].click(); } catch (e) {}
-          return 'button';
-        }
-      }
-    }
+    // 点「新对话」会再开一个标签，Chrome 还把窗口拉到前面。同一张标签导航。
     var url = /(qianwen|tongyi|qwen)/i.test(host) ? 'https://www.qianwen.com/' : 'https://www.doubao.com/chat/';
     var here = String(location.href || '').split('?')[0].replace(/\/$/, '');
     if (here === url.replace(/\/$/, '')) {
