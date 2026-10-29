@@ -16,11 +16,36 @@
   }
   function combined(el) { return (textOf(el) + ' ' + labelOf(el)).trim(); }
 
-  // 最近的可编辑输入区（composer）
+  function classNameOf(el) {
+    return String((el && ((el.className && el.className.baseVal) || el.className)) || '');
+  }
+  // 豆包会在可见输入框旁边放一份 invisible 的 ProseMirror 克隆，testid 相同。
+  function hiddenComposer(el) {
+    for (var node = el, i = 0; node && i < 8; i++, node = node.parentElement) {
+      if (/(^|\s)invisible(\s|$)/.test(classNameOf(node))) return true;
+    }
+    return false;
+  }
+  function editorInside(slot) {
+    if (!slot || hiddenComposer(slot)) return null;
+    if (slot.tagName === 'TEXTAREA' || slot.tagName === 'INPUT' || (slot.getAttribute && slot.getAttribute('contenteditable') === 'true')) return slot;
+    return slot.querySelector ? slot.querySelector('textarea,[contenteditable="true"],input[type="text"]') : null;
+  }
+  // 最近的可编辑输入区。豆包实页是 [data-testid="chat_input_input"] 里的 textarea 或 ProseMirror。
   function findComposer() {
+    var slots = document.querySelectorAll('[data-testid="chat_input_input"]');
+    var fallback = null;
+    for (var i = slots.length - 1; i >= 0; i--) {
+      var editor = editorInside(slots[i]);
+      if (!editor || hiddenComposer(editor)) continue;
+      if (!fallback) fallback = editor;
+      if (visible(editor)) return editor;
+    }
+    if (fallback) return fallback;
     var tas = document.querySelectorAll('textarea,[contenteditable=true],input[type=text]');
-    for (var i = tas.length - 1; i >= 0; i--) {
-      if (visible(tas[i])) return tas[i];
+    for (var j = tas.length - 1; j >= 0; j--) {
+      if (hiddenComposer(tas[j])) continue;
+      if (visible(tas[j])) return tas[j];
     }
     return null;
   }
@@ -271,20 +296,31 @@
     } catch (e) { return ''; }
   }
 
-  // 发送成功要看到我们这条用户气泡，或地址变成新的对话 id。输入框空了不算。
-  window.tulaiSendAccepted = function (beforeHref, prompt) {
+  // 实页用户气泡是 send_message[data-message-role=user]。旧夹具只写了 role。
+  function userBubbles() {
+    var nodes = document.querySelectorAll('[data-testid="send_message"][data-message-role="user"]');
+    if (nodes.length) return nodes;
+    return document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"]');
+  }
+  function promptMatches(prompt) {
+    var want = String(prompt || '').replace(/\s+/g, '');
+    if (!want) return 0;
+    var nodes = userBubbles();
+    var n = 0;
+    for (var i = 0; i < nodes.length; i++) {
+      var text = String(nodes[i].innerText || nodes[i].textContent || '').replace(/\s+/g, '');
+      if (text.indexOf(want) !== -1) n++;
+    }
+    return n;
+  }
+  // 发送成功要看到一条新的用户气泡（正文含这次提示词），或地址变成新的 /chat/<id>。输入框空了不算。
+  window.tulaiSendAccepted = function (beforeHref, prompt, beforeMatches) {
     var href = String(location.href || '');
     var nowID = conversationKey(href);
     var thenID = conversationKey(beforeHref);
     if (nowID && nowID !== thenID) return true;
-    var want = String(prompt || '').replace(/\s+/g, '');
-    if (!want) return false;
-    var nodes = document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"],[data-testid="send_message"],[data-testid="user_message"],[data-testid="message_text_user"]');
-    for (var i = 0; i < nodes.length; i++) {
-      var text = String(nodes[i].innerText || nodes[i].textContent || '').replace(/\s+/g, '');
-      if (text.indexOf(want) !== -1) return true;
-    }
-    return false;
+    var floor = typeof beforeMatches === 'number' ? beforeMatches : 0;
+    return promptMatches(prompt) > floor;
   };
 
   window.tulaiSendPrompt = async function () {
@@ -302,6 +338,7 @@
     if (!visible(button)) return JSON.stringify({ attempted: false, error: '发送按钮仍被禁用，平台尚未就绪' });
     var beforeHref = String(location.href || '');
     var promptText = window.tulaiReadComposer(comp);
+    var beforeMatches = promptMatches(promptText);
     var clicked = false;
     if (window.tulaiClick) {
       try { clicked = await window.tulaiClick(button); } catch (e) { clicked = false; }
@@ -311,7 +348,7 @@
     }
     deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
-      if (window.tulaiSendAccepted(beforeHref, promptText)) return JSON.stringify({ sent: true });
+      if (window.tulaiSendAccepted(beforeHref, promptText, beforeMatches)) return JSON.stringify({ sent: true });
       await sleep(100);
     }
     var latest = findComposer();

@@ -73,6 +73,24 @@ func (l *Logger) Entries() []Entry {
 	return out
 }
 
+// VisibleTail 是界面上要留下的最近几条。调试行会在出图时刷满尾部，不能把它们算进这几条。
+func VisibleTail(entries []Entry, limit int) []Entry {
+	if limit < 1 {
+		limit = 1
+	}
+	kept := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Level == Debug {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if len(kept) > limit {
+		kept = kept[len(kept)-limit:]
+	}
+	return kept
+}
+
 // Info 记录普通信息。
 func (l *Logger) Info(format string, a ...any) { l.add(Info, fmt.Sprintf(format, a...)) }
 

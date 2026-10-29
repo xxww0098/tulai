@@ -584,6 +584,19 @@ func TestRunVerificationRetainsSavedPartial(t *testing.T) {
 	}
 }
 
+func TestExecuteDeadlineIsImageTimeout(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	e := NewEngine(nil, nil, nil, "")
+	got := e.execute(ctx, Task{Results: []string{"already-saved.png"}}, func(context.Context, *Task) error {
+		t.Fatal("时限已经到了就不要再尝试")
+		return nil
+	})
+	if got.Status != StatusFailed || got.Error != "出图超时" || len(got.Results) != 1 {
+		t.Fatalf("整体超时应标成出图超时并留下已有结果: %+v", got)
+	}
+}
+
 func TestExecuteCancellationBeatsVerification(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := NewEngine(nil, nil, nil, "")
@@ -693,8 +706,11 @@ func TestVerificationHandOffTimeoutRetainsNeedsUserUnlessParentStops(t *testing.
 				return attemptErr
 			})
 			want := StatusNeedsUser
-			if scenario != "handoff-timeout" {
+			if scenario == "parent-canceled" {
 				want = StatusSkipped
+			}
+			if scenario == "parent-deadline" {
+				want = StatusFailed
 			}
 			if got.Status != want || got.Attempts != 1 || len(got.Results) != 1 || strings.Join(sess.events, ",") != "manual,handoff,close" {
 				t.Fatalf("error=%v task=%+v events=%v", attemptErr, got, sess.events)
@@ -703,8 +719,12 @@ func TestVerificationHandOffTimeoutRetainsNeedsUserUnlessParentStops(t *testing.
 				if !errors.Is(attemptErr, captcha.ErrVerificationRequired) || errors.Is(attemptErr, context.DeadlineExceeded) || !strings.Contains(got.Error, "交还浏览器超时") {
 					t.Fatalf("private timeout must preserve verification: %v", attemptErr)
 				}
+			} else if scenario == "parent-deadline" {
+				if !errors.Is(attemptErr, context.DeadlineExceeded) || got.Error != "出图超时" {
+					t.Fatalf("整体超时要标成出图超时: error=%v task=%+v", attemptErr, got)
+				}
 			} else if !errors.Is(attemptErr, ctx.Err()) || errors.Is(attemptErr, captcha.ErrVerificationRequired) || got.Error != "已停止" {
-				t.Fatalf("parent cancellation/deadline must win: error=%v task=%+v", attemptErr, got)
+				t.Fatalf("parent cancellation must win: error=%v task=%+v", attemptErr, got)
 			}
 		})
 	}

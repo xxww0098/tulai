@@ -10,6 +10,7 @@
   var baselineURLs = new Set();
   var baselineIDs = new Set();
   var baselineActions = new WeakSet();
+  var baselineReplies = new WeakSet();
   var idSeq = 0;
   var taskNumber = 0, pendingGeneration = 0;
   function generationURL(url) { return /sse|event-stream|chat|completion|stream|message|segment|generation/i.test(url); }
@@ -170,7 +171,8 @@
   function urlRank(url, width) {
     var rank = width || 0;
     if (/^https?:/i.test(url)) rank += 1000000;
-    if (/cgen_lwm|\/orig(?:in)?\b/i.test(url)) rank += 50000;
+    if (/rc_gen_image/i.test(url)) rank += 300000;
+    if (/cgen_lwm|\/orig(?:in)?\b/i.test(url)) rank += 80000;
     if (/cthumb|thumbnail|downsize/i.test(url)) rank -= 20000;
     if (/~tplv-/i.test(url)) rank -= 1000;
     return rank;
@@ -184,9 +186,35 @@
     });
     return best;
   }
-  // 同一个 img 壳会先占位再换成实图。只按标记时的地址排除，不按元素 id，
-  // 否则占位壳换上 http(s) 后永远进不了这一轮。
+  function pageHost() {
+    if (window.__tulaiPageHost) return String(window.__tulaiPageHost);
+    return String(location.hostname || '');
+  }
+  function closestAny(node, selectors) {
+    if (!node || !node.closest) return null;
+    for (var i = 0; i < selectors.length; i++) {
+      var hit = node.closest(selectors[i]);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  function replyOf(img) {
+    return closestAny(img, ['[data-testid="receive_message"]', '[data-message-author-role="assistant"]', '[data-message-role="assistant"]', '[data-role="assistant"]', '.chat-answers-card-wrap']);
+  }
+  // 用户气泡里的 message_image_content 是上传的原图。助手回复里的同名容器才是生成图。
+  function inUserBubble(img) {
+    var node = closestAny(img, ['[data-testid="send_message"]', '[data-testid="receive_message"]', '[data-message-role="user"]', '[data-message-role="assistant"]', '[data-message-author-role="user"]', '[data-message-author-role="assistant"]']);
+    if (!node || !node.getAttribute) return false;
+    var tid = node.getAttribute('data-testid') || '';
+    var role = node.getAttribute('data-message-role') || node.getAttribute('data-message-author-role') || '';
+    if (tid === 'receive_message' || role === 'assistant') return false;
+    return tid === 'send_message' || role === 'user';
+  }
+  // 基准只排除发送前已经在的回复。这一轮新出现的 receive_message 整段都算，
+  // 即使占位壳的地址在标记时见过。旧回复里换上新地址的壳仍然算。
   function isBaselineImage(img) {
+    var reply = replyOf(img);
+    if (reply && !baselineReplies.has(reply)) return false;
     var urls = urlsOf(img);
     if (!urls.length) return false;
     for (var i = 0; i < urls.length; i++) if (!baselineURLs.has(urls[i])) return false;
@@ -212,9 +240,21 @@
     var buttons = root.querySelectorAll('button,[role="button"],a');
     for (var i = 0; i < buttons.length; i++) {
       if (baselineActions.has(buttons[i])) continue;
+      var tid = buttons[i].getAttribute && (buttons[i].getAttribute('data-testid') || '');
+      if (tid === 'message_action_regenerate' || tid === 'message_action_copy') return true;
       if (/重新生成|再次生成|再试一次|复制|拷贝|^copy$/i.test(labelOf(buttons[i]))) return true;
     }
     return false;
+  }
+  function replyFinished(root) {
+    if (!root) return false;
+    if (root.getAttribute && root.getAttribute('data-finished') === 'true') return true;
+    var boxes = root.querySelectorAll('[data-testid="message_image_content"]');
+    for (var i = 0; i < boxes.length; i++) if (boxes[i].getAttribute('data-finished') === 'true') return true;
+    if (root.getAttribute && root.getAttribute('data-streaming') === 'false') return true;
+    var texts = root.querySelectorAll('[data-testid="message_text_content"]');
+    for (var t = 0; t < texts.length; t++) if (texts[t].getAttribute('data-streaming') === 'false') return true;
+    return actionBar(root);
   }
   function replyBusy(root) {
     var text = String((root && root.innerText) || '');
@@ -250,25 +290,35 @@
   }
   function inResult(img) {
     if (!img || !img.closest) return false;
-    if (img.closest('nav,header,button,[role="button"],svg')) return false;
-    var host = String(location.hostname || '');
+    if (img.closest('nav') || img.closest('header') || img.closest('button') || img.closest('[role="button"]') || img.closest('svg')) return false;
+    var host = pageHost();
     if (/(^|\.)doubao\.com$/.test(host)) {
-      if (img.closest('[data-testid="message_image_content"]') || img.closest('[data-testid="attachment-image-card"]')) return false;
-      return !!(img.closest('[data-testid="mdbox_image"]') || img.closest('[data-testid="receive_message"]'));
+      if (img.closest('[data-testid="attachment-image-card"]')) return false;
+      // 生成图就在助手回复的 message_image_content 里。只丢掉用户消息上的那一层。
+      if (img.closest('[data-testid="message_image_content"]') && inUserBubble(img)) return false;
+      return !!(img.closest('[data-testid="mdbox_image"]') || img.closest('[data-testid="message_image_content"]') || img.closest('[data-testid="receive_message"]') || img.closest('[class*="image-box-grid-item"]'));
     }
     if (/(^|\.)(tongyi|qianwen)\.com$/.test(host) || /(^|\.)qwen\.ai$/.test(host)) {
       return !!img.closest('#qk-markdown-react,.markdown-pc-special-class,[data-message-author-role="assistant"],[data-message-role="assistant"]');
     }
     return true;
   }
+  function generatedSrc(src) {
+    return /rc_gen_image|cgen_lwm/i.test(src || '');
+  }
   function realImg(img) {
     if (!img || !inResult(img)) return false;
-    var src = img.currentSrc || img.src || '';
+    var src = bestURL(img) || img.currentSrc || img.src || '';
+    if (!src && img.getAttribute) src = img.getAttribute('src') || '';
     if (junkURL(src)) return false;
     var nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
     if (nw && nh && (nw < 128 || nh < 128)) return false;
-    // 窗口在屏幕外时布局盒可以是 0，已解码的大图仍然算数。
+    // 窗口在屏幕外时布局盒可以是 0。已解码的大图，或地址上的 rc_gen_image 原图，仍然算数。
     if (nw >= 128 && nh >= 128) return true;
+    var aw = parseInt((img.getAttribute && img.getAttribute('width')) || '0', 10) || 0;
+    var ah = parseInt((img.getAttribute && img.getAttribute('height')) || '0', 10) || 0;
+    if (aw >= 128 && ah >= 128) return true;
+    if (generatedSrc(src)) return true;
     var box = img.getBoundingClientRect();
     if (box.width < 64 || box.height < 64) return false;
     if (!(nw && nh) && (box.width < 128 || box.height < 128)) return false;
@@ -305,43 +355,70 @@
     }
     return n;
   };
-  function pushLiveImage(images, seen, img) {
+  function gridOf(img) {
+    return closestAny(img, ['[class*="image-box-grid-item"]', '[data-testid="mdbox_image"]']) || img;
+  }
+  // 同一格里的 svg 占位、缩略图和原图只留一张，优先 rc_gen_image 的 cgen 原图。
+  function considerImage(groups, img) {
     if (!realImg(img) || isBaselineImage(img)) return;
     var src = bestURL(img);
-    if (!src || seen[src] || baselineURLs.has(src)) return;
-    seen[src] = true;
-    images.push({ url: src, src: 'dom', w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+    if (!src) return;
+    var reply = replyOf(img);
+    if ((!reply || baselineReplies.has(reply)) && baselineURLs.has(src)) return;
+    var node = gridOf(img);
+    var width = parseInt((img.getAttribute && img.getAttribute('width')) || '0', 10) || img.naturalWidth || 0;
+    var score = urlRank(src, width);
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].node === node) {
+        if (score > groups[i].score) {
+          groups[i].score = score;
+          groups[i].url = src;
+          groups[i].img = img;
+        }
+        return;
+      }
+    }
+    groups.push({ node: node, url: src, score: score, img: img });
   }
-  // 完成候选：这一轮回复里有实图，并且没有生成指示。
-  // 重新生成/复制和 data-count 在真实页面上经常没有，不能拿它们当完成条件。
+  // 完成：这一轮 receive_message 的图格 data-finished=true。
+  // 没有这个属性时，文字 data-streaming=false 或重新生成/复制也算。
   // 地址要再稳大约 3 秒才由调用方收下；这里只报告这一拍的判断。
   window.__tulaiLiveImages = function () {
     var replies = replyNodes();
-    var images = [];
-    var seen = {};
+    var groups = [];
     var busy = composerStopping();
     var bar = false;
+    var finished = false;
     var expect = 0;
     replies.forEach(function (root) {
       if (replyBusy(root)) busy = true;
       if (actionBar(root)) bar = true;
+      if (replyFinished(root)) finished = true;
       var declared = declaredCount(root);
       if (declared > expect) expect = declared;
-      root.querySelectorAll('img').forEach(function (img) { pushLiveImage(images, seen, img); });
+      root.querySelectorAll('img').forEach(function (img) { considerImage(groups, img); });
     });
-    // 角色选择器对不上时，回复外的 mdbox 实图也算。标记时已经在的地址仍排除。
+    // 角色选择器对不上时，回复外的 mdbox 实图也算。用户消息上的图仍然排除。
     document.querySelectorAll('[data-testid="mdbox_image"] img').forEach(function (img) {
-      if (img.closest && (img.closest('[data-testid="message_image_content"]') || img.closest('[data-testid="attachment-image-card"]'))) return;
-      pushLiveImage(images, seen, img);
+      if (inUserBubble(img)) return;
+      considerImage(groups, img);
+    });
+    var images = [];
+    var seen = {};
+    groups.forEach(function (group) {
+      if (!group.url || seen[group.url]) return;
+      seen[group.url] = true;
+      images.push({ url: group.url, src: 'dom', w: group.img.naturalWidth || 0, h: group.img.naturalHeight || 0 });
     });
     var reason = 'no-reply';
-    if (replies.length && !images.length) reason = 'no-new-image';
-    else if (!replies.length && !images.length) reason = 'no-reply';
+    if (!replies.length && !images.length) reason = 'no-reply';
+    else if (!images.length) reason = 'no-new-image';
     else if (busy) reason = 'generating';
+    else if (!finished) reason = 'unfinished';
     else reason = 'images-ready';
     return {
       busy: busy,
-      done: !busy && images.length > 0,
+      done: !busy && images.length > 0 && finished,
       expect: expect,
       bar: bar,
       replies: replies.length,
@@ -436,6 +513,8 @@
     baselineURLs = new Set();
     baselineIDs = new Set();
     baselineActions = new WeakSet();
+    baselineReplies = new WeakSet();
+    assistantNodes().forEach(function (node) { baselineReplies.add(node); });
     document.querySelectorAll('button,[role="button"],a').forEach(function (el) { baselineActions.add(el); });
     Array.from(document.images || document.querySelectorAll('img')).forEach(function (img) {
       existingImages.add(img);
