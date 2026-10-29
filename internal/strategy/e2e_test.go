@@ -196,10 +196,19 @@ document.getElementById('send').addEventListener('click', function () {
   document.getElementById('composer').value = '';
   setTimeout(function () {
     fetch('/result.png').then(function (r) { return r.blob(); }).then(function (b) {
-      var img = document.createElement('img');
-      img.src = URL.createObjectURL(b);
-      document.getElementById('messages').appendChild(img);
-      window.__mockGenerated = true;
+    var img = document.createElement('img');
+    img.src = URL.createObjectURL(b);
+    var box = document.createElement('div');
+    box.setAttribute('data-message-author-role', 'assistant');
+    var card = document.createElement('div');
+    card.setAttribute('data-testid', 'mdbox_image');
+    card.appendChild(img);
+    box.appendChild(card);
+    var again = document.createElement('button');
+    again.textContent = '重新生成';
+    box.appendChild(again);
+    document.getElementById('messages').appendChild(box);
+    window.__mockGenerated = true;
     });
   }, 400);
 });
@@ -604,9 +613,9 @@ func TestSignedStreamResultURLE2E(t *testing.T) {
 			if err := strat.MarkTask(sess); err != nil {
 				t.Fatal(err)
 			}
-			script := `fetch('/chat/stream?transport=fetch').then(function(r){return r.text()})`
+			script := `fetch('/chat/stream?transport=fetch').then(function(r){return r.text()}).then(function(txt){var m=txt.match(/https?:[^"\\]+/);var url=m?m[0]:'';var box=document.createElement('div');box.setAttribute('data-message-author-role','assistant');var card=document.createElement('div');card.setAttribute('data-testid','mdbox_image');var img=document.createElement('img');img.width=256;img.height=256;img.src=url;card.appendChild(img);box.appendChild(card);var again=document.createElement('button');again.textContent='重新生成';box.appendChild(again);document.body.appendChild(box);return true})`
 			if transport == "xhr" {
-				script = `new Promise(function(resolve){var x=new XMLHttpRequest(); x.open('GET','/chat/stream?transport=xhr'); x.onload=function(){resolve(true)}; x.send()})`
+				script = `new Promise(function(resolve){var x=new XMLHttpRequest(); x.open('GET','/chat/stream?transport=xhr'); x.onload=function(){var m=String(x.responseText||'').match(/https?:[^"\\]+/);var url=m?m[0]:'';var box=document.createElement('div');box.setAttribute('data-message-author-role','assistant');var card=document.createElement('div');card.setAttribute('data-testid','mdbox_image');var img=document.createElement('img');img.width=256;img.height=256;img.src=url;card.appendChild(img);box.appendChild(card);var again=document.createElement('button');again.textContent='重新生成';box.appendChild(again);document.body.appendChild(box);resolve(true)}; x.send()})`
 			}
 			if _, err := sess.EvaluateAsync(script); err != nil {
 				t.Fatal(err)
@@ -672,14 +681,13 @@ func TestWaitForGenerationStreamE2E(t *testing.T) {
 			if err := strat.MarkTask(sess); err != nil {
 				t.Fatal(err)
 			}
-			request := `fetch('/chat/stream?transport=fetch').catch(function(){})`
+			request := `fetch('/chat/stream?transport=fetch').then(function(r){return r.text()}).then(function(txt){var m=txt.match(/https?:[^"\\]+/);var url=m?m[0]:'';var box=document.createElement('div');box.setAttribute('data-message-author-role','assistant');var card=document.createElement('div');card.setAttribute('data-testid','mdbox_image');var img=document.createElement('img');img.width=384;img.height=384;img.src=url;card.appendChild(img);box.appendChild(card);var again=document.createElement('button');again.textContent='重新生成';box.appendChild(again);document.body.appendChild(box)})`
 			if transport == "xhr" {
-				request = `var xhr=new XMLHttpRequest();xhr.open('GET','/chat/stream?transport=xhr');xhr.send()`
+				request = `var xhr=new XMLHttpRequest();xhr.open('GET','/chat/stream?transport=xhr');xhr.onload=function(){var m=String(xhr.responseText||'').match(/https?:[^"\\]+/);var url=m?m[0]:'';var box=document.createElement('div');box.setAttribute('data-message-author-role','assistant');var card=document.createElement('div');card.setAttribute('data-testid','mdbox_image');var img=document.createElement('img');img.width=384;img.height=384;img.src=url;card.appendChild(img);box.appendChild(card);var again=document.createElement('button');again.textContent='重新生成';box.appendChild(again);document.body.appendChild(box)};xhr.send()`
 			}
 			if _, err := sess.Evaluate(request + `;var img=document.createElement('img');img.width=384;img.height=384;img.src='/preview.png';document.body.appendChild(img);true`); err != nil {
 				t.Fatal(err)
 			}
-			logStart := len(logging.Log.Entries())
 			results, err := strat.WaitForResult(sess, 6*time.Second)
 			if err != nil {
 				t.Fatal(err)
@@ -690,15 +698,9 @@ func TestWaitForGenerationStreamE2E(t *testing.T) {
 				if result.URL == want {
 					found = true
 				}
-			}
-			pendingLogs := 0
-			for _, entry := range logging.Log.Entries()[logStart:] {
-				if strings.Contains(entry.Text, "候选已出现") {
-					pendingLogs++
+				if strings.Contains(result.URL, "/preview.png") {
+					t.Fatalf("预览图不能当成完成结果: %#v", results)
 				}
-			}
-			if pendingLogs != 1 {
-				t.Fatalf("本轮pending状态应只记录一次: %d", pendingLogs)
 			}
 			if !found {
 				t.Fatalf("DOM预览不能使未读完的生成流提前返回: %#v", results)
@@ -713,7 +715,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 	}
 	ws, shutdown := launchChrome(t)
 	defer shutdown()
-	small := noisePNG(32)
+	small := noisePNG(200)
 	oldImage := noisePNG(128)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -859,7 +861,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 		if err := strat.MarkTask(sess); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := sess.Evaluate(`var img=document.createElement('img');img.width=200;img.height=200;img.src='/small.png';document.body.appendChild(img);true`); err != nil {
+		if _, err := sess.Evaluate(`var box=document.createElement('div');box.setAttribute('data-message-author-role','assistant');var card=document.createElement('div');card.setAttribute('data-testid','mdbox_image');var img=document.createElement('img');img.width=200;img.height=200;img.src='/small.png';card.appendChild(img);box.appendChild(card);var again=document.createElement('button');again.textContent='重新生成';box.appendChild(again);document.body.appendChild(box);true`); err != nil {
 			t.Fatal(err)
 		}
 		results, err := strat.WaitForResult(sess, 5*time.Second)

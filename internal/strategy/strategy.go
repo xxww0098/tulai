@@ -297,17 +297,16 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	return nil
 }
 
-// WaitForResult 等本轮生成图出现在回复容器里。
-// 页面流式连接经常在图已经画完后还挂着，不能拿 pending 把完成拖几分钟。
-// 图标和 SVG 壳不算出图。没有真图就继续等，而不是拿空结果报成功。
+// WaitForResult 等这一轮回复自己的完成信号。
+// 豆包会先吐出 1 张、再补到 4 张。图片地址连续几百毫秒不变只是流式中间态，不能当成完成。
+// 完成要同时满足：停止/生成指示已经消失，并且出现重新生成或复制，或者格子达到页面声明的最终张数。
+// 到总超时之前不返回半成品。
 func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
 	if s.IsEgo() {
 		return egoWaitForResult(s, timeout)
 	}
 	deadline := time.Now().Add(timeout)
 	poll := 300 * time.Millisecond
-	var stableKey string
-	var stableSince time.Time
 	for time.Now().Before(deadline) {
 		if err := s.Ctx().Err(); err != nil {
 			return nil, err
@@ -316,33 +315,15 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 			return nil, err
 		}
 		_, _ = s.Evaluate(`window.__tulaiDismissPopups ? String(__tulaiDismissPopups()) : '0'`)
-		out, err := s.Evaluate(`JSON.stringify(window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false})`)
+		out, err := s.Evaluate(`JSON.stringify(window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false,done:false})`)
 		if err == nil {
 			var live struct {
 				Busy   bool     `json:"busy"`
+				Done   bool     `json:"done"`
 				Images []Result `json:"images"`
 			}
-			if cdp.ParseJSValue(out, &live) == nil && !live.Busy && len(live.Images) > 0 {
-				key := liveKey(live.Images)
-				if key != stableKey {
-					stableKey = key
-					stableSince = time.Now()
-				}
-				if time.Since(stableSince) >= 400*time.Millisecond {
-					return live.Images, nil
-				}
-			} else if hooked, ok := hookedResults(s); ok && len(hooked) > 0 && !live.Busy {
-				key := liveKey(hooked)
-				if key != stableKey {
-					stableKey = key
-					stableSince = time.Now()
-				}
-				if time.Since(stableSince) >= 400*time.Millisecond {
-					return hooked, nil
-				}
-			} else {
-				stableKey = ""
-				stableSince = time.Time{}
+			if cdp.ParseJSValue(out, &live) == nil && live.Done && len(live.Images) > 0 {
+				return live.Images, nil
 			}
 		}
 		select {
@@ -354,26 +335,48 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 	return nil, fmt.Errorf("等待生成结果超时")
 }
 
-func hookedResults(s *cdp.Session) ([]Result, bool) {
-	out, err := s.Evaluate(`JSON.stringify(window.__tulaiResultsSince ? __tulaiResultsSince() : [])`)
+// FreshChat 每次任务都开一条新对话。复用标签页会留着上一轮的图，标记之前先换对话。
+func FreshChat(s *cdp.Session) error {
+	if s == nil || s.IsEgo() {
+		return nil
+	}
+	out, err := s.Evaluate(`window.__tulaiFreshChat ? __tulaiFreshChat() : "missing"`)
 	if err != nil {
-		return nil, false
+		return nil
 	}
-	var items []Result
-	if cdp.ParseJSValue(out, &items) != nil {
-		return nil, false
+	via := strings.Trim(out, `"`)
+	if via == "missing" || via == "ready" {
+		return nil
 	}
-	return items, true
-}
-
-func liveKey(items []Result) string {
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		if item.URL != "" {
-			parts = append(parts, item.URL)
+	origin := strings.Trim(evalString(s, "location.href"), `"`)
+	before := s.EvaluateInt(`document.querySelectorAll(window.__tulaiAssistantQuery||"*").length`)
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := s.Ctx().Err(); err != nil {
+			return err
+		}
+		href := strings.Trim(evalString(s, "location.href"), `"`)
+		left := s.EvaluateInt(`document.querySelectorAll(window.__tulaiAssistantQuery||"*").length`)
+		composer := s.EvaluateBool(`document.readyState==="complete" && !!document.querySelector('textarea,[contenteditable="true"]')`)
+		cleared := href != origin || left < before || left == 0
+		if composer && cleared {
+			return nil
+		}
+		select {
+		case <-s.Ctx().Done():
+			return s.Ctx().Err()
+		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	return strings.Join(parts, "\n")
+	return nil
+}
+
+func evalString(s *cdp.Session, expr string) string {
+	out, err := s.Evaluate(expr)
+	if err != nil {
+		return ""
+	}
+	return out
 }
 
 // FetchResultBytes 页面内 fetch 结果 URL（带登录态），base64 回传。
@@ -381,9 +384,33 @@ func (base) FetchResultBytes(s *cdp.Session, url string) ([]byte, error) {
 	if s.IsEgo() {
 		return nil, fmt.Errorf("Ego 结果必须通过网页下载入口获取")
 	}
+	data, pageErr := readPageImage(s, url)
+	if pageErr == nil {
+		return data, nil
+	}
+	if browserFetch(pageErr) {
+		if via, err := s.LoadResource(url); err == nil && len(via) >= 1024 {
+			return via, nil
+		}
+	}
+	return nil, pageErr
+}
+
+func browserFetch(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "HTTP ") {
+		return true
+	}
+	return strings.HasPrefix(msg, "TypeError:") && strings.Contains(strings.ToLower(msg), "fetch")
+}
+
+func readPageImage(s *cdp.Session, url string) ([]byte, error) {
 	out, err := s.EvaluateAsync(fmt.Sprintf(`(async function(){
 		try {
-			var resp = await fetch(%q, {credentials: 'include'});
+			var resp = await fetch(%q, {credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'});
 			if (!resp.ok) return JSON.stringify({error: 'HTTP ' + resp.status});
 			var blob = await resp.blob();
 			if (blob.size < 1024) return JSON.stringify({error: '结果过小'});
@@ -406,9 +433,6 @@ func (base) FetchResultBytes(s *cdp.Session, url string) ([]byte, error) {
 		if r.Error == "" {
 			r.Error = "返回解析失败"
 		}
-		if strings.HasPrefix(r.Error, "TypeError:") && strings.Contains(strings.ToLower(r.Error), "fetch") {
-			return s.LoadResource(url)
-		}
 		return nil, fmt.Errorf("%s", r.Error)
 	}
 	return decodeB64(r.B64)
@@ -428,7 +452,7 @@ func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 		var urls = %s;
 		var items = await Promise.all(urls.map(async function(url){
 			try {
-				var resp = await fetch(url, {credentials:'include'});
+				var resp = await fetch(url, {credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'});
 				if (!resp.ok) return {error:'HTTP '+resp.status};
 				var blob = await resp.blob();
 				if (blob.size < 1536) return {error:'结果过小'};
@@ -453,11 +477,22 @@ func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 		return out
 	}
 	for i := range urls {
-		if i >= len(items) || items[i].Error != "" || items[i].B64 == "" {
-			continue
+		if i < len(items) && items[i].Error == "" && items[i].B64 != "" {
+			if data, err := decodeB64(items[i].B64); err == nil {
+				out[i] = data
+				continue
+			}
 		}
-		if data, err := decodeB64(items[i].B64); err == nil {
-			out[i] = data
+		seen := map[string]bool{}
+		for _, candidate := range []string{OriginalImageURL(urls[i]), urls[i]} {
+			if candidate == "" || seen[candidate] {
+				continue
+			}
+			seen[candidate] = true
+			if data, err := (base{}).FetchResultBytes(s, candidate); err == nil {
+				out[i] = data
+				break
+			}
 		}
 	}
 	return out

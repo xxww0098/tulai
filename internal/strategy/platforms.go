@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 
 	"github.com/xxww0098/tulai/internal/cdp"
@@ -16,16 +17,40 @@ func (Doubao) Platform() string { return "豆包" }
 // HomeURL 豆包图像生成入口。
 func (Doubao) HomeURL() string { return "https://www.doubao.com/chat/" }
 
-// FetchResultBytes 豆包覆盖：优先网络层截获的原图（保存免水印版本）。
-func (d Doubao) FetchResultBytes(s *cdp.Session, url string) ([]byte, error) {
-	// 豆包 CDN 支持按参数取无水印原图：去掉水印相关查询参数。
-	clean := PreferUnwatermarkedURL(url)
-	b, err := d.base.FetchResultBytes(s, clean)
-	if err != nil {
-		// 原参数版本兜底
-		return d.base.FetchResultBytes(s, url)
+// FetchResultBytes 豆包覆盖：先要原图地址，再按页面 referer 和浏览器登录态去拉。
+func (d Doubao) FetchResultBytes(s *cdp.Session, raw string) ([]byte, error) {
+	tried := map[string]bool{}
+	var last error
+	for _, candidate := range []string{OriginalImageURL(raw), PreferUnwatermarkedURL(raw), raw} {
+		if candidate == "" || tried[candidate] {
+			continue
+		}
+		tried[candidate] = true
+		body, err := d.base.FetchResultBytes(s, candidate)
+		if err == nil {
+			return body, nil
+		}
+		last = err
 	}
-	return b, nil
+	if last == nil {
+		last = fmt.Errorf("缺少图片地址")
+	}
+	return nil, last
+}
+
+// OriginalImageURL 去掉 imagex 的 ~tplv 缩略图模板，留下对象原图地址。
+// 没有模板时原样返回。签名跟模板绑在一起时，调用方还会再试页面上的原地址。
+func OriginalImageURL(raw string) string {
+	clean := PreferUnwatermarkedURL(raw)
+	i := strings.Index(clean, "~tplv-")
+	if i <= 0 {
+		return clean
+	}
+	tail := ""
+	if q := strings.IndexAny(clean[i:], "?#"); q >= 0 {
+		tail = clean[i+q:]
+	}
+	return clean[:i] + tail
 }
 
 // PreferUnwatermarkedURL 去掉豆包 CDN 用来带水印的查询。

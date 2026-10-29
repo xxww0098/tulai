@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	cdpbrowser "github.com/chromedp/cdproto/browser"
 	cdprotoCDP "github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
@@ -95,6 +96,7 @@ func (c *Client) NewBackgroundSession(rawURL string, onLog func(string)) (*Sessi
 			return nil, err
 		}
 	}
+	_ = conn.moveWindow(ctx, id, false)
 	tab, tabCancel := chromedp.NewContext(c.alloc, chromedp.WithTargetID(targetID(id)), chromedp.WithErrorf(quietCDP))
 	return c.finishSession(tab, tabCancel, "", onLog)
 }
@@ -153,6 +155,24 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 		s.EnsureBase() // 导航后新文档需重注入
 	}
 	return s, nil
+}
+
+// KeepOffscreen 把这个标签所在窗口放到屏幕外，并且不激活它。
+// 登录需要看屏幕时走 OpenURL，不走这里。
+func (s *Session) KeepOffscreen() {
+	if s == nil || s.ego != nil {
+		return
+	}
+	_ = s.exec(func(ctx context.Context) error {
+		id, _, err := cdpbrowser.GetWindowForTarget().Do(ctx)
+		if err != nil {
+			return err
+		}
+		return cdpbrowser.SetWindowBounds(id, &cdpbrowser.Bounds{
+			Left: -2400, Top: -2400, Width: 1280, Height: 900,
+			WindowState: cdpbrowser.WindowStateNormal,
+		}).Do(ctx)
+	})
 }
 
 // Close 关闭标签页会话。

@@ -412,6 +412,8 @@ func (c *SliderConn) activate(ctx context.Context, id string) error {
 	if stayBack(ctx) {
 		return nil
 	}
+	// 只有登录才把窗口拿回屏幕并激活。出图路径不进这里。
+	_ = c.moveWindow(ctx, id, true)
 	if err := c.Activate(ctx, id); err != nil {
 		return err
 	}
@@ -421,6 +423,29 @@ func (c *SliderConn) activate(ctx context.Context, id string) error {
 	}
 	_ = c.call(ctx, session, "Page.bringToFront", map[string]any{}, nil)
 	return nil
+}
+
+// moveWindow 把浏览器窗口放到屏幕外，或在登录时挪回可见区域。
+// 最小化会让生成图的布局尺寸变成 0，所以用屏幕外的正常窗口。
+func (c *SliderConn) moveWindow(ctx context.Context, targetID string, show bool) error {
+	if c == nil || targetID == "" {
+		return nil
+	}
+	var win struct {
+		WindowID int `json:"windowId"`
+	}
+	if err := c.call(ctx, "", "Browser.getWindowForTarget", map[string]any{"targetId": targetID}, &win); err != nil {
+		return err
+	}
+	bounds := map[string]any{"windowState": "normal", "width": 1280, "height": 900}
+	if show {
+		bounds["left"] = 80
+		bounds["top"] = 48
+	} else {
+		bounds["left"] = -2400
+		bounds["top"] = -2400
+	}
+	return c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil)
 }
 
 func (c *SliderConn) closeBlankPages(ctx context.Context, keep string) {

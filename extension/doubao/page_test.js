@@ -530,3 +530,60 @@ console.log('doubao page.js anchors ok')
   assert.strictEqual(prefer.length, 1)
   assert.ok(/cgen_lwm/.test(prefer[0].url))
 }
+
+{
+  const doc = makeDoc('www.doubao.com')
+  const marked = Page.mark(doc, '水彩风格')
+  message(doc, 'user', '旧问题')
+  const old = message(doc, 'assistant', '')
+  const oldCard = old.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  const oldImg = oldCard.append(new El('img'))
+  oldImg.complete = true
+  oldImg.naturalWidth = 800
+  oldImg.src = 'https://cdn.example/old.png'
+  oldImg.currentSrc = oldImg.src
+  old.append(new El('button')).addText('重新生成')
+  message(doc, 'user', '水彩风格')
+  const answer = message(doc, 'assistant', '')
+  function card(url) {
+    const box = answer.append(new El('div', { 'data-testid': 'mdbox_image' }))
+    const img = box.append(new El('img'))
+    img.complete = true
+    img.naturalWidth = 1024
+    img.src = url
+    img.currentSrc = url
+  }
+  card('https://cdn.example/n1.png')
+  assert.strictEqual(Page.replyDone(doc, marked).done, false, '1 张还没完成')
+  card('https://cdn.example/n2.png')
+  card('https://cdn.example/n3.png')
+  card('https://cdn.example/n4.png')
+  assert.strictEqual(Page.replyDone(doc, marked).done, false, '4 张没有完成信号也不能结束')
+  assert.strictEqual(Page.resultImages(doc, marked).length, 4)
+  answer.append(new El('button')).addText('重新生成')
+  assert.strictEqual(Page.replyDone(doc, marked).done, true)
+  const counted = makeDoc('www.doubao.com')
+  const mark2 = Page.mark(counted, '格子')
+  message(counted, 'user', '格子')
+  const grid = message(counted, 'assistant', '')
+  grid.attrs = grid.attrs || {}
+  grid.attrs['data-count'] = '4'
+  for (let i = 0; i < 2; i++) {
+    const box = grid.append(new El('div', { 'data-testid': 'mdbox_image' }))
+    const img = box.append(new El('img'))
+    img.complete = true
+    img.naturalWidth = 1024
+    img.src = 'https://cdn.example/g' + i + '.png'
+    img.currentSrc = img.src
+  }
+  assert.strictEqual(Page.replyDone(counted, mark2).done, false, '声明 4 张时只有 2 张不能结束')
+  for (let i = 2; i < 4; i++) {
+    const box = grid.append(new El('div', { 'data-testid': 'mdbox_image' }))
+    const img = box.append(new El('img'))
+    img.complete = true
+    img.naturalWidth = 1024
+    img.src = 'https://cdn.example/g' + i + '.png'
+    img.currentSrc = img.src
+  }
+  assert.strictEqual(Page.replyDone(counted, mark2).done, true, '格子达到声明张数后结束')
+}

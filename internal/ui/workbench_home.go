@@ -994,18 +994,20 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 		ui.Row(c).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
 			a.inputThumb(c, card)
 			if len(card.Shots) > 0 {
-				ui.Row(c).Gap(6).Grow(1).MinWidth(0).Children(func() {
-					n := len(card.Shots)
-					if n > 3 {
-						n = 3
-					}
+				shown, extra := visibleShots(len(card.Shots))
+				ui.Row(c).Gap(4).Grow(1).MinWidth(0).Wrap().Children(func() {
 					flown := map[int]bool{}
-					for _, shot := range card.Shots[:n] {
+					for _, shot := range card.Shots[:shown] {
 						fly := shot.Task > 0 && !flown[shot.Task]
 						if fly {
 							flown[shot.Task] = true
 						}
 						a.resultThumb(c, shot, card.Status == "生成中", fly)
+					}
+					if extra > 0 {
+						ui.Box(c.Key("more")).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Center().Children(func() {
+							ui.Text(c, fmt.Sprintf("+%d", extra)).FontSize(12).TextColor(tok.muted)
+						})
 					}
 				})
 			}
@@ -1067,9 +1069,17 @@ func (a *App) inputThumb(c *ui.Context, card ProgressCard) {
 	})
 }
 
+// visibleShots 把结果缩略图都摆出来。太多时留下一格显示还剩几张。
+func visibleShots(n int) (shown, extra int) {
+	if n <= 6 {
+		return n, 0
+	}
+	return 5, n - 5
+}
+
 func (a *App) resultThumb(c *ui.Context, shot CardShot, shimmer, fly bool) {
 	tok := a.look
-	tile := ui.Box(c.Key(shot.Path)).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
+	tile := ui.Box(c.Key(shot.Path)).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Shrink(0).Label("结果图")
 	if fly {
 		tile.Transition(ui.ElementTransition{
 			Animation: &motionEaseOut,

@@ -76,7 +76,6 @@ async function dispatch(method, params) {
       }
       await page.cdp("Runtime.enable");
       await page.cdp("Runtime.addBinding", { name: "tulaiBridge" });
-      await page.cdp("Page.bringToFront");
       return { label: page.label, url: await page.url() };
     }
     case "renew": {
@@ -87,7 +86,6 @@ async function dispatch(method, params) {
         await fresh.goto(currentURL, { waitUntil: "domcontentloaded", timeout: 60000 });
         await fresh.cdp("Runtime.enable");
         await fresh.cdp("Runtime.addBinding", { name: "tulaiBridge" });
-        await fresh.cdp("Page.bringToFront");
         await previous.evaluate(() => sessionStorage.setItem("__tulaiRetiredHookPage", "1"));
       } catch (error) {
         await fresh.close();
