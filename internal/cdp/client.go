@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	cdpbrowser "github.com/chromedp/cdproto/browser"
 	cdprotoCDP "github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
@@ -79,16 +81,22 @@ func (c *Client) NewBackgroundSession(rawURL string, onLog func(string)) (*Sessi
 		return nil, err
 	}
 	host := strings.ToLower(hostOf(rawURL))
-	var id string
+	var ids []string
 	for _, item := range targets {
 		if item.Type != "page" || item.ID == "" {
 			continue
 		}
 		if host != "" && strings.Contains(strings.ToLower(item.URL), host) {
-			id = item.ID
+			ids = append(ids, item.ID)
 		}
 	}
-	if id == "" {
+	var id string
+	if len(ids) > 0 {
+		id = ids[len(ids)-1]
+		for _, extra := range ids[:len(ids)-1] {
+			_ = conn.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": extra}, nil)
+		}
+	} else {
 		back := context.WithValue(ctx, stayBackKey{}, true)
 		id, err = conn.createPage(back, rawURL)
 		if err != nil {
@@ -146,6 +154,9 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 		return nil, err
 	}
 	_ = s.InjectBase() // 基础运行时（幂等）
+	if rawURL == "" {
+		s.quietBackground()
+	}
 	if rawURL != "" {
 		if err := chromedp.Run(ctx, chromedp.Navigate(rawURL), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
 			// 页面可能加载慢，导航错误不致命
@@ -230,6 +241,8 @@ func (s *Session) dispatchBridge(payload string) {
 	var result string
 	if msg.Cmd == "mouseClick" {
 		result = s.bridgeMouseClick(msg.Data)
+	} else if msg.Cmd == "keyEnter" {
+		result = s.bridgeKeyEnter()
 	} else if fn != nil {
 		result = fn(msg.Data)
 	} else {
@@ -369,8 +382,67 @@ func (s *Session) Click(sel string) error {
 	return nil
 }
 
+// emulateFocus 让后台页以为自己有焦点，输入和点击才能进到豆包。
+// 不用 activateTarget / bringToFront，那些会把窗口拉到前面。
+func (s *Session) emulateFocus() {
+	if s == nil || s.ego != nil {
+		return
+	}
+	_ = s.exec(func(ctx context.Context) error {
+		return emulation.SetFocusEmulationEnabled(true).Do(ctx)
+	})
+}
+
+// quietBackground 出图页不抢前台：模拟焦点，并拒绝会弹出下载栏的浏览器下载。
+func (s *Session) quietBackground() {
+	s.emulateFocus()
+	if s == nil || s.ego != nil {
+		return
+	}
+	_ = s.exec(func(ctx context.Context) error {
+		c := chromedp.FromContext(ctx)
+		if c == nil || c.Browser == nil {
+			return nil
+		}
+		return cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorDeny).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
+	})
+}
+
+// KeepOnePage 关掉同一站点多出来的标签，只留当前这一张。
+// 每单新开一页又不关，窗口里会堆上好几张豆包。关的是别的标签，不激活窗口。
+func (s *Session) KeepOnePage(rawURL string) {
+	if s == nil || s.ego != nil {
+		return
+	}
+	host := strings.ToLower(hostOf(rawURL))
+	if host == "" {
+		return
+	}
+	_ = s.exec(func(ctx context.Context) error {
+		c := chromedp.FromContext(ctx)
+		if c == nil || c.Browser == nil || c.Target == nil {
+			return nil
+		}
+		infos, err := cdt.GetTargets().Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
+		if err != nil {
+			return err
+		}
+		for _, info := range infos {
+			if info.Type != "page" || info.TargetID == "" || info.TargetID == c.Target.TargetID {
+				continue
+			}
+			if !strings.Contains(strings.ToLower(info.URL), host) {
+				continue
+			}
+			_ = cdt.CloseTarget(info.TargetID).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
+		}
+		return nil
+	})
+}
+
 // InsertText 选中编辑器全文后用浏览器真实输入替换，触发框架可信输入事件。
 func (s *Session) InsertText(sel, text string) error {
+	s.emulateFocus()
 	_, err := s.Evaluate(fmt.Sprintf(`(()=>{
 const e=document.querySelector(%q);
 if(!e)throw new Error('找不到输入框');

@@ -39,13 +39,15 @@ type Task struct {
 
 	submitted          bool // 已确认发送，重试时继续等待原任务
 	savedHashes        map[string]bool
-	matchedSavedResult bool  // 本轮是否再次获取到本任务已成功落盘的原图
-	slot               int64 // 这次派发时占用的浏览器，完成后用来释放并发名额
-	ranOn              int64 // 实际打到的账号。轮换后 BrowserID 会改成下一个
-	rotated            bool  // 失败后已改派，调度器要把任务放回队列
-	altTried           bool  // 发送未确认后已经换过一次账号
-	avoidSend          int64 // 这次未确认的账号，调度不要把它立刻派回去
-	soften             int   // 审核改写已经自动重试的次数
+	matchedSavedResult bool   // 本轮是否再次获取到本任务已成功落盘的原图
+	slot               int64  // 这次派发时占用的浏览器，完成后用来释放并发名额
+	ranOn              int64  // 实际打到的账号。轮换后 BrowserID 会改成下一个
+	rotated            bool   // 失败后已改派，调度器要把任务放回队列
+	altTried           bool   // 发送未确认后已经换过一次账号
+	avoidSend          int64  // 这次未确认的账号，调度不要把它立刻派回去
+	Reassigned         string // 改派到的账号名。卡片写「已改由…」，成功后也留着
+	ReassignWhy        string // 改派前的失败原因
+	soften             int    // 审核改写已经自动重试的次数
 }
 
 // Options 引擎运行参数（由设置表构造）。

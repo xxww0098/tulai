@@ -23,7 +23,7 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 	hook := mustRead(t, filepath.Join("js", "hook.js"))
 	composer := mustRead(t, filepath.Join("js", "composer.js"))
 	pages := map[string]string{}
-	for _, name := range []string{"9336-0", "9336-1", "9337-5", "9337-1"} {
+	for _, name := range []string{"9336-0", "9336-1", "9337-5", "9337-1", "9337-3"} {
 		pages[name] = staticFixture(mustRead(t, filepath.Join("testdata", "doubao", name, "page.html")))
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +94,52 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 		}
 		if !fresh.EvaluateBool(`(() => { var before=location.href; history.pushState({}, '', '/chat/38450053409309698'); return window.tulaiSendAccepted(before, ` + quote(prompt) + `, 0) === true; })()`) {
 			t.Fatal("地址变成 /chat/<id> 就是发送已接受")
+		}
+	})
+
+	t.Run("9337-3 send", func(t *testing.T) {
+		prompt := "雪山下的小木屋，油画风格"
+		sess := openFixture(t, client, srv.URL+"/9337-3", hook, composer)
+		defer sess.Close()
+		// 实页上按钮的 click() 不可信，豆包直接丢掉。盖住按钮后只能靠回车。
+		if !sess.EvaluateBool(`(() => {
+			var area = document.querySelector('textarea[data-testid="chat_input_input"]');
+			var btn = document.querySelector('button[data-testid="chat_input_send_button"]');
+			if (!area || !btn) return false;
+			window.__hits = [];
+			function accept(how) {
+				if (window.__how) return;
+				window.__how = how;
+				var bubble = document.createElement('div');
+				bubble.setAttribute('data-testid', 'send_message');
+				bubble.setAttribute('data-message-role', 'user');
+				bubble.textContent = area.value;
+				document.body.appendChild(bubble);
+			}
+			btn.addEventListener('click', function (e) {
+				window.__hits.push('click:' + e.isTrusted);
+				if (e.isTrusted) accept('click');
+			});
+			area.addEventListener('keydown', function (e) {
+				window.__hits.push('key:' + e.key + ':' + e.isTrusted);
+				if (e.isTrusted && e.key === 'Enter') accept('enter');
+			});
+			var cover = document.createElement('div');
+			cover.style.cssText = 'position:fixed;inset:0;z-index:2147483647';
+			document.body.appendChild(cover);
+			return true;
+		})()`) {
+			t.Fatal("9337-3 夹具没有挂上发送监听")
+		}
+		if !sess.EvaluateBool(`!!document.querySelector('textarea[data-testid="chat_input_input"]') && !!document.querySelector('button[data-testid="chat_input_send_button"]')`) {
+			t.Fatal("9337-3 夹具里没有可见输入框或 chat_input_send_button")
+		}
+		if err := (base{}).SendPrompt(sess, prompt); err != nil {
+			out, _ := sess.Evaluate(`JSON.stringify(window.__hits||[])`)
+			t.Fatalf("发送: %v hits=%s", err, out)
+		}
+		if !sess.EvaluateBool(`(document.querySelector('[data-testid="send_message"][data-message-role="user"]')||{}).textContent.includes('雪山下的小木屋')`) {
+			t.Fatal("发送后没有出现用户气泡")
 		}
 	})
 }

@@ -280,7 +280,8 @@ func launchArgs(port int, userData, startURL, extDir, proxy string, extra []stri
 		"--edge-skip-compat-layer-relaunch",
 		"--remote-allow-origins=*",
 		// 出图时窗口不要盖住 tulai。登录需要看屏幕时再把窗口挪回来。
-		"--window-position=-32000,-32000",
+		// -32000 超出虚拟屏幕，Windows 会夹回桌面，启动那下窗口就到了前面。
+		"--window-position=-2400,-2400",
 		"--window-size=1280,900",
 	}
 	if dir := strings.TrimSpace(extDir); dir != "" {

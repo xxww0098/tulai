@@ -55,6 +55,12 @@
     return !!(answer && answer.success);
   };
 
+  // 后台窗口里按钮的 click() 不可信，豆包会丢掉。回车走浏览器按键。
+  window.tulaiPressEnter = async function () {
+    var answer = await tulaiCall('keyEnter', '');
+    return !!(answer && answer.success);
+  };
+
   // 向 composer（textarea / contenteditable / input）写入文本并派发输入事件
   window.tulaiInsertText = function (sel, text) {
     var el = document.querySelector(sel);

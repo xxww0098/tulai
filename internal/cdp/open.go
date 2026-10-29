@@ -391,15 +391,21 @@ func (c *SliderConn) navigate(ctx context.Context, id, rawURL string) error {
 	return c.activate(ctx, id)
 }
 
+// pageTarget 是 Target.createTarget 的参数。后台页不能 newWindow，否则窗口会被拉到前面。
+func pageTarget(rawURL string, background bool) map[string]any {
+	return map[string]any{
+		"url":        rawURL,
+		"background": background,
+		"newWindow":  false,
+	}
+}
+
 func (c *SliderConn) createPage(ctx context.Context, rawURL string) (string, error) {
 	var out struct {
 		TargetID string `json:"targetId"`
 	}
-	if err := c.call(ctx, "", "Target.createTarget", map[string]any{
-		"url":        rawURL,
-		"background": stayBack(ctx),
-		"newWindow":  false,
-	}, &out); err != nil {
+	// background=true 时 Chrome 不激活新标签。newWindow 会另开一扇到前台的窗口，出图不用。
+	if err := c.call(ctx, "", "Target.createTarget", pageTarget(rawURL, stayBack(ctx)), &out); err != nil {
 		return "", err
 	}
 	if out.TargetID == "" {

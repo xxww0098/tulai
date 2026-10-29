@@ -110,7 +110,7 @@ func TestDebugArgsUseLoginURLAndSkipAutomation(t *testing.T) {
 		"--no-service-autorun",
 		"--edge-skip-compat-layer-relaunch",
 		"--remote-allow-origins=*",
-		"--window-position=-32000,-32000",
+		"--window-position=-2400,-2400",
 		"--window-size=1280,900",
 	} {
 		if !strings.Contains(joined, want) {

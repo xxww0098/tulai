@@ -261,6 +261,15 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if waiting[0].Status != "排队中" || waiting[0].Reason != "发送状态未确认，等待「豆包1」空闲后再试" {
 		t.Fatalf("queued retry card = %+v", waiting[0])
 	}
+	switched := ProgressCards([]tasks.Task{{
+		Index: 2, Platform: "豆包", BrowserID: 1, Prompt: "雪山下的小木屋，油画风格",
+		Status: tasks.StatusSuccess, Results: []string{"out.png"},
+		Reassigned:  "豆包1",
+		ReassignWhy: "发送: 发送状态未确认，请检查网页后再开始任务: 平台未接受消息",
+	}})
+	if switched[0].Moved != "已改由豆包1" || switched[0].MoveWhy != "发送结果不确定，请看网页后再试" {
+		t.Fatalf("reassign note = %+v", switched[0])
+	}
 	failedSend := ProgressCards([]tasks.Task{
 		{Platform: "豆包", Prompt: "油画风格", Status: tasks.StatusFailed, Error: "发送状态未确认，请检查网页后再开始任务: 平台未接受消息"},
 	})
