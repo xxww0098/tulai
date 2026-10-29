@@ -540,6 +540,23 @@ function paint(img, url) {
   assert.strictEqual(scratchHit.blocked, true)
   assert.strictEqual(scratchHit.baxia, true)
   assert.strictEqual(scratchHit.kind, 'slider')
+
+  const retry = makeDoc('www.qianwen.com')
+  retry.body.append(new El('textarea'))
+  const again = retry.body.append(new El('button'))
+  again.addText('Please click me to try again(error:verify)')
+  const retryHit = Page.detectCaptcha(retry)
+  assert.strictEqual(retryHit.blocked, true)
+  assert.strictEqual(retryHit.kind, 'slider')
+  assert.strictEqual(retryHit.root, again)
+
+  const drag = makeDoc('www.qianwen.com')
+  drag.body.append(new El('textarea'))
+  const prompt = drag.body.append(new El('span'))
+  prompt.addText('Please drag the slider to verify')
+  const dragHit = Page.detectCaptcha(drag)
+  assert.strictEqual(dragHit.blocked, true)
+  assert.strictEqual(dragHit.root, prompt)
 }
 
 {

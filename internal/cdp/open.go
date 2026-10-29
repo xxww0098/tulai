@@ -483,21 +483,50 @@ func (c *SliderConn) activate(ctx context.Context, id string) error {
 	return nil
 }
 
-// moveWindow 把浏览器窗口放到屏幕外，或在登录时挪回可见区域。
+// moveWindow 把浏览器窗口放到屏幕外，或在登录、验证码时挪回可见区域。
 // setWindowBounds 会把窗口激活到前台。出图挪走之后把焦点还给 tulai。
 // 窗口管理器把负坐标夹回左上角时再最小化，并用固定视口保住布局尺寸。
+// 同一个调试端口的挪动串行做。验证码或「去处理」已经占住前台时，不再写 -2400。
 func (c *SliderConn) moveWindow(ctx context.Context, targetID string, show bool) error {
-	if show && c != nil {
-		holdFront(c.endpoint)
+	endpoint := ""
+	if c != nil {
+		endpoint = c.endpoint
+	}
+	mu := windowLock(endpoint)
+	mu.Lock()
+	defer mu.Unlock()
+	if show {
+		holdFront(endpoint)
+	} else if keepParked(endpoint, false) {
+		return nil
 	}
 	changed, err := c.placeWindow(ctx, targetID, show)
 	if err != nil {
 		return err
 	}
-	if !show && changed && (c == nil || !frontHeld(c.endpoint)) {
+	if !show && changed && !frontHeld(endpoint) {
 		focusCaller()
 	}
 	return nil
+}
+
+var windowMu sync.Map
+
+func windowLock(endpoint string) *sync.Mutex {
+	key := frontKey(endpoint)
+	if key == "" {
+		key = "*"
+	}
+	v, _ := windowMu.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// keepParked 为真时不要再把窗口送出屏幕。show 为真是要拿到前台，不受这条限制。
+func keepParked(endpoint string, show bool) bool {
+	if show {
+		return false
+	}
+	return frontHeld(endpoint)
 }
 
 func (c *SliderConn) placeWindow(ctx context.Context, targetID string, show bool) (bool, error) {
@@ -566,20 +595,10 @@ func (c *SliderConn) pinLayout(ctx context.Context, targetID string) error {
 	}, nil)
 }
 
-// ParkBrowser 在出图冷启动连上调试端口后把窗口送出屏幕。登录占用前台时不动。
-func ParkBrowser(ctx context.Context, endpoint string) {
-	if ctx == nil || frontHeld(endpoint) {
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-	conn, err := DialSlider(ctx, endpoint)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-	_ = conn.parkFirst(ctx)
-}
+// ParkBrowser 以前会在出图冷启动后把窗口送到 -2400。
+// 页面能读到 screenX，这个坐标会被当成自动化；每 500ms 再写一次还会把验证码窗口拽回去。
+// 现在留在屏幕内，只在启动后把 tulai 自己的窗口拉回前面。
+func ParkBrowser(context.Context, string) {}
 
 func (c *SliderConn) parkFirst(ctx context.Context) error {
 	targets, err := c.targets(ctx)

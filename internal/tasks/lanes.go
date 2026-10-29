@@ -87,10 +87,12 @@ type LaneFact struct {
 }
 
 type laneClock struct {
-	busy   map[int64]int64
-	jobs   map[int64]LaneJob
-	ready  map[int64]SendWindow
-	verify map[int64]bool
+	busy      map[int64]int64
+	jobs      map[int64]LaneJob
+	ready     map[int64]SendWindow
+	verify    map[int64]bool
+	holdStart map[int64]time.Time
+	held      map[int64]time.Duration
 }
 
 func (c laneClock) snapshot() LaneLive {
@@ -335,6 +337,8 @@ func (e *Engine) beginLanes() {
 	e.clock.jobs = map[int64]LaneJob{}
 	e.clock.ready = map[int64]SendWindow{}
 	e.clock.verify = map[int64]bool{}
+	e.clock.holdStart = nil
+	e.clock.held = nil
 	e.liveMu.Unlock()
 }
 
@@ -344,6 +348,8 @@ func (e *Engine) finishLanes() {
 	e.clock.jobs = nil
 	e.clock.ready = nil
 	e.clock.verify = nil
+	e.clock.holdStart = nil
+	e.clock.held = nil
 	e.liveMu.Unlock()
 }
 

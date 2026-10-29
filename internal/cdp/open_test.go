@@ -73,6 +73,34 @@ func TestPresentForCaptchaHoldsFrontUntilParked(t *testing.T) {
 	}
 }
 
+func TestOffscreenParkYieldsToCaptcha(t *testing.T) {
+	ep := "http://127.0.0.1:9391"
+	if keepParked(ep, false) {
+		t.Fatal("没有人在看窗口时，这条限制不该挡着")
+	}
+	holdFront(ep)
+	t.Cleanup(func() { releaseFront(ep) })
+	if !keepParked(ep, false) {
+		t.Fatal("验证码或去处理占用前台时，不能再写 -2400")
+	}
+	if keepParked(ep, true) {
+		t.Fatal("拿到前台不受这条限制")
+	}
+}
+
+func TestTypeChunksKeepTheWholePrompt(t *testing.T) {
+	if got := strings.Join(typeChunks("你好hello"), ""); got != "你好hello" {
+		t.Fatalf("chunks = %q", got)
+	}
+	parts := typeChunks("123456789012345")
+	if len(parts) != 2 || parts[0] != "12345678" || parts[1] != "9012345" {
+		t.Fatalf("parts = %#v", parts)
+	}
+	if len(typeChunks("")) != 1 || typeChunks("")[0] != "" {
+		t.Fatal("empty prompt still inserts once so the field can be cleared")
+	}
+}
+
 func TestParkStepsDoesNotRestateNormalOffscreen(t *testing.T) {
 	if parkSteps("normal", -2400, -2400) != nil {
 		t.Fatal("已经在屏幕外的正常窗口不能再 setWindowBounds，否则会被激活到前台")

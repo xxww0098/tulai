@@ -158,8 +158,9 @@
     'div[class*="overlay"] canvas', '[class*="captcha"] canvas', '[class*="verify"] canvas',
     '[class*="puzzle"]', 'div[class*="mask"] canvas', 'div[class*="pop"] canvas',
     'div[class*="captcha"]', 'div[class*="verify"]', 'div[class*="geetest"]', 'div[class*="verification"]',
+    '#aliyunCaptcha-window-popup', '#aliyunCaptcha-sliding-text', '[id*="aliyunCaptcha"]', '[id*="captcha"]',
   ];
-  var CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|verify (?:that )?you are human|human verification|security verification/i;
+  var CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|please drag the slider|please click me to try again|verify (?:that )?you are human|human verification|security verification/i;
 
   function captchaEvidence(el) {
     var identity = cls(el) + ' ' + (el.id || '') + ' ' + (el.getAttribute('data-testid') || '');
@@ -196,6 +197,23 @@
         }
       }
     } catch (e) {}
+    var still = visibleSliderText();
+    if (still) return still;
+    return null;
+  }
+
+  // 阿里云滑块失败后文案会从 “Please drag the slider to verify”
+  // 变成 “Please click me to try again(error:...)”。两种都还在验证。
+  function visibleSliderText() {
+    var nodes;
+    try { nodes = document.querySelectorAll('div,span,button,p'); } catch (e) { return null; }
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!visible(el)) continue;
+      var raw = String(el.innerText || '').replace(/\s+/g, ' ').trim();
+      if (!raw || raw.length > 180) continue;
+      if (/please drag the slider to verify|please click me to try again/i.test(raw)) return el;
+    }
     return null;
   }
 

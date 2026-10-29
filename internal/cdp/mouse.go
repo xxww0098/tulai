@@ -3,6 +3,7 @@ package cdp
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/chromedp/cdproto/input"
 )
@@ -15,7 +16,13 @@ func (s *Session) bridgeMouseClick(data string) string {
 	}
 	if err == nil {
 		err = s.exec(func(ctx context.Context) error {
+			if err := pauseHuman(ctx, 40*time.Millisecond, 50*time.Millisecond); err != nil {
+				return err
+			}
 			if err := input.DispatchMouseEvent(input.MousePressed, *point.X, *point.Y).WithButton(input.Left).WithButtons(1).WithClickCount(1).Do(ctx); err != nil {
+				return err
+			}
+			if err := pauseHuman(ctx, 30*time.Millisecond, 40*time.Millisecond); err != nil {
 				return err
 			}
 			return input.DispatchMouseEvent(input.MouseReleased, *point.X, *point.Y).WithButton(input.Left).WithClickCount(1).Do(ctx)

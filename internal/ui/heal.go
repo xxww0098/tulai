@@ -63,6 +63,12 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 		logging.Log.Errorf("%s 打开登录页失败：%v", accountLabel(b), err)
 		return err
 	}
+	if ws != "" {
+		// 去处理要马上把已经开着的窗口拿到前台，不要等后面的导航重试。
+		showCtx, showCancel := context.WithTimeout(ctx, 4*time.Second)
+		_ = cdp.BringToFront(showCtx, ws)
+		showCancel()
+	}
 	if page == "" || ws == "" {
 		a.watchLogin(b, ws)
 		return nil

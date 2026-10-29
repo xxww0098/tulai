@@ -58,13 +58,13 @@ func (e *Engine) holdIfCaptcha(ctx context.Context, sess *cdp.Session, t *Task) 
 	return true, nil
 }
 
-// holdForHuman 把窗口拿回前台，暂停出图计时，最多等 humanVerifyLimit。
-// 验证通过后把窗口送回屏幕外。超时留下窗口，方便人接着点。
+// holdForHuman 把窗口拿到前台，暂停出图计时，最多等 humanVerifyLimit。
+// 验证通过后放开前台占用。超时留下窗口，方便人接着点。
 func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if ctx.Err() != nil && !endedByTimeout(ctx, nil) {
 		return ctx.Err()
 	}
 	blocked, readErr := captchaVisible(sess)
@@ -73,6 +73,9 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 	}
 	captchaManual(sess)
 	e.setAwaiting(t, true)
+	// 单次出图和外层任务时限都从这里停表，验证结束再接着走。
+	e.pauseBudget(budgetIDs(t)...)
+	defer e.resumeBudget(budgetIDs(t)...)
 	captchaShow(sess)
 	name := ""
 	if t != nil {
@@ -89,7 +92,7 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 	passed := false
 	defer func() {
 		e.setAwaiting(t, false)
-		if passed || (ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+		if passed || (ctx.Err() != nil && !endedByTimeout(ctx, nil)) {
 			captchaHide(sess)
 		}
 	}()
@@ -100,7 +103,7 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 	defer tick.Stop()
 	ignoreDeadline := false
 	for {
-		if !ignoreDeadline && ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if !ignoreDeadline && ctx.Err() != nil && !endedByTimeout(ctx, nil) {
 			return ctx.Err()
 		}
 		if sess != nil && sess.Ctx() != nil && sess.Ctx().Err() != nil {
@@ -118,13 +121,13 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 		}
 		select {
 		case <-user:
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if endedByTimeout(ctx, nil) {
 				ignoreDeadline = true
 				continue
 			}
 			return ctx.Err()
 		case <-waitCtx.Done():
-			if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if ctx.Err() != nil && !endedByTimeout(ctx, nil) {
 				return ctx.Err()
 			}
 			logging.Log.Warning("#%d %s 等待人工验证超过 %s，交给同平台其他账号", taskIndex(t), name, humanVerifyLimit)
@@ -132,6 +135,84 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 		case <-tick.C:
 		}
 	}
+}
+
+func budgetIDs(t *Task) []int64 {
+	if t == nil {
+		return nil
+	}
+	return []int64{t.BrowserID, t.ranOn}
+}
+
+// pauseBudget 停住这个账号的出图时限。验证码还在时，单次尝试和外层任务都不该算超时。
+func (e *Engine) pauseBudget(ids ...int64) {
+	if e == nil {
+		return
+	}
+	e.liveMu.Lock()
+	defer e.liveMu.Unlock()
+	if e.clock.holdStart == nil {
+		e.clock.holdStart = map[int64]time.Time{}
+	}
+	now := time.Now()
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if _, ok := e.clock.holdStart[id]; !ok {
+			e.clock.holdStart[id] = now
+		}
+	}
+}
+
+func (e *Engine) resumeBudget(ids ...int64) {
+	if e == nil {
+		return
+	}
+	e.liveMu.Lock()
+	defer e.liveMu.Unlock()
+	if e.clock.held == nil {
+		e.clock.held = map[int64]time.Duration{}
+	}
+	now := time.Now()
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if e.clock.holdStart == nil {
+			continue
+		}
+		start, ok := e.clock.holdStart[id]
+		if !ok {
+			continue
+		}
+		delete(e.clock.holdStart, id)
+		if !start.IsZero() && now.After(start) {
+			e.clock.held[id] += now.Sub(start)
+		}
+	}
+}
+
+func (e *Engine) pausedFor(id int64, now time.Time) time.Duration {
+	if e == nil || id <= 0 {
+		return 0
+	}
+	e.liveMu.Lock()
+	defer e.liveMu.Unlock()
+	extra := time.Duration(0)
+	if e.clock.held != nil {
+		extra = e.clock.held[id]
+	}
+	if e.clock.holdStart != nil {
+		if start, ok := e.clock.holdStart[id]; ok && !start.IsZero() && now.After(start) {
+			extra += now.Sub(start)
+		}
+	}
+	return extra
 }
 
 func taskIndex(t *Task) int {

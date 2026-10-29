@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,6 @@ import (
 
 	cdpbrowser "github.com/chromedp/cdproto/browser"
 	cdprotoCDP "github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
@@ -228,7 +228,9 @@ func (s *Session) PresentForCaptcha() {
 var presentForCaptcha = func(endpoint string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	_ = BringToFront(ctx, endpoint)
+	if err := BringToFront(ctx, endpoint); err != nil {
+		logging.Log.Warning("验证码窗口没有拿到前台: %v", err)
+	}
 }
 
 // KeepOffscreen 出图期间把窗口留在屏幕外，并把焦点还给 tulai。
@@ -252,12 +254,11 @@ func (s *Session) StayBack() {
 }
 
 func (s *Session) armPark() {
-	if s == nil || s.ego != nil || s.ctx == nil || s.client == nil {
+	if s == nil {
 		return
 	}
-	s.hide.Store(true)
-	s.parkOnce.Do(func() { go s.parkLoop() })
-	s.parkNow()
+	// 不再每 500ms 把窗口送回 -2400。那一下和验证码抢窗口，页面也能读到屏幕外坐标。
+	s.hide.Store(false)
 }
 
 func (s *Session) parkLoop() {
@@ -507,16 +508,9 @@ func (s *Session) Click(sel string) error {
 	return nil
 }
 
-// emulateFocus 让后台页以为自己有焦点，输入和点击才能进到豆包。
-// 不用 activateTarget / bringToFront，那些会把窗口拉到前面。
-func (s *Session) emulateFocus() {
-	if s == nil || s.ego != nil {
-		return
-	}
-	_ = s.exec(func(ctx context.Context) error {
-		return emulation.SetFocusEmulationEnabled(true).Do(ctx)
-	})
-}
+// emulateFocus 以前调用 Emulation.setFocusEmulationEnabled。
+// 后台页假装有焦点，和真实窗口对不上，风控会看。可信输入走 CDP，不需要这层伪装。
+func (s *Session) emulateFocus() {}
 
 // quietBackground 出图页不抢前台：模拟焦点，拒绝下载栏，并把窗口送出屏幕。
 func (s *Session) quietBackground() {
@@ -634,9 +628,60 @@ return true;
 	if err != nil {
 		return err
 	}
-	err = s.exec(func(ec context.Context) error { return input.InsertText(text).Do(ec) })
+	for _, part := range typeChunks(text) {
+		if err := pauseHuman(s.ctx, 35*time.Millisecond, 55*time.Millisecond); err != nil {
+			return err
+		}
+		part := part
+		if err := s.exec(func(ec context.Context) error { return input.InsertText(part).Do(ec) }); err != nil {
+			return err
+		}
+	}
 	s.StayBack()
-	return err
+	return nil
+}
+
+// typeChunks 把一次整段 insertText 拆开。整段瞬间写完是自动化痕迹，空串仍要写一次用来清空。
+func typeChunks(text string) []string {
+	if text == "" {
+		return []string{""}
+	}
+	const size = 8
+	runes := []rune(text)
+	out := make([]string, 0, (len(runes)+size-1)/size)
+	for i := 0; i < len(runes); i += size {
+		j := i + size
+		if j > len(runes) {
+			j = len(runes)
+		}
+		out = append(out, string(runes[i:j]))
+	}
+	return out
+}
+
+// pauseHuman 停一小会儿，区间是 [base, base+span)。ctx 取消时马上返回。
+func pauseHuman(ctx context.Context, base, span time.Duration) error {
+	if base < 0 {
+		base = 0
+	}
+	wait := base
+	if span > 0 {
+		wait += time.Duration(rand.Int64N(int64(span)))
+	}
+	if wait <= 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // SetUploadFilesNth 给第 n 个 input[type=file] 设置文件，由浏览器发送输入事件。

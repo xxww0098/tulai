@@ -163,6 +163,35 @@ func TestHumanWaitSurvivesImageDeadlineAndThenRequeues(t *testing.T) {
 	}
 }
 
+func TestCaptchaPausesOuterBudget(t *testing.T) {
+	saveCaptchaHooks(t)
+	calls := 0
+	captchaVisible = func(*cdp.Session) (bool, error) {
+		calls++
+		return calls < 3, nil
+	}
+	e := NewEngine(nil, nil, nil, "")
+	ctx, cancel := e.budgetContext(context.Background(), 7, 50*time.Millisecond)
+	defer cancel()
+	err := e.holdForHuman(ctx, nil, &Task{Index: 1, Platform: "千问", BrowserID: 7, Status: StatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls < 3 {
+		t.Fatalf("没有等到验证结束就返回了: calls=%d", calls)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("验证期间外层时限到了: %v", ctx.Err())
+	}
+	deadline := time.Now().Add(800 * time.Millisecond)
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !errors.Is(context.Cause(ctx), context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("放开之后时限应继续走: err=%v cause=%v", ctx.Err(), context.Cause(ctx))
+	}
+}
+
 func TestHumanWaitStopsWhenUserStops(t *testing.T) {
 	saveCaptchaHooks(t)
 	captchaVisible = func(*cdp.Session) (bool, error) { return true, nil }

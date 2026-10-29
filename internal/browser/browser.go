@@ -316,9 +316,9 @@ func launchArgs(port int, userData, startURL, extDir, proxy string, extra []stri
 		"--no-service-autorun",
 		"--edge-skip-compat-layer-relaunch",
 		"--remote-allow-origins=*",
-		// 出图时窗口不要盖住 tulai。登录需要看屏幕时再把窗口挪回来。
-		// -32000 超出虚拟屏幕，Windows 会夹回桌面，启动那下窗口就到了前面。
-		"--window-position=-2400,-2400",
+		// 窗口留在屏幕内。负坐标会被页面读成 screenX，风控会当成自动化。
+		// 出图冷启动后再把 tulai 自己的窗口拉回前面，不靠把浏览器扔到屏幕外。
+		"--window-position=80,48",
 		"--window-size=1280,900",
 	}
 	if dir := strings.TrimSpace(extDir); dir != "" {

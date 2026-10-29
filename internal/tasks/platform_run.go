@@ -177,7 +177,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					completed <- t
 					continue
 				}
-				tctx, cancel := context.WithTimeout(ctx, e.taskBudget())
+				tctx, cancel := e.budgetContext(ctx, t.BrowserID, e.taskBudget())
 				t.slot = t.BrowserID
 				if t.BrowserID > 0 {
 					e.setActive(t.BrowserID, true)
@@ -381,6 +381,38 @@ func (e *Engine) platformCap(platform string, now time.Time) int {
 		return PlatformInFlight
 	}
 	return usable
+}
+
+// budgetContext 是这一单的外层时限。验证码暂停时这段时间不计入。
+// 用户取消仍会立刻结束。到点取消的原因是 DeadlineExceeded，和 WithTimeout 一样。
+func (e *Engine) budgetContext(parent context.Context, id int64, limit time.Duration) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, stop := context.WithCancelCause(parent)
+	started := time.Now()
+	go func() {
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-parent.Done():
+				return
+			case <-ctx.Done():
+				return
+			case now := <-tick.C:
+				spent := time.Since(started)
+				if e != nil {
+					spent -= e.pausedFor(id, now)
+				}
+				if spent >= limit {
+					stop(context.DeadlineExceeded)
+					return
+				}
+			}
+		}
+	}()
+	return ctx, func() { stop(context.Canceled) }
 }
 
 func (e *Engine) taskBudget() time.Duration {
