@@ -817,7 +817,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if strat != nil {
 		home = strat.HomeURL()
 	}
-	// 出图冷启动不要盖住 tulai。窗口留在屏幕内，启动后把 tulai 拉回前面。
+	// 出图冷启动不要盖住 tulai。窗口在创建时放在屏幕外，启动后把 tulai 拉回前面。
 	// 登录走界面的 Start(..., false)，窗口可以到前面。
 	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, home, true)
 	if startErr != nil {

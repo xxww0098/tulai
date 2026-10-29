@@ -88,6 +88,51 @@ func TestOffscreenParkYieldsToCaptcha(t *testing.T) {
 	}
 }
 
+func TestOffscreenPlacementIsOncePerStateChange(t *testing.T) {
+	prevPark := parkWindow
+	prevPresent := presentForCaptcha
+	var n int
+	parkWindow = func(context.Context, string) { n++ }
+	presentForCaptcha = func(string) {}
+	t.Cleanup(func() {
+		parkWindow = prevPark
+		presentForCaptcha = prevPresent
+	})
+	s := &Session{client: &Client{wsURL: "http://127.0.0.1:9393"}, ctx: context.Background()}
+	t.Cleanup(func() { releaseFront(s.client.wsURL) })
+	s.KeepOffscreen()
+	s.KeepOffscreen()
+	s.StayBack()
+	if n != 1 {
+		t.Fatalf("藏起来只写一次坐标: %d", n)
+	}
+	s.PresentForCaptcha()
+	s.StayBack()
+	if n != 1 || !frontHeld(s.client.wsURL) {
+		t.Fatalf("验证码占着前台时不能再送出屏幕 n=%d held=%v", n, frontHeld(s.client.wsURL))
+	}
+	s.KeepOffscreen()
+	if n != 2 || frontHeld(s.client.wsURL) {
+		t.Fatalf("验证结束再藏一次 n=%d held=%v", n, frontHeld(s.client.wsURL))
+	}
+}
+
+func TestBindChatFollowsTheNextPrompt(t *testing.T) {
+	s := &Session{}
+	s.BindChat("old-url", "old-wrap")
+	s.BindChat("old-url", "cabin-wrap")
+	url, wrap := s.BoundChat()
+	if url != "old-url" || wrap != "cabin-wrap" {
+		t.Fatalf("同一条对话的下一句要换问答卡: %s %s", url, wrap)
+	}
+	s.ResetChat()
+	s.BindChat("new-url", "")
+	url, wrap = s.BoundChat()
+	if url != "new-url" || wrap != "" {
+		t.Fatalf("新的一单不能留着上一轮的问答卡: %s %s", url, wrap)
+	}
+}
+
 func TestTypeChunksKeepTheWholePrompt(t *testing.T) {
 	if got := strings.Join(typeChunks("你好hello"), ""); got != "你好hello" {
 		t.Fatalf("chunks = %q", got)
