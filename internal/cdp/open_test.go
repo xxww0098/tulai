@@ -22,6 +22,31 @@ func TestTaskTargetStaysInBackground(t *testing.T) {
 	}
 }
 
+func TestNeedsMinimizeOnlyWhenStillOnScreen(t *testing.T) {
+	if needsMinimize("minimized", 0, 0) || needsMinimize("normal", -2400, -2400) {
+		t.Fatal("已经藏好的窗口不要再改")
+	}
+	if !needsMinimize("normal", 0, 0) || !needsMinimize("normal", -2400, 12) {
+		t.Fatal("被夹回屏幕的窗口要最小化")
+	}
+}
+
+func TestFrontHoldIsPerDebugPort(t *testing.T) {
+	holdFront("http://127.0.0.1:9336")
+	t.Cleanup(func() { releaseFront("http://127.0.0.1:9336") })
+	if !frontHeld("ws://127.0.0.1:9336/devtools/browser/abc") {
+		t.Fatal("登录占用要按调试端口认")
+	}
+	if frontHeld("http://127.0.0.1:9337") {
+		t.Fatal("别的端口不该被占用")
+	}
+	s := &Session{client: &Client{wsURL: "ws://127.0.0.1:9336/devtools/browser/abc"}}
+	s.KeepOffscreen()
+	if frontHeld(s.client.wsURL) {
+		t.Fatal("出图要解除登录的前台占用")
+	}
+}
+
 func TestParkStepsDoesNotRestateNormalOffscreen(t *testing.T) {
 	if parkSteps("normal", -2400, -2400) != nil {
 		t.Fatal("已经在屏幕外的正常窗口不能再 setWindowBounds，否则会被激活到前台")

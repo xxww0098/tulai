@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cdpbrowser "github.com/chromedp/cdproto/browser"
@@ -64,6 +65,9 @@ type Session struct {
 	closed       bool
 	newDoc       []string // 新文档注入脚本
 	navigateHook string
+	hide         atomic.Bool
+	parkOnce     sync.Once
+	parkMu       sync.Mutex
 }
 
 // NewSession 在浏览器上新建标签页并打开 url。
@@ -167,9 +171,68 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 	return s, nil
 }
 
-// KeepOffscreen 出图期间不再改窗口。启动参数已经把窗口放在屏幕外，
-// 再调 setWindowBounds / activateTarget / bringToFront 都会把 Chrome 拉到前面。
-func (s *Session) KeepOffscreen() {}
+// KeepOffscreen 出图期间把窗口留在屏幕外，并把焦点还给 tulai。
+// 登录调用过 BringToFront / setWindowBounds 显示窗口时，这里才解除占用。
+func (s *Session) KeepOffscreen() {
+	if s == nil || s.ego != nil {
+		return
+	}
+	if s.client != nil {
+		releaseFront(s.client.wsURL)
+	}
+	s.armPark()
+}
+
+// StayBack 在导航、点击、输入之后再送一次屏幕外。登录占用前台时不动。
+func (s *Session) StayBack() {
+	if s == nil || !s.hide.Load() {
+		return
+	}
+	s.parkNow()
+}
+
+func (s *Session) armPark() {
+	if s == nil || s.ego != nil || s.ctx == nil || s.client == nil {
+		return
+	}
+	s.hide.Store(true)
+	s.parkOnce.Do(func() { go s.parkLoop() })
+	s.parkNow()
+}
+
+func (s *Session) parkLoop() {
+	t := time.NewTicker(500 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-t.C:
+			s.parkNow()
+		}
+	}
+}
+
+func (s *Session) parkNow() {
+	if s == nil || s.ctx == nil || s.ego != nil || s.client == nil || !s.hide.Load() {
+		return
+	}
+	if frontHeld(s.client.wsURL) {
+		return
+	}
+	if !s.parkMu.TryLock() {
+		return
+	}
+	defer s.parkMu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
+	defer cancel()
+	conn, err := DialSlider(ctx, s.client.wsURL)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.parkFirst(ctx)
+}
 
 // Close 关闭标签页会话。
 func (s *Session) Close() {
@@ -323,7 +386,9 @@ func (s *Session) Navigate(url string) error {
 	if s.ego != nil {
 		return s.ego.request(ctx, "goto", map[string]any{"url": url}, nil)
 	}
-	return chromedp.Run(ctx, chromedp.Navigate(url))
+	err := chromedp.Run(ctx, chromedp.Navigate(url))
+	s.StayBack()
+	return err
 }
 
 // RenewPage 为旧版注入迁移建立干净页面；ego lite 保留旧页及浏览器登录态。
@@ -393,7 +458,7 @@ func (s *Session) emulateFocus() {
 	})
 }
 
-// quietBackground 出图页不抢前台：模拟焦点，并拒绝会弹出下载栏的浏览器下载。
+// quietBackground 出图页不抢前台：模拟焦点，拒绝下载栏，并把窗口送出屏幕。
 func (s *Session) quietBackground() {
 	s.emulateFocus()
 	if s == nil || s.ego != nil {
@@ -406,6 +471,7 @@ func (s *Session) quietBackground() {
 		}
 		return cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorDeny).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
 	})
+	s.armPark()
 }
 
 // KeepOnePage 关掉同一站点多出来的标签，只留当前这一张。
@@ -459,7 +525,9 @@ return true;
 	if err != nil {
 		return err
 	}
-	return s.exec(func(ec context.Context) error { return input.InsertText(text).Do(ec) })
+	err = s.exec(func(ec context.Context) error { return input.InsertText(text).Do(ec) })
+	s.StayBack()
+	return err
 }
 
 // SetUploadFilesNth 给第 n 个 input[type=file] 设置文件，由浏览器发送输入事件。

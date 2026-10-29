@@ -6,7 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -432,32 +437,163 @@ func (c *SliderConn) activate(ctx context.Context, id string) error {
 }
 
 // moveWindow 把浏览器窗口放到屏幕外，或在登录时挪回可见区域。
-// 最小化会让生成图的布局尺寸变成 0，所以用屏幕外的正常窗口。
+// setWindowBounds 会把窗口激活到前台。出图挪走之后把焦点还给 tulai。
+// 窗口管理器把负坐标夹回左上角时再最小化，并用固定视口保住布局尺寸。
 func (c *SliderConn) moveWindow(ctx context.Context, targetID string, show bool) error {
-	if c == nil || targetID == "" {
-		return nil
+	if show && c != nil {
+		holdFront(c.endpoint)
 	}
-	var win struct {
-		WindowID int `json:"windowId"`
-		Bounds   struct {
-			Left        int    `json:"left"`
-			Top         int    `json:"top"`
-			WindowState string `json:"windowState"`
-		} `json:"bounds"`
-	}
-	if err := c.call(ctx, "", "Browser.getWindowForTarget", map[string]any{"targetId": targetID}, &win); err != nil {
+	changed, err := c.placeWindow(ctx, targetID, show)
+	if err != nil {
 		return err
+	}
+	if !show && changed && (c == nil || !frontHeld(c.endpoint)) {
+		focusCaller()
+	}
+	return nil
+}
+
+func (c *SliderConn) placeWindow(ctx context.Context, targetID string, show bool) (bool, error) {
+	if c == nil || targetID == "" {
+		return false, nil
+	}
+	var win windowBounds
+	if err := c.call(ctx, "", "Browser.getWindowForTarget", map[string]any{"targetId": targetID}, &win); err != nil {
+		return false, err
+	}
+	// 已经最小化就别先恢复。parkSteps 对非 normal 会先写 windowState=normal，那一下又把窗口拉回屏幕。
+	if !show && win.Bounds.WindowState == "minimized" {
+		return false, nil
 	}
 	if show {
 		bounds := map[string]any{"windowState": "normal", "left": 80, "top": 48, "width": 1280, "height": 900}
-		return c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil)
+		return true, c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil)
 	}
-	for _, bounds := range parkSteps(win.Bounds.WindowState, win.Bounds.Left, win.Bounds.Top) {
+	steps := parkSteps(win.Bounds.WindowState, win.Bounds.Left, win.Bounds.Top)
+	for _, bounds := range steps {
 		if err := c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil); err != nil {
-			return err
+			return true, err
+		}
+	}
+	if err := c.call(ctx, "", "Browser.getWindowForTarget", map[string]any{"targetId": targetID}, &win); err != nil {
+		return len(steps) > 0, nil
+	}
+	minimized := false
+	if needsMinimize(win.Bounds.WindowState, win.Bounds.Left, win.Bounds.Top) {
+		minimized = true
+		if err := c.call(ctx, "", "Browser.setWindowBounds", map[string]any{
+			"windowId": win.WindowID,
+			"bounds":   map[string]any{"windowState": "minimized"},
+		}, nil); err != nil {
+			return true, err
+		}
+		_ = c.pinLayout(ctx, targetID)
+	}
+	return len(steps) > 0 || minimized, nil
+}
+
+type windowBounds struct {
+	WindowID int `json:"windowId"`
+	Bounds   struct {
+		Left        int    `json:"left"`
+		Top         int    `json:"top"`
+		WindowState string `json:"windowState"`
+	} `json:"bounds"`
+}
+
+// needsMinimize 是负坐标被夹回屏幕之后。已经最小化或已经在屏外就不用再改。
+func needsMinimize(state string, left, top int) bool {
+	if state == "minimized" {
+		return false
+	}
+	return left > -2000 || top > -2000
+}
+
+func (c *SliderConn) pinLayout(ctx context.Context, targetID string) error {
+	session, err := c.session(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	return c.call(ctx, session, "Emulation.setDeviceMetricsOverride", map[string]any{
+		"width": 1280, "height": 900, "deviceScaleFactor": 1, "mobile": false,
+	}, nil)
+}
+
+// ParkBrowser 在出图冷启动连上调试端口后把窗口送出屏幕。登录占用前台时不动。
+func ParkBrowser(ctx context.Context, endpoint string) {
+	if ctx == nil || frontHeld(endpoint) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	conn, err := DialSlider(ctx, endpoint)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.parkFirst(ctx)
+}
+
+func (c *SliderConn) parkFirst(ctx context.Context) error {
+	targets, err := c.targets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range targets {
+		if item.Type == "page" && item.ID != "" {
+			return c.moveWindow(ctx, item.ID, false)
 		}
 	}
 	return nil
+}
+
+var frontHold sync.Map
+
+func frontKey(endpoint string) string {
+	s := strings.TrimSpace(endpoint)
+	if s == "" {
+		return ""
+	}
+	if !strings.Contains(s, "://") {
+		s = "http://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return s
+	}
+	return u.Host
+}
+
+func holdFront(endpoint string) {
+	if key := frontKey(endpoint); key != "" {
+		frontHold.Store(key, struct{}{})
+	}
+}
+
+func releaseFront(endpoint string) {
+	if key := frontKey(endpoint); key != "" {
+		frontHold.Delete(key)
+	}
+}
+
+func frontHeld(endpoint string) bool {
+	key := frontKey(endpoint)
+	if key == "" {
+		return false
+	}
+	_, ok := frontHold.Load(key)
+	return ok
+}
+
+// focusCaller 把焦点还给本进程的窗口。出图只在 Linux X11 上做；没有 xdotool 就跳过。
+func focusCaller() {
+	if runtime.GOOS != "linux" || os.Getenv("DISPLAY") == "" {
+		return
+	}
+	if _, err := exec.LookPath("xdotool"); err != nil {
+		return
+	}
+	_ = exec.Command("xdotool", "search", "--pid", strconv.Itoa(os.Getpid()), "windowactivate").Run()
 }
 
 // parkSteps 是出图时把窗口留在屏幕外的 setWindowBounds。

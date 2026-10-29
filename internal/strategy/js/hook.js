@@ -246,11 +246,43 @@
     }
     return false;
   }
+  function imageSlots(root) {
+    var items = root.querySelectorAll('[class*="image-box-grid-item"]');
+    if (items.length) return Array.prototype.slice.call(items);
+    var boxes = root.querySelectorAll('[data-testid="mdbox_image"]');
+    if (boxes.length) return Array.prototype.slice.call(boxes);
+    return [];
+  }
+  function hasFinishedAttr(root) {
+    if (root.getAttribute && root.getAttribute('data-finished') != null) return true;
+    return root.querySelectorAll('[data-finished]').length > 0;
+  }
+  function slotFinished(slot) {
+    var node = slot;
+    while (node && node.getAttribute) {
+      var v = node.getAttribute('data-finished');
+      if (v === 'true') return true;
+      if (v === 'false') return false;
+      node = node.parentElement;
+    }
+    return false;
+  }
+  function slotReady(slot) {
+    if (!slotFinished(slot)) return false;
+    var imgs = slot.querySelectorAll ? slot.querySelectorAll('img') : [];
+    for (var i = 0; i < imgs.length; i++) if (realImg(imgs[i])) return true;
+    return false;
+  }
   function replyFinished(root) {
     if (!root) return false;
+    var slots = imageSlots(root);
+    // 豆包一格一个 data-finished。有这个属性时必须全部为 true，并且每格都有实图。
+    // 只看第一格或复制按钮会在其余三张还没出来时就把这一轮收走。
+    if (slots.length && hasFinishedAttr(root)) {
+      for (var i = 0; i < slots.length; i++) if (!slotReady(slots[i])) return false;
+      return true;
+    }
     if (root.getAttribute && root.getAttribute('data-finished') === 'true') return true;
-    var boxes = root.querySelectorAll('[data-testid="message_image_content"]');
-    for (var i = 0; i < boxes.length; i++) if (boxes[i].getAttribute('data-finished') === 'true') return true;
     if (root.getAttribute && root.getAttribute('data-streaming') === 'false') return true;
     var texts = root.querySelectorAll('[data-testid="message_text_content"]');
     for (var t = 0; t < texts.length; t++) if (texts[t].getAttribute('data-streaming') === 'false') return true;
@@ -380,8 +412,8 @@
     }
     groups.push({ node: node, url: src, score: score, img: img });
   }
-  // 完成：这一轮 receive_message 的图格 data-finished=true。
-  // 没有这个属性时，文字 data-streaming=false 或重新生成/复制也算。
+  // 完成：这一轮每个图格 data-finished=true，并且每格都有实图。
+  // 没有任何 data-finished 时，文字 data-streaming=false 或重新生成/复制也算。
   // 地址要再稳大约 3 秒才由调用方收下；这里只报告这一拍的判断。
   window.__tulaiLiveImages = function () {
     var replies = replyNodes();

@@ -219,6 +219,22 @@ func promptFileName(prompt string) string {
 	return name + ".png"
 }
 
+// promptBatchBase 是一条回复里第 seq 张图的文件名（不含扩展名），从 01 起。
+func promptBatchBase(prompt string, seq int) string {
+	if seq < 1 {
+		seq = 1
+	}
+	return fmt.Sprintf("%s_%02d", strings.TrimSuffix(promptFileName(prompt), ".png"), seq)
+}
+
+// resultBase 有提示词时用「提示词_01」。没有提示词时沿用源文件名和前后缀。
+func (o Options) resultBase(prompt, source string, seq, total int) string {
+	if strings.TrimSpace(prompt) != "" {
+		return promptBatchBase(prompt, seq)
+	}
+	return strings.TrimSuffix(o.NameFor(source, seq, total), ".png")
+}
+
 // NameFor 结果文件名：按命名规则 + 前后缀。
 func (o Options) NameFor(sourcePath string, seq, total int) string {
 	base := strings.TrimSuffix(filepath.Base(sourcePath), filepath.Ext(sourcePath))

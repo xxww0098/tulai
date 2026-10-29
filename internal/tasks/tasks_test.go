@@ -988,8 +988,7 @@ func TestWaitAndSaveCancellationDuringResultRead(t *testing.T) {
 func TestWaitAndSaveRetainsPartialResultsOnDiskError(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{OutputPath: t.TempDir(), WaitResultSeconds: 60}
-	// 第一张文件名可保存，第二张冲突后的后缀会超过文件系统的 255 字节文件名上限。
-	base := strings.Repeat("s", 248)
+	base := strings.Repeat("s", 40)
 	blocker := filepath.Join(e.opts.OutputPath, base+"_02.png")
 	if err := os.WriteFile(blocker, []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1000,20 +999,22 @@ func TestWaitAndSaveRetainsPartialResultsOnDiskError(t *testing.T) {
 		data:   map[string][]byte{"first": first, "second": second},
 	}
 	task := &Task{Images: []string{base + ".png"}}
-	if err := e.waitAndSave(context.Background(), task, strat, nil); err == nil {
-		t.Fatal("第二张保存错误应返回")
+	if err := e.waitAndSave(context.Background(), task, strat, nil); err != nil || len(task.Results) != 2 {
+		t.Fatalf("重名应改存时间戳目录，而不是失败: %v %v", task.Results, err)
 	}
-	if len(task.Results) != 1 {
-		t.Fatalf("已落盘的第一张应保留在任务结果中: %v", task.Results)
-	}
-	if data, err := os.ReadFile(task.Results[0]); err != nil || !bytes.Equal(data, first) {
-		t.Fatalf("已保存的第一张应保持完整: %v", err)
+	for _, path := range task.Results {
+		if path == blocker || strings.Contains(filepath.Base(path), "_1.png") {
+			t.Fatalf("冲突文件被覆盖或加了混乱后缀: %s", path)
+		}
+		if filepath.Dir(path) == e.opts.OutputPath {
+			t.Fatal("整批应离开已被占用的文件名")
+		}
 	}
 	if data, err := os.ReadFile(blocker); err != nil || string(data) != "keep" {
-		t.Fatalf("第二张冲突文件不应覆盖: %v", err)
+		t.Fatalf("已有文件不应覆盖: %v", err)
 	}
-	if !e.seenHash[images.SHA256(first)] || e.seenHash[images.SHA256(second)] {
-		t.Fatalf("去重状态应只保留成功文件: %v", e.seenHash)
+	if !e.seenHash[images.SHA256(first)] || !e.seenHash[images.SHA256(second)] {
+		t.Fatalf("两张都应记下: %v", e.seenHash)
 	}
 }
 
@@ -1449,9 +1450,43 @@ func TestSaveResultsTextOnlyUsesPromptName(t *testing.T) {
 	if err != nil || len(saved) != 1 {
 		t.Fatalf("保存文生图结果: %v, %v", saved, err)
 	}
-	want := filepath.Join(dir, "画一只猫", "画一只猫.png")
+	want := filepath.Join(dir, "画一只猫", "画一只猫_01.png")
 	if saved[0] != want {
 		t.Fatalf("路径 = %s, want %s", saved[0], want)
+	}
+}
+
+func TestSaveResultsNamesEveryImageAndAvoidsSuffixCollision(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{OutputPath: dir}
+	task := &Task{Prompt: "雪山下的小木屋", Images: []string{"source.png"}}
+	var results []strategy.Result
+	for i := range 4 {
+		results = append(results, strategy.Result{Data: resultPNG(t, uint8(i+1))})
+	}
+	saved, err := e.saveResults(context.Background(), task, nil, nil, results)
+	if err != nil || len(saved) != 4 {
+		t.Fatalf("四张都要落下: %v %v", saved, err)
+	}
+	for i, path := range saved {
+		want := filepath.Join(dir, fmt.Sprintf("雪山下的小木屋_%02d.png", i+1))
+		if path != want {
+			t.Fatalf("路径 = %s, want %s", path, want)
+		}
+	}
+	again, err := e.saveResults(context.Background(), &Task{Prompt: "雪山下的小木屋"}, nil, nil, []strategy.Result{{Data: resultPNG(t, 9)}})
+	if err != nil || len(again) != 1 {
+		t.Fatalf("重名再保存: %v %v", again, err)
+	}
+	if filepath.Base(again[0]) != "雪山下的小木屋_01.png" {
+		t.Fatalf("重名仍用原文件名: %s", again[0])
+	}
+	if filepath.Dir(again[0]) == dir {
+		t.Fatal("重名应进时间戳子目录，而不是 _1 / _108 后缀")
+	}
+	if strings.Contains(filepath.Base(again[0]), "_1") || strings.Contains(again[0], "_108") {
+		t.Fatalf("出现混乱后缀: %s", again[0])
 	}
 }
 
