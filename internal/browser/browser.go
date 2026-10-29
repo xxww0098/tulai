@@ -145,6 +145,9 @@ type Manager struct {
 	extDir string
 	// onExt 在调试端口就绪后补装扩展。品牌版浏览器会忽略 --load-extension。
 	onExt func(wsURL, dir string) error
+	// focusApp 在出图浏览器冷启动之后把 tulai 自己的窗口重新放到前面。
+	// 登录启动不调用。界面用 MyGo 的 Window.Focus 接上。
+	focusApp func()
 	// log 非空时收浏览器的标准错误，便于对照首次运行页。
 	log io.Writer
 }
@@ -157,7 +160,8 @@ func NewManager() *Manager { return &Manager{procs: map[int64]*runningProc{}} }
 // 同一 profile 的调试端口已经在听时，不再起第二个进程（Edge/Chrome 会把新进程交回旧实例，并再开一个窗口）。
 // backend 接受 Chrome、Edge、Builtin。选中的浏览器不在时按系统顺序回落，仍使用独立的 --user-data-dir。
 // 每次启动都重新 Resolve，不沿用进程刚起来时看到的安装路径。
-func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, minimize bool) (string, error) {
+// background 为真是出图：窗口留在屏幕外，启动后把 tulai 拉回前面。登录传 false，窗口可以到前面。
+func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, background bool) (string, error) {
 	if strings.TrimSpace(startURL) == "" {
 		startURL = "about:blank"
 	}
@@ -197,24 +201,46 @@ func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, min
 	extDir := m.extDir
 	stderr := m.log
 	m.mu.Unlock()
-	cmd := exec.Command(rt.Path, launchArgs(b.Port, userData, startURL, extDir, CurrentProxyServer(), extra)...)
+	args := launchArgs(b.Port, userData, startURL, extDir, CurrentProxyServer(), extra)
+	cmd, quietOpen := launchCmd(runtime.GOOS, rt.Path, args, background)
 	cmd.Stdout, cmd.Stderr = nil, stderr
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动%s失败: %w", ChoiceLabel(rt.Kind), err)
 	}
 	done := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(done)
-	}()
+	proc := cmd.Process
+	if quietOpen {
+		adopted, adoptErr := adoptOpenedBrowser(cmd, userData)
+		if adoptErr != nil {
+			return "", fmt.Errorf("启动%s失败: %w", ChoiceLabel(rt.Kind), adoptErr)
+		}
+		proc = adopted
+		go watchOpened(proc.Pid, done)
+	} else {
+		go func() {
+			_ = cmd.Wait()
+			close(done)
+		}()
+	}
 	m.mu.Lock()
 	if old := m.procs[b.ID]; old.alive() {
 		old.proc.Kill()
 	}
-	m.procs[b.ID] = &runningProc{proc: cmd.Process, done: done}
+	m.procs[b.ID] = &runningProc{proc: proc, done: done}
 	m.mu.Unlock()
-	logging.Log.Info("浏览器[%s] 已启动（%s，端口 %d）", b.Name, ChoiceLabel(rt.Kind), b.Port)
+	if quietOpen {
+		logging.Log.Info("浏览器[%s] 已在后台启动（%s，端口 %d）", b.Name, ChoiceLabel(rt.Kind), b.Port)
+	} else {
+		logging.Log.Info("浏览器[%s] 已启动（%s，端口 %d）", b.Name, ChoiceLabel(rt.Kind), b.Port)
+	}
+	if background {
+		// 窗口可能比调试端口更早出现。先把 tulai 拉回来，端口就绪后再补一次。
+		m.refocusApp()
+	}
 	ws, err := WaitWSURL(b.Port, 20*time.Second)
+	if background {
+		m.KeepAppInFront()
+	}
 	if err != nil {
 		noteDebugPort(b.Name, startURL)
 		return "", fmt.Errorf("%w：%v", ErrDebugPort, err)
@@ -237,6 +263,17 @@ func (m *Manager) SetExtensionDir(dir string) {
 	}
 	m.mu.Lock()
 	m.extDir = dir
+	m.mu.Unlock()
+}
+
+// SetAppFocus 在出图浏览器冷启动之后调用，把 tulai 自己的窗口重新放到前面。
+// 登录启动不会调用它。fn 应走 MyGo 的 Window.Focus。
+func (m *Manager) SetAppFocus(fn func()) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.focusApp = fn
 	m.mu.Unlock()
 }
 
