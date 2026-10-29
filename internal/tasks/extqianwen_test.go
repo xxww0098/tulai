@@ -598,7 +598,9 @@ func TestExtensionUploadSplitsChunks(t *testing.T) {
 }
 
 func TestRunQianwenDownloadReassembly(t *testing.T) {
-	pngBytes := solidPNG(t, 2, 2, color.NRGBA{R: 10, G: 20, B: 30, A: 255})
+	// 8 字节一片。solidPNG 为了过生成图尺寸门槛被放大后，分片次数会把 5 秒上下文吃满，
+	// -race 下稳定撞上 E_TIMEOUT。这里只要能拼回字节，用请求的小图。
+	pngBytes := tinyPNG(t, 2, 2, color.NRGBA{R: 10, G: 20, B: 30, A: 255})
 	srv, err := extbridge.Listen(extbridge.Config{Addr: "127.0.0.1:0", Token: "dev-token"})
 	if err != nil {
 		t.Fatal(err)
@@ -936,6 +938,21 @@ func writeSolidPNG(t *testing.T, path string, w, h int, c color.NRGBA) {
 	if err := os.WriteFile(path, solidPNG(t, w, h, c), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func tinyPNG(t *testing.T, w, h int, c color.NRGBA) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func solidPNG(t *testing.T, w, h int, c color.NRGBA) []byte {
