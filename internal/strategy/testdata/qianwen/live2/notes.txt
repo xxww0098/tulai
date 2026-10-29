@@ -1,0 +1,33 @@
+qianwen.com live image-generation capture — 2026-10-29 (Asia/Shanghai), account Qwen3464 (profile 浏览器3 copy)
+Prompt: 画一只橘猫坐在窗台上，水彩风格  (sent ~22:52:25 via focus + Input.insertText + mouse click on button[aria-label="发送消息"])
+Final URL: https://www.qianwen.com/chat/78241e13b27e48a2868f7133437ca28f
+Result: SUCCESS, 1 image (image_num=1, ratio 3:4, 1760x2368, scene qwen3_t2i).
+  Server start_time 22:52:30.590, estimated_time +20s, image file ts 22:53:03.682 (~38s after send).
+  Still card_status=processing in DOM at 3/15/40/45s snapshots; complete in live-gen-98-final.html.
+Reply images (naturalWidth>200):
+  https://workspace-zb-cdn.qianwen.com/f44cf2463ac542be986f50769795a599%2Fo%2F1793285583682.png?auth_key=1795880160-0-0-dbd524d7927e07e9411f013f7ad373f9
+  (NOT reply images, exclude: gw.alicdn.com/...tps-1024-1024.jpg = sidebar avatar img.size-7.rounded-full;
+   images.quark.cn/s/uae/g/1y/fea/prod/file/20260109/*.webp = card decoration/placeholder assets)
+
+Files: live-gen-3/15/40/45.html (in-progress), live-gen-98-final.html (finished). log.txt = failing tulai log.
+
+SELECTORS
+User message bubble:
+  .chat-question-card-wrap[data-chat-question-wrap=<chatId>] > .message-card-wrap.question[data-mt="text/plain"] > .question-text-card (prompt text)
+  outer: .chat-question-wrap, wrapper class message-select-wrapper-question-* (hashed suffix)
+Assistant reply container:
+  .chat-answers-card-wrap[data-chat-answers-wrap=<same chatId as question>] (outer message-select-wrapper-answer-*)
+  inside: .answer-common-card ; text in .qk-markdown .qk-md-text (gets class "complete" when text streamed)
+  anchor after the pair: .chat-msg-bottom-anchor[data-chat-id][data-req-id=<reqId>]
+Busy / generating indicators:
+  - early (≈3s): .answer-common-card.answer-receiving-card[data-mt="custom/receiving"] with .dot-container > [class^=loading-]
+  - image card: [data-qianwen-card="ai_generate_image_list"][data-message-id=<reqId>] whose data-exposure-extra JSON has "card_status":"processing" -> "complete" when done.
+    Embedded <script type="application/json" data-used-by="hydrate"> has content.status "processing", image_num, estimated_time (SSR snapshot; may stay stale — trust data-exposure-extra / rendered img).
+  - .float-to-bottom[data-loading="true"] / .rotate-circle[data-loading="true"] (present throughout; NOT reliable).
+  - STOP BUTTON: none found. No aria-label containing 停止 and no *stop* class during any snapshot; composer button stays button[aria-label="发送消息"]. Do not rely on a stop button.
+Finished images:
+  [data-qianwen-card=ai_generate_image_list] .card.card_card_ai_generate_image[data-tpl^="card_ai_generate_image"]
+    .imagesContainer-*.complete-* .imageItem-* img[data-image-resource-id]
+  attrs: data-image-resource-id, data-image-resource-width/height (original size), data-image-watermark-url.
+  Original URL: img.src (workspace-zb-cdn.qianwen.com/.../o/<ts>.png?auth_key=...) — full 1760x2368, not a thumbnail.
+  Count expected = image_num in card JSON. Done when img[data-image-resource-id] count == image_num and card_status complete.

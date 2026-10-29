@@ -399,6 +399,81 @@
     if (String(img.getAttribute('alt') || '').trim().toLowerCase() !== 'loading') return false;
     return !!(img.closest && img.closest('[id^="card_card_ai_generate_image_"]'));
   }
+  function qwenJSON(text) {
+    try { return JSON.parse(text); } catch (e) { return null; }
+  }
+  // 完成看 data-exposure-extra 的 card_status。hydrate 脚本里的 status 会停在 processing。
+  function qwenCardStatus(card) {
+    var extra = qwenJSON(card.getAttribute('data-exposure-extra') || '');
+    return String((extra && extra.card_status) || '');
+  }
+  function qwenImageNum(card) {
+    var scripts = card.querySelectorAll('script[data-used-by="hydrate"]');
+    for (var i = 0; i < scripts.length; i++) {
+      var data = qwenJSON(scripts[i].textContent || '');
+      var content = data && data.data && data.data.originalData && data.data.originalData.content;
+      var n = content && parseInt(content.image_num, 10);
+      if (n > 0) return n;
+    }
+    return 0;
+  }
+  function qwenNoise(url) {
+    return /\/\/(?:gw\.alicdn\.com|images\.quark\.cn)(?:\/|$)/i.test(String(url || ''));
+  }
+  function qwenSrc(img) {
+    var prop = String((img && img.src) || '');
+    if (/^https?:/i.test(prop)) return prop;
+    return String((img && img.getAttribute && img.getAttribute('src')) || '').trim();
+  }
+  function qwenReplies() {
+    var nodes = Array.prototype.slice.call(document.querySelectorAll('.chat-answers-card-wrap[data-chat-answers-wrap]'));
+    var floor = window.__tulaiQwenReplyBaseline || 0;
+    if (floor < 0) floor = 0;
+    if (floor > nodes.length) floor = nodes.length;
+    return nodes.slice(floor);
+  }
+  // 千问没有停止按钮。生成中是 receiving 卡或 card_status=processing。
+  // 原图是 img[data-image-resource-id] 的 src，张数要对上 image_num。
+  function qwenLiveImages() {
+    var replies = qwenReplies();
+    var images = [];
+    var seen = {};
+    var busy = false;
+    var expect = 0;
+    var cards = 0;
+    replies.forEach(function (root) {
+      if (root.querySelector('.answer-receiving-card,[data-mt="custom/receiving"]')) busy = true;
+      Array.prototype.forEach.call(root.querySelectorAll('[data-qianwen-card="ai_generate_image_list"]'), function (card) {
+        cards++;
+        var need = qwenImageNum(card);
+        if (need > 0) expect += need;
+        var got = 0;
+        Array.prototype.forEach.call(card.querySelectorAll('img[data-image-resource-id]'), function (img) {
+          var src = qwenSrc(img);
+          if (!src || qwenNoise(src)) return;
+          got++;
+          if (seen[src]) return;
+          seen[src] = true;
+          images.push({
+            url: src,
+            src: 'dom',
+            w: parseInt(img.getAttribute('data-image-resource-width') || '0', 10) || img.naturalWidth || 0,
+            h: parseInt(img.getAttribute('data-image-resource-height') || '0', 10) || img.naturalHeight || 0
+          });
+        });
+        var status = qwenCardStatus(card);
+        if (status !== 'complete' || got < (need || 1)) busy = true;
+      });
+    });
+    var done = !busy && cards > 0 && images.length > 0 && (expect === 0 || images.length >= expect);
+    var reason = 'no-reply';
+    if (!replies.length && !images.length) reason = 'no-reply';
+    else if (busy) reason = 'generating';
+    else if (!images.length) reason = 'no-new-image';
+    else if (!done) reason = 'unfinished';
+    else reason = 'images-ready';
+    return { busy: busy, done: done, expect: expect, bar: false, replies: replies.length, reason: reason, images: images };
+  }
   function gridOf(img) {
     var card = img.closest && img.closest('[id^="card_card_ai_generate_image_"]');
     if (card) return card;
@@ -430,6 +505,7 @@
   // 没有任何 data-finished 时，文字 data-streaming=false 或重新生成/复制也算。
   // 地址要再稳大约 3 秒才由调用方收下；这里只报告这一拍的判断。
   window.__tulaiLiveImages = function () {
+    if (qwenPage()) return qwenLiveImages();
     var replies = replyNodes();
     var groups = [];
     var busy = composerStopping();
@@ -568,6 +644,7 @@
     pendingGeneration = 0;
     window.__tulaiMark = Date.now();
     window.__tulaiAssistantBaseline = assistantNodes().length;
+    window.__tulaiQwenReplyBaseline = document.querySelectorAll('.chat-answers-card-wrap[data-chat-answers-wrap]').length;
     existingImages = new WeakSet();
     ignoredURLs = new Set();
     baselineURLs = new Set();
