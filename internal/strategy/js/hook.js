@@ -456,11 +456,20 @@
     return { url: url || '', wrap: wrap || '' };
   };
   function qwenReplies() {
-    var wrap = qwenBound().wrap;
-    var sel = '.chat-answers-card-wrap[data-chat-answers-wrap]';
-    if (wrap) sel = '.chat-answers-card-wrap[data-chat-answers-wrap="' + wrap.replace(/["\\]/g, '') + '"]';
-    var nodes = Array.prototype.slice.call(document.querySelectorAll(sel));
-    if (wrap) return nodes;
+    var wrap = String(qwenBound().wrap || '');
+    var all = Array.prototype.slice.call(document.querySelectorAll('.chat-answers-card-wrap[data-chat-answers-wrap]'));
+    var nodes = all;
+    if (wrap) {
+      nodes = all.filter(function (node) {
+        return String(node.getAttribute('data-chat-answers-wrap') || '') === wrap;
+      });
+    }
+    var fresh = nodes.filter(function (node) { return !baselineReplies.has(node); });
+    if (wrap) {
+      // 绑住的那张卡在这一轮标记前就在，是上一句的结果。改看标记之后新出来的回复。
+      if (fresh.length || !nodes.length) return fresh;
+      return all.filter(function (node) { return !baselineReplies.has(node); });
+    }
     var floor = window.__tulaiQwenReplyBaseline || 0;
     if (floor < 0) floor = 0;
     if (floor > nodes.length) floor = nodes.length;

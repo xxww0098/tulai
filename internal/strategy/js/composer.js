@@ -342,13 +342,17 @@
     return n;
   }
   // 发送成功要看到一条新的用户气泡（正文含这次提示词），或地址变成新的 /chat/<id>。输入框空了不算。
+  // 千问复用标签时，首页壳会把地址写回上一轮的 /chat/<id>，问答卡里却没有这次提示词。那不是发出去了。
   window.tulaiSendAccepted = function (beforeHref, prompt, beforeMatches) {
     var href = String(location.href || '');
     var nowID = conversationKey(href);
     var thenID = conversationKey(beforeHref);
-    if (nowID && nowID !== thenID) return true;
     var floor = typeof beforeMatches === 'number' ? beforeMatches : 0;
-    return promptMatches(prompt) > floor;
+    if (promptMatches(prompt) > floor) return true;
+    if (!(nowID && nowID !== thenID)) return false;
+    var host = String((window.__tulaiPageHost || location.hostname) || '');
+    if (!/(qianwen|tongyi|qwen)/i.test(host)) return true;
+    return document.querySelectorAll('.chat-question-card-wrap').length === 0;
   };
 
   // InsertText 在失焦窗口里可能只改了 DOM。再用原生 setter 派发 input，React 才会打开发送。

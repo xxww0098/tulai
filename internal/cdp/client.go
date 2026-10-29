@@ -75,7 +75,6 @@ type Session struct {
 	newDoc       []string // 新文档注入脚本
 	navigateHook string
 	hide         atomic.Bool
-	parkOnce     sync.Once
 	parkMu       sync.Mutex
 }
 
@@ -213,14 +212,14 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 }
 
 // PresentForCaptcha 把这个账号的窗口拿回屏幕并抢到前台。
-// 出图过程中只有等人完成验证码可以走这里，平时的导航和点击仍留在屏幕外。
+// 出图过程中只有等人完成验证码可以走这里。
 func (s *Session) PresentForCaptcha() {
 	if s == nil || s.ego != nil || s.client == nil || s.client.wsURL == "" {
 		return
 	}
-	// 先占住前台，park 循环才不会在激活完成前把窗口又送出去。
-	// 激活本身同步做完，避免验证很快通过时，迟到的激活把窗口又拉回来。
+	// 先占住前台，这次显示完成前不要再写屏幕外坐标。
 	holdFront(s.client.wsURL)
+	s.hide.Store(false)
 	presentForCaptcha(s.client.wsURL)
 }
 
@@ -234,7 +233,7 @@ var presentForCaptcha = func(endpoint string) {
 }
 
 // KeepOffscreen 出图期间把窗口留在屏幕外，并把焦点还给 tulai。
-// 登录调用过 BringToFront / setWindowBounds 显示窗口时，这里才解除占用。
+// 登录或验证码占着前台时不动。已经藏好就不再 setWindowBounds。
 func (s *Session) KeepOffscreen() {
 	if s == nil || s.ego != nil {
 		return
@@ -242,36 +241,29 @@ func (s *Session) KeepOffscreen() {
 	if s.client != nil {
 		releaseFront(s.client.wsURL)
 	}
-	s.armPark()
+	s.placeOffscreen()
 }
 
-// StayBack 在导航、点击、输入之后再送一次屏幕外。登录占用前台时不动。
+// StayBack 在导航、点击、输入之后，窗口如果还显示着就藏一次。
+// 已经在屏幕外就什么都不写。不轮询，避免和验证码的 setWindowBounds 抢窗口。
 func (s *Session) StayBack() {
-	if s == nil || !s.hide.Load() {
+	s.placeOffscreen()
+}
+
+func (s *Session) armPark() { s.placeOffscreen() }
+
+// placeOffscreen 只在「显示着 → 藏起来」这一下改坐标。重复调用直接返回。
+func (s *Session) placeOffscreen() {
+	if s == nil || s.ego != nil || s.client == nil || s.ctx == nil {
+		return
+	}
+	if frontHeld(s.client.wsURL) {
+		return
+	}
+	if s.hide.Swap(true) {
 		return
 	}
 	s.parkNow()
-}
-
-func (s *Session) armPark() {
-	if s == nil {
-		return
-	}
-	// 不再每 500ms 把窗口送回 -2400。那一下和验证码抢窗口，页面也能读到屏幕外坐标。
-	s.hide.Store(false)
-}
-
-func (s *Session) parkLoop() {
-	t := time.NewTicker(500 * time.Millisecond)
-	defer t.Stop()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-t.C:
-			s.parkNow()
-		}
-	}
 }
 
 func (s *Session) parkNow() {
@@ -287,7 +279,12 @@ func (s *Session) parkNow() {
 	defer s.parkMu.Unlock()
 	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
 	defer cancel()
-	conn, err := DialSlider(ctx, s.client.wsURL)
+	parkWindow(ctx, s.client.wsURL)
+}
+
+// parkWindow 把这个调试端口的窗口送出屏幕。测试里换成计数，避免去连端口。
+var parkWindow = func(ctx context.Context, endpoint string) {
+	conn, err := DialSlider(ctx, endpoint)
 	if err != nil {
 		return
 	}
@@ -528,19 +525,30 @@ func (s *Session) quietBackground() {
 	s.armPark()
 }
 
-// BindChat 记下这次发送的千问对话。已经记下的不换，避免视图被切走后把别的对话当成这一轮。
+// BindChat 记下这次发送的千问对话。同一轮里后写的非空 id 覆盖先写的，
+// 这样复用标签的下一句提示词不会继续盯着上一轮的问答卡。
 func (s *Session) BindChat(urlID, wrapID string) {
-	if s == nil {
+	if s == nil || (urlID == "" && wrapID == "") {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if urlID != "" && s.boundURL == "" {
+	if urlID != "" {
 		s.boundURL = urlID
 	}
-	if wrapID != "" && s.boundWrap == "" {
+	if wrapID != "" {
 		s.boundWrap = wrapID
 	}
+}
+
+// ResetChat 在新的一单开始时丢掉上一轮的对话绑定。
+func (s *Session) ResetChat() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.boundURL, s.boundWrap = "", ""
+	s.mu.Unlock()
 }
 
 // BoundChat 返回发送时的对话地址 id 和问答卡 id。

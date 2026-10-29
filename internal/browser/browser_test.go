@@ -89,6 +89,18 @@ func TestProfileDirSeparatesEdgeFromChrome(t *testing.T) {
 	}
 }
 
+func TestGenerationWindowStartsOffscreen(t *testing.T) {
+	args := launchArgs(9333, "profile", "https://www.qianwen.com/", "", "", nil)
+	shown := strings.Join(args, "\n")
+	if !strings.Contains(shown, "--window-position=80,48") {
+		t.Fatalf("登录窗口应在屏幕里: %v", args)
+	}
+	hidden := strings.Join(offscreenArgs(args), "\n")
+	if !strings.Contains(hidden, "--window-position=-2400,-2400") || strings.Contains(hidden, "80,48") {
+		t.Fatalf("出图窗口应在创建时放到屏幕外: %s", hidden)
+	}
+}
+
 func TestDebugArgsUseLoginURLAndSkipAutomation(t *testing.T) {
 	userData := filepath.Join("BrowserData", "Edge", "千问")
 	login := "https://www.doubao.com/chat/"

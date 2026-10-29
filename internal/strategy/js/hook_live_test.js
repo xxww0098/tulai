@@ -14,35 +14,42 @@ function match(node, sel) {
     sel = sel.slice(tagMatch[0].length)
   }
   if (tag && node.tagName !== tag) return false
-  while (sel.startsWith('[')) {
-    const end = sel.indexOf(']')
-    if (end < 0) return false
-    const body = sel.slice(1, end)
-    sel = sel.slice(end + 1)
-    let name, op, value
-    if (body.includes('*=')) {
-      const at = body.indexOf('*=')
-      name = body.slice(0, at)
-      op = '*='
-      value = body.slice(at + 2).replace(/^["']|["']$/g, '')
-    } else if (body.includes('=')) {
-      const at = body.indexOf('=')
-      name = body.slice(0, at)
-      op = '='
-      value = body.slice(at + 1).replace(/^["']|["']$/g, '')
-    } else {
-      name = body
-      op = 'has'
+  const takeAttrs = () => {
+    while (sel.startsWith('[')) {
+      const end = sel.indexOf(']')
+      if (end < 0) return false
+      const body = sel.slice(1, end)
+      sel = sel.slice(end + 1)
+      let name, op, value
+      if (body.includes('*=')) {
+        const at = body.indexOf('*=')
+        name = body.slice(0, at)
+        op = '*='
+        value = body.slice(at + 2).replace(/^["']|["']$/g, '')
+      } else if (body.includes('=')) {
+        const at = body.indexOf('=')
+        name = body.slice(0, at)
+        op = '='
+        value = body.slice(at + 1).replace(/^["']|["']$/g, '')
+      } else {
+        name = body
+        op = 'has'
+      }
+      const got = node.attrs && node.attrs[name]
+      if (op === 'has' && (got == null || got === '')) return false
+      if (op === '=' && String(got) !== value) return false
+      if (op === '*=' && String(got || '').indexOf(value) < 0) return false
     }
-    const got = node.attrs && node.attrs[name]
-    if (op === 'has' && (got == null || got === '')) return false
-    if (op === '=' && String(got) !== value) return false
-    if (op === '*=' && String(got || '').indexOf(value) < 0) return false
+    return true
   }
+  if (!takeAttrs()) return false
   if (sel.startsWith('.')) {
-    return String(node.attrs.class || '').split(/\s+/).includes(sel.slice(1))
+    const m = sel.match(/^\.([^[.#:\s]+)/)
+    if (!m || !String(node.attrs.class || '').split(/\s+/).includes(m[1])) return false
+    sel = sel.slice(m[0].length)
   }
-  return tag !== '' || sel === ''
+  if (!takeAttrs()) return false
+  return sel === ''
 }
 
 function queryAll(root, selector) {
@@ -385,5 +392,47 @@ shot = context.__tulaiLiveImages()
 assert.strictEqual(shot.reason, 'off-chat')
 assert.strictEqual(shot.replies, 0)
 assert.strictEqual(shot.images.length, 0)
+
+// 同一标签的第二句。上一轮的完成卡还在，绑定也还指着它。
+body.childNodes = []
+location.href = 'https://www.qianwen.com/chat/78241e13b27e48a2868f7133437ca28f'
+function qwenTurn(wrap, prompt, src, status) {
+  const question = el('div')
+  question.attrs.class = 'chat-question-card-wrap'
+  question.setAttribute('data-chat-question-wrap', wrap)
+  question.innerText = prompt
+  const answer = el('div')
+  answer.attrs.class = 'chat-answers-card-wrap'
+  answer.setAttribute('data-chat-answers-wrap', wrap)
+  const card = el('div')
+  card.setAttribute('data-qianwen-card', 'ai_generate_image_list')
+  card.setAttribute('data-exposure-extra', JSON.stringify({ card_status: status }))
+  const script = el('script')
+  script.setAttribute('data-used-by', 'hydrate')
+  script.textContent = JSON.stringify({ data: { originalData: { content: { image_num: 1 } } } })
+  const img = el('img')
+  img.src = src
+  img.setAttribute('data-image-resource-id', wrap)
+  card.appendChild(script)
+  card.appendChild(img)
+  answer.appendChild(card)
+  body.appendChild(question)
+  body.appendChild(answer)
+  return answer
+}
+qwenTurn('9d6za8GJXYrgCGrzLZb49-Jt_cRKc9nn', '画一只橘猫坐在窗台上，水彩风格', 'https://workspace-zb-cdn.qianwen.com/o/cat.png', 'complete')
+context.__tulaiQwenURL = '78241e13b27e48a2868f7133437ca28f'
+context.__tulaiQwenChat = '9d6za8GJXYrgCGrzLZb49-Jt_cRKc9nn'
+context.__tulaiMarkTask()
+shot = context.__tulaiLiveImages()
+assert.strictEqual(shot.done, false, '第二句还没出现时不能收下上一轮的橘猫: ' + JSON.stringify(shot))
+assert.ok(!urls(shot).some((url) => url.includes('cat.png')), JSON.stringify(shot))
+qwenTurn('cabin-wrap', '雪山下的小木屋，油画风格', 'https://workspace-zb-cdn.qianwen.com/o/cabin.png', 'complete')
+shot = context.__tulaiLiveImages()
+assert.strictEqual(shot.done, true, JSON.stringify(shot))
+assert.deepStrictEqual(urls(shot), ['https://workspace-zb-cdn.qianwen.com/o/cabin.png'])
+context.__tulaiQwenChat = 'cabin-wrap'
+shot = context.__tulaiLiveImages()
+assert.deepStrictEqual(urls(shot), ['https://workspace-zb-cdn.qianwen.com/o/cabin.png'])
 
 console.log('hook live images ok')

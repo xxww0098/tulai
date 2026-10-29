@@ -160,7 +160,7 @@ func NewManager() *Manager { return &Manager{procs: map[int64]*runningProc{}} }
 // 同一 profile 的调试端口已经在听时，不再起第二个进程（Edge/Chrome 会把新进程交回旧实例，并再开一个窗口）。
 // backend 接受 Chrome、Edge、Builtin。选中的浏览器不在时按系统顺序回落，仍使用独立的 --user-data-dir。
 // 每次启动都重新 Resolve，不沿用进程刚起来时看到的安装路径。
-// background 为真是出图：窗口留在屏幕外，启动后把 tulai 拉回前面。登录传 false，窗口可以到前面。
+// background 为真是出图：创建时就把窗口放在屏幕外，启动后把 tulai 拉回前面。登录传 false，窗口留在屏幕里。
 func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, background bool) (string, error) {
 	if strings.TrimSpace(startURL) == "" {
 		startURL = "about:blank"
@@ -202,6 +202,9 @@ func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, bac
 	stderr := m.log
 	m.mu.Unlock()
 	args := launchArgs(b.Port, userData, startURL, extDir, CurrentProxyServer(), extra)
+	if background {
+		args = offscreenArgs(args)
+	}
 	cmd, quietOpen := launchCmd(runtime.GOOS, rt.Path, args, background)
 	cmd.Stdout, cmd.Stderr = nil, stderr
 	if err := cmd.Start(); err != nil {
@@ -316,8 +319,7 @@ func launchArgs(port int, userData, startURL, extDir, proxy string, extra []stri
 		"--no-service-autorun",
 		"--edge-skip-compat-layer-relaunch",
 		"--remote-allow-origins=*",
-		// 窗口留在屏幕内。负坐标会被页面读成 screenX，风控会当成自动化。
-		// 出图冷启动后再把 tulai 自己的窗口拉回前面，不靠把浏览器扔到屏幕外。
+		// 登录窗口留在屏幕里。出图用 offscreenArgs 换成屏幕外，只在创建时放一次。
 		"--window-position=80,48",
 		"--window-size=1280,900",
 	}
@@ -335,6 +337,17 @@ func launchArgs(port int, userData, startURL, extDir, proxy string, extra []stri
 	args = append(args, extra...)
 	args = append(args, startURL)
 	return args
+}
+
+// offscreenArgs 把启动坐标改到屏幕外。已经在外面就不要再 setWindowBounds，那会把窗口激活到 tulai 前面。
+func offscreenArgs(args []string) []string {
+	out := append([]string(nil), args...)
+	for i, arg := range out {
+		if strings.HasPrefix(arg, "--window-position=") {
+			out[i] = "--window-position=-2400,-2400"
+		}
+	}
+	return out
 }
 
 // debugArgs 给仍直接拼命令行的测试用。

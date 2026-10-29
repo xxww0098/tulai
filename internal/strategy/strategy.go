@@ -292,17 +292,14 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if result.Attempted != nil && !*result.Attempted {
 		uncertain = false
 	}
-	if pageIsQwen(s) {
-		if result.Chat != "" && result.Chat != beforeChat {
-			s.BindChat(result.Chat, result.Wrap)
-		} else if result.Sent && result.Wrap != "" {
-			s.BindChat(beforeChat, result.Wrap)
+	if pageIsQwen(s) && result.Sent {
+		chat := result.Chat
+		if chat == "" {
+			chat = beforeChat
 		}
+		s.BindChat(chat, result.Wrap)
 	}
 	if !result.Sent {
-		if pageIsQwen(s) && result.Chat != "" && result.Chat != beforeChat {
-			return nil
-		}
 		for _, diagnostic := range result.Diagnostic {
 			logging.Log.Debugf("发送诊断 %s", diagnostic)
 		}
@@ -456,6 +453,8 @@ func FreshChat(s *cdp.Session) error {
 	if s == nil || s.IsEgo() {
 		return nil
 	}
+	// 同一标签接着出下一句。上一轮的对话 id 留着的话，检测会读旧图，重试也不再发送。
+	s.ResetChat()
 	defer s.StayBack()
 	out, err := s.Evaluate(`window.__tulaiFreshChat ? __tulaiFreshChat() : "missing"`)
 	if err != nil {
@@ -546,9 +545,6 @@ func applyQwenBind(s *cdp.Session) {
 		return
 	}
 	urlID, wrapID := s.BoundChat()
-	if urlID == "" && wrapID == "" {
-		return
-	}
 	_, _ = s.Evaluate(fmt.Sprintf(`window.__tulaiQwenURL=%q;window.__tulaiQwenChat=%q;`, urlID, wrapID))
 }
 

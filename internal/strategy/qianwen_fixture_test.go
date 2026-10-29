@@ -289,6 +289,64 @@ func TestQianwenGenerationFixtures(t *testing.T) {
 		}
 	})
 
+	t.Run("second prompt", func(t *testing.T) {
+		sess := openFixture(t, client, srv.URL+"/live-gen-98-final", hook, composer)
+		defer sess.Close()
+		const cabin = "https://workspace-zb-cdn.qianwen.com/o/cabin.png"
+		const prompt = "雪山下的小木屋，油画风格"
+		if !sess.EvaluateBool(`window.__tulaiPageHost='www.qianwen.com'; history.pushState({}, '', '/chat/` + sentChat + `'); window.__tulaiQwenURL='` + sentChat + `'; window.__tulaiQwenChat='` + sentWrap + `'; __tulaiMarkTask(); (() => {
+			var stale = __tulaiLiveImages();
+			if (stale.done || stale.images.some(function (img) { return img.url.indexOf('1793285583682') >= 0; })) return false;
+			var answer = document.createElement('div');
+			answer.className = 'chat-answers-card-wrap';
+			answer.setAttribute('data-chat-answers-wrap', 'cabin-wrap');
+			var card = document.createElement('div');
+			card.setAttribute('data-qianwen-card', 'ai_generate_image_list');
+			card.setAttribute('data-exposure-extra', '{"card_status":"complete"}');
+			var script = document.createElement('script');
+			script.type = 'application/json';
+			script.setAttribute('data-used-by', 'hydrate');
+			script.textContent = '{"data":{"originalData":{"content":{"image_num":1}}}}';
+			var img = document.createElement('img');
+			img.src = '` + cabin + `';
+			img.setAttribute('data-image-resource-id', 'cabin');
+			card.appendChild(script);
+			card.appendChild(img);
+			answer.appendChild(card);
+			document.body.appendChild(answer);
+			return true;
+		})()`) {
+			out, _ := sess.Evaluate(`JSON.stringify(__tulaiLiveImages())`)
+			t.Fatalf("标记后不能把上一轮橘猫当成这一轮: %s", out)
+		}
+		live := readLive(t, sess, `window.__tulaiPageHost='www.qianwen.com'; JSON.stringify(__tulaiLiveImages())`)
+		if !live.Done || live.Reason != "images-ready" || len(live.Images) != 1 || live.Images[0].URL != cabin {
+			t.Fatalf("第二句要读新图，不能读上一轮的橘猫 images=%v done=%t reason=%s", live.Images, live.Done, live.Reason)
+		}
+		sess.ResetChat()
+		applyQwenBind(sess)
+		sess.BindChat(sentChat, "cabin-wrap")
+		applyQwenBind(sess)
+		bound := readLive(t, sess, `window.__tulaiPageHost='www.qianwen.com'; JSON.stringify(__tulaiLiveImages())`)
+		if !bound.Done || len(bound.Images) != 1 || bound.Images[0].URL != cabin {
+			t.Fatalf("换到这句的问答卡后仍只留新图 images=%v done=%t", bound.Images, bound.Done)
+		}
+		if !sess.EvaluateBool(`window.__tulaiPageHost='www.qianwen.com'; (() => {
+			var prompt = ` + quote(prompt) + `;
+			if (window.tulaiSendAccepted('https://www.qianwen.com/', prompt, 0)) return false;
+			history.pushState({}, '', '/chat/cccccccccccccccccccccccccccccccc');
+			if (window.tulaiSendAccepted('https://www.qianwen.com/', prompt, 0)) return false;
+			var bubble = document.createElement('div');
+			bubble.className = 'chat-question-card-wrap';
+			bubble.setAttribute('data-chat-question-wrap', 'cabin-wrap');
+			bubble.textContent = prompt;
+			document.body.appendChild(bubble);
+			return window.tulaiSendAccepted('https://www.qianwen.com/', prompt, 0) === true;
+		})()`) {
+			t.Fatal("上一轮问答卡还在时，地址变化不能当成这句已经发出")
+		}
+	})
+
 	t.Run("reopen sent chat", func(t *testing.T) {
 		sess := openFixture(t, client, srv.URL+"/live-gen-3", hook, composer)
 		defer sess.Close()
