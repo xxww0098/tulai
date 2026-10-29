@@ -906,7 +906,7 @@ func (a *App) reloginCard(card ProgressCard) {
 	}(row)
 }
 
-// showBrowserAccount 切到浏览器页并选中这个账号，方便二维码出现在它那一行。
+// showBrowserAccount 切到浏览器页并选中这个账号，方便在打开的网页里登录。
 func (a *App) showBrowserAccount(id int64) store.Browser {
 	if id > 0 {
 		a.holdLogin(id)

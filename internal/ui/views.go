@@ -63,6 +63,7 @@ func (a *App) browserSetup(c *ui.Context) {
 }
 
 func (a *App) browserInstances(c *ui.Context) {
+	a.followStagePlatform()
 	ui.Text(c, "浏览器实例").FontSize(15).Bold()
 	ui.Text(c, browserInstanceHint).FontSize(12).TextColor(c.Theme().TextMuted)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -122,7 +123,20 @@ func (a *App) browserInstances(c *ui.Context) {
 		ui.Button(c, "恢复选中").Shrink(0).Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
 	})
 	ui.Button(c, "删除选中").Shrink(0).AlignSelf(ui.Start).Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
-	ui.Text(c, "想重新登录或再添加账号，点左侧导航栏里的设置向导。").FontSize(12).TextColor(c.Theme().TextMuted)
+	ui.Text(c, "双击名称或点笔图标改名。登录在打开的网页里完成，成功后窗口会自动关闭。").FontSize(12).TextColor(c.Theme().TextMuted)
+}
+
+// followStagePlatform 让添加账号的平台下拉跟着右侧当前 Tab，直到用户自己改下拉。
+func (a *App) followStagePlatform() {
+	if a == nil {
+		return
+	}
+	if a.platSynced && a.platSyncedTab == a.stageTab && a.newBrowserPlat != "" {
+		return
+	}
+	a.newBrowserPlat = a.stagePlatform()
+	a.platSynced = true
+	a.platSyncedTab = a.stageTab
 }
 
 // extensionBridgeSection 展示页面桥令牌和端口。扩展弹出页要填同一组值。
@@ -506,6 +520,28 @@ func (a *App) downloadBuiltin() {
 }
 
 func (a *App) addBrowser() {
+	if a == nil || a.running {
+		return
+	}
+	name := strings.TrimSpace(a.newBrowserName)
+	a.newBrowserName = ""
+	a.createBrowser(a.newBrowserPlat, name)
+}
+
+// addAccountHere 给右侧当前 Tab 的平台直接加一个账号。
+func (a *App) addAccountHere() {
+	if a == nil || a.running {
+		return
+	}
+	platform := a.stagePlatform()
+	a.newBrowserPlat = platform
+	a.platSynced = true
+	a.platSyncedTab = a.stageTab
+	a.tab = pageBrowser
+	a.createBrowser(platform, "")
+}
+
+func (a *App) createBrowser(platform, name string) {
 	if a == nil || a.store == nil || a.running {
 		return
 	}
@@ -513,22 +549,28 @@ func (a *App) addBrowser() {
 		logging.Log.Errorf("没有浏览器，无法添加账号")
 		return
 	}
-	name := strings.TrimSpace(a.newBrowserName)
-	if name == "" {
-		name = fmt.Sprintf("浏览器%d", len(a.browserRows)+1)
+	platform = strings.TrimSpace(platform)
+	if platform == "" {
+		platform = "豆包"
+	}
+	if strings.TrimSpace(name) == "" {
+		var used []string
+		for _, row := range a.store.Browsers() {
+			used = append(used, row.Name)
+		}
+		name = wizard.NextInstanceName(platform, used)
 	}
 	dir := ""
 	if strings.TrimSpace(a.dataRoot) != "" {
 		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
 	}
-	row, err := a.store.AddBrowser(a.newBrowserPlat, name, dir)
+	row, err := a.store.AddBrowser(platform, name, dir)
 	if err != nil {
 		logging.Log.Errorf("添加浏览器失败: %v", err)
 		return
 	}
-	a.newBrowserName = ""
 	a.markFreshLogin(row.ID)
-	logging.Log.Info("正在打开 %s（%s），登录成功后才会留在列表里", name, a.newBrowserPlat)
+	logging.Log.Info("正在打开 %s（%s），请在网页里登录，成功后窗口会自动关闭", name, platform)
 	a.refreshBrowsers()
 	for i := range a.browserRows {
 		if a.browserRows[i].ID == row.ID {
@@ -546,25 +588,14 @@ func (a *App) selectedBrowser() (store.Browser, bool) {
 	return a.browserRows[a.browserSel], true
 }
 
-func accountNeedsQR(b store.Browser, shot loginShot) bool {
-	if b.ExtAccount != "" || shot.state == wizard.ProbeIn {
-		return false
-	}
-	switch shot.state {
-	case wizard.ProbeOut, wizard.ProbeUnknown, wizard.ProbeRegion:
-		return true
-	}
-	return shot.bmp != nil || shot.hint != ""
-}
-
 func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
 	shot := a.loginShot(b.ID)
 	ui.Column(c).FillWidth().Padding(10, 12).Gap(6).Children(func() {
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
 				signedIn := accountSignedIn(b, shot)
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, b.Name).Bold().SingleLine()
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					a.accountNameField(c, b)
 					ui.Badge(c, accountHealthLabel(b, active, signedIn)).Shrink(0)
 				})
 				line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
@@ -577,33 +608,107 @@ func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
 					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
 				}
 			})
-			if shot.bmp != nil && accountNeedsQR(b, shot) && shot.state != wizard.ProbeRegion {
-				ui.Image(c, shot.bmp).Size(132, 132).Shrink(0).Fit(ui.Contain).Radius(8).Border(1, c.Theme().Border)
-			}
 		})
 		a.accountLoginStatus(c, b, shot)
 	})
+}
+
+func (a *App) accountNameField(c *ui.Context, b store.Browser) {
+	if a.renameID == b.ID {
+		field := ui.TextInput(c.Key("rename"), &a.renameDraft).Width(148).FontSize(13).OnTextKey(func(k ui.TextKey) bool {
+			switch k.Key {
+			case ui.KeyEnter:
+				a.renameDraft = strings.TrimSpace(k.Text())
+				a.commitRename()
+				return true
+			case ui.KeyEscape:
+				a.cancelRename()
+				return true
+			default:
+				return false
+			}
+		})
+		if a.renameFocus {
+			field.Focus()
+			a.renameFocus = false
+		}
+		return
+	}
+	name := ui.Text(c, b.Name).Bold().SingleLine()
+	if name.Clicked() {
+		a.selectBrowserID(b.ID)
+	}
+	if name.DoubleClicked() {
+		a.beginRename(b)
+	}
+	pen := ui.ButtonBase(c.Key("pen")).Size(20, 20).Radius(6).Shrink(0).Center().
+		Label("重命名 " + b.Name).Cursor(ui.CursorPointer)
+	if pen.Hovered() {
+		pen.Background(c.Theme().Border.Alpha(0.45))
+	}
+	if pen.Clicked() {
+		a.beginRename(b)
+	}
+	pen.Children(func() {
+		ui.Icon(c, iconPen).FontSize(12).TextColor(c.Theme().TextMuted)
+	})
+}
+
+func (a *App) selectBrowserID(id int64) {
+	for i := range a.browserRows {
+		if a.browserRows[i].ID == id {
+			a.browserSel = i
+			return
+		}
+	}
+}
+
+func (a *App) beginRename(b store.Browser) {
+	a.renameID = b.ID
+	a.renameDraft = b.Name
+	a.renameFocus = true
+	a.selectBrowserID(b.ID)
+}
+
+func (a *App) commitRename() {
+	id := a.renameID
+	name := strings.TrimSpace(a.renameDraft)
+	a.renameID = 0
+	a.renameFocus = false
+	if id <= 0 || name == "" || a.store == nil {
+		return
+	}
+	a.store.RenameBrowser(id, name)
+	for i := range a.browserRows {
+		if a.browserRows[i].ID == id {
+			a.browserRows[i].Name = name
+		}
+	}
+	if a.wizardAccount.ID == id {
+		a.wizardAccount.Name = name
+		a.wizardName = name
+	}
+	a.refreshBrowsers()
+}
+
+func (a *App) cancelRename() {
+	a.renameID = 0
+	a.renameFocus = false
 }
 
 func (a *App) accountLoginStatus(c *ui.Context, b store.Browser, shot loginShot) {
 	if b.ExtAccount != "" {
 		return
 	}
-	if accountNeedsQR(b, shot) {
-		switch {
-		case shot.state == wizard.ProbeRegion:
-			ui.Text(c, regionProxyHint).FontSize(12).TextColor(c.Theme().Warning)
-		case shot.hint != "":
-			ui.Text(c, shot.hint).FontSize(12).TextColor(c.Theme().Warning)
-		case shot.bmp != nil:
-			ui.Text(c, "用手机扫码，过期会自动刷新").FontSize(12).TextColor(c.Theme().TextMuted)
-		default:
-			ui.Text(c, loginQRWaitHint).FontSize(12).TextColor(c.Theme().TextMuted)
-		}
-		return
-	}
-	if accountSignedIn(b, shot) {
+	switch {
+	case shot.state == wizard.ProbeRegion:
+		ui.Text(c, regionProxyHint).FontSize(12).TextColor(c.Theme().Warning)
+	case accountSignedIn(b, shot):
 		ui.Text(c, "已登录").FontSize(12).TextColor(c.Theme().Success)
+	case shot.hint != "":
+		ui.Text(c, shot.hint).FontSize(12).TextColor(c.Theme().Warning)
+	default:
+		ui.Text(c, pageLoginHint).FontSize(12).TextColor(c.Theme().TextMuted)
 	}
 }
 
@@ -632,6 +737,12 @@ func (a *App) launchBrowser() {
 		logging.Log.Errorf("无法识别浏览器平台: %s", b.Platform)
 		return
 	}
+	if a.loginLaunch != nil {
+		if err := a.loginLaunch(b); err != nil {
+			logging.Log.Errorf("启动失败: %v", err)
+		}
+		return
+	}
 	a.pushProxy()
 	a.refreshDetected()
 	go func() {
@@ -653,7 +764,7 @@ func (a *App) launchBrowser() {
 			a.onUI(func() { a.refreshBrowsers() })
 			return
 		}
-		err = cdp.OpenURLBackground(context.Background(), ws, platform.HomeURL())
+		err = cdp.OpenURLContext(context.Background(), ws, platform.HomeURL())
 		a.store.SetRunning(b.ID, true)
 		if err == nil || errors.Is(err, cdp.ErrDebugUnavailable) {
 			a.watchLogin(b, ws)

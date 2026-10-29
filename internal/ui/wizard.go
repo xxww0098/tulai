@@ -18,18 +18,13 @@ import (
 	"github.com/xxww0098/tulai/internal/wizard"
 )
 
-const scanLoginTitle = "用手机扫码登录"
+const pageLoginTitle = "在打开的网页里登录"
+const pageLoginHint = "请在打开的网页里登录"
 
 const regionProxyHint = "当前地区打不开这个站点。请到设置的「网络」里选择自定义代理，填写 http://主机:端口 或 socks5://主机:端口，然后重新打开登录页。"
 
-const (
-	loginQRWaitHint    = "正在获取二维码…"
-	loginQRExpiredHint = "二维码已过期，正在刷新"
-)
-
 type loginShot struct {
 	state string
-	bmp   *ui.Bitmap
 	hint  string
 }
 
@@ -178,8 +173,8 @@ func (a *App) wizardBrowserStep(c *ui.Context) {
 func (a *App) wizardPlatformStep(c *ui.Context) {
 	ui.Text(c, "选一个，或两个都选。每个平台用自己的免费账号。").FontSize(15).TextColor(c.Theme().TextMuted)
 	ui.Row(c).Gap(20).AlignItems(ui.Stretch).Children(func() {
-		a.wizardPlatformCard(c, "豆包", "在豆包里生图。扫码登录一个免费账号。", &a.platDoubao)
-		a.wizardPlatformCard(c, "千问", "在千问里生图。扫码登录一个免费账号。", &a.platQianwen)
+		a.wizardPlatformCard(c, "豆包", "在豆包里生图。在打开的网页里登录一个免费账号。", &a.platDoubao)
+		a.wizardPlatformCard(c, "千问", "在千问里生图。在打开的网页里登录一个免费账号。", &a.platQianwen)
 	})
 	if !wizard.CanChoosePlatform(a.platDoubao, a.platQianwen) {
 		ui.Text(c, "请至少选择一个平台。").FontSize(14).TextColor(c.Theme().Warning)
@@ -218,8 +213,8 @@ func (a *App) wizardAccountStep(c *ui.Context) {
 	if platform == "" {
 		platform = a.wizardAccount.Platform
 	}
-	ui.Text(c, scanLoginTitle).FontSize(18).Bold()
-	ui.Text(c, "二维码显示在下面，浏览器可以留在后台。过期会自动刷新。").FontSize(14).TextColor(c.Theme().TextMuted)
+	ui.Text(c, pageLoginTitle).FontSize(18).Bold()
+	ui.Text(c, "浏览器会打开平台登录页。登录成功后窗口自动关闭，账号留在列表里。").FontSize(14).TextColor(c.Theme().TextMuted)
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "账号名称").FontSize(13).TextColor(c.Theme().TextMuted)
 		ui.TextInput(c, &a.wizardName).Width(220).Placeholder("例如工作号")
@@ -239,11 +234,11 @@ func (a *App) wizardAccountStep(c *ui.Context) {
 		if line != "" {
 			ui.Text(c, line).FontSize(15).Bold().SingleLine()
 		}
-		a.loginQRBody(c, a.wizardAccount, true)
+		a.loginStatusBody(c, a.wizardAccount, true)
 	})
 }
 
-func (a *App) loginQRBody(c *ui.Context, b store.Browser, inWizard bool) {
+func (a *App) loginStatusBody(c *ui.Context, b store.Browser, inWizard bool) {
 	shot := a.loginShot(b.ID)
 	loggedIn := b.IsLoggedIn || shot.state == wizard.ProbeIn || (inWizard && a.wizardPhase == "in")
 	if loggedIn {
@@ -258,16 +253,11 @@ func (a *App) loginQRBody(c *ui.Context, b store.Browser, inWizard bool) {
 		ui.Text(c, msg).FontSize(13).TextColor(c.Theme().Warning)
 		return
 	}
-	if shot.hint != "" && shot.bmp == nil {
+	if shot.hint != "" {
 		ui.Text(c, shot.hint).FontSize(13).TextColor(c.Theme().Warning)
 		return
 	}
-	if shot.bmp != nil {
-		ui.Image(c, shot.bmp).Size(168, 168).Fit(ui.Contain).Radius(8)
-		ui.Text(c, "用手机扫码").FontSize(12).TextColor(c.Theme().TextMuted)
-		return
-	}
-	msg := loginQRWaitHint
+	msg := pageLoginHint
 	color := c.Theme().Text
 	waiting := true
 	if inWizard {
@@ -562,7 +552,7 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 				a.wizardPhase = "error"
 				a.wizardNavFailed = false
 				a.wizardErr = "启动浏览器失败：" + err.Error()
-				a.wizardNote = scanLoginTitle
+				a.wizardNote = pageLoginTitle
 			})
 			return
 		}
@@ -596,7 +586,7 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			}
 			a.store.SetRunning(account.ID, true)
 			a.wizardPhase = "waiting"
-			a.wizardNote = scanLoginTitle
+			a.wizardNote = pageLoginTitle
 			a.wizardErr = ""
 		})
 		for {
@@ -606,27 +596,14 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			raw, probeErr := a.probeWizardLogin(ctx, ws)
 			cancel()
-			var png []byte
-			var hint string
-			if probeErr == nil && raw != wizard.ProbeIn && raw != wizard.ProbeRegion {
-				capCtx, capCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				var expired bool
-				var qrErr error
-				png, expired, qrErr = a.grabLoginQR(capCtx, ws)
-				capCancel()
-				if len(png) == 0 {
-					if qrErr != nil {
-						hint = cdp.LoginQRHint(qrErr)
-					} else if expired {
-						hint = loginQRExpiredHint
-					}
-				}
-			}
 			action := wizard.PollWait
 			a.wizardUI(func() {
-				a.setLoginShot(account.ID, raw, png, hint)
+				a.setLoginShot(account.ID, raw, "")
 				action = a.noteProbe(gen, raw, probeErr)
 			})
+			if action == wizard.PollNext || action == wizard.PollDone {
+				a.closeLoginWindow(account)
+			}
 			switch action {
 			case wizard.PollNext:
 				goto nextPlatform
@@ -675,7 +652,7 @@ func (a *App) wizardPrepare(gen int) bool {
 		if err != nil {
 			a.wizardPhase = "error"
 			a.wizardErr = err.Error()
-			a.wizardNote = scanLoginTitle
+			a.wizardNote = pageLoginTitle
 			return
 		}
 		a.wizardAccount = account
@@ -723,7 +700,7 @@ func (a *App) ensureWizardAccount() (store.Browser, error) {
 	for _, row := range a.store.Browsers() {
 		names = append(names, row.Name)
 	}
-	name := wizard.NextAccountName(names)
+	name := wizard.NextInstanceName(platform, names)
 	dir := ""
 	if strings.TrimSpace(a.dataRoot) != "" {
 		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
@@ -748,7 +725,7 @@ func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 	}
 	if err != nil || !wizard.LoggedIn(raw) {
 		a.wizardPhase = "waiting"
-		a.wizardNote = scanLoginTitle
+		a.wizardNote = pageLoginTitle
 		a.wizardErr = ""
 		if err != nil {
 			a.wizardPhase = "error"
@@ -760,14 +737,9 @@ func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 		a.store.ConfirmLogin(a.wizardAccount.ID)
 		a.clearLoginHold(a.wizardAccount.ID)
 	}
-	if a.wizardPhase != "in" {
-		a.wizardPhase = "in"
-		a.wizardNote = "已登录"
-		a.wizardErr = ""
-		if a.wizardStop != nil {
-			return wizard.PollWait
-		}
-	}
+	a.wizardPhase = "in"
+	a.wizardNote = "已登录"
+	a.wizardErr = ""
 	next, poll := wizard.AfterLogin(a.wizardQueue, true)
 	a.wizardQueue = next
 	if poll == wizard.PollNext {
@@ -896,7 +868,7 @@ func (a *App) openWizardPage(ws, rawURL string) error {
 	if a.wizardOpen != nil {
 		return a.wizardOpen(ws, rawURL)
 	}
-	return cdp.OpenURLBackground(context.Background(), ws, rawURL)
+	return cdp.OpenURLContext(context.Background(), ws, rawURL)
 }
 
 func (a *App) probeWizardLogin(ctx context.Context, endpoint string) (string, error) {
@@ -906,17 +878,7 @@ func (a *App) probeWizardLogin(ctx context.Context, endpoint string) (string, er
 	return cdp.ProbeLogin(ctx, endpoint)
 }
 
-func (a *App) grabLoginQR(ctx context.Context, endpoint string) ([]byte, bool, error) {
-	if a.wizardQR != nil {
-		return a.wizardQR(ctx, endpoint)
-	}
-	if a.wizardProbe != nil {
-		return nil, false, nil
-	}
-	return cdp.CaptureLoginQR(ctx, endpoint)
-}
-
-func (a *App) setLoginShot(id int64, state string, png []byte, hint string) {
+func (a *App) setLoginShot(id int64, state, hint string) {
 	if a == nil || id == 0 {
 		return
 	}
@@ -930,17 +892,31 @@ func (a *App) setLoginShot(id int64, state string, png []byte, hint string) {
 		shot.state = state
 	}
 	shot.hint = hint
-	switch {
-	case state == wizard.ProbeIn || state == wizard.ProbeRegion:
-		shot.bmp = nil
+	if state == wizard.ProbeIn || state == wizard.ProbeRegion {
 		shot.hint = ""
-	case len(png) > 0:
-		if bmp, err := ui.DecodeBitmap(png); err == nil {
-			shot.bmp = bmp
-			shot.hint = ""
-		}
 	}
 	a.loginShots[id] = shot
+}
+
+// closeLoginWindow 登录成功后关掉这次打开的窗口。账号留在库里，出图时再在屏幕外启动。
+func (a *App) closeLoginWindow(b store.Browser) {
+	if a == nil || b.ID <= 0 {
+		return
+	}
+	a.mu.Lock()
+	a.loginClosed = append(a.loginClosed, b.ID)
+	a.mu.Unlock()
+	cdp.ReleaseLoginFront(loginEndpoint(b))
+	if a.manager != nil {
+		a.manager.Stop(b.ID)
+	}
+	if a.store != nil {
+		a.store.SetRunning(b.ID, false)
+	}
+	a.onUI(func() { a.refreshBrowsers() })
+	if a.afterClose != nil {
+		a.afterClose()
+	}
 }
 
 func (a *App) loginShot(id int64) loginShot {
@@ -976,7 +952,7 @@ func loginEndpoint(b store.Browser) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", b.Port)
 }
 
-// watchLogin 开始在账号卡片上刷新二维码。测试可换成 loginFollow。
+// watchLogin 在打开的网页上探测登录。测试可换成 loginFollow。
 func (a *App) watchLogin(b store.Browser, ws string) {
 	if a == nil || b.ID == 0 {
 		return
@@ -1006,7 +982,7 @@ func (a *App) followLogin(b store.Browser, ws string) {
 	gen := a.loginWatchGen[b.ID]
 	a.mu.Unlock()
 	go func() {
-		a.publishLogin(b.ID, gen, wizard.ProbeOut, nil, "")
+		a.publishLogin(b.ID, gen, wizard.ProbeOut, "")
 		for i := 0; i < 150; i++ {
 			if !a.loginCurrent(b.ID, gen) {
 				return
@@ -1014,26 +990,16 @@ func (a *App) followLogin(b store.Browser, ws string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			state, err := a.probeWizardLogin(ctx, ws)
 			cancel()
-			var png []byte
-			var hint string
-			if err == nil && state != cdp.RegionBlocked && state != wizard.ProbeIn {
-				capCtx, capCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				var expired bool
-				var qrErr error
-				png, expired, qrErr = a.grabLoginQR(capCtx, ws)
-				capCancel()
-				if len(png) == 0 {
-					if qrErr != nil && qrErr.Error() != "地区限制" {
-						hint = cdp.LoginQRHint(qrErr)
-					} else if expired {
-						hint = loginQRExpiredHint
-					}
-				}
+			hint := ""
+			if err != nil && state != wizard.ProbeRegion {
+				hint = "还没检测到登录，可以在打开的网页里完成后等自动识别"
+				state = wizard.ProbeOut
 			}
-			if !a.publishLogin(b.ID, gen, state, png, hint) {
+			if !a.publishLogin(b.ID, gen, state, hint) {
 				return
 			}
 			if state == wizard.ProbeIn {
+				a.closeLoginWindow(b)
 				return
 			}
 			if !a.loginSleep(b.ID, gen) {
@@ -1066,7 +1032,7 @@ func (a *App) loginSleep(id int64, gen int) bool {
 	}
 }
 
-func (a *App) publishLogin(id int64, gen int, state string, png []byte, hint string) bool {
+func (a *App) publishLogin(id int64, gen int, state, hint string) bool {
 	if !a.loginCurrent(id, gen) {
 		return false
 	}
@@ -1074,7 +1040,7 @@ func (a *App) publishLogin(id int64, gen int, state string, png []byte, hint str
 		if !a.loginCurrent(id, gen) {
 			return
 		}
-		a.setLoginShot(id, state, png, hint)
+		a.setLoginShot(id, state, hint)
 		if state == wizard.ProbeIn && a.store != nil {
 			a.store.ConfirmLogin(id)
 			a.clearLoginHold(id)

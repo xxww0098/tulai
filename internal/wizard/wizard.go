@@ -244,19 +244,37 @@ func AfterLogin(q Queue, loggedIn bool) (Queue, Poll) {
 	return q, PollNext
 }
 
-// NextAccountName 给新档案一个不重复的名字，从账号1开始。
-func NextAccountName(used []string) string {
-	taken := map[string]bool{}
-	for _, name := range used {
-		taken[strings.TrimSpace(name)] = true
+// NextInstanceName 按平台取最小的未占用编号。豆包和千问各自从 1 起，
+// 所以已有豆包时，千问叫千问1、千问2，而不是浏览器3、浏览器4。
+func NextInstanceName(platform string, used []string) string {
+	prefix := strings.TrimSpace(platform)
+	if prefix == "" {
+		prefix = "账号"
 	}
-	for i := 1; i < 10000; i++ {
-		name := "账号" + itoa(i)
-		if !taken[name] {
-			return name
+	taken := map[int]bool{}
+	for _, name := range used {
+		name = strings.TrimSpace(name)
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		n := 0
+		for _, r := range name[len(prefix):] {
+			if r < '0' || r > '9' {
+				n = 0
+				break
+			}
+			n = n*10 + int(r-'0')
+		}
+		if n > 0 {
+			taken[n] = true
 		}
 	}
-	return "账号"
+	for i := 1; i < 10000; i++ {
+		if !taken[i] {
+			return prefix + itoa(i)
+		}
+	}
+	return prefix
 }
 
 func itoa(n int) string {

@@ -81,7 +81,7 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
 	}
-	for _, label := range []string{"用手机扫码登录", "已登录? 重新检测", "豆包 · 账号1", "账号名称"} {
+	for _, label := range []string{"在打开的网页里登录", "已登录? 重新检测", "豆包 · 豆包1", "账号名称"} {
 		assertVisible(t, tt, label, 1280, 900)
 	}
 	if a.wizardStep != wizard.StepAccount || probes != 1 {
@@ -119,8 +119,11 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := st.Browsers()
-	if len(rows) != 3 || rows[0].Name != "账号1" || rows[0].Platform != "豆包" || !rows[0].IsLoggedIn || rows[1].Name != "账号2" || rows[1].Platform != "千问" || !rows[1].IsLoggedIn || rows[2].Name != "账号3" || rows[2].Platform != "豆包" || !rows[2].IsLoggedIn {
+	if len(rows) != 3 || rows[0].Name != "豆包1" || rows[0].Platform != "豆包" || !rows[0].IsLoggedIn || rows[0].IsRunning || rows[1].Name != "千问1" || rows[1].Platform != "千问" || !rows[1].IsLoggedIn || rows[1].IsRunning || rows[2].Name != "豆包2" || rows[2].Platform != "豆包" || !rows[2].IsLoggedIn || rows[2].IsRunning {
 		t.Fatalf("accounts: %+v", rows)
+	}
+	if len(a.loginClosed) < 3 {
+		t.Fatalf("login windows left open: %v", a.loginClosed)
 	}
 	if st.Get("browser_backend") != browser.KindChrome {
 		t.Fatalf("backend = %q", st.Get("browser_backend"))

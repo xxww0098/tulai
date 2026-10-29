@@ -135,11 +135,21 @@ func TestCompleteFlagPersistsInConfigDB(t *testing.T) {
 }
 
 func TestAccountNamesAndLoginAdvance(t *testing.T) {
-	if got := NextAccountName(nil); got != "账号1" {
-		t.Fatalf("first name = %q", got)
+	// 豆包占了两号之后，千问仍从 1 起。旧的「浏览器3 / 浏览器4」不再出现。
+	if got := NextInstanceName("千问", []string{"豆包1", "豆包2"}); got != "千问1" {
+		t.Fatalf("qianwen first = %q", got)
 	}
-	if got := NextAccountName([]string{"账号1", "工作"}); got != "账号2" {
-		t.Fatalf("next name = %q", got)
+	if got := NextInstanceName("千问", []string{"豆包1", "豆包2", "千问1"}); got != "千问2" {
+		t.Fatalf("qianwen second = %q", got)
+	}
+	if got := NextInstanceName("千问", []string{"浏览器3", "浏览器4", "千问2"}); got != "千问1" {
+		t.Fatalf("smallest free qianwen = %q", got)
+	}
+	if got := NextInstanceName("豆包", []string{"豆包1", "豆包2", "千问1", "千问2"}); got != "豆包3" {
+		t.Fatalf("doubao third = %q", got)
+	}
+	if got := NextInstanceName("豆包", nil); got != "豆包1" {
+		t.Fatalf("first name = %q", got)
 	}
 	if !CanChoosePlatform(true, false) || !CanChoosePlatform(false, true) || CanChoosePlatform(false, false) {
 		t.Fatal("platform step should require one choice")

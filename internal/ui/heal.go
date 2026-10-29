@@ -69,7 +69,7 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	}
 	if navErr := cdp.OpenURLContext(ctx, ws, page); navErr != nil {
 		if errors.Is(navErr, cdp.ErrDebugUnavailable) {
-			logging.Log.Warning("%s 调试端口还没连上，已打开登录页，请在浏览器里扫码", accountLabel(b))
+			logging.Log.Warning("%s 调试端口还没连上，已打开登录页，请在网页里登录", accountLabel(b))
 			a.watchLogin(b, ws)
 			return nil
 		}

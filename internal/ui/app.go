@@ -143,6 +143,14 @@ type App struct {
 	browserSel     int
 	newBrowserPlat string
 	newBrowserName string
+	platSynced     bool
+	platSyncedTab  int
+	renameID       int64
+	renameDraft    string
+	renameFocus    bool
+	loginLaunch    func(store.Browser) error
+	loginClosed    []int64
+	afterClose     func()
 	extToken       string
 	extPort        string
 	extTokenNote   string
@@ -205,7 +213,6 @@ type App struct {
 	accountProbe       func(store.Browser) (string, error)
 	loginPoll          time.Duration
 	loginFollow        func(store.Browser, string)
-	wizardQR           func(ctx context.Context, endpoint string) ([]byte, bool, error)
 	accountOpen        func(store.Browser) error
 	pluginWasConnected bool
 	pluginWatch        bool

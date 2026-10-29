@@ -133,6 +133,9 @@ func (a *App) laneBrowsers() []store.Browser {
 func (a *App) accountPanel(c *ui.Context, compact bool) {
 	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 	if len(board.Lanes) == 0 {
+		ui.Row(c.Key("lane-empty")).Gap(8).AlignItems(ui.Center).Children(func() {
+			a.addAccountButton(c)
+		})
 		return
 	}
 	a.laneClock(c, board)
@@ -214,8 +217,17 @@ func (a *App) laneHeader(c *ui.Context) {
 	default:
 		line = fmt.Sprintf("%d 个账号空闲", idle)
 	}
-	ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).
-		ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+		ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).Grow(1).MinWidth(0).
+			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
+		a.addAccountButton(c)
+	})
+}
+
+func (a *App) addAccountButton(c *ui.Context) {
+	ui.Button(c, "+ 添加账号").Shrink(0).FontSize(12).Disabled(a.running).OnClick(func() {
+		a.addAccountHere()
+	})
 }
 
 func (a *App) laneStrip(c *ui.Context, board tasks.Board) {

@@ -31,6 +31,17 @@ func TestNeedsMinimizeOnlyWhenStillOnScreen(t *testing.T) {
 	}
 }
 
+func TestReleaseLoginFrontLetsTheNextRunPark(t *testing.T) {
+	holdFront("http://127.0.0.1:9340")
+	if !frontHeld("http://127.0.0.1:9340") {
+		t.Fatal("登录窗口应占着前台")
+	}
+	ReleaseLoginFront("http://127.0.0.1:9340")
+	if frontHeld("http://127.0.0.1:9340") {
+		t.Fatal("关掉登录窗口后，出图仍被挡在屏幕里")
+	}
+}
+
 func TestFrontHoldIsPerDebugPort(t *testing.T) {
 	holdFront("http://127.0.0.1:9336")
 	t.Cleanup(func() { releaseFront("http://127.0.0.1:9336") })
