@@ -16,24 +16,61 @@ import (
 )
 
 func (a *App) promptsPage(c *ui.Context) {
-	ui.Column(c).Fill().Gap(14).Padding(16, 8).Children(func() {
-		ui.Text(c, "提示词").FontSize(22).Bold()
-		ui.Text(c, "内置模板和保存过的提示词。出图页会记住上次的选择。").FontSize(13).TextColor(c.Theme().TextMuted)
+	w, _ := c.Size()
+	if homeSplit(w) {
+		ui.Row(c).Grow(1).MinHeight(0).Gap(20).AlignItems(ui.Stretch).Children(func() {
+			ui.Column(c).Width(300).Shrink(1).MinWidth(240).Gap(12).Children(func() {
+				a.promptsHead(c)
+				a.promptControls(c, true)
+				a.promptNoteLine(c)
+			})
+			ui.Column(c).Grow(1).MinWidth(0).MaxWidth(640).MinHeight(0).Children(func() {
+				ui.TextArea(c, &a.prompts).Grow(1).MinHeight(220).FillWidth().Label("提示词内容").Placeholder("每行一条。选了模板后，整段一起发送")
+			})
+		})
+		return
+	}
+	ui.Column(c).Fill().MaxWidth(720).Gap(14).Children(func() {
+		a.promptsHead(c)
 		a.promptRow(c)
 		ui.TextArea(c, &a.prompts).Grow(1).MinHeight(220).Label("提示词内容").Placeholder("每行一条。选了模板后，整段一起发送")
-		if a.promptNote != "" {
-			ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
-		}
+		a.promptNoteLine(c)
 	})
 }
 
+func (a *App) promptsHead(c *ui.Context) {
+	ui.Text(c, "提示词").FontSize(22).Bold()
+	ui.Text(c, "内置模板和保存过的提示词。出图页会记住上次的选择。").FontSize(13).TextColor(c.Theme().TextMuted)
+}
+
+func (a *App) promptNoteLine(c *ui.Context) {
+	if a.promptNote == "" {
+		return
+	}
+	ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
+}
+
 func (a *App) settingsPage(c *ui.Context) {
+	w, _ := c.Size()
 	ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).Children(func() {
-		ui.Column(c).MaxWidth(760).FillWidth().Gap(16).Padding(16, 8, 24, 8).Children(func() {
+		ui.Column(c).Gap(16).Padding(4, 0, 20, 0).Children(func() {
 			ui.Text(c, "设置").FontSize(22).Bold()
 			ui.Text(c, "验证码在这里调。平台、并发和输出文件夹在出图页的「高级」里。").FontSize(13).TextColor(c.Theme().TextMuted)
-			a.updateSettings(c)
-			a.captchaFields(c)
+			if homeSplit(w) {
+				ui.Row(c).Gap(24).AlignItems(ui.Start).Children(func() {
+					ui.Column(c).Width(400).Shrink(1).MinWidth(280).Children(func() {
+						a.updateSettings(c)
+					})
+					ui.Column(c).Width(440).Shrink(1).MinWidth(300).Children(func() {
+						a.captchaFields(c)
+					})
+				})
+				return
+			}
+			ui.Column(c).MaxWidth(720).FillWidth().Gap(16).Children(func() {
+				a.updateSettings(c)
+				a.captchaFields(c)
+			})
 		})
 	})
 }

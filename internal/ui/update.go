@@ -54,7 +54,7 @@ func (a *App) updateSettings(c *ui.Context) {
 			ui.TextInput(c, &a.updateMirror).Placeholder("留空用默认镜像，填 off 则只用 GitHub")
 		})
 		ui.Text(c, "镜像是地址前缀，例如 https://ghfast.top/。GitHub 连不上时才会用它。").FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
+		ui.Button(c, "检查更新").AlignSelf(ui.Start).Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
 	}).Gap(8)
 }
 

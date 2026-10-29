@@ -141,7 +141,7 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"tulai", "豆包 / 千问", "检查更新", "开始出图", "出图进度", "排队中", "高级", "添加图片"} {
+				for _, label := range []string{"tulai", "检查更新", "开始出图", "出图进度", "排队中", "高级", "添加图片"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})

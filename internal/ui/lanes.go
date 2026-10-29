@@ -204,13 +204,7 @@ func (a *App) laneCards(c *ui.Context, board tasks.Board) {
 		Transition(motionReveal()).Children(func() {
 		a.laneHeader(c)
 		width, _ := c.Size()
-		cols := int((width - 40) / 280)
-		if cols < 1 {
-			cols = 1
-		}
-		if cols > 3 {
-			cols = 3
-		}
+		cols := fitCols(homeStageW(width)-28, 268, 3)
 		if n := len(board.Lanes); cols > n {
 			cols = n
 		}
@@ -236,7 +230,7 @@ func laneEnter(i int) ui.ElementTransition {
 func (a *App) laneCard(c *ui.Context, ln tasks.AccountLane, i int) {
 	tok := a.look
 	card := ui.Column(c.Key(ln.ID)).Gap(8).Padding(10, 12).Radius(tok.radiusM).
-		Background(tok.paper).Border(1, tok.border).AlignSelf(ui.Stretch).FillHeight().
+		Background(tok.paper).Border(1, tok.border).AlignSelf(ui.Stretch).
 		Label("车道" + ln.Name).Transition(laneEnter(i))
 	if ln.State == tasks.LaneLogin {
 		card.Opacity(0.72)
@@ -258,7 +252,6 @@ func (a *App) laneCard(c *ui.Context, ln tasks.AccountLane, i int) {
 			ui.Text(c, "同一窗口正在出图").FontSize(tok.caption).TextColor(tok.muted)
 		}
 		a.laneQuota(c, ln)
-		ui.Box(c).Grow(1)
 		if ln.Action != "" {
 			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
 				a.laneAction(c, ln)
