@@ -541,20 +541,23 @@ func TestRunVerificationStopsBatchWithoutResend(t *testing.T) {
 		attempts++
 		return e.submitTask(task, strat, nil)
 	})
-	if !errors.Is(err, captcha.ErrVerificationRequired) || attempts != 1 || strings.Join(strat.calls, ",") != "clean" {
-		t.Fatalf("verification must stop retries and whole shared space: %v attempts=%d calls=%v", err, attempts, strat.calls)
+	if err != nil || attempts != 1 || strings.Join(strat.calls, ",") != "clean" {
+		t.Fatalf("verification must not be resent and must not cancel the run: %v attempts=%d calls=%v", err, attempts, strat.calls)
 	}
-	manual, pending := 0, 0
+	manual, held := 0, 0
 	for _, task := range e.View().Snapshot() {
+		if task.Error == "已停止" || task.Status == StatusSkipped {
+			t.Fatalf("verification must not cancel other tasks: %+v", task)
+		}
 		if task.Status == StatusNeedsUser && task.Attempts == 1 {
 			manual++
 		}
-		if task.Status == StatusPending && task.Attempts == 0 {
-			pending++
+		if task.Status == StatusFailed && strings.Contains(task.Error, "验证") {
+			held++
 		}
 	}
-	if manual != 1 || pending != 3 {
-		t.Fatalf("queue must preserve one manual task and three untouched tasks: %+v", e.View().Snapshot())
+	if manual != 1 || held != 3 {
+		t.Fatalf("one manual task, the rest wait on that account: %+v", e.View().Snapshot())
 	}
 }
 
@@ -573,8 +576,8 @@ func TestRunVerificationRetainsSavedPartial(t *testing.T) {
 		return e.waitAndSave(ctx, task, strat, nil)
 	})
 	got := e.View().Snapshot()[0]
-	if !errors.Is(err, captcha.ErrVerificationRequired) || got.Status != StatusNeedsUser || got.Attempts != 1 || len(got.Results) != 1 || strat.calls != 1 {
-		t.Fatalf("partial must survive without resend: error=%v task=%+v waits=%d", err, got, strat.calls)
+	if err != nil || got.Status != StatusNeedsUser || got.Error == "已停止" || got.Attempts != 1 || len(got.Results) != 1 || strat.calls != 1 {
+		t.Fatalf("partial must survive without resend or cancelling the run: error=%v task=%+v waits=%d", err, got, strat.calls)
 	}
 	if saved, err := os.ReadFile(got.Results[0]); err != nil || !bytes.Equal(saved, data) {
 		t.Fatalf("completed image not retained: %v", err)

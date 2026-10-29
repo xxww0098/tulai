@@ -43,6 +43,8 @@ type Task struct {
 	slot               int64 // 这次派发时占用的浏览器，完成后用来释放并发名额
 	ranOn              int64 // 实际打到的账号。轮换后 BrowserID 会改成下一个
 	rotated            bool  // 失败后已改派，调度器要把任务放回队列
+	altTried           bool  // 发送未确认后已经换过一次账号
+	avoidSend          int64 // 这次未确认的账号，调度不要把它立刻派回去
 	soften             int   // 审核改写已经自动重试的次数
 }
 

@@ -258,7 +258,24 @@ const button = el('button')
 button.innerText = '新对话'
 body.appendChild(button)
 assert.strictEqual(context.__tulaiFreshChat(), 'button')
-assert.strictEqual(button.clicked, 1, '每单要点新对话，不能继续用上一轮页面')
+assert.strictEqual(button.clicked, 1, '停在旧对话时才点新对话')
 assert.deepStrictEqual(assigned, [])
+
+location.href = 'https://www.doubao.com/chat/'
+assert.strictEqual(context.__tulaiFreshChat(), 'ready')
+assert.strictEqual(button.clicked, 1, '已经是新对话地址就不要再点，免得换掉输入框')
+
+const box = el('textarea')
+body.appendChild(box)
+let ready = context.__tulaiChatReady()
+assert.strictEqual(ready.ready, true)
+assert.strictEqual(ready.id, '')
+const node = ready.node
+ready = context.__tulaiChatReady()
+assert.strictEqual(ready.node, node, '输入框没被换掉时节点要稳定')
+
+location.href = 'https://www.doubao.com/chat/still-old'
+ready = context.__tulaiChatReady()
+assert.strictEqual(ready.id, 'still-old', '旧对话 id 还在就不能当成新对话已经准备好')
 
 console.log('hook live images ok')

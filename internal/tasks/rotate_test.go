@@ -96,8 +96,11 @@ func TestCaptchaWithOneAccountStillStopsTheBatch(t *testing.T) {
 		return captcha.ErrVerificationRequired
 	})
 	queue := e.View().Snapshot()
-	if !errors.Is(err, captcha.ErrVerificationRequired) || calls != 1 || queue[0].Status != StatusNeedsUser || queue[1].Status != StatusPending {
-		t.Fatalf("single-account captcha should stop the batch: calls=%d err=%v queue=%+v", calls, err, queue)
+	if err != nil || calls != 1 || queue[0].Status != StatusNeedsUser || queue[0].Error == "已停止" || queue[1].Status == StatusSkipped || queue[1].Error == "已停止" {
+		t.Fatalf("captcha must not cancel the batch: calls=%d err=%v queue=%+v", calls, err, queue)
+	}
+	if queue[1].Status != StatusFailed || !strings.Contains(queue[1].Error, "验证") {
+		t.Fatalf("the next task should stop on the account that needs the user, not hang: %+v", queue[1])
 	}
 }
 
@@ -145,30 +148,30 @@ func TestSubmittedCaptchaDoesNotResendOnAnotherAccount(t *testing.T) {
 	}
 }
 
-func TestUncertainSendDoesNotRotate(t *testing.T) {
+func TestUncertainSendRetriesOnceOnAnotherAccount(t *testing.T) {
 	st := openRotateStore(t)
 	addNamed(t, st, "豆包", "甲")
 	addNamed(t, st, "豆包", "乙")
 	e := NewEngine(st, nil, nil, "")
-	calls := 0
+	var calls atomic.Int32
 	err := e.run(context.Background(), Options{
 		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 1, RetryCount: 3,
 	}, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
-		calls++
+		calls.Add(1)
 		return strategy.ErrSubmissionUncertain
 	})
 	queue := e.View().Snapshot()
 	failed := 0
 	for _, task := range queue {
-		if task.Status == StatusSuccess {
-			t.Fatalf("uncertain send should stop the batch: %+v", queue)
+		if task.Status == StatusSkipped || task.Error == "已停止" {
+			t.Fatalf("uncertain send must not stop the other task: %+v", queue)
 		}
 		if task.Status == StatusFailed && strings.Contains(task.Error, "未确认") {
 			failed++
 		}
 	}
-	if err != nil || calls < 1 || calls > 2 || failed != 1 {
-		t.Fatalf("uncertain send should still stop the batch: calls=%d failed=%d err=%v queue=%+v", calls, failed, err, queue)
+	if err != nil || calls.Load() != 4 || failed != 2 {
+		t.Fatalf("each task may try the other account once, then fail: calls=%d failed=%d err=%v queue=%+v", calls.Load(), failed, err, queue)
 	}
 }
 

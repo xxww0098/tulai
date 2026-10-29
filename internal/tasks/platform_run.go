@@ -246,7 +246,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				}
 				resource := e.slotKey(task.BrowserID)
 				if busy[resource] || now.Before(readyAt[resource]) {
-					if id, ok := e.pickIdleAccount(task.Platform, resource, busy, readyAt, now); ok {
+					if id, ok := e.pickIdleAccount(task.Platform, resource, busy, readyAt, now); ok && id != task.avoidSend {
 						task.BrowserID = id
 						pending[i] = task
 						resource = e.slotKey(id)

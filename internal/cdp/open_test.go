@@ -15,6 +15,32 @@ import (
 	"github.com/xxww0098/tulai/internal/browser"
 )
 
+func TestParkStepsDoesNotRestateNormalOffscreen(t *testing.T) {
+	if parkSteps("normal", -2400, -2400) != nil {
+		t.Fatal("已经在屏幕外的正常窗口不能再 setWindowBounds，否则会被激活到前台")
+	}
+	maximized := parkSteps("maximized", 0, 0)
+	if len(maximized) != 2 {
+		t.Fatalf("最大化要先恢复再挪走: %#v", maximized)
+	}
+	if _, ok := maximized[0]["windowState"]; !ok || len(maximized[0]) != 1 {
+		t.Fatalf("恢复不能带坐标，否则 Chrome 会丢掉坐标并只 Restore: %#v", maximized[0])
+	}
+	if _, ok := maximized[1]["windowState"]; ok {
+		t.Fatalf("挪到屏幕外不能再带 windowState=normal: %#v", maximized[1])
+	}
+	if maximized[1]["left"] != -2400 || maximized[1]["top"] != -2400 {
+		t.Fatalf("坐标: %#v", maximized[1])
+	}
+	normal := parkSteps("normal", 80, 48)
+	if len(normal) != 1 {
+		t.Fatalf("已经是正常窗口只改坐标: %#v", normal)
+	}
+	if _, ok := normal[0]["windowState"]; ok {
+		t.Fatal("正常窗口再写 windowState=normal 会把窗口拉到前面")
+	}
+}
+
 func TestOpenURLKeepsPageAfterDisconnect(t *testing.T) {
 	if testing.Short() {
 		t.Skip("跳过 Chrome E2E")

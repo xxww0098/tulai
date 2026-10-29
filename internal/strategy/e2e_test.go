@@ -193,6 +193,11 @@ document.getElementById('send').addEventListener('click', function () {
   var text = String(composer.value === undefined ? composer.textContent : composer.value).trim();
   if (!text || !window.__mockFiles) return;
   window.__mockSent = text;
+  var bubble = document.createElement('div');
+  bubble.setAttribute('data-message-author-role', 'user');
+  bubble.textContent = text;
+  document.getElementById('messages').appendChild(bubble);
+  history.pushState({}, '', '/chat/c1');
   document.getElementById('composer').value = '';
   setTimeout(function () {
     fetch('/result.png').then(function (r) { return r.blob(); }).then(function (b) {
@@ -947,7 +952,7 @@ func TestSendPromptE2E(t *testing.T) {
 		wantError   bool
 	}{
 		{"button once", `window.__sendCount=0; window.__enterCount=0;
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;document.getElementById('composer').value=''});
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');document.getElementById('composer').value=''});
 			document.getElementById('composer').addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, false},
 		{"trusted editable", `window.__sendCount=0; window.__enterCount=0;
 			var hidden=document.createElement('textarea'); hidden.style.display='none'; document.body.prepend(hidden);
@@ -958,40 +963,40 @@ func TestSendPromptE2E(t *testing.T) {
 			var attachment=document.createElement('button'); attachment.setAttribute('aria-label','移除附件'); attachment.onclick=function(){window.__attachmentRemoved++}; document.getElementById('bar').appendChild(attachment);
 			rich.addEventListener('input',function(e){if(e.isTrusted)send.disabled=false});
 			rich.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});
-			send.addEventListener('click',function(){window.__sendCount++;rich.textContent=''});`, false},
+			send.addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');rich.textContent=''});`, false},
 		{"outer send sibling", `window.__sendCount=0;window.__enterCount=0;
 			var comp=document.getElementById('composer'), inner=document.createElement('div'); inner.setAttribute('data-chat-input-body','1'); comp.before(inner); inner.appendChild(comp);
 			var more=document.createElement('button'); more.textContent='更多'; inner.appendChild(more);
 			var send=document.getElementById('send'); send.setAttribute('aria-label','发送消息'); send.innerHTML='<svg width="20" height="20"></svg>';
-			send.addEventListener('click',function(){window.__sendCount++;comp.value=''});
+			send.addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');comp.value=''});
 			comp.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, false},
 		{"doubao icon send", `window.__sendCount=0;window.__enterCount=0;
 			var comp=document.getElementById('composer'), send=document.getElementById('send'); send.id='flow-end-msg-send'; send.setAttribute('data-testid','chat_input_send_button'); send.innerHTML='<svg class="size-18 !text-g-send-msg-btn-text" width="20" height="20"></svg>';
-			send.addEventListener('click',function(){window.__sendCount++;comp.value=''});
+			send.addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');comp.value=''});
 			comp.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, false},
 		{"existing rich same prompt", `window.__sendCount=0;window.__enterCount=0;
 			var old=document.getElementById('composer'), rich=document.createElement('div');rich.id='composer';rich.contentEditable='true';rich.style.cssText='width:420px;height:60px';rich.innerHTML='<p>只发送一次</p>';old.replaceWith(rich);
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;window.__observedText=rich.innerText;rich.textContent=''});
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;window.__observedText=rich.innerText;history.pushState({},'','/chat/c1');rich.textContent=''});
 			rich.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, false},
 		{"hidden connected editor", `window.__sendCount=0;window.__enterCount=0;var old=document.getElementById('composer');
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;old.style.visibility='hidden';var fresh=document.createElement('div');fresh.contentEditable='true';fresh.style.cssText='width:420px;height:60px';fresh.textContent='\uFEFF';old.before(fresh)});
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');old.style.visibility='hidden';var fresh=document.createElement('div');fresh.contentEditable='true';fresh.style.cssText='width:420px;height:60px';fresh.textContent='\uFEFF';old.before(fresh)});
 			old.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, false},
 		{"hidden placeholder", `window.__sendCount=0;window.__enterCount=0;var old=document.getElementById('composer'),rich=document.createElement('div');rich.id='composer';rich.contentEditable='true';rich.style.cssText='width:420px;height:60px';old.replaceWith(rich);
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;rich.innerHTML='\uFEFF<span style="display:none">隐藏占位文本</span>'});
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');rich.innerHTML='\uFEFF<span style="display:none">隐藏占位文本</span>'});
 			rich.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, false},
 		{"slow accepted", `window.__sendCount=0;window.__enterCount=0;var comp=document.getElementById('composer');
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;setTimeout(function(){comp.value=''},6000)});
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;setTimeout(function(){history.pushState({},'','/chat/c1');comp.value=''},6000)});
 			comp.addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, false},
 		{"noneditable placeholder", `window.__sendCount=0;window.__enterCount=0;var old=document.getElementById('composer'),rich=document.createElement('div');rich.id='composer';rich.contentEditable='true';rich.style.cssText='width:420px;height:60px';old.replaceWith(rich);
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;rich.innerHTML='\uFEFF<span contenteditable="false" data-slate-placeholder="true">向千问提问</span>'});`, false},
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');rich.innerHTML='\uFEFF<span contenteditable="false" data-slate-placeholder="true">向千问提问</span>'});`, false},
 		{"aria hidden placeholder", `window.__sendCount=0;window.__enterCount=0;var old=document.getElementById('composer'),rich=document.createElement('div');rich.id='composer';rich.contentEditable='true';rich.style.cssText='width:420px;height:60px';old.replaceWith(rich);
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;rich.innerHTML='\uFEFF<span aria-hidden="true">向千问提问</span>'});`, false},
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');rich.innerHTML='\uFEFF<span aria-hidden="true">向千问提问</span>'});`, false},
 		{"BOM empty", `window.__sendCount=0;window.__enterCount=0;var old=document.getElementById('composer'),rich=document.createElement('div');rich.id='composer';rich.contentEditable='true';rich.style.cssText='width:420px;height:60px';old.replaceWith(rich);
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;rich.textContent='\uFEFF'});`, false},
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;history.pushState({},'','/chat/c1');rich.textContent='\uFEFF'});`, false},
 		{"user placeholder wording", `window.__sendCount=0;window.__enterCount=0;var old=document.getElementById('composer'),rich=document.createElement('div');rich.id='composer';rich.contentEditable='true';rich.style.cssText='width:420px;height:60px';old.replaceWith(rich);
 			document.getElementById('send').addEventListener('click',function(){window.__sendCount++});`, true},
 		{"multiline rich value", `window.__sendCount=0;window.__enterCount=0;var old=document.getElementById('composer'),rich=document.createElement('div');rich.id='composer';rich.contentEditable='true';rich.style.cssText='width:420px;height:60px';old.replaceWith(rich);
-			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;window.__observedText=rich.innerText;rich.textContent=''});`, false},
+			document.getElementById('send').addEventListener('click',function(){window.__sendCount++;window.__observedText=rich.innerText;history.pushState({},'','/chat/c1');rich.textContent=''});`, false},
 		{"duplicate editor content", `window.__sendCount=0;var comp=document.getElementById('composer');comp.addEventListener('input',function(){comp.value+=comp.value});document.getElementById('send').addEventListener('click',function(){window.__sendCount++});`, true},
 		{"missing send", `document.getElementById('send').remove();
 			var extra=document.createElement('button'); extra.setAttribute('aria-label','添加附件'); extra.setAttribute('data-testid','diagnostic-last'); extra.title='https://example.invalid/image?token=fixture-secret'; extra.innerHTML='<svg class=send-fixture><use href="/icon.svg?token=fixture-secret#send"></use></svg>'; document.getElementById('bar').appendChild(extra);

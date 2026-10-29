@@ -298,6 +298,24 @@ func heldForUser(b store.Browser) bool {
 	return strings.Contains(b.LastError, "登录") || strings.Contains(b.LastError, "验证")
 }
 
+// accountsNeedUser 是验证码或登录把号按住了。这种不要干等冷却，也不要取消别的任务。
+func accountsNeedUser(rows []store.Browser, now time.Time, cap int) bool {
+	saw := false
+	for _, b := range rows {
+		if openAccount(b, now, cap) {
+			return false
+		}
+		if b.CoolUntil <= 0 || !now.Before(time.Unix(b.CoolUntil, 0)) {
+			continue
+		}
+		if !heldForUser(b) {
+			return false
+		}
+		saw = true
+	}
+	return saw
+}
+
 func (e *Engine) accountWaitingOnUser(rows []store.Browser, now time.Time) bool {
 	e.mu.Lock()
 	probe := e.loginProbe
@@ -517,9 +535,6 @@ func (e *Engine) finishVerify(t *Task, err error, plan heal.Plan, row store.Brow
 		t.Error = err.Error()
 	} else if plan.Reason != "" {
 		t.Error = plan.Reason
-	}
-	if !e.hasOtherHealthy(t.Platform, t.ranOnOr(t.BrowserID), time.Now()) && e.cancel != nil {
-		e.cancel()
 	}
 }
 

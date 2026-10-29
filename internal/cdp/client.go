@@ -164,14 +164,37 @@ func (s *Session) KeepOffscreen() {
 		return
 	}
 	_ = s.exec(func(ctx context.Context) error {
-		id, _, err := cdpbrowser.GetWindowForTarget().Do(ctx)
+		id, bounds, err := cdpbrowser.GetWindowForTarget().Do(ctx)
 		if err != nil {
 			return err
 		}
-		return cdpbrowser.SetWindowBounds(id, &cdpbrowser.Bounds{
-			Left: -2400, Top: -2400, Width: 1280, Height: 900,
-			WindowState: cdpbrowser.WindowStateNormal,
-		}).Do(ctx)
+		state, left, top := "", 0, 0
+		if bounds != nil {
+			state = string(bounds.WindowState)
+			left, top = int(bounds.Left), int(bounds.Top)
+		}
+		for _, step := range parkSteps(state, left, top) {
+			next := &cdpbrowser.Bounds{}
+			if v, ok := step["windowState"].(string); ok {
+				next.WindowState = cdpbrowser.WindowState(v)
+			}
+			if v, ok := step["left"].(int); ok {
+				next.Left = int64(v)
+			}
+			if v, ok := step["top"].(int); ok {
+				next.Top = int64(v)
+			}
+			if v, ok := step["width"].(int); ok {
+				next.Width = int64(v)
+			}
+			if v, ok := step["height"].(int); ok {
+				next.Height = int64(v)
+			}
+			if err := cdpbrowser.SetWindowBounds(id, next).Do(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
