@@ -623,6 +623,8 @@ func TestChromeQianwenWithoutBrowserCannotStart(t *testing.T) {
 	}
 	st.UpdateBrowser(row.ID, false, true)
 	a.tab = pageHome
+	a.stageTab = 1
+	a.stagePicked = true
 	tt.Frame()
 	if !a.canStart() {
 		t.Fatal("登录千问后仍不能出图")

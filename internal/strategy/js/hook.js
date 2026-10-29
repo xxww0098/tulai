@@ -174,6 +174,8 @@
     if (/rc_gen_image/i.test(url)) rank += 300000;
     if (/cgen_lwm|\/orig(?:in)?\b/i.test(url)) rank += 80000;
     if (/cthumb|thumbnail|downsize/i.test(url)) rank -= 20000;
+    // 千问缩略图带 x-oss-process=image/resize。同一张图上的无处理地址才是原图。
+    if (/[?&]x-oss-process=/i.test(url)) rank -= 80000;
     if (/~tplv-/i.test(url)) rank -= 1000;
     return rank;
   }
@@ -330,8 +332,9 @@
       if (img.closest('[data-testid="message_image_content"]') && inUserBubble(img)) return false;
       return !!(img.closest('[data-testid="mdbox_image"]') || img.closest('[data-testid="message_image_content"]') || img.closest('[data-testid="receive_message"]') || img.closest('[class*="image-box-grid-item"]'));
     }
-    if (/(^|\.)(tongyi|qianwen)\.com$/.test(host) || /(^|\.)qwen\.ai$/.test(host)) {
-      return !!img.closest('#qk-markdown-react,.markdown-pc-special-class,[data-message-author-role="assistant"],[data-message-role="assistant"]');
+    if (qwenPage()) {
+      if (qwenLoadingImage(img)) return false;
+      return !!img.closest('#qk-markdown-react,.markdown-pc-special-class,[id^="card_card_ai_generate_image_"],[data-message-author-role="assistant"],[data-message-role="assistant"],.chat-answers-card-wrap');
     }
     return true;
   }
@@ -387,7 +390,18 @@
     }
     return n;
   };
+  function qwenPage() {
+    var host = pageHost();
+    return /(^|\.)(tongyi|qianwen)\.com$/.test(host) || /(^|\.)qwen\.ai$/.test(host);
+  }
+  function qwenLoadingImage(img) {
+    if (!qwenPage() || !img || !img.getAttribute) return false;
+    if (String(img.getAttribute('alt') || '').trim().toLowerCase() !== 'loading') return false;
+    return !!(img.closest && img.closest('[id^="card_card_ai_generate_image_"]'));
+  }
   function gridOf(img) {
+    var card = img.closest && img.closest('[id^="card_card_ai_generate_image_"]');
+    if (card) return card;
     return closestAny(img, ['[class*="image-box-grid-item"]', '[data-testid="mdbox_image"]']) || img;
   }
   // 同一格里的 svg 占位、缩略图和原图只留一张，优先 rc_gen_image 的 cgen 原图。
@@ -428,7 +442,10 @@
       if (replyFinished(root)) finished = true;
       var declared = declaredCount(root);
       if (declared > expect) expect = declared;
-      root.querySelectorAll('img').forEach(function (img) { considerImage(groups, img); });
+      root.querySelectorAll('img').forEach(function (img) {
+        if (qwenLoadingImage(img)) busy = true;
+        considerImage(groups, img);
+      });
     });
     // 角色选择器对不上时，回复外的 mdbox 实图也算。用户消息上的图仍然排除。
     document.querySelectorAll('[data-testid="mdbox_image"] img').forEach(function (img) {
@@ -442,6 +459,8 @@
       seen[group.url] = true;
       images.push({ url: group.url, src: 'dom', w: group.img.naturalWidth || 0, h: group.img.naturalHeight || 0 });
     });
+    // 千问生成卡没有 data-finished。灰块没了、实图还在，这一轮就停了。
+    if (qwenPage() && !busy && images.length) finished = true;
     var reason = 'no-reply';
     if (!replies.length && !images.length) reason = 'no-reply';
     else if (!images.length) reason = 'no-new-image';
@@ -471,7 +490,33 @@
     if (!el || el.readOnly || el.disabled) return false;
     if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
     var box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
-    return box.width > 5 && box.height > 5;
+    if (box.width > 5 && box.height > 5) return true;
+    // 窗口在屏幕外时布局盒可以是 0。Slate 输入条和豆包输入框仍然算。
+    var mark = el.getAttribute && (el.getAttribute('data-slate-editor') || el.getAttribute('data-testid') || '');
+    return mark === 'true' || mark === 'chat_input_input';
+  }
+  // 占位「向千问提问」写在 contenteditable=false 里。innerText 会把它当成没发出去的草稿。
+  function composerText(el) {
+    if (!el) return '';
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return String(el.value || '').replace(/\uFEFF/g, '').trim();
+    var out = '';
+    if (document.createTreeWalker && typeof NodeFilter !== 'undefined') {
+      var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), text;
+      while ((text = walker.nextNode())) {
+        var skip = false;
+        for (var node = text.parentElement; node && node !== el; node = node.parentElement) {
+          if (!node.getAttribute) continue;
+          if (node.getAttribute('contenteditable') === 'false' || node.getAttribute('aria-hidden') === 'true' || node.getAttribute('data-slate-placeholder') === 'true') {
+            skip = true;
+            break;
+          }
+        }
+        if (!skip) out += text.nodeValue || '';
+      }
+    } else {
+      out = String(el.innerText || el.textContent || '');
+    }
+    return out.replace(/\uFEFF/g, '').trim();
   }
   function composerNode() {
     var nodes = document.querySelectorAll('textarea,[contenteditable="true"]');
@@ -479,11 +524,6 @@
       if (composerBox(nodes[i])) return nodes[i];
     }
     return null;
-  }
-  function composerText(el) {
-    if (!el) return '';
-    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return String(el.value || '').trim();
-    return String(el.innerText || el.textContent || '').trim();
   }
   // 能打字的新对话：文档完成、地址没有对话 id、没有上一轮回复、输入框是空的。
   // 只看见一个 textarea 不够。上一轮没发出去的草稿还在时，点发送不会进对话。
@@ -498,7 +538,7 @@
     return { ready: ready, href: href, id: id, node: comp ? comp.__tulaiNode : '', messages: messages, chars: chars };
   };
   window.__tulaiFreshChat = function () {
-    var host = String(location.hostname || '');
+    var host = pageHost();
     var id = window.__tulaiConversationKey(location.href);
     var dirty = assistantNodes().length > 0 || composerText(composerNode()).length > 0;
     // 空白的 /chat/ 不要再点。有旧回复或草稿时必须清掉，否则发送点在死输入框上。

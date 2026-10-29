@@ -353,6 +353,53 @@ func loginSite(host string) string {
 	}
 }
 
+type pageRef struct {
+	ID  string
+	URL string
+}
+
+// chooseBackgroundPage 复用已经打开的同一站点标签。千问从 tongyi.com 跳到 qianwen.com 仍算同一站。
+// 没有站点页时要新开。多出来的同站页和空白页关掉，每个账号只留一张。
+func chooseBackgroundPage(pages []pageRef, wantURL string) (keep string, closeIDs []string, create bool) {
+	host := hostOf(wantURL)
+	var same []string
+	for _, page := range pages {
+		if page.ID == "" {
+			continue
+		}
+		if sameSite(hostOf(page.URL), host) {
+			same = append(same, page.ID)
+			continue
+		}
+		if blankLike(page.URL) {
+			closeIDs = append(closeIDs, page.ID)
+		}
+	}
+	if len(same) == 0 {
+		return "", closeIDs, true
+	}
+	keep = same[len(same)-1]
+	for _, id := range same[:len(same)-1] {
+		closeIDs = append(closeIDs, id)
+	}
+	return keep, closeIDs, false
+}
+
+// extraPages 是当前标签之外、同一站点或空白的页。不关别的平台。
+func extraPages(pages []pageRef, wantURL, keep string) []string {
+	host := hostOf(wantURL)
+	var closeIDs []string
+	for _, page := range pages {
+		if page.ID == "" || page.ID == keep {
+			continue
+		}
+		if sameSite(hostOf(page.URL), host) || blankLike(page.URL) {
+			closeIDs = append(closeIDs, page.ID)
+		}
+	}
+	return closeIDs
+}
+
 func (c *SliderConn) pageHits(ctx context.Context) ([]pageHit, error) {
 	targets, err := c.targets(ctx)
 	if err != nil {

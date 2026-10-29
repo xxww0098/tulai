@@ -126,6 +126,42 @@ func TestAddUseResetsOnNewDay(t *testing.T) {
 	}
 }
 
+func TestOpenRewritesLegacyBrowserNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddBrowser("千问", "浏览器3", "/data/qw3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddBrowser("千问", "浏览器4", "/data/qw4"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddBrowser("豆包", "豆包1", "/data/db1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddBrowser("豆包", "浏览器1", "/data/dbx"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddBrowser("千问", "工作室", "/data/studio"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got := map[string]string{}
+	for _, row := range s.Browsers() {
+		got[row.UserDataDir] = row.Name
+	}
+	if got["/data/qw3"] != "千问1" || got["/data/qw4"] != "千问2" || got["/data/db1"] != "豆包1" || got["/data/dbx"] != "豆包2" || got["/data/studio"] != "工作室" {
+		t.Fatalf("%v", got)
+	}
+}
+
 func TestRenameBrowserKeepsProfileDir(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {

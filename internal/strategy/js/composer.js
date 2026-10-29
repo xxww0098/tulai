@@ -45,25 +45,42 @@
     var tas = document.querySelectorAll('textarea,[contenteditable=true],input[type=text]');
     for (var j = tas.length - 1; j >= 0; j--) {
       if (hiddenComposer(tas[j])) continue;
+      if (!fallback) fallback = tas[j];
+      if (tas[j].getAttribute && tas[j].getAttribute('data-slate-editor') === 'true') fallback = tas[j];
       if (visible(tas[j])) return tas[j];
     }
-    return null;
+    return fallback;
   }
   // 仅有占位/隐藏文本时视为空；有可编辑正文时保留浏览器的多行 innerText。
   window.tulaiReadComposer = function (comp) {
     if (!comp) return null;
     if (comp.tagName === 'TEXTAREA' || comp.tagName === 'INPUT') return comp.value;
-    var walker = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), text;
-    while ((text = walker.nextNode())) {
-      if (!String(text.nodeValue || '').trim()) continue;
-      var excluded = false;
-      for (var node = text.parentElement; node && node !== comp; node = node.parentElement) {
-        var style = getComputedStyle(node);
-        if (node.getAttribute('contenteditable') === 'false' || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden') { excluded = true; break; }
+    var slate = comp.querySelector && comp.querySelector('[data-slate-placeholder]');
+    if (!slate) {
+      var walker = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), text;
+      while ((text = walker.nextNode())) {
+        if (!String(text.nodeValue || '').trim()) continue;
+        var excluded = false;
+        for (var node = text.parentElement; node && node !== comp; node = node.parentElement) {
+          var style = getComputedStyle(node);
+          if (node.getAttribute('contenteditable') === 'false' || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden') { excluded = true; break; }
+        }
+        if (!excluded) return comp.innerText;
       }
-      if (!excluded) return comp.innerText;
+      return '';
     }
-    return '';
+    var out = '', seen = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), leaf;
+    while ((leaf = seen.nextNode())) {
+      var skip = false;
+      for (var parent = leaf.parentElement; parent && parent !== comp; parent = parent.parentElement) {
+        if (parent.getAttribute && (parent.getAttribute('contenteditable') === 'false' || parent.getAttribute('data-slate-placeholder') === 'true' || parent.getAttribute('aria-hidden') === 'true')) {
+          skip = true;
+          break;
+        }
+      }
+      if (!skip) out += leaf.nodeValue || '';
+    }
+    return out.replace(/\uFEFF/g, '');
   };
 
   window.tulaiComposerDiagnostic = function (comp) {
@@ -252,14 +269,25 @@
     return true;
   };
 
+  function shown(el) {
+    if (!el) return false;
+    if (visible(el)) return true;
+    var target = el.getAttribute && el.getAttribute('data-session-switch-target');
+    if (target === 'send-query') return true;
+    return !!(el.getAttribute && el.getAttribute('data-testid') === 'chat_input_send_button');
+  }
+  function sendEnabled(el) {
+    return shown(el) && !el.disabled && (!el.getAttribute || el.getAttribute('aria-disabled') !== 'true');
+  }
   function findSendButton(comp) {
     // 上传区/“更多”可能只包住编辑器，发送按钮在其外层兄弟中。
+    // 千问箭头是 data-session-switch-target=send-query。屏幕外时布局盒可以是 0。
     for (var scope = comp.parentElement; scope; scope = scope.parentElement) {
       var buttons = scope.querySelectorAll('button,[role=button]');
       for (var i = buttons.length - 1; i >= 0; i--) {
-        var el = buttons[i], r = el.getBoundingClientRect();
-        if (r.width > 5 && r.height > 5 && getComputedStyle(el).visibility !== 'hidden' &&
-            (el.getAttribute('data-testid') === 'chat_input_send_button' || /发送|发消息|\bsend\b/i.test(combined(el)))) return el;
+        var el = buttons[i];
+        if (!shown(el)) continue;
+        if (el.getAttribute('data-session-switch-target') === 'send-query' || el.getAttribute('data-testid') === 'chat_input_send_button' || /发送|发消息|\bsend\b/i.test(combined(el))) return el;
       }
     }
     return null;
@@ -300,7 +328,7 @@
   function userBubbles() {
     var nodes = document.querySelectorAll('[data-testid="send_message"][data-message-role="user"]');
     if (nodes.length) return nodes;
-    return document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"]');
+    return document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"],.chat-question-card-wrap');
   }
   function promptMatches(prompt) {
     var want = String(prompt || '').replace(/\s+/g, '');
@@ -353,7 +381,8 @@
       if (!comp.isConnected) comp = findComposer();
       if (!comp) return JSON.stringify({ attempted: false, error: '输入框已消失' });
       button = realSendButton(comp);
-      if (button && visible(button)) break;
+      if (sendEnabled(button)) break;
+      button = null;
       await sleep(100);
     }
     var beforeHref = String(location.href || '');

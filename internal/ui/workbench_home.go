@@ -297,47 +297,20 @@ func (a *App) runningOn(platform string) int {
 }
 
 func (a *App) platformCards() []ProgressCard {
-	return cardsForPlatform(ProgressCards(a.queueItems()), a.stagePlatform())
+	return ProgressCards(tasksForPlatform(a.queueItems(), a.stagePlatform()))
 }
 
-func cardsForPlatform(cards []ProgressCard, platform string) []ProgressCard {
-	var out []ProgressCard
-	for _, card := range cards {
-		if cardHasPlatform(card, platform) {
-			out = append(out, card)
+func tasksForPlatform(items []tasks.Task, platform string) []tasks.Task {
+	if platform == "" {
+		return items
+	}
+	var out []tasks.Task
+	for _, task := range items {
+		if task.Platform == platform {
+			out = append(out, task)
 		}
 	}
 	return out
-}
-
-func cardHasPlatform(card ProgressCard, platform string) bool {
-	if platform == "" {
-		return true
-	}
-	if len(card.Platforms) == 0 && len(card.Sites) == 0 {
-		return true
-	}
-	for _, name := range card.Platforms {
-		if name == platform {
-			return true
-		}
-	}
-	for _, site := range card.Sites {
-		if site.Platform == platform {
-			return true
-		}
-	}
-	for _, shot := range card.Shots {
-		if shot.Platform == platform {
-			return true
-		}
-	}
-	for _, task := range card.Retry {
-		if task.Platform == platform {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *App) runLog(c *ui.Context) {
@@ -647,7 +620,7 @@ func (a *App) stepRun(c *ui.Context, step flowStep) {
 		if plan.Action == StartWizard && !a.running {
 			a.accountCallout(c)
 		}
-		board := a.accountBoard(c.Now())
+		board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 		ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Clip().Children(func() {
 				summary := a.stepLead(board)
@@ -969,7 +942,7 @@ func (a *App) chooseReplacement() (string, error) {
 // progressCols 按窗口里出图进度实际能用的宽度分列，避免卡片比格子宽、叠出面板。
 func (a *App) progressCols(c *ui.Context) int {
 	width, _ := c.Size()
-	return gridCols(width, 230, len(ProgressCards(a.queueItems())), 3)
+	return gridCols(width, 230, len(a.platformCards()), 3)
 }
 
 func (a *App) progressCard(c *ui.Context, card ProgressCard) {

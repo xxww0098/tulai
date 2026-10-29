@@ -51,6 +51,7 @@ type WorkbenchInput struct {
 	AutoPlatform  bool
 	WantDoubao    bool
 	WantQianwen   bool
+	OnlyPlatform  string
 	ExtensionMode bool
 	Accounts      []AccountSnap
 	Now           time.Time
@@ -68,7 +69,11 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 	if in.Running || (!in.HasImages && !in.HasPrompts) {
 		return WorkbenchPlan{Action: StartNone}
 	}
+	only := strings.TrimSpace(in.OnlyPlatform)
 	want := func(platform string) bool {
+		if only != "" && platform != only {
+			return false
+		}
 		if in.AutoPlatform {
 			return platform == "豆包" || platform == "千问"
 		}
@@ -83,9 +88,22 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 	}
 	platforms := platformsFromAccounts(in.Accounts, in.ExtensionMode, in.Now, want)
 	if len(platforms) == 0 {
+		// 这一页已经有账号，只是登录或额度不行。按钮关掉，不要改去开向导。
+		if only != "" && hasPlatformAccount(in.Accounts, only) {
+			return WorkbenchPlan{Action: StartNone}
+		}
 		return WorkbenchPlan{Action: StartWizard}
 	}
 	return WorkbenchPlan{Action: StartGenerate, Platforms: platforms}
+}
+
+func hasPlatformAccount(accounts []AccountSnap, platform string) bool {
+	for _, account := range accounts {
+		if account.Platform == platform {
+			return true
+		}
+	}
+	return false
 }
 
 // ConcurrencyCaption 是「调度与等待」里并发这一行的说明。

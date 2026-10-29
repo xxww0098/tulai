@@ -130,10 +130,19 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 		if onProgress != nil {
 			onProgress(Progress{Done: done, Total: total})
 		}
+		line := logging.Line{
+			TaskID: ev.task.Index, Platform: ev.task.Platform, Account: e.accountName(ev.task.BrowserID), Port: e.accountPort(ev.task.BrowserID),
+		}
 		if ev.task.Status == StatusSuccess {
-			logging.Log.Success("#%d [%s] 完成，保存 %d 张", ev.task.Index, ev.task.Platform, len(ev.task.Results))
+			line.Stage = "saved"
+			line.Images = len(ev.task.Results)
+			line.Msg = fmt.Sprintf("#%d [%s] 完成，保存 %d 张", ev.task.Index, ev.task.Platform, len(ev.task.Results))
+			logging.Emit(logging.Success, line)
 		} else if ev.task.Status != "" && ev.task.Status != StatusPending {
-			logging.Log.Warning("#%d [%s] %s: %s", ev.task.Index, ev.task.Platform, ev.task.Status, ev.task.Error)
+			line.Stage = "fail"
+			line.Error = ev.task.Error
+			line.Msg = fmt.Sprintf("#%d [%s] %s: %s", ev.task.Index, ev.task.Platform, ev.task.Status, ev.task.Error)
+			logging.Emit(logging.Warning, line)
 		}
 	}
 	return runErr
@@ -183,6 +192,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					e.view.Update(t)
 				}
 				name := e.accountName(t.BrowserID)
+				stopLog := logging.Bind(t.Platform, name, e.accountPort(t.BrowserID), t.Index)
 				e.traceTask(&t, "assign", "#"+itoa(t.Index)+" "+name+" 开始", 0, 0, nil)
 				if onTask != nil {
 					onTask(t)
@@ -200,6 +210,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					logErr = fmt.Errorf("%s", t.Error)
 				}
 				e.traceTask(&t, stage, msg, len(t.Results), 0, logErr)
+				stopLog()
 				if t.slot > 0 {
 					e.setActive(t.slot, false)
 				}

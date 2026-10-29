@@ -124,7 +124,7 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 980)
 	tt.Advance(300 * time.Millisecond)
-	for _, label := range []string{"没有可用账号：豆包需要重新登录，千问今日已满", "暂无可用账号", "去重登"} {
+	for _, label := range []string{"没有可用账号：豆包需要重新登录", "暂无可用账号", "去重登"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}

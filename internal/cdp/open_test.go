@@ -197,3 +197,32 @@ func TestChooseLoginPagePrefersTheVisibleBlankTab(t *testing.T) {
 		t.Fatal("unrelated host counted as qianwen")
 	}
 }
+
+func TestQianwenKeepsOneTab(t *testing.T) {
+	pages := []pageRef{
+		{ID: "a", URL: "https://www.qianwen.com/"},
+		{ID: "b", URL: "https://www.qianwen.com/chat/1"},
+		{ID: "c", URL: "https://www.tongyi.com/"},
+		{ID: "d", URL: "about:blank"},
+		{ID: "e", URL: "https://www.doubao.com/chat/"},
+	}
+	keep, closeIDs, create := chooseBackgroundPage(pages, "https://www.tongyi.com/")
+	if create || keep != "c" {
+		t.Fatalf("keep=%s create=%v close=%v", keep, create, closeIDs)
+	}
+	closed := map[string]bool{}
+	for _, id := range closeIDs {
+		closed[id] = true
+	}
+	if !closed["a"] || !closed["b"] || !closed["d"] || closed["c"] || closed["e"] || len(closeIDs) != 3 {
+		t.Fatalf("close=%v", closeIDs)
+	}
+	extra := extraPages(pages, "https://www.tongyi.com/", "b")
+	left := map[string]bool{}
+	for _, id := range extra {
+		left[id] = true
+	}
+	if !left["a"] || !left["c"] || !left["d"] || left["b"] || left["e"] {
+		t.Fatalf("extra=%v", extra)
+	}
+}

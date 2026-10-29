@@ -22,6 +22,8 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	cdt "github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
+
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 // Client 对应一个已启动的浏览器实例（远程分配器）。
@@ -62,6 +64,10 @@ type Session struct {
 	mu           sync.Mutex
 	hooks        map[string]func(data string) string // 桥命令处理表
 	onLog        func(string)                        // console 日志回调
+	logPlatform  string
+	logAccount   string
+	logPort      int
+	logTask      int
 	closed       bool
 	newDoc       []string // 新文档注入脚本
 	navigateHook string
@@ -84,23 +90,18 @@ func (c *Client) NewBackgroundSession(rawURL string, onLog func(string)) (*Sessi
 	if err != nil {
 		return nil, err
 	}
-	host := strings.ToLower(hostOf(rawURL))
-	var ids []string
+	var pages []pageRef
 	for _, item := range targets {
 		if item.Type != "page" || item.ID == "" {
 			continue
 		}
-		if host != "" && strings.Contains(strings.ToLower(item.URL), host) {
-			ids = append(ids, item.ID)
-		}
+		pages = append(pages, pageRef{ID: item.ID, URL: item.URL})
 	}
-	var id string
-	if len(ids) > 0 {
-		id = ids[len(ids)-1]
-		for _, extra := range ids[:len(ids)-1] {
-			_ = conn.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": extra}, nil)
-		}
-	} else {
+	id, closeIDs, create := chooseBackgroundPage(pages, rawURL)
+	for _, extra := range closeIDs {
+		_ = conn.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": extra}, nil)
+	}
+	if create {
 		back := context.WithValue(ctx, stayBackKey{}, true)
 		id, err = conn.createPage(back, rawURL)
 		if err != nil {
@@ -134,7 +135,12 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 		switch e := ev.(type) {
 		case *runtime.EventBindingCalled:
 			if e.Name == "tulaiBridge" {
-				go s.dispatchBridge(e.Payload)
+				payload := e.Payload
+				go func() {
+					stop := s.bindLog()
+					defer stop()
+					s.dispatchBridge(payload)
+				}()
 			}
 		case *runtime.EventConsoleAPICalled:
 			if onLog != nil && len(e.Args) > 0 {
@@ -142,7 +148,9 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, r
 				for _, a := range e.Args {
 					parts = append(parts, a.Value.String())
 				}
+				stop := s.bindLog()
 				onLog(strings.Join(parts, " "))
+				stop()
 			}
 		}
 	})
@@ -474,6 +482,29 @@ func (s *Session) quietBackground() {
 	s.armPark()
 }
 
+// SetLogAccount 让这个标签上的页面回调带上平台和账号。
+func (s *Session) SetLogAccount(platform, account string, port, taskID int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.logPlatform, s.logAccount, s.logPort, s.logTask = platform, account, port, taskID
+	s.mu.Unlock()
+}
+
+func (s *Session) bindLog() func() {
+	if s == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	platform, account, port, taskID := s.logPlatform, s.logAccount, s.logPort, s.logTask
+	s.mu.Unlock()
+	if platform == "" && account == "" {
+		return func() {}
+	}
+	return logging.Bind(platform, account, port, taskID)
+}
+
 // KeepOnePage 关掉同一站点多出来的标签，只留当前这一张。
 // 每单新开一页又不关，窗口里会堆上好几张豆包。关的是别的标签，不激活窗口。
 func (s *Session) KeepOnePage(rawURL string) {
@@ -493,14 +524,15 @@ func (s *Session) KeepOnePage(rawURL string) {
 		if err != nil {
 			return err
 		}
+		var pages []pageRef
 		for _, info := range infos {
-			if info.Type != "page" || info.TargetID == "" || info.TargetID == c.Target.TargetID {
+			if info.Type != "page" || info.TargetID == "" {
 				continue
 			}
-			if !strings.Contains(strings.ToLower(info.URL), host) {
-				continue
-			}
-			_ = cdt.CloseTarget(info.TargetID).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
+			pages = append(pages, pageRef{ID: string(info.TargetID), URL: info.URL})
+		}
+		for _, id := range extraPages(pages, rawURL, string(c.Target.TargetID)) {
+			_ = cdt.CloseTarget(cdt.ID(id)).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
 		}
 		return nil
 	})
