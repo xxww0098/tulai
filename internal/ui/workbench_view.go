@@ -56,7 +56,7 @@ func (a *App) settingsPage(c *ui.Context) {
 	ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).Children(func() {
 		ui.Column(c).MaxWidth(920).Gap(16).Padding(4, 0, 20, 0).Children(func() {
 			ui.Text(c, "设置").FontSize(22).Bold()
-			ui.Text(c, "验证码在这里调。平台、并发和输出文件夹在出图页的「高级」里。").FontSize(13).TextColor(c.Theme().TextMuted)
+			ui.Text(c, "验证码在这里调。平台和输出文件夹在出图页的「更多设置」里。").FontSize(13).TextColor(c.Theme().TextMuted)
 			cards := func() {
 				a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
 				a.settingsCard(c, "验证码", "出图遇到验证时怎么处理。", func() { a.captchaFields(c) })
@@ -202,28 +202,23 @@ func (a *App) captchaFields(c *ui.Context) {
 	})
 }
 
-// advancedFields 是出图页「高级」里的平台、轮换、输出和单次任务选项。
+// advancedFields 是出图页里收起来的「更多设置」。平台勾选、运行日志和并发不在这里。
 func (a *App) advancedFields(c *ui.Context) {
+	if a.platformAuto {
+		a.platDoubao, a.platQianwen = true, true
+		a.platformAuto = false
+	}
 	ui.Form(c, func() {
-		ui.Text(c, "运行日志").FontSize(15).Bold()
-		a.autoLogPane(c)
-		ui.Field(c, "平台", func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Switch(c, &a.platformAuto).Disabled(a.running)
-				ui.Text(c, "自动选择平台")
-			})
-		})
 		ui.Text(c, "用已登录的账号。额度用尽、限流或验证码时，自动换到同平台下一个健康账号。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Row(c).Gap(16).Children(func() {
-			ui.Checkbox(c, &a.platDoubao, "豆包").Disabled(a.running || a.platformAuto)
-			ui.Checkbox(c, &a.platQianwen, "千问").Disabled(a.running || a.platformAuto)
+			ui.Checkbox(c, &a.platDoubao, "豆包").Disabled(a.running).OnChange(func() { a.platformAuto = false })
+			ui.Checkbox(c, &a.platQianwen, "千问").Disabled(a.running).OnChange(func() { a.platformAuto = false })
 		})
 		ui.Text(c, a.platformLine()).FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "输出目录", func() {
 			ui.Row(c).Gap(8).Children(func() {
 				ui.TextInput(c, &a.outputPath).Grow(1).MinWidth(0).Placeholder("留空则保存到输出结果")
 				ui.Button(c, "选择…").Disabled(a.running).OnClick(func() { a.pickOutputDir() })
-				ui.Button(c, "打开输出文件夹").OnClick(func() { a.openOutputFolder() })
 			})
 		})
 		resolved := a.resolvedOutputDir()
@@ -259,20 +254,7 @@ func (a *App) advancedFields(c *ui.Context) {
 		ui.Field(c, "发送策略", func() {
 			motionSelect(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
 		})
-		ui.Field(c, "并发", func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Switch(c, &a.concurrencyAuto).Disabled(a.running)
-				if a.concurrencyAuto {
-					ui.Text(c, ConcurrencyCaption(true, a.parallelSlots()))
-				} else {
-					if a.concurrency < 1 {
-						a.concurrency = 1
-					}
-					ui.NumberInput(c, &a.concurrency, 1, 16, 1).Disabled(a.running)
-					ui.Text(c, ConcurrencyCaption(false, a.parallelSlots())).FontSize(12).TextColor(c.Theme().TextMuted)
-				}
-			})
-		})
+		ui.Text(c, "豆包、千问各同时出 2 张，两边可以一起跑。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "失败重试", func() {
 			ui.NumberInput(c, &a.retryCount, 0, 20, 1)
 		})

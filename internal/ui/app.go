@@ -109,6 +109,8 @@ type App struct {
 	platformAuto    bool
 	advancedOpen    bool
 	logsOpen        bool
+	stageTab        int
+	stagePicked     bool
 	outputNote      string
 	thumbs          map[string]*ui.Bitmap
 	thumbWait       map[string]bool

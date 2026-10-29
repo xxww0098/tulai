@@ -176,6 +176,33 @@ func TestSliderSuccessRetriesSameAccount(t *testing.T) {
 	}
 }
 
+func TestBusyAccountProbeCannotLogOut(t *testing.T) {
+	st := openRotateStore(t)
+	row := addNamed(t, st, "豆包", "豆包2")
+	st.UpdateBrowser(row.ID, true, true)
+	e := NewEngine(st, nil, nil, "")
+	var focused int64
+	e.SetLoginFocus(func(_ context.Context, b store.Browser) error {
+		focused = b.ID
+		return nil
+	})
+	e.setActive(row.ID, true)
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	held := browserByID(t, st, row.ID)
+	if !held.IsLoggedIn || held.Health == store.HealthExhausted || focused != 0 {
+		t.Fatalf("busy account was logged out: %+v focus=%d", held, focused)
+	}
+	if notes := strings.Join(e.AutoNotes(), "\n"); strings.Contains(notes, "已退出登录") {
+		t.Fatalf("notes = %v", e.AutoNotes())
+	}
+	e.setActive(row.ID, false)
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	held = browserByID(t, st, row.ID)
+	if held.IsLoggedIn || focused != row.ID {
+		t.Fatalf("idle logout should stick: %+v focus=%d", held, focused)
+	}
+}
+
 func TestLogoutProbeRestoresWithoutManualReset(t *testing.T) {
 	st := openRotateStore(t)
 	row := addNamed(t, st, "豆包", "账号2")

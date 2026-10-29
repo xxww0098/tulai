@@ -24,7 +24,7 @@
   window.__tulaiResults = results;
   window.__tulaiMark = Date.now();
   window.__tulaiAddResult = function (url, src) {
-    if (!url) return;
+    if (!url || junkURL(url)) return;
     // 去重
     for (var i = 0; i < results.length; i++) if (results[i].url === url) return;
     results.push({ url: url, src: src || '', ts: Date.now() });
@@ -124,6 +124,34 @@
       });
     }
   });
+  function junkURL(url) {
+    var value = String(url || '');
+    if (!value) return true;
+    if (/^data:image\/svg/i.test(value) || /\.svg(\?|#|$)/i.test(value)) return true;
+    if (/avatar|icon|logo|emoji|sprite/i.test(value)) return true;
+    return false;
+  }
+  function inResult(img) {
+    if (!img || !img.closest) return false;
+    if (img.closest('nav,header,button,[role="button"],svg')) return false;
+    var host = String(location.hostname || '');
+    if (/(^|\.)doubao\.com$/.test(host)) return !!img.closest('[data-testid="mdbox_image"]');
+    if (/(^|\.)(tongyi|qianwen)\.com$/.test(host) || /(^|\.)qwen\.ai$/.test(host)) {
+      return !!img.closest('#qk-markdown-react,.markdown-pc-special-class,[data-message-author-role="assistant"],[data-message-role="assistant"]');
+    }
+    return true;
+  }
+  function realImg(img) {
+    if (!img || !inResult(img)) return false;
+    var src = img.currentSrc || img.src || '';
+    if (junkURL(src)) return false;
+    var nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+    if (nw && nh && (nw < 128 || nh < 128)) return false;
+    var box = img.getBoundingClientRect();
+    if (box.width < 64 || box.height < 64) return false;
+    if (!(nw && nh) && (box.width < 128 || box.height < 128)) return false;
+    return true;
+  }
   function checkImg(img) {
     try {
       if (existingImages.has(img)) {
@@ -131,13 +159,49 @@
         ignoredURLs.add(img.currentSrc);
         return;
       }
-      var r = img.getBoundingClientRect();
-      if (r.width >= 180 && r.height >= 180) { // 生成结果是大图，排除头像/图标
-        var src = img.currentSrc || img.src;
-        if (src && !/avatar|icon|logo|emoji/i.test(src)) window.__tulaiAddResult(src, 'dom');
-      }
+      if (realImg(img)) window.__tulaiAddResult(img.currentSrc || img.src, 'dom');
     } catch (e) {}
   }
+  window.__tulaiDismissPopups = function () {
+    var prompts = ['下载电脑版', '立即下载电脑版', '每日签到', '签到领'];
+    var closes = ['关闭', '取消', '我知道了', '稍后再说', '以后再说', '暂不', '×', '✕'];
+    var n = 0;
+    var nodes = document.querySelectorAll('[role="dialog"],[class*="dialog"],[class*="modal"],[class*="popup"],[class*="mask"]');
+    for (var i = 0; i < nodes.length; i++) {
+      var box = nodes[i];
+      var text = String(box.innerText || '').slice(0, 400);
+      var hit = false;
+      for (var p = 0; p < prompts.length; p++) if (text.indexOf(prompts[p]) >= 0) hit = true;
+      if (!hit) continue;
+      var buttons = box.querySelectorAll('button,[role="button"],a');
+      for (var b = 0; b < buttons.length; b++) {
+        var label = String(buttons[b].innerText || buttons[b].getAttribute('aria-label') || '').trim();
+        for (var c = 0; c < closes.length; c++) if (label === closes[c]) {
+          try { buttons[b].click(); n++; } catch (e) {}
+        }
+      }
+    }
+    return n;
+  };
+  window.__tulaiLiveImages = function () {
+    var out = [];
+    var seen = {};
+    var busy = false;
+    var nodes = document.querySelectorAll('[data-testid="mdbox_image"],[data-testid="receive_message"],[data-message-author-role="assistant"],#qk-markdown-react');
+    for (var i = 0; i < nodes.length; i++) {
+      var text = String(nodes[i].innerText || '');
+      if (/正在生成|生成中|绘制中/.test(text)) busy = true;
+      var imgs = nodes[i].querySelectorAll('img');
+      for (var j = 0; j < imgs.length; j++) {
+        if (!realImg(imgs[j])) continue;
+        var src = imgs[j].currentSrc || imgs[j].src;
+        if (!src || seen[src]) continue;
+        seen[src] = true;
+        out.push({ url: src, src: 'dom', w: imgs[j].naturalWidth || 0, h: imgs[j].naturalHeight || 0 });
+      }
+    }
+    return { busy: busy, images: out };
+  };
   function start() {
     try { mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] }); } catch (e) {}
   }

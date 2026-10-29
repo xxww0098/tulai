@@ -5,6 +5,7 @@ package strategy
 import (
 	"crypto/sha256"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -296,16 +297,17 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	return nil
 }
 
-// WaitForResult 等本轮生成响应读完；仅 DOM 结果留出短暂稳定窗口。
+// WaitForResult 等本轮生成图出现在回复容器里。
+// 页面流式连接经常在图已经画完后还挂着，不能拿 pending 把完成拖几分钟。
+// 图标和 SVG 壳不算出图。没有真图就继续等，而不是拿空结果报成功。
 func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
 	if s.IsEgo() {
 		return egoWaitForResult(s, timeout)
 	}
 	deadline := time.Now().Add(timeout)
-	poll := 1500 * time.Millisecond
-	var stableState string
+	poll := 300 * time.Millisecond
+	var stableKey string
 	var stableSince time.Time
-	pendingLogged := false
 	for time.Now().Before(deadline) {
 		if err := s.Ctx().Err(); err != nil {
 			return nil, err
@@ -313,36 +315,33 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 		if err := pageAccountFault(s); err != nil {
 			return nil, err
 		}
-		out, err := s.Evaluate(`JSON.stringify({results:window.__tulaiResultsSince ? __tulaiResultsSince() : [],pending:window.__tulaiPendingGeneration ? __tulaiPendingGeneration() : 0})`)
+		_, _ = s.Evaluate(`window.__tulaiDismissPopups ? String(__tulaiDismissPopups()) : '0'`)
+		out, err := s.Evaluate(`JSON.stringify(window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false})`)
 		if err == nil {
-			var state struct {
-				Results []Result `json:"results"`
-				Pending int      `json:"pending"`
+			var live struct {
+				Busy   bool     `json:"busy"`
+				Images []Result `json:"images"`
 			}
-			if cdp.ParseJSValue(out, &state) == nil && len(state.Results) > 0 {
-				if state.Pending > 0 {
-					if !pendingLogged {
-						logging.Log.Debugf("候选已出现，仍有 %d 个本轮生成响应读取中", state.Pending)
-						pendingLogged = true
-					}
-					stableState = ""
-					stableSince = time.Time{}
-				} else {
-					for _, result := range state.Results {
-						if result.Src != "dom" {
-							return state.Results, nil
-						}
-					}
-					if out != stableState {
-						stableState = out
-						stableSince = time.Now()
-					}
-					if time.Since(stableSince) >= 3*time.Second {
-						return state.Results, nil
-					}
+			if cdp.ParseJSValue(out, &live) == nil && !live.Busy && len(live.Images) > 0 {
+				key := liveKey(live.Images)
+				if key != stableKey {
+					stableKey = key
+					stableSince = time.Now()
+				}
+				if time.Since(stableSince) >= 400*time.Millisecond {
+					return live.Images, nil
+				}
+			} else if hooked, ok := hookedResults(s); ok && len(hooked) > 0 && !live.Busy {
+				key := liveKey(hooked)
+				if key != stableKey {
+					stableKey = key
+					stableSince = time.Now()
+				}
+				if time.Since(stableSince) >= 400*time.Millisecond {
+					return hooked, nil
 				}
 			} else {
-				stableState = ""
+				stableKey = ""
 				stableSince = time.Time{}
 			}
 		}
@@ -353,6 +352,28 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 		}
 	}
 	return nil, fmt.Errorf("等待生成结果超时")
+}
+
+func hookedResults(s *cdp.Session) ([]Result, bool) {
+	out, err := s.Evaluate(`JSON.stringify(window.__tulaiResultsSince ? __tulaiResultsSince() : [])`)
+	if err != nil {
+		return nil, false
+	}
+	var items []Result
+	if cdp.ParseJSValue(out, &items) != nil {
+		return nil, false
+	}
+	return items, true
+}
+
+func liveKey(items []Result) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.URL != "" {
+			parts = append(parts, item.URL)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // FetchResultBytes 页面内 fetch 结果 URL（带登录态），base64 回传。
@@ -391,6 +412,55 @@ func (base) FetchResultBytes(s *cdp.Session, url string) ([]byte, error) {
 		return nil, fmt.Errorf("%s", r.Error)
 	}
 	return decodeB64(r.B64)
+}
+
+// FetchResultList 在页面里并行拉取多张结果。一张失败不影响其余。
+func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
+	out := make([][]byte, len(urls))
+	if s == nil || len(urls) == 0 || s.IsEgo() {
+		return out
+	}
+	payload, err := json.Marshal(urls)
+	if err != nil {
+		return out
+	}
+	raw, err := s.EvaluateAsync(fmt.Sprintf(`(async function(){
+		var urls = %s;
+		var items = await Promise.all(urls.map(async function(url){
+			try {
+				var resp = await fetch(url, {credentials:'include'});
+				if (!resp.ok) return {error:'HTTP '+resp.status};
+				var blob = await resp.blob();
+				if (blob.size < 1536) return {error:'结果过小'};
+				var b64 = await new Promise(function(resolve){
+					var fr = new FileReader();
+					fr.onload = function(){ resolve(String(fr.result||'').split(',')[1]||''); };
+					fr.readAsDataURL(blob);
+				});
+				return {b64:b64};
+			} catch (e) { return {error:String(e)}; }
+		}));
+		return JSON.stringify(items);
+	})()`, string(payload)))
+	if err != nil {
+		return out
+	}
+	var items []struct {
+		B64   string `json:"b64"`
+		Error string `json:"error"`
+	}
+	if cdp.ParseJSValue(raw, &items) != nil {
+		return out
+	}
+	for i := range urls {
+		if i >= len(items) || items[i].Error != "" || items[i].B64 == "" {
+			continue
+		}
+		if data, err := decodeB64(items[i].B64); err == nil {
+			out[i] = data
+		}
+	}
+	return out
 }
 
 // CleanComposer 清理输入区。

@@ -45,6 +45,9 @@ func main() {
 			log.Fatalf("进入应用数据目录失败: %v", err)
 		}
 	}
+	if err := logging.Open("."); err != nil {
+		log.Printf("打开日志文件失败: %v", err)
+	}
 	dataRoot := "BrowserData"
 	db, err := store.Open(filepath.Join("database", "config.db"))
 	if err != nil {

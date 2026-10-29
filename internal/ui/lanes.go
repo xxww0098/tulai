@@ -41,9 +41,9 @@ func LaneStatusLine(slots int, started bool) string {
 		return "暂无可用账号"
 	}
 	if !started {
-		return fmt.Sprintf("%d 个账号就绪", slots)
+		return fmt.Sprintf("%d 个账号空闲", slots)
 	}
-	return fmt.Sprintf("%d 个账号同时出图", slots)
+	return fmt.Sprintf("%d 个账号出图中", slots)
 }
 
 // BlockedAccounts 把不能出图的账号收成一句原因。能用的状态不写进来。
@@ -131,7 +131,7 @@ func (a *App) laneBrowsers() []store.Browser {
 }
 
 func (a *App) accountPanel(c *ui.Context, compact bool) {
-	board := a.accountBoard(c.Now())
+	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 	if len(board.Lanes) == 0 {
 		return
 	}
@@ -176,10 +176,44 @@ func (a *App) laneClock(c *ui.Context, board tasks.Board) {
 	}
 }
 
+func filterBoard(board tasks.Board, platform string) tasks.Board {
+	if platform == "" {
+		return board
+	}
+	out := tasks.Board{}
+	for _, ln := range board.Lanes {
+		if ln.Platform != platform {
+			continue
+		}
+		if ln.State == tasks.LaneRunning {
+			out.Active++
+		}
+		out.Lanes = append(out.Lanes, ln)
+	}
+	return out
+}
+
 func (a *App) laneHeader(c *ui.Context) {
 	tok := a.look
-	started := a.running || len(ProgressCards(a.queueItems())) > 0
-	line := LaneStatusLine(a.liveParallel(), started)
+	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
+	running, idle := 0, 0
+	for _, ln := range board.Lanes {
+		switch ln.State {
+		case tasks.LaneRunning:
+			running++
+		case tasks.LaneIdle, tasks.LaneGap:
+			idle++
+		}
+	}
+	var line string
+	switch {
+	case running > 0:
+		line = fmt.Sprintf("%d 个账号出图中", running)
+	case idle == 0:
+		line = "暂无可用账号"
+	default:
+		line = fmt.Sprintf("%d 个账号空闲", idle)
+	}
 	ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).
 		ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 }
@@ -295,7 +329,7 @@ func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
 	tok := a.look
 	fg, bg := laneInk(tok, ln.State)
-	text := string(ln.State)
+	text := laneLabel(ln.State)
 	if ln.State == tasks.LaneGap {
 		text = fmt.Sprintf("等待间隔 %d", gapSeconds(ln.NextReadyAt, c.Now()))
 	}
@@ -305,6 +339,19 @@ func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
 		ui.Text(c.Key("chip-label"), text).FontSize(tok.caption).TextColor(fg).SingleLine().
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseFast})
 	})
+}
+
+func laneLabel(state tasks.LaneState) string {
+	switch state {
+	case tasks.LaneRunning:
+		return "出图中"
+	case tasks.LaneLogin:
+		return "需登录"
+	case tasks.LaneIdle:
+		return "空闲"
+	default:
+		return string(state)
+	}
 }
 
 func laneInk(tok tokens, state tasks.LaneState) (fg, bg ui.Color) {

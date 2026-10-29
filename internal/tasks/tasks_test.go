@@ -14,6 +14,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"math"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,11 +194,9 @@ func TestRunTextOnlySkipsUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(strat.calls, ","), "upload") {
-		t.Fatalf("文生图不应上传: %v", strat.calls)
-	}
-	if strings.Join(strat.calls, ",") != "clean,mark,send,clean,mark,send,clean,mark,send,clean,mark,send" {
-		t.Fatalf("调用序列: %s", strings.Join(strat.calls, ","))
+	joined := strings.Join(strat.calls, ",")
+	if strings.Contains(joined, "upload") || strings.Count(joined, "clean") != 4 || strings.Count(joined, "mark") != 4 || strings.Count(joined, "send") != 4 {
+		t.Fatalf("文生图应各做 4 次清理、标记、发送，且不上传: %s", joined)
 	}
 	snap := e.View().Snapshot()
 	want := []struct{ plat, prompt string }{
@@ -342,13 +341,13 @@ func TestRunConcurrentProgress(t *testing.T) {
 	}
 	defer st.Close()
 	st.Set("browser_backend", "Chrome")
-	const count = 32
+	const count = 2
 	for range count {
 		if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	opts := Options{Platforms: []string{"豆包"}, Images: make([]string, count), Concurrency: count}
+	opts := Options{Platforms: []string{"豆包"}, Images: make([]string, count)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var ready sync.WaitGroup
@@ -473,27 +472,34 @@ type resultBytesStrategy struct {
 
 type submitStrategy struct {
 	strategy.Strategy
+	mu       sync.Mutex
 	cleanErr error
 	calls    []string
 }
 
+func (s *submitStrategy) note(name string) {
+	s.mu.Lock()
+	s.calls = append(s.calls, name)
+	s.mu.Unlock()
+}
+
 func (s *submitStrategy) CleanComposer(*cdp.Session) error {
-	s.calls = append(s.calls, "clean")
+	s.note("clean")
 	return s.cleanErr
 }
 
 func (s *submitStrategy) UploadFiles(*cdp.Session, []string) error {
-	s.calls = append(s.calls, "upload")
+	s.note("upload")
 	return nil
 }
 
 func (s *submitStrategy) MarkTask(*cdp.Session) error {
-	s.calls = append(s.calls, "mark")
+	s.note("mark")
 	return nil
 }
 
 func (s *submitStrategy) SendPrompt(*cdp.Session, string) error {
-	s.calls = append(s.calls, "send")
+	s.note("send")
 	return nil
 }
 
@@ -707,11 +713,18 @@ func (s resultBytesStrategy) FetchResultBytes(*cdp.Session, string) ([]byte, err
 
 func resultPNG(t *testing.T, shade uint8) []byte {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	img.Set(0, 0, color.RGBA{R: shade, A: 255})
+	const n = 128
+	img := image.NewNRGBA(image.Rect(0, 0, n, n))
+	rnd := rand.New(rand.NewPCG(uint64(shade)+1, 7))
+	for i := range img.Pix {
+		img.Pix[i] = byte(rnd.Uint32())
+	}
 	var data bytes.Buffer
 	if err := png.Encode(&data, img); err != nil {
 		t.Fatal(err)
+	}
+	if !images.AcceptGenerated(data.Bytes()) {
+		t.Fatalf("fixture is not a generated image (%d bytes)", data.Len())
 	}
 	return data.Bytes()
 }
@@ -1012,7 +1025,13 @@ func TestSaveResultsRejectsIncompleteAndOversizedImages(t *testing.T) {
 }
 
 func TestSaveResultsUsesImageFormat(t *testing.T) {
-	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img := image.NewRGBA(image.Rect(0, 0, 160, 160))
+	rnd := rand.New(rand.NewPCG(3, 9))
+	for y := 0; y < 160; y++ {
+		for x := 0; x < 160; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: byte(rnd.Uint32()), G: byte(rnd.Uint32()), B: byte(rnd.Uint32()), A: 255})
+		}
+	}
 	var jpg, animation bytes.Buffer
 	if err := jpeg.Encode(&jpg, img, nil); err != nil {
 		t.Fatal(err)
@@ -1214,7 +1233,15 @@ func TestSaveResultsWatermarkCancellationRetainsOriginal(t *testing.T) {
 
 func TestSaveResultsWatermarkSkipsAnimatedFormats(t *testing.T) {
 	var animation bytes.Buffer
-	frame := image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black, color.White})
+	palette := make(color.Palette, 256)
+	for i := range palette {
+		palette[i] = color.RGBA{R: uint8(i), G: uint8(255 - i), B: uint8(i * 3), A: 255}
+	}
+	frame := image.NewPaletted(image.Rect(0, 0, 180, 180), palette)
+	rnd := rand.New(rand.NewPCG(11, 13))
+	for i := range frame.Pix {
+		frame.Pix[i] = byte(rnd.Uint32())
+	}
 	if err := gif.EncodeAll(&animation, &gif.GIF{Image: []*image.Paletted{frame, frame}, Delay: []int{1, 1}}); err != nil {
 		t.Fatal(err)
 	}

@@ -39,15 +39,31 @@ const loginProbeJS = `(function () {
     return false;
   }
   function loginButton() {
-    var nodes = document.querySelectorAll('button,[role="button"],a,input[type="password"]');
+    var nodes = document.querySelectorAll('button,[role="button"],a');
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
       if (!visible(el)) continue;
-      if (el.type === 'password') return true;
       var t = String(el.innerText || '').trim();
       if (t === '登录' || t === '扫码登录' || t === '立即登录') return true;
     }
     return false;
+  }
+  function passwordField() {
+    var nodes = document.querySelectorAll('input[type="password"]');
+    for (var i = 0; i < nodes.length; i++) if (visible(nodes[i])) return true;
+    return false;
+  }
+  // 生成中、进度条、或文档还没画完，都不是「已退出」的证据。
+  function generating() {
+    if (document.readyState && document.readyState !== 'complete') return true;
+    if (document.querySelector('[aria-busy="true"],[role="progressbar"]')) return true;
+    var text = String((document.body && document.body.innerText) || '').slice(0, 2000);
+    return /正在生成|生成中|绘制中|\bGenerating\b/.test(text);
+  }
+  function signedIn() {
+    if (document.querySelector('[class*="avatar"],[class*="Avatar"],[data-testid*="avatar"]')) return true;
+    var text = String((document.body && document.body.innerText) || '').slice(0, 2500);
+    return text.indexOf('退出登录') >= 0 || text.indexOf('退出登陆') >= 0;
   }
   function challenge() {
     var href = String(location.href || '');
@@ -63,13 +79,17 @@ const loginProbeJS = `(function () {
     var top = String((document.body && document.body.innerText) || '').slice(0, 500);
     if (/受区域限制|当前地区暂不支持|所在地区暂不可用|服务在当前地区不可用/.test(top)) return {state:'region'};
   }
-  if (challenge()) return {state:'challenge'};
+  if (challenge()) return {state:'challenge', evidence:'challenge'};
+  if (generating()) return {state:'unknown', evidence:'generating'};
   var hasComposer = composer();
-  if (loginDialog() || loginButton()) return {state:'out'};
-  if (hasComposer) return {state:'in'};
+  // 退出必须有正面证据：登录层、密码框，或明确的登录按钮且页面上没有已登录痕迹。
+  // 生成中途闪一下「登录」不能把正在出图的账号打成未登录。
+  if (loginDialog() || passwordField()) return {state:'out', evidence:'login_dialog'};
+  if (loginButton() && !signedIn()) return {state:'out', evidence:'login_button'};
+  if (hasComposer || signedIn()) return {state:'in', evidence:'composer'};
   var body = String((document.body && document.body.innerText) || '').slice(0, 800);
-  if (/扫码登录|手机号登录|短信登录/.test(body)) return {state:'out'};
-  return {state:'unknown'};
+  if (/扫码登录|手机号登录|短信登录/.test(body)) return {state:'out', evidence:'login_text'};
+  return {state:'unknown', evidence:'none'};
 })()`
 
 type loginProbeResult struct {

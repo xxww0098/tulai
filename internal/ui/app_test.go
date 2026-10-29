@@ -20,12 +20,12 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"tulai", "出图", "浏览器", "提示词", "设置", "开始出图", "高级", "拖入或点击添加图片", "检查更新", "设置向导"} {
+	for _, label := range []string{"tulai", "出图", "浏览器", "提示词", "设置", "开始出图", "更多设置", "拖入或点击添加图片", "检查更新", "设置向导"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
 	drop := assertVisible(t, tt, "拖入或点击添加图片", 1280, 840)
 	start := assertVisible(t, tt, "开始出图", 1280, 840)
-	advanced := assertVisible(t, tt, "高级", 1280, 840)
+	advanced := assertVisible(t, tt, "更多设置", 1280, 840)
 	if start.Y < drop.Y+drop.H+24 {
 		t.Fatalf("start button crowds the drop zone: drop=%+v start=%+v", drop, start)
 	}
@@ -141,7 +141,7 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"tulai", "检查更新", "开始出图", "出图进度", "排队中", "高级", "添加图片"} {
+				for _, label := range []string{"tulai", "检查更新", "开始出图", "出图进度", "排队中", "更多设置", "添加图片"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})
@@ -160,7 +160,7 @@ func TestWorkspaceNeedsUserVisible(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"待验证", verificationHint, "完成 0 · 生成中 0 · 排队 0 · 失败 0 · 待验证 1", "开始出图", "出图进度", "重试"} {
+				for _, label := range []string{"待验证", verificationHint, "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1 · 0/2 并发", "开始出图", "出图进度", "重试"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 				if tt.HasText("已结束") || tt.HasText("失败: 验证码需要手动处理") {

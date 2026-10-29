@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -114,23 +116,28 @@ func TestRunCoolingBrowserDoesNotOccupyWorker(t *testing.T) {
 	}
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Now()
-		var indexes []int
+		var mu sync.Mutex
 		var times []time.Duration
 		e := NewEngine(st, nil, nil, "")
 		e.gap = func(d time.Duration) time.Duration { return d }
-		opts := Options{Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, Concurrency: 1, SendWait: 10}
+		opts := Options{Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, SendWait: 10}
 		err := e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
-			indexes = append(indexes, task.Index)
+			mu.Lock()
 			times = append(times, time.Since(start))
+			mu.Unlock()
 			return nil
 		})
-		if err != nil || len(times) != 4 || times[0] != 0 || times[1] != 0 || times[2] != 10*time.Second || times[3] != 10*time.Second {
-			t.Fatalf("浏览器冷却不能阻塞独立浏览器: times=%v err=%v", times, err)
-		}
-		for i, index := range indexes {
-			if index != i+1 {
-				t.Fatalf("单并发且资源就绪时应保持队列顺序: %v", indexes)
+		var at0, at10 int
+		for _, elapsed := range times {
+			switch elapsed {
+			case 0:
+				at0++
+			case 10 * time.Second:
+				at10++
 			}
+		}
+		if err != nil || len(times) != 4 || at0 != 2 || at10 != 2 {
+			t.Fatalf("两个平台应同时开跑，各自的下一单等 10 秒: times=%v err=%v", times, err)
 		}
 	})
 }
@@ -300,8 +307,8 @@ func TestAutoConcurrencyRunsOneJobPerAccount(t *testing.T) {
 	got := overlapStarted(t, st, Options{
 		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png", "d.png"},
 	})
-	if len(got) != 3 {
-		t.Fatalf("3 个可用账号应同时跑 3 条，实际 %v", got)
+	if len(got) != 2 {
+		t.Fatalf("豆包同时最多 2 条，实际 %v", got)
 	}
 	seen := map[int64]bool{}
 	for _, id := range got {
@@ -515,5 +522,120 @@ func TestSameExtensionProfileStaysSerial(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("应有两个配置文件在跑: %v", got)
+	}
+}
+
+func TestTwoAccountsOverlapOneTaskTime(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	if _, err := st.AddBrowser("豆包", "豆包1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddBrowser("豆包", "豆包2", ""); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		var cur, max atomic.Int32
+		start := time.Now()
+		e := NewEngine(st, nil, nil, "")
+		e.gap = func(d time.Duration) time.Duration { return d }
+		err := e.run(context.Background(), Options{
+			Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"},
+		}, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
+			n := cur.Add(1)
+			for {
+				old := max.Load()
+				if n <= old || max.CompareAndSwap(old, n) {
+					break
+				}
+			}
+			time.Sleep(200 * time.Millisecond)
+			cur.Add(-1)
+			return nil
+		})
+		elapsed := time.Since(start)
+		if err != nil || max.Load() != 2 || elapsed < 200*time.Millisecond || elapsed > 350*time.Millisecond {
+			t.Fatalf("two accounts should overlap: max=%d elapsed=%s err=%v", max.Load(), elapsed, err)
+		}
+	})
+}
+
+func TestQianwenIsNotBlockedByDoubao(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	if _, err := st.AddBrowser("豆包", "豆包1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddBrowser("千问", "千问1", ""); err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		var qianwenDone atomic.Bool
+		finished := make(chan error, 1)
+		e := NewEngine(st, nil, nil, "")
+		go func() {
+			finished <- e.run(context.Background(), Options{
+				Platforms: []string{"豆包", "千问"}, Images: []string{"a.png"},
+			}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+				if task.Platform == "豆包" {
+					select {
+					case <-release:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				qianwenDone.Store(true)
+				return nil
+			})
+		}()
+		synctest.Wait()
+		if !qianwenDone.Load() {
+			t.Fatal("千问应在豆包还堵着的时候完成")
+		}
+		close(release)
+		synctest.Wait()
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestFourInFlightAcrossPlatforms(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	for range 2 {
+		if _, err := st.AddBrowser("豆包", "豆包", ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.AddBrowser("千问", "千问", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"},
+	})
+	if len(got) != 4 {
+		t.Fatalf("两个平台应同时跑 4 条: %v", got)
+	}
+	seen := map[int64]int{}
+	for _, id := range got {
+		seen[id]++
+		if seen[id] > 1 {
+			t.Fatalf("同一账号跑了两条: %v", got)
+		}
 	}
 }

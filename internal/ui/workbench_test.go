@@ -243,7 +243,7 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if got := LaneHeader(3, done, len(running)); got != "3 个账号同时出图 · 完成 0 / 共 3" {
 		t.Fatal(got)
 	}
-	if got := FormatProgressTally(done, gen, queued, failedN, needs); got != "完成 0 · 生成中 3 · 排队 0 · 失败 0" {
+	if got := FormatProgressTally(done, gen, queued, failedN, needs); got != "完成 0 · 进行中 3 · 排队 0 · 失败 0 · 3/2 并发" {
 		t.Fatal(got)
 	}
 	finished := ProgressCards([]tasks.Task{
@@ -315,7 +315,16 @@ func TestFailCardShowsOneAction(t *testing.T) {
 		{Platform: "豆包", Status: tasks.StatusFailed, Images: []string{"静物.png"}, Prompt: "乙", Error: "上传: 没就绪"},
 	}}
 	tt := ui.NewTester(a.view, 1280, 900)
-	for _, label := range []string{"这条内容没通过审核", "改提示词重试", "已改写：", "登录失效了，请重新登录", "去重登", "图片上传失败", "换图"} {
+	for _, label := range []string{"这条内容没通过审核", "改提示词重试", "已改写：", "图片上传失败", "换图"} {
+		if !tt.HasText(label) {
+			t.Fatalf("missing %q", label)
+		}
+	}
+	if err := tt.Click("千问"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	for _, label := range []string{"登录失效了，请重新登录", "去重登"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
@@ -347,10 +356,10 @@ func TestLayoutFlow(t *testing.T) {
 	if skip.Images.Open || skip.Images.State != stepDone || !skip.Prompt.Open || skip.Prompt.State != stepCurrent {
 		t.Fatalf("skip %+v", skip)
 	}
-	if got := FormatProgressTally(1, 1, 1, 1, 0); got != "完成 1 · 生成中 1 · 排队 1 · 失败 1" {
+	if got := FormatProgressTally(1, 1, 1, 1, 0); got != "完成 1 · 进行中 1 · 排队 1 · 失败 1 · 1/2 并发" {
 		t.Fatalf("tally %q", got)
 	}
-	if got := FormatProgressTally(0, 0, 0, 0, 1); got != "完成 0 · 生成中 0 · 排队 0 · 失败 0 · 待验证 1" {
+	if got := FormatProgressTally(0, 0, 0, 0, 1); got != "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1 · 0/2 并发" {
 		t.Fatalf("needs tally %q", got)
 	}
 }

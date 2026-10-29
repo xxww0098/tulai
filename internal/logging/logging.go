@@ -43,7 +43,7 @@ type Entry struct {
 }
 
 // Log 全局日志实例。
-var Log = New(600)
+var Log = New(8000)
 
 // Logger 线程安全的环形日志，支持一个订阅回调（UI 刷新用）。
 type Logger struct {
@@ -62,20 +62,6 @@ func (l *Logger) SetSink(fn func(Entry)) {
 	l.mu.Lock()
 	l.sink = fn
 	l.mu.Unlock()
-}
-
-func (l *Logger) add(level Level, msg string) {
-	e := Entry{Time: time.Now(), Level: level, Text: msg}
-	l.mu.Lock()
-	if len(l.buf) >= l.max {
-		l.buf = l.buf[1:]
-	}
-	l.buf = append(l.buf, e)
-	sink := l.sink
-	l.mu.Unlock()
-	if sink != nil {
-		sink(e)
-	}
 }
 
 // Entries 返回日志快照。

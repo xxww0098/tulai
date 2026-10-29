@@ -71,10 +71,12 @@ type Engine struct {
 	attentionID int64
 	notes       []string
 	wake        chan struct{}
+	wakes       []chan struct{}
 	gap         func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
 
 	liveMu sync.Mutex
 	clock  laneClock
+	starts sync.Map // task index → time.Time
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。
@@ -226,190 +228,11 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		e.mu.Unlock()
 	}()
 
-	total := len(queue)
-	done := 0
-	var runErr error
-	// 工人数跟任务数走。真正的同时出图上限在每一轮按可用账号重算。
-	pool := total
-	jobs := make(chan Task)
-	completed := make(chan Task, pool)
-	// 每个账号一个名额。扩展配置文件跨平台共用；负数占位 ID 不再并成 0。
-	busy := map[int64]bool{}
-	readyAt := map[int64]time.Time{}
-	var wg sync.WaitGroup
-	logging.Log.Info("任务开始：共 %d 个（并发 %d）", total, e.dispatchLimit(time.Now()))
-	onProgress(Progress{Done: 0, Total: total})
-
-	for w := 0; w < pool; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for t := range jobs {
-				if ctx.Err() != nil {
-					completed <- t
-					continue
-				}
-				t.slot = t.BrowserID
-				if t.BrowserID > 0 {
-					e.setActive(t.BrowserID, true)
-					if e.store != nil {
-						e.store.TouchBrowser(t.BrowserID, time.Now())
-					}
-				}
-				e.laneStart(e.slotKey(t.BrowserID), t.BrowserID, jobOf(t, time.Now()))
-				t.Status = StatusRunning
-				e.view.Update(t)
-				onTask(t)
-				t = e.execute(ctx, t, attempt)
-				e.noteUse(t)
-				if t.slot > 0 {
-					e.setActive(t.slot, false)
-				}
-				completed <- t
-			}
-		}()
-	}
-	active := 0
-	pending := queue
-	ctxDone := ctx.Done()
-	for len(pending) > 0 || active > 0 {
-		if ctx.Err() != nil {
-			pending, ctxDone = nil, nil
-			if active == 0 {
-				break
-			}
-		}
-		var dispatch chan Task
-		var next Task
-		index := -1
-		var earliest time.Time
-		now := time.Now()
-		if active < e.dispatchLimit(now) && ctx.Err() == nil {
-			for i := 0; i < len(pending); i++ {
-				task := pending[i]
-				wait, dead := e.settleAccount(ctx, &task)
-				pending[i] = task
-				if dead {
-					task.Status = StatusFailed
-					if task.Error == "" {
-						task.Error = "同平台账号都不可用"
-					}
-					e.view.Update(task)
-					onTask(task)
-					done++
-					onProgress(Progress{Done: done, Total: total})
-					logging.Log.Warning("#%d [%s] %s: %s", task.Index, task.Platform, task.Status, task.Error)
-					pending = append(pending[:i], pending[i+1:]...)
-					i--
-					continue
-				}
-				if !wait.IsZero() {
-					if earliest.IsZero() || wait.Before(earliest) {
-						earliest = wait
-					}
-					continue
-				}
-				resource := e.slotKey(task.BrowserID)
-				if busy[resource] || now.Before(readyAt[resource]) {
-					if id, ok := e.pickIdleAccount(task.Platform, resource, busy, readyAt, now); ok {
-						task.BrowserID = id
-						pending[i] = task
-						resource = e.slotKey(id)
-					}
-				}
-				if busy[resource] {
-					noteCool(&earliest, e.accountsFor(task.Platform), now)
-					continue
-				}
-				if ready := readyAt[resource]; now.Before(ready) {
-					if earliest.IsZero() || ready.Before(earliest) {
-						earliest = ready
-					}
-					noteCool(&earliest, e.accountsFor(task.Platform), now)
-					continue
-				}
-				index, next, dispatch = i, task, jobs
-				break
-			}
-		} else if ctx.Err() == nil {
-			// 名额满了也要在冷却结束时醒来，否则新恢复的账号要等当前这一单跑完。
-			for _, platform := range e.opts.Platforms {
-				noteCool(&earliest, e.accountsFor(platform), now)
-			}
-		}
-		if len(pending) == 0 && active == 0 {
-			break
-		}
-		var timer *time.Timer
-		var wake <-chan time.Time
-		if dispatch == nil && !earliest.IsZero() {
-			timer = time.NewTimer(time.Until(earliest))
-			wake = timer.C
-		}
-		select {
-		case dispatch <- next:
-			busy[e.slotKey(next.BrowserID)] = true
-			if index == 0 {
-				pending = pending[1:]
-			} else {
-				pending = append(pending[:index], pending[index+1:]...)
-			}
-			active++
-		case t := <-completed:
-			active--
-			resource := t.slot
-			if resource == 0 {
-				resource = t.BrowserID
-			}
-			busySlot := e.slotKey(resource)
-			delete(busy, busySlot)
-			used := t.ranOn
-			if used == 0 {
-				used = resource
-			}
-			readySlot := e.slotKey(used)
-			gap := e.sendGap(time.Duration(opts.SendWait) * time.Second)
-			readyAt[readySlot] = time.Now().Add(gap)
-			// 先收起账号上的这一单，再把结果写进队列，界面同一帧里才能从账号车道飞到结果。
-			e.laneFinish(busySlot, resource, readySlot, gap)
-			if e.view != nil {
-				e.view.Update(t)
-			}
-			if t.rotated && t.Status == StatusPending {
-				t.rotated = false
-				pending = append(pending, t)
-				onTask(t)
-				if timer != nil {
-					timer.Stop()
-					timer = nil
-				}
-				continue
-			}
-			if t.Status != StatusPending {
-				done++
-				if t.Status == StatusNeedsUser && ctx.Err() != nil {
-					runErr = captcha.ErrVerificationRequired
-				}
-				onTask(t)
-				onProgress(Progress{Done: done, Total: total})
-				if t.Status == StatusSuccess {
-					logging.Log.Success("#%d [%s] 完成，保存 %d 张", t.Index, t.Platform, len(t.Results))
-				} else {
-					logging.Log.Warning("#%d [%s] %s: %s", t.Index, t.Platform, t.Status, t.Error)
-				}
-			}
-		case <-wake:
-		case <-nudge:
-		case <-ctxDone:
-			pending, ctxDone = nil, nil
-		}
-		if timer != nil {
-			timer.Stop()
-		}
-	}
-	close(jobs)
-	wg.Wait()
-	logging.Log.Info("任务结束：完成 %d/%d", done, total)
+	logging.SetRun(time.Now().Format("20060102T150405.000"))
+	logging.Event(logging.Line{Stage: "queue", Msg: fmt.Sprintf("任务开始：共 %d 个", len(queue)), Images: len(queue)})
+	onProgress(Progress{Done: 0, Total: len(queue)})
+	runErr := e.runPlatforms(ctx, nudge, queue, onTask, onProgress, attempt)
+	logging.Event(logging.Line{Stage: "queue", Msg: "任务结束"})
 	return runErr
 }
 
@@ -701,7 +524,7 @@ func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session)
 		if err := strat.UploadFiles(sess, t.Images); err != nil {
 			return fmt.Errorf("上传: %w", err)
 		}
-		logging.Log.Info("#%d 已上传 %d 张源图", t.Index, len(t.Images))
+		e.traceTask(t, "upload", fmt.Sprintf("#%d 已上传 %d 张源图", t.Index, len(t.Images)), len(t.Images), 0, nil)
 	}
 	// 上传预览就绪后再标记，避免把源图回显当作生成结果。
 	if err := strat.MarkTask(sess); err != nil {
@@ -712,7 +535,7 @@ func (e *Engine) submitTask(t *Task, strat strategy.Strategy, sess *cdp.Session)
 		return fmt.Errorf("发送: %w", err)
 	}
 	t.submitted = true
-	logging.Log.Info("#%d 已发送提示词（%.20s…）", t.Index, t.Prompt)
+	e.traceTask(t, "submit", fmt.Sprintf("#%d %s 已提交", t.Index, e.accountName(t.BrowserID)), 0, 0, nil)
 	return nil
 }
 
@@ -736,8 +559,11 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 				downloads++
 			}
 		}
+		if len(results) > 0 {
+			e.traceTask(t, "detect_done", fmt.Sprintf("#%d 检测到 %d 张", t.Index, len(results)), len(results), 0, nil)
+		}
 		if downloads > 0 {
-			logging.Log.Info("#%d 收到 %d 个网页下载结果，正在校验保存", t.Index, downloads)
+			e.traceTask(t, "download", fmt.Sprintf("#%d 下载 %d 张", t.Index, downloads), downloads, 0, nil)
 		}
 		if candidates := len(results) - downloads; candidates > 0 {
 			logging.Log.Debugf("#%d 截获 %d 个候选结果", t.Index, candidates)
@@ -851,7 +677,8 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if clientErr != nil {
 		return nil, clientErr
 	}
-	sess, err := client.NewSession(strat.HomeURL(), onLog)
+	sess, err := client.NewBackgroundSession(home, onLog)
+	e.traceTask(&Task{Index: 0, Platform: platform, BrowserID: browserID}, "open", "打开页面", 0, 0, err)
 	if err != nil {
 		client.Close()
 		return nil, fmt.Errorf("打开页面: %w", err)
@@ -907,6 +734,16 @@ func closeFailedSession(ctx context.Context, sess failedSession, err error) erro
 		return ctxErr
 	}
 	return err
+}
+
+func (e *Engine) accountBusy(id int64) bool {
+	if e == nil || id <= 0 {
+		return false
+	}
+	e.mu.Lock()
+	on := e.active[id]
+	e.mu.Unlock()
+	return on
 }
 
 func (e *Engine) setActive(id int64, on bool) {
@@ -1012,16 +849,49 @@ func (e *Engine) forgetSession(sess *cdp.Session) {
 // 限制解码分配，仍允许 8K 结果图。
 const maxResultPixels = 32 * 1024 * 1024
 
+// prefetchResults 在同一页里并行下载多张结果。单张仍走原来的逐张抓取。
+func prefetchResults(strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) [][]byte {
+	out := make([][]byte, len(results))
+	fetch, ok := strat.(interface {
+		FetchResultList(*cdp.Session, []string) [][]byte
+	})
+	if !ok || sess == nil || sess.IsEgo() {
+		return out
+	}
+	var urls []string
+	var idx []int
+	for i, r := range results {
+		if r.Data == nil && r.URL != "" {
+			urls = append(urls, r.URL)
+			idx = append(idx, i)
+		}
+	}
+	if len(urls) < 2 {
+		return out
+	}
+	got := fetch.FetchResultList(sess, urls)
+	for n, data := range got {
+		if n < len(idx) {
+			out[idx[n]] = data
+		}
+	}
+	return out
+}
+
 // saveResults 校验 + 去重 + 按命名规则落盘。
 func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) ([]string, error) {
 	t.matchedSavedResult = false
 	var saved []string
+	batched := prefetchResults(strat, sess, results)
 	for i, r := range results {
 		if err := ctx.Err(); err != nil {
 			return saved, err
 		}
 		data := r.Data
 		var err error
+		if data == nil && i < len(batched) && batched[i] != nil {
+			data = batched[i]
+		}
 		if data == nil {
 			data, err = strat.FetchResultBytes(sess, r.URL)
 		}
@@ -1067,6 +937,10 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 				return saved, fmt.Errorf("网页下载结果 #%d 校验失败: 无法完整解码: %w", i+1, err)
 			}
 			logging.Log.Debugf("候选图 #%d 无法完整解码", i+1)
+			continue
+		}
+		if len(data) < images.MinGeneratedBytes || cfg.Width < images.MinGeneratedSide || cfg.Height < images.MinGeneratedSide {
+			logging.Log.Debugf("候选图 #%d 不是生成图（%d 字节，%dx%d），已忽略", i+1, len(data), cfg.Width, cfg.Height)
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -1150,6 +1024,9 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 		if repairErr != nil {
 			logging.Log.Warning("#%d 图片 #%d 去水印版本保存失败，保留原图: %s", t.Index, i+1, repairErr)
 		}
+	}
+	if len(saved) > 0 {
+		e.traceTask(t, "save", fmt.Sprintf("#%d 保存 %d 张", t.Index, len(saved)), len(saved), 0, nil)
 	}
 	return saved, nil
 }

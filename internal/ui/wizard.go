@@ -244,7 +244,7 @@ func (a *App) wizardAccountStep(c *ui.Context) {
 }
 
 func (a *App) loginQRBody(c *ui.Context, b store.Browser, inWizard bool) {
-	shot := a.loginShots[b.ID]
+	shot := a.loginShot(b.ID)
 	loggedIn := b.IsLoggedIn || shot.state == wizard.ProbeIn || (inWizard && a.wizardPhase == "in")
 	if loggedIn {
 		ui.Text(c, "已登录").FontSize(15).TextColor(c.Theme().Success)
