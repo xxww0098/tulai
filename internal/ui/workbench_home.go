@@ -617,7 +617,7 @@ func (a *App) stepRun(c *ui.Context, step flowStep) {
 	card := a.stepCard(c, "step-run", step.State)
 	card.Children(func() {
 		ui.Text(c, "③ 出图").FontSize(tok.title).Bold()
-		if plan.Action == StartWizard && !a.running {
+		if !a.running && (plan.Action == StartWizard || a.loggedOutCallout()) {
 			a.accountCallout(c)
 		}
 		board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
@@ -731,6 +731,30 @@ func runGlyph(c *ui.Context, stop bool, ink ui.Color) {
 			p.Fill(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, ink.Alpha(shown), 1.5)
 		}
 	})
+}
+
+// loggedOutCallout 是这一页已经有账号，但没有一个是登录的。
+// 开始按钮保持关掉，另外留一句去登录。已登录只是额度满了，不说成没登录。
+func (a *App) loggedOutCallout() bool {
+	if a == nil || a.workbenchPlan().Action != StartNone {
+		return false
+	}
+	in := a.workbenchInput()
+	if !in.HasImages && !in.HasPrompts {
+		return false
+	}
+	stage := a.stagePlatform()
+	any := false
+	for _, account := range in.Accounts {
+		if account.Platform != stage || account.Extension != in.ExtensionMode {
+			continue
+		}
+		if account.LoggedIn {
+			return false
+		}
+		any = true
+	}
+	return any
 }
 
 func (a *App) accountCallout(c *ui.Context) {

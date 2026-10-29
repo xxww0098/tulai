@@ -138,6 +138,9 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	if a.running || a.wizardOn {
 		t.Fatal("disabled start still ran")
 	}
+	if !tt.HasText("还没有可用账号。先去设置登录，再开始出图。") {
+		t.Fatal("logged-out tab should still say to log in")
+	}
 	left, okL := tt.Find("车道豆包没登录")
 	if !okL {
 		t.Fatal("doubao lane missing")
