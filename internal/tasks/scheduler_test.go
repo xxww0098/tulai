@@ -233,7 +233,7 @@ func TestExecuteCancellationDuringRetryWait(t *testing.T) {
 	})
 }
 
-func TestRunUncertainSubmissionStopsWithoutResend(t *testing.T) {
+func TestRunUncertainSubmissionDoesNotStopTheBatch(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -249,14 +249,83 @@ func TestRunUncertainSubmissionStopsWithoutResend(t *testing.T) {
 		return e.submitTask(task, strat, nil)
 	})
 	queue := e.View().Snapshot()
-	if err != nil || calls != 1 || queue[0].Status != StatusFailed || queue[0].Attempts != 1 || queue[0].submitted {
-		t.Fatalf("发送状态不确定应停止批次，不能重发: calls=%d queue=%+v err=%v", calls, queue, err)
+	if err != nil || calls != 4 || queue[0].Status != StatusFailed || queue[0].Attempts != 1 || queue[0].submitted {
+		t.Fatalf("发送未确认只失败这一条，不能重发也不能停批: calls=%d queue=%+v err=%v", calls, queue, err)
 	}
 	for _, task := range queue[1:] {
-		if task.Status != StatusPending || task.Attempts != 0 {
-			t.Fatalf("不确定的生成仍可能进行，不能启动后续任务: %+v", task)
+		if task.Status != StatusSuccess || task.Error == "已停止" {
+			t.Fatalf("其他任务应继续跑完: %+v", task)
 		}
 	}
+}
+
+func TestOneFailedWorkerDoesNotCancelTheOther(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Set("browser_backend", "Chrome")
+	first, err := st.AddBrowser("豆包", "豆包1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.AddBrowser("豆包", "豆包2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		started := make(chan int64, 8)
+		finished := make(chan error, 1)
+		e := NewEngine(st, nil, nil, "")
+		opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 2, RetryCount: 3}
+		go func() {
+			finished <- e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+				started <- task.BrowserID
+				if task.BrowserID == second.ID {
+					return strategy.ErrSubmissionUncertain
+				}
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+		}()
+		synctest.Wait()
+		sawFailed := 0
+		for len(started) > 0 {
+			if id := <-started; id == second.ID {
+				sawFailed++
+			}
+		}
+		close(release)
+		synctest.Wait()
+		err := <-finished
+		if err != nil || sawFailed != 1 {
+			t.Fatalf("失败的账号应先跑一次且不能卡住批次: saw=%d err=%v", sawFailed, err)
+		}
+		queue := e.View().Snapshot()
+		if len(queue) != 2 {
+			t.Fatalf("queue: %+v", queue)
+		}
+		for _, task := range queue {
+			if task.Status != StatusSuccess || task.Error == "已停止" {
+				t.Fatalf("一条失败不能取消另一条: first=%d second=%d task=%+v", first.ID, second.ID, task)
+			}
+		}
+		retried := 0
+		for len(started) > 0 {
+			if id := <-started; id == first.ID {
+				retried++
+			}
+		}
+		if retried < 1 {
+			t.Fatal("未确认的发送应改到另一个空闲账号再试一次")
+		}
+	})
 }
 
 // overlapStarted 跑到第一批任务都堵在 attempt 里，返回已经开始的浏览器 ID。

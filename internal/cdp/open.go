@@ -433,19 +433,41 @@ func (c *SliderConn) moveWindow(ctx context.Context, targetID string, show bool)
 	}
 	var win struct {
 		WindowID int `json:"windowId"`
+		Bounds   struct {
+			Left        int    `json:"left"`
+			Top         int    `json:"top"`
+			WindowState string `json:"windowState"`
+		} `json:"bounds"`
 	}
 	if err := c.call(ctx, "", "Browser.getWindowForTarget", map[string]any{"targetId": targetID}, &win); err != nil {
 		return err
 	}
-	bounds := map[string]any{"windowState": "normal", "width": 1280, "height": 900}
 	if show {
-		bounds["left"] = 80
-		bounds["top"] = 48
-	} else {
-		bounds["left"] = -2400
-		bounds["top"] = -2400
+		bounds := map[string]any{"windowState": "normal", "left": 80, "top": 48, "width": 1280, "height": 900}
+		return c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil)
 	}
-	return c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil)
+	for _, bounds := range parkSteps(win.Bounds.WindowState, win.Bounds.Left, win.Bounds.Top) {
+		if err := c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parkSteps 是出图时把窗口留在屏幕外的 setWindowBounds。
+// 已经在屏幕外就什么都不发：再写一次 bounds 会把窗口激活到前台。
+// Chrome 收到 windowState=normal 时，最大化或最小化的窗口只走 Restore()，
+// 坐标被丢掉，Restore 还会把窗口拉到 tulai 前面。所以先单独恢复，再只写坐标。
+func parkSteps(state string, left, top int) []map[string]any {
+	if state == "normal" && left <= -2000 && top <= -2000 {
+		return nil
+	}
+	var steps []map[string]any
+	if state != "" && state != "normal" {
+		steps = append(steps, map[string]any{"windowState": "normal"})
+	}
+	steps = append(steps, map[string]any{"left": -2400, "top": -2400, "width": 1280, "height": 900})
+	return steps
 }
 
 func (c *SliderConn) closeBlankPages(ctx context.Context, keep string) {

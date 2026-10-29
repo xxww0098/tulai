@@ -335,32 +335,54 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 	return nil, fmt.Errorf("等待生成结果超时")
 }
 
+type chatReady struct {
+	Ready bool   `json:"ready"`
+	Href  string `json:"href"`
+	ID    string `json:"id"`
+	Node  string `json:"node"`
+}
+
 // FreshChat 每次任务都开一条新对话。复用标签页会留着上一轮的图，标记之前先换对话。
+// 输入框出现而且地址还是上一条对话时不能打字：那是还没换完的旧编辑器。
 func FreshChat(s *cdp.Session) error {
 	if s == nil || s.IsEgo() {
 		return nil
 	}
 	out, err := s.Evaluate(`window.__tulaiFreshChat ? __tulaiFreshChat() : "missing"`)
 	if err != nil {
-		return nil
+		return err
 	}
 	via := strings.Trim(out, `"`)
-	if via == "missing" || via == "ready" {
+	if via == "missing" {
 		return nil
 	}
-	origin := strings.Trim(evalString(s, "location.href"), `"`)
-	before := s.EvaluateInt(`document.querySelectorAll(window.__tulaiAssistantQuery||"*").length`)
+	originID := ""
+	if via != "ready" {
+		originID = strings.Trim(evalString(s, `window.__tulaiConversationKey ? __tulaiConversationKey(location.href) : ""`), `"`)
+	}
 	deadline := time.Now().Add(8 * time.Second)
+	stable := 0
+	last := ""
 	for time.Now().Before(deadline) {
 		if err := s.Ctx().Err(); err != nil {
 			return err
 		}
-		href := strings.Trim(evalString(s, "location.href"), `"`)
-		left := s.EvaluateInt(`document.querySelectorAll(window.__tulaiAssistantQuery||"*").length`)
-		composer := s.EvaluateBool(`document.readyState==="complete" && !!document.querySelector('textarea,[contenteditable="true"]')`)
-		cleared := href != origin || left < before || left == 0
-		if composer && cleared {
-			return nil
+		raw, evalErr := s.Evaluate(`JSON.stringify(window.__tulaiChatReady ? __tulaiChatReady() : {ready:false})`)
+		var st chatReady
+		if evalErr == nil && cdp.ParseJSValue(raw, &st) == nil && st.Ready && freshLanded(via, originID, st) {
+			key := st.Href + "\n" + st.Node
+			if key == last {
+				stable++
+			} else {
+				stable = 1
+				last = key
+			}
+			if stable >= 2 {
+				return nil
+			}
+		} else {
+			stable = 0
+			last = ""
 		}
 		select {
 		case <-s.Ctx().Done():
@@ -368,7 +390,14 @@ func FreshChat(s *cdp.Session) error {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	return nil
+	return fmt.Errorf("新对话还没准备好")
+}
+
+func freshLanded(via, originID string, st chatReady) bool {
+	if via == "ready" || originID == "" {
+		return st.ID == ""
+	}
+	return st.ID == "" || st.ID != originID
 }
 
 func evalString(s *cdp.Session, expr string) string {

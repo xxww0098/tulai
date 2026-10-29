@@ -340,9 +340,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 	for t.Attempts < maxAttempts {
 		select {
 		case <-ctx.Done():
-			t.Status = StatusSkipped
-			t.Error = "已停止"
-			return t
+			return stoppedTask(ctx, t)
 		default:
 		}
 		if t.Attempts > 0 {
@@ -350,12 +348,14 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		}
 		t.Attempts++
 		err := attempt(ctx, &t)
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			if e.cancel != nil {
-				e.cancel()
-			}
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			t.Status = StatusSkipped
 			t.Error = "已停止"
+			return t
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			t.Status = StatusFailed
+			t.Error = err.Error()
 			return t
 		}
 		if err == nil {
@@ -382,18 +382,17 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		kind := classifyFault(err)
 		if errors.Is(err, captcha.ErrVerificationRequired) {
 			t.Status = StatusNeedsUser
-			if !e.hasOtherHealthy(t.Platform, t.ranOnOr(t.BrowserID), time.Now()) && e.cancel != nil {
-				e.cancel()
-			}
 			return t
 		}
-		if errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) {
-			t.Status = StatusFailed
-			if errors.Is(err, strategy.ErrSubmissionUncertain) || !e.hasOtherHealthy(t.Platform, t.ranOnOr(t.BrowserID), time.Now()) {
-				if e.cancel != nil {
-					e.cancel()
-				}
+		if errors.Is(err, strategy.ErrSubmissionUncertain) {
+			if e.rotateUncertain(&t, time.Now()) {
+				return t
 			}
+			t.Status = StatusFailed
+			return t
+		}
+		if errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) {
+			t.Status = StatusFailed
 			return t
 		}
 		if kind == faultQuota || kind == faultRate || kind == faultAuth {
@@ -407,10 +406,19 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		select {
 		case <-time.After(3 * time.Second):
 		case <-ctx.Done():
-			t.Status = StatusSkipped
-			t.Error = "已停止"
-			return t
+			return stoppedTask(ctx, t)
 		}
+	}
+	t.Status = StatusFailed
+	return t
+}
+
+// stoppedTask 是这一条任务自己的上下文结束了。不取消还在跑的其他任务。
+func stoppedTask(ctx context.Context, t Task) Task {
+	if ctx.Err() != nil {
+		t.Status = StatusSkipped
+		t.Error = "已停止"
+		return t
 	}
 	t.Status = StatusFailed
 	return t
@@ -431,14 +439,8 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	if t.ranOn <= 0 {
 		t.ranOn = t.BrowserID
 	}
-	e.mu.Lock()
-	cancelRun := e.cancel
-	e.mu.Unlock()
 	sess, err := e.session(ctx, t.Platform, t.BrowserID, strat)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			cancelRun()
-		}
 		return err
 	}
 	sess.KeepOffscreen()

@@ -12,7 +12,7 @@ import (
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
-// 账号级失败。不确定的发送不在这里轮换，避免同一条提示词打两次。
+// 账号级失败。不确定的发送不在这里记成账号故障，避免把还能用的号冷却掉。
 type faultKind int
 
 const (

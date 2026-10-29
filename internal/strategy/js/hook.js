@@ -325,26 +325,57 @@
     var gridFull = expect > 0 && images.length >= expect;
     return { busy: busy, done: !busy && images.length > 0 && (bar || gridFull), expect: expect, images: images };
   };
+  // /chat/<id> 是已经打开的对话。/chat 或 /chat/ 才是新对话。
+  window.__tulaiConversationKey = function (href) {
+    var path = '';
+    try { path = new URL(String(href || ''), location.href).pathname; } catch (e) { return ''; }
+    var parts = path.split('/').filter(Boolean);
+    var i = parts.indexOf('chat');
+    if (i < 0 || !parts[i + 1]) return '';
+    return parts[i + 1];
+  };
+  function composerBox(el) {
+    if (!el || el.readOnly || el.disabled) return false;
+    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
+    var box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
+    return box.width > 5 && box.height > 5;
+  }
+  // 新对话可以打字：有一个还在的输入框，并且不在 loading。
+  window.__tulaiChatReady = function () {
+    var href = String(location.href || '');
+    var nodes = document.querySelectorAll('textarea,[contenteditable="true"]');
+    var comp = null;
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      if (!composerBox(nodes[i])) continue;
+      comp = nodes[i];
+      break;
+    }
+    if (!comp || document.readyState === 'loading') {
+      return { ready: false, href: href, id: window.__tulaiConversationKey(href) };
+    }
+    if (!comp.__tulaiNode) comp.__tulaiNode = 'n' + Math.random().toString(36).slice(2);
+    return { ready: true, href: href, id: window.__tulaiConversationKey(href), node: comp.__tulaiNode };
+  };
   window.__tulaiFreshChat = function () {
     var host = String(location.hostname || '');
+    // 已经在新对话地址上就别再点。点下去会换掉正在用的输入框。
+    if (!window.__tulaiConversationKey(location.href)) return 'ready';
     var labels = /(^|\.)doubao\.com$/i.test(host) ? ['新对话', '新建对话'] : ['新建对话', '新对话', '新建聊天'];
     var nodes = document.querySelectorAll('a,button,[role="button"]');
     for (var i = 0; i < nodes.length; i++) {
       var text = labelOf(nodes[i]);
+      var box = nodes[i].getBoundingClientRect ? nodes[i].getBoundingClientRect() : { width: 1, height: 1 };
+      if (box.width <= 8 || box.height <= 8) continue;
       for (var k = 0; k < labels.length; k++) {
-        if (text === labels[k] || text.indexOf(labels[k]) === 0) {
+        if (text === labels[k] || (text.indexOf(labels[k]) === 0 && text.length <= labels[k].length + 12)) {
           try { nodes[i].click(); } catch (e) {}
           return 'button';
         }
       }
     }
     var url = /(qianwen|tongyi|qwen)/i.test(host) ? 'https://www.qianwen.com/' : 'https://www.doubao.com/chat/';
-    var here = String(location.href || '').split('?')[0].replace(/\/$/, '');
-    if (here !== url.replace(/\/$/, '')) {
-      location.assign(url);
-      return 'url';
-    }
-    return 'ready';
+    location.assign(url);
+    return 'url';
   };
   function start() {
     try { mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] }); } catch (e) {}

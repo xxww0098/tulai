@@ -262,6 +262,31 @@
     }), extra.map(function (el, index) { return describe(el, 'icon#' + (index + 1) + ' '); }));
   }
 
+  function conversationKey(href) {
+    if (window.__tulaiConversationKey) return window.__tulaiConversationKey(href);
+    try {
+      var parts = new URL(String(href || ''), location.href).pathname.split('/').filter(Boolean);
+      var i = parts.indexOf('chat');
+      return i >= 0 && parts[i + 1] ? parts[i + 1] : '';
+    } catch (e) { return ''; }
+  }
+
+  // 发送成功要看到我们这条用户气泡，或地址变成新的对话 id。输入框空了不算。
+  window.tulaiSendAccepted = function (beforeHref, prompt) {
+    var href = String(location.href || '');
+    var nowID = conversationKey(href);
+    var thenID = conversationKey(beforeHref);
+    if (nowID && nowID !== thenID) return true;
+    var want = String(prompt || '').replace(/\s+/g, '');
+    if (!want) return false;
+    var nodes = document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"],[data-testid="send_message"],[data-testid="user_message"],[data-testid="message_text_user"]');
+    for (var i = 0; i < nodes.length; i++) {
+      var text = String(nodes[i].innerText || nodes[i].textContent || '').replace(/\s+/g, '');
+      if (text.indexOf(want) !== -1) return true;
+    }
+    return false;
+  };
+
   window.tulaiSendPrompt = async function () {
     var comp = document.querySelector('[data-tulai-composer="1"]');
     if (!comp) return JSON.stringify({ attempted: false, error: '未找到已定位的输入框' });
@@ -275,19 +300,17 @@
       await sleep(100);
     }
     if (!visible(button)) return JSON.stringify({ attempted: false, error: '发送按钮仍被禁用，平台尚未就绪' });
+    var beforeHref = String(location.href || '');
+    var promptText = window.tulaiReadComposer(comp);
     try { button.click(); } catch (e) { return JSON.stringify({ attempted: true, error: '点击发送失败: ' + String(e) }); }
     deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
-      var current = findComposer();
-      if (current) {
-        var text = window.tulaiReadComposer(current);
-        if (!String(text || '').trim()) return JSON.stringify({ sent: true });
-      }
+      if (window.tulaiSendAccepted(beforeHref, promptText)) return JSON.stringify({ sent: true });
       await sleep(100);
     }
     var latest = findComposer();
     var remaining = window.tulaiReadComposer(latest);
-    return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后输入仍未清空', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.tulaiComposerDiagnostic(latest)) });
+    return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后没有出现用户消息，地址也没有变成对话', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.tulaiComposerDiagnostic(latest)) });
   };
 
   // 文本由可信 InsertText 全文替换，只清理输入区附件。
