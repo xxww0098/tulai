@@ -51,7 +51,7 @@ func (m *Manager) focusFn() func() {
 // launchCmd 在出图时尽量不把浏览器变成前台应用。
 // macOS 且二进制在 .app 里时用 open -n -g：-n 新开一个实例，-g 不把应用带到前面。
 // 不用 -j。-j 会把整个应用藏起来，之后登录没法把同一个进程的窗口显示出来。
-// 其它系统直接启动，窗口坐标仍在屏幕外，再由 KeepAppInFront 把 tulai 拉回来。
+// 其它系统直接启动。窗口留在屏幕内，再由 KeepAppInFront 把 tulai 拉回来。
 func launchCmd(goos, bin string, args []string, background bool) (*exec.Cmd, bool) {
 	if background && goos == "darwin" {
 		if app := appBundle(bin); app != "" {

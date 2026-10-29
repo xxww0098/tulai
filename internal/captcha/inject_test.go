@@ -68,6 +68,8 @@ check(editor(),false,'unrelated page text must not classify the editor',[new Ele
 check(new Element('div',{class:'captcha-widget'},[canvas()]),true,'dedicated captcha container');
 check(new Element('div',{class:'modal'},[canvas()],'请完成下方验证码'),true,'local verification prompt');
 check(new Element('div',{class:'dialog'},[canvas()],'安全验证：请拖动滑块'),true,'explicit slider verification');
+check(new Element('div',{class:'dialog'},[canvas()],'Please drag the slider to verify'),true,'aliyun slider prompt stays verifying');
+check(new Element('button',{},[],'Please click me to try again(error:verify)'),true,'aliyun slider retry stays verifying');
 check(new Element('iframe',{src:'https://example.test/captcha'}),true,'dedicated captcha iframe');
 check(editor(),false,'normal editor clears prior captcha blocking');
 window.__tulaiCaptcha.stop();

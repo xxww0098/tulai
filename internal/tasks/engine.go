@@ -427,10 +427,10 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 
 // endedByTimeout 是这一单自己的时限到了。用户点停止是 Canceled，不能标成超时。
 func endedByTimeout(ctx context.Context, err error) bool {
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if ctx != nil && (errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(context.Cause(ctx), context.DeadlineExceeded)) {
 		return true
 	}
-	if ctx.Err() != nil {
+	if ctx != nil && ctx.Err() != nil {
 		return false
 	}
 	return errors.Is(err, context.DeadlineExceeded)
@@ -817,18 +817,17 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if strat != nil {
 		home = strat.HomeURL()
 	}
-	// 出图冷启动不要盖住 tulai。登录走界面的 Start(..., false)，窗口可以到前面。
+	// 出图冷启动不要盖住 tulai。窗口留在屏幕内，启动后把 tulai 拉回前面。
+	// 登录走界面的 Start(..., false)，窗口可以到前面。
 	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, home, true)
 	if startErr != nil {
 		return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
 	}
-	cdp.ParkBrowser(ctx, ws)
 	client, clientErr := cdp.NewClient(ws)
 	if clientErr != nil {
 		return nil, clientErr
 	}
 	sess, err := client.NewBackgroundSession(home, onLog)
-	// 第一次把窗口挪到屏幕外时，setWindowBounds 可能再激活一次。挪完再把 tulai 拉回来。
 	e.browsers.KeepAppInFront()
 	e.traceTask(&Task{Index: 0, Platform: platform, BrowserID: browserID}, "open", "打开页面", 0, 0, err)
 	if err != nil {
@@ -843,7 +842,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if err := strat.InstallHook(sess); err != nil {
 		return nil, closeFailedSession(ctx, sess, err)
 	}
-	// 出图不自动拖验证码。窗口在屏幕外，求解既点不中，也会和人工抢滑块。
+	// 出图不自动拖验证码。求解会和人工抢滑块。
 	captcha.Attach(sess, solver, false, func() {
 		e.store.UpdateBrowser(browserID, true, false)
 	})

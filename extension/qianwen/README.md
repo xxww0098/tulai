@@ -6,7 +6,7 @@
 
 输入框是 Slate。提示词用 `beforeinput` 写入，页面才会把字记进自己的文本状态，右侧箭头发送才会从灰色变成可点。箭头没有「发送」两个字，锚点是 `data-session-switch-target="send-query"`，或原来的「发送」「发送消息」。`disabled` 的箭头不算就绪。
 
-源图预览必须能解码。`naturalWidth` 为 0 的 CDN 图不算就绪，输入区里的「上传失败」「加载失败」也不算。未解码时，只有产品 CDN 地址并且 img 上写了大于 0 的宽高才算收下。带可用源图发送前先进入输入壳里的「AI生图」胶囊（`aria-pressed` / `aria-checked`，或占位符含「图像生成与编辑」）。已经选中就不再点，再点会退出该模式。不点整页更靠前的同名入口，那会进创意生图，箭头保持灰色。切换后若输入框被重绘，会再写一次提示词，并等到箭头重新可点。纯文字不切换。发送后若整页或 iframe 进入 Baxia / `_____tmd_____/punish`，或出现 `aliyunCaptcha` / `scratch-captcha` 滑块（含英文 “Please drag the slider to verify”），按验证码返回，而不是 `E_SEND_UNCERTAIN`。主机若能连上 Chrome 调试端口，会用信任的鼠标事件拖过这块滑块，再继续等结果。页面内合成点击不用于过滑块。
+源图预览必须能解码。`naturalWidth` 为 0 的 CDN 图不算就绪，输入区里的「上传失败」「加载失败」也不算。未解码时，只有产品 CDN 地址并且 img 上写了大于 0 的宽高才算收下。带可用源图发送前先进入输入壳里的「AI生图」胶囊（`aria-pressed` / `aria-checked`，或占位符含「图像生成与编辑」）。已经选中就不再点，再点会退出该模式。不点整页更靠前的同名入口，那会进创意生图，箭头保持灰色。切换后若输入框被重绘，会再写一次提示词，并等到箭头重新可点。纯文字不切换。发送后若整页或 iframe 进入 Baxia / `_____tmd_____/punish`，或出现 `aliyunCaptcha` / `scratch-captcha` 滑块（含英文 “Please drag the slider to verify”，以及拖动失败后的 “Please click me to try again”），按验证码返回，而不是 `E_SEND_UNCERTAIN`。这两种文案都还在验证。扩展不自动拖滑块。
 
 等待结果时，视口外的生成卡往往先是灰块（`alt="loading"`，或很小的 data / blob / SVG）。循环会把 `[id^="card_card_ai_generate_image_"]` 滚进画面，并把 `loading="lazy"` 改成马上加载；一次只停一张，画出实图再看下一张。空地址、blob、SVG 和很短的 data 图不是结果。还有可见的 loading 卡时继续等。豆包不走这一步。
 

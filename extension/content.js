@@ -60,6 +60,11 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// 整段瞬间写入和连点会被风控看成脚本。停几十毫秒，不改变写进去的内容。
+function humanGap() {
+  return 40 + Math.floor(Math.random() * 70)
+}
+
 function moderationBlocked(env) {
   if (!globalThis.TULAIRefuse) return null
   const chunks = []
@@ -248,6 +253,7 @@ async function setPrompt(env, payload) {
   if (blockedPrompt) return blockedPrompt
   const comp = ready
   const prompt = String(payload.prompt || '')
+  await delay(humanGap())
   if (!Page.setComposer(comp, prompt)) {
     return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
   }
@@ -384,6 +390,7 @@ async function confirmSend(env, payload, button, rec) {
       return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, rec.message)
     }
   }
+  await delay(humanGap())
   if (!pressSend(target)) {
     rec.phase = 'uncertain'
     rec.clicked = false

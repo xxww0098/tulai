@@ -240,14 +240,7 @@ func TestExtensionTextOnlySkipsUpload(t *testing.T) {
 	}
 }
 
-func TestQianwenSliderSolveRetriesSendAndWait(t *testing.T) {
-	prev := solveQianwenBaxia
-	t.Cleanup(func() { solveQianwenBaxia = prev })
-	solves := 0
-	solveQianwenBaxia = func(context.Context) error {
-		solves++
-		return nil
-	}
+func TestQianwenCaptchaDoesNotDragOrRetrySend(t *testing.T) {
 	st := openTaskStore(t)
 	port := freePort(t)
 	st.Set(extbridge.SettingBrowserBackend, "extension")
@@ -256,79 +249,50 @@ func TestQianwenSliderSolveRetriesSendAndWait(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.png")
 	writeSolidPNG(t, src, 2, 2, color.NRGBA{R: 20, A: 255})
-	resultPNG := solidPNG(t, 3, 3, color.NRGBA{G: 90, A: 255})
 	var mu sync.Mutex
-	sends, waits := 0, 0
+	sends := 0
 	go serveFakeQianwen("127.0.0.1:"+port, "dev-token", func(env extbridge.Envelope) extbridge.Envelope {
 		name, _ := env.Name()
 		switch name {
 		case extbridge.CmdSend:
 			mu.Lock()
 			sends++
-			n := sends
 			mu.Unlock()
-			if n == 1 {
-				return ackOK(env, map[string]any{
-					"ok": false, "code": extbridge.ECaptchaHuman, "message": "Please drag the slider to verify",
-					"captchaBlocked": true, "kind": "slider", "baxia": true,
-				})
-			}
-			return ackOK(env, map[string]any{"ok": true})
-		case extbridge.CmdWaitResult:
-			mu.Lock()
-			waits++
-			n := waits
-			mu.Unlock()
-			if n == 1 {
-				return ackOK(env, map[string]any{
-					"ok": false, "code": extbridge.ECaptchaHuman, "message": "滑块",
-					"captchaBlocked": true, "kind": "slider", "baxia": true,
-				})
-			}
-			return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": "https://cdn.example/out.png"}}})
-		case extbridge.CmdDownload:
-			return chunkAck(env, resultPNG, 8)
-		case extbridge.CmdCaptchaAssist:
+			return ackOK(env, map[string]any{
+				"ok": false, "code": extbridge.ECaptchaHuman, "message": "Please drag the slider to verify",
+				"captchaBlocked": true, "kind": "slider", "baxia": true,
+			})
+		case extbridge.CmdCaptchaAssist, extbridge.CmdUpload, extbridge.CmdSetPrompt:
 			return ackOK(env, map[string]any{"ok": true, "captchaBlocked": false})
 		default:
-			return ackOK(env, map[string]any{"ok": true})
+			return ackFail(env, extbridge.EProtocol, name)
 		}
 	})
 	e := NewEngine(st, nil, nil, dir)
 	defer e.CloseSessions()
 	var last Task
-	err := e.Run(context.Background(), Options{
+	_ = e.Run(context.Background(), Options{
 		Platforms:         []string{"千问"},
 		Prompts:           []string{"水彩风格"},
 		Images:            []string{src},
 		Concurrency:       1,
-		RetryCount:        0,
+		RetryCount:        1,
 		WaitResult:        true,
 		WaitResultSeconds: 30,
 		OutputPath:        filepath.Join(dir, "out"),
 		NamingRule:        "原文件名",
 	}, func(task Task) { last = task }, func(Progress) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if last.Status != StatusSuccess {
+	if last.Status != StatusNeedsUser {
 		t.Fatalf("status=%s err=%s", last.Status, last.Error)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if solves != 2 || sends != 2 || waits != 2 {
-		t.Fatalf("solves=%d sends=%d waits=%d", solves, sends, waits)
+	if sends != 1 {
+		t.Fatalf("send calls=%d", sends)
 	}
 }
 
 func TestDoubaoCaptchaDoesNotUseQianwenDrag(t *testing.T) {
-	prev := solveQianwenBaxia
-	t.Cleanup(func() { solveQianwenBaxia = prev })
-	solves := 0
-	solveQianwenBaxia = func(context.Context) error {
-		solves++
-		return nil
-	}
 	st := openTaskStore(t)
 	port := freePort(t)
 	st.Set(extbridge.SettingBrowserBackend, "extension")
@@ -366,9 +330,6 @@ func TestDoubaoCaptchaDoesNotUseQianwenDrag(t *testing.T) {
 	}, func(task Task) { last = task }, func(Progress) {})
 	if last.Status != StatusNeedsUser {
 		t.Fatalf("status=%s err=%s", last.Status, last.Error)
-	}
-	if solves != 0 {
-		t.Fatalf("doubao called the qianwen drag %d times", solves)
 	}
 }
 

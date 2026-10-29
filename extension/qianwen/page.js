@@ -8,7 +8,7 @@
 globalThis.TULAIPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"]'
   const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"]'
-  const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请按住滑块|拖动到最右边|向右滑动|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|please drag the slider|verify (?:that )?you are human|human verification|security verification/i
+  const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请按住滑块|拖动到最右边|向右滑动|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|please drag the slider|please click me to try again|verify (?:that )?you are human|human verification|security verification/i
 
   function hostOf(doc) {
     if (doc && doc.hostname) return String(doc.hostname)
@@ -1087,7 +1087,22 @@ globalThis.TULAIPage = (function () {
         pa = pa.parentElement
       }
     }
+    const still = visibleSliderText(doc)
+    if (still) return describeCaptcha(still, true)
     return { blocked: false, kind: '', root: null }
+  }
+
+  // 拖动失败后滑块文案会变成 “Please click me to try again(error:...)”，这时仍在验证。
+  function visibleSliderText(doc) {
+    const nodes = all(doc, 'div,span,button,p')
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i]
+      if (!visible(el)) continue
+      const raw = String(el.innerText || '').replace(/\s+/g, ' ').trim()
+      if (!raw || raw.length > 180) continue
+      if (/please drag the slider to verify|please click me to try again/i.test(raw)) return el
+    }
+    return null
   }
 
   function describeCaptcha(root, baxia) {
