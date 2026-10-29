@@ -69,6 +69,8 @@ type Session struct {
 	logAccount   string
 	logPort      int
 	logTask      int
+	boundURL     string // 千问这次发送落到的 /chat/<id>
+	boundWrap    string // data-chat-question-wrap，和答案卡是同一个
 	closed       bool
 	newDoc       []string // 新文档注入脚本
 	navigateHook string
@@ -530,6 +532,31 @@ func (s *Session) quietBackground() {
 		return cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorDeny).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
 	})
 	s.armPark()
+}
+
+// BindChat 记下这次发送的千问对话。已经记下的不换，避免视图被切走后把别的对话当成这一轮。
+func (s *Session) BindChat(urlID, wrapID string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if urlID != "" && s.boundURL == "" {
+		s.boundURL = urlID
+	}
+	if wrapID != "" && s.boundWrap == "" {
+		s.boundWrap = wrapID
+	}
+}
+
+// BoundChat 返回发送时的对话地址 id 和问答卡 id。
+func (s *Session) BoundChat() (string, string) {
+	if s == nil {
+		return "", ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.boundURL, s.boundWrap
 }
 
 // SetLogAccount 让这个标签上的页面回调带上平台和账号。

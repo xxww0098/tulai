@@ -38,7 +38,9 @@ type Task struct {
 	Results   []string // 已保存结果路径
 	Rewritten bool     // 审核失败后提示词被改写过，卡片上要能看见
 
-	submitted          bool // 已确认发送，重试时继续等待原任务
+	submitted          bool   // 已确认发送，重试时继续等待原任务
+	sentURL            string // 千问 /chat/<id>，重试只回到这一条
+	sentWrap           string // data-chat-question-wrap
 	savedHashes        map[string]bool
 	matchedSavedResult bool   // 本轮是否再次获取到本任务已成功落盘的原图
 	slot               int64  // 这次派发时占用的浏览器，完成后用来释放并发名额

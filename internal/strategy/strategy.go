@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -262,6 +263,10 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if err := pageAccountFault(s); err != nil {
 		return err
 	}
+	beforeChat := ""
+	if pageIsQwen(s) {
+		beforeChat = chatKey(s)
+	}
 	// 点击与确认之间出错时，不能靠重发判断平台是否已接受消息。
 	uncertain := true
 	defer func() {
@@ -278,6 +283,8 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 		Attempted  *bool    `json:"attempted"`
 		Error      string   `json:"error"`
 		Diagnostic []string `json:"diagnostic"`
+		Chat       string   `json:"chat"`
+		Wrap       string   `json:"wrap"`
 	}
 	if err := cdp.ParseJSValue(out, &result); err != nil {
 		return fmt.Errorf("解析发送结果: %w", err)
@@ -285,7 +292,17 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if result.Attempted != nil && !*result.Attempted {
 		uncertain = false
 	}
+	if pageIsQwen(s) {
+		if result.Chat != "" && result.Chat != beforeChat {
+			s.BindChat(result.Chat, result.Wrap)
+		} else if result.Sent && result.Wrap != "" {
+			s.BindChat(beforeChat, result.Wrap)
+		}
+	}
 	if !result.Sent {
+		if pageIsQwen(s) && result.Chat != "" && result.Chat != beforeChat {
+			return nil
+		}
 		for _, diagnostic := range result.Diagnostic {
 			logging.Log.Debugf("发送诊断 %s", diagnostic)
 		}
@@ -306,6 +323,7 @@ type liveShot struct {
 	Bar     bool     `json:"bar"`
 	Replies int      `json:"replies"`
 	Reason  string   `json:"reason"`
+	Here    string   `json:"here"`
 	Images  []Result `json:"images"`
 }
 
@@ -341,6 +359,8 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 	var key string
 	var held []Result
 	var lastDetect, lastFail string
+	var offSince time.Time
+	reopened := false
 	for {
 		if err := s.Ctx().Err(); err != nil {
 			return nil, err
@@ -351,10 +371,30 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 		if err := pageAccountFault(s); err != nil {
 			return nil, err
 		}
+		applyQwenBind(s)
 		_, _ = s.Evaluate(`window.__tulaiDismissPopups ? String(__tulaiDismissPopups()) : '0'`)
 		out, err := s.Evaluate(`JSON.stringify(window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false,done:false,reason:'missing'})`)
 		var live liveShot
 		if err == nil && cdp.ParseJSValue(out, &live) == nil {
+			if live.Reason == "off-chat" {
+				urlID, _ := s.BoundChat()
+				if offSince.IsZero() {
+					offSince = time.Now()
+				}
+				away := urlID != "" && live.Here != urlID
+				if urlID != "" && !reopened && (away || time.Since(offSince) >= 8*time.Second) {
+					reopened = true
+					logging.Log.Info("千问页面不在对话 %s，打开 /chat/%s", urlID, urlID)
+					if navErr := s.Navigate(qwenChatURL(s, urlID)); navErr != nil {
+						logging.Log.Debugf("打开千问对话 %s", navErr.Error())
+					}
+					applyQwenBind(s)
+					offSince = time.Time{}
+					continue
+				}
+			} else {
+				offSince = time.Time{}
+			}
 			if len(live.Images) > 0 {
 				held = live.Images
 			}
@@ -400,10 +440,14 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 }
 
 type chatReady struct {
-	Ready bool   `json:"ready"`
-	Href  string `json:"href"`
-	ID    string `json:"id"`
-	Node  string `json:"node"`
+	Ready    bool   `json:"ready"`
+	Href     string `json:"href"`
+	ID       string `json:"id"`
+	Node     string `json:"node"`
+	Messages int    `json:"messages"`
+	Chars    int    `json:"chars"`
+	Cards    int    `json:"cards"`
+	Why      string `json:"why"`
 }
 
 // FreshChat 每次任务都开一条新对话。复用标签页会留着上一轮的图，标记之前先换对话。
@@ -428,26 +472,30 @@ func FreshChat(s *cdp.Session) error {
 	deadline := time.Now().Add(8 * time.Second)
 	stable := 0
 	last := ""
+	seen := chatReady{Why: "missing"}
 	for time.Now().Before(deadline) {
 		if err := s.Ctx().Err(); err != nil {
 			return err
 		}
-		raw, evalErr := s.Evaluate(`JSON.stringify(window.__tulaiChatReady ? __tulaiChatReady() : {ready:false})`)
+		raw, evalErr := s.Evaluate(`JSON.stringify(window.__tulaiChatReady ? __tulaiChatReady() : {ready:false,why:"missing"})`)
 		var st chatReady
-		if evalErr == nil && cdp.ParseJSValue(raw, &st) == nil && st.Ready && freshLanded(via, originID, st) {
-			key := st.Href + "\n" + st.Node
-			if key == last {
-				stable++
+		if evalErr == nil && cdp.ParseJSValue(raw, &st) == nil {
+			seen = st
+			if st.Ready && freshLanded(via, originID, st) {
+				key := st.Href + "\n" + st.Node
+				if key == last {
+					stable++
+				} else {
+					stable = 1
+					last = key
+				}
+				if stable >= 5 {
+					return nil
+				}
 			} else {
-				stable = 1
-				last = key
+				stable = 0
+				last = ""
 			}
-			if stable >= 5 {
-				return nil
-			}
-		} else {
-			stable = 0
-			last = ""
 		}
 		select {
 		case <-s.Ctx().Done():
@@ -455,14 +503,91 @@ func FreshChat(s *cdp.Session) error {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("新对话还没准备好")
+	return freshChatFailure(seen)
+}
+
+func freshChatFailure(st chatReady) error {
+	why := st.Why
+	if st.Ready && why == "" {
+		why = "unstable"
+	}
+	if why == "" {
+		why = "unknown"
+	}
+	logging.Log.Info("新对话还没准备好 id=%s messages=%d chars=%d cards=%d why=%s href=%s", st.ID, st.Messages, st.Chars, st.Cards, why, st.Href)
+	return fmt.Errorf("新对话还没准备好（%s）", why)
 }
 
 func freshLanded(via, originID string, st chatReady) bool {
+	if !st.Ready {
+		return false
+	}
+	// 千问首页壳：地址还挂着 /chat/<id>，但没有问答卡，输入框是空的。
+	if st.Cards == 0 && st.Chars == 0 && st.Node != "" {
+		return true
+	}
 	if via == "ready" || originID == "" {
 		return st.ID == ""
 	}
 	return st.ID == "" || st.ID != originID
+}
+
+func pageIsQwen(s *cdp.Session) bool {
+	host := strings.ToLower(strings.Trim(evalString(s, `window.__tulaiPageHost || location.hostname`), `"`))
+	return strings.Contains(host, "qianwen") || strings.Contains(host, "tongyi") || strings.Contains(host, "qwen")
+}
+
+func chatKey(s *cdp.Session) string {
+	return strings.Trim(evalString(s, `window.__tulaiConversationKey ? __tulaiConversationKey(location.href) : ""`), `"`)
+}
+
+func applyQwenBind(s *cdp.Session) {
+	if s == nil || s.IsEgo() {
+		return
+	}
+	urlID, wrapID := s.BoundChat()
+	if urlID == "" && wrapID == "" {
+		return
+	}
+	_, _ = s.Evaluate(fmt.Sprintf(`window.__tulaiQwenURL=%q;window.__tulaiQwenChat=%q;`, urlID, wrapID))
+}
+
+func qwenChatURL(s *cdp.Session, id string) string {
+	id = strings.TrimSpace(id)
+	fallback := "https://www.qianwen.com/chat/" + id
+	if s == nil || id == "" {
+		return fallback
+	}
+	raw := strings.Trim(evalString(s, `location.href`), `"`)
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fallback
+	}
+	u.Path = "/chat/" + id
+	u.RawQuery, u.Fragment = "", ""
+	return u.String()
+}
+
+// FocusQwenChat 回到发送时的那条对话。已经在这条对话上就不导航。
+func FocusQwenChat(s *cdp.Session, urlID, wrapID string) {
+	if s == nil || s.IsEgo() || strings.TrimSpace(urlID) == "" {
+		return
+	}
+	s.BindChat(urlID, wrapID)
+	applyQwenBind(s)
+	raw, err := s.Evaluate(`JSON.stringify({here: window.__tulaiConversationKey ? __tulaiConversationKey(location.href) : "", on: window.__tulaiQwenOnChat ? __tulaiQwenOnChat() : false})`)
+	var st struct {
+		Here string `json:"here"`
+		On   bool   `json:"on"`
+	}
+	if err == nil && cdp.ParseJSValue(raw, &st) == nil && st.On && st.Here == urlID {
+		return
+	}
+	logging.Log.Info("回到千问对话 /chat/%s", urlID)
+	if navErr := s.Navigate(qwenChatURL(s, urlID)); navErr != nil {
+		logging.Log.Debugf("打开千问对话 %s", navErr.Error())
+	}
+	applyQwenBind(s)
 }
 
 func evalString(s *cdp.Session, expr string) string {

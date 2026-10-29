@@ -91,6 +91,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	logging.Log.Warning("#%d 账号 %s，改用「%s」", task.Index, faultLabel(kind), name)
 	task.BrowserID = next
 	task.submitted = false
+	task.sentURL, task.sentWrap = "", ""
 	task.rotated = true
 	if task.Attempts > 0 {
 		task.Attempts--
@@ -117,6 +118,7 @@ func (e *Engine) rotateUncertain(task *Task, now time.Time) bool {
 	task.avoidSend = current
 	task.BrowserID = next
 	task.submitted = false
+	task.sentURL, task.sentWrap = "", ""
 	task.rotated = true
 	task.altTried = true
 	if task.Attempts > 0 {

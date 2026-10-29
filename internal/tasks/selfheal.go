@@ -202,7 +202,6 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 		return
 	}
 	if e.accountBusy(id) {
-		logging.Log.Debugf("账号正在出图，跳过登录探测 platform=%s account=%s port=%d", row.Platform, accountLabel(row), row.Port)
 		return
 	}
 	e.mu.Lock()

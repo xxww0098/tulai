@@ -73,6 +73,15 @@ func TestSubmitTaskResumesOnlyAfterConfirmedSend(t *testing.T) {
 	}
 }
 
+func TestRetryDoesNotResendQianwenChat(t *testing.T) {
+	e := NewEngine(nil, nil, nil, "")
+	strat := &resumeStrategy{}
+	task := &Task{Prompt: "画一只橘猫坐在窗台上，水彩风格", sentURL: "78241e13b27e48a2868f7133437ca28f", sentWrap: "9d6za8GJXYrgCGrzLZb49-Jt_cRKc9nn"}
+	if err := e.submitTask(context.Background(), task, strat, nil); err != nil || !task.submitted || len(strat.calls) != 0 {
+		t.Fatalf("retry must reopen the sent chat without sending: submitted=%v calls=%v err=%v", task.submitted, strat.calls, err)
+	}
+}
+
 func TestResultRetryContinuesOriginalTask(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(map[bool]string{false: "wait-failure", true: "partial-download"}[partial], func(t *testing.T) {
