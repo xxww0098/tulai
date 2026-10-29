@@ -30,9 +30,9 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 `go.mod` 把 MyGo 工具固定在 **v0.6.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.7**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.7` 上发布，页面扩展 zip 是 **0.3.10**。步骤见下文「发布 0.1.7」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.8**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.8` 上发布，页面扩展 zip 是 **0.3.10**。步骤见下文「发布 0.1.8」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
-已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、标题栏、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。它请求 `https://api.github.com/repos/xxww0098/tulai/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`tulai version` 打印桌面端版本。
+已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。任务还在跑时不会打断，结束后再装。也可以用菜单 **帮助 → 检查更新…**、左侧导航、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。它请求 `https://api.github.com/repos/xxww0098/tulai/releases/latest`，不附带 token；GitHub 连不上时再试可配置的镜像前缀。按当前系统下载对应安装包，并用发布里的 `SHA256SUMS` 校验，支持断点续传。新程序启动失败会回到上一版。这些包没有公证，也没有 Windows 代码签名。页面桥扩展不在这次更新里。`tulai version` 打印桌面端版本。
 
 应用图标是仓库根目录的 `resources/icon.png`（1024×1024）。`mygo.json` 的 `icon` 指向它。`mygo build` 会把它做成 macOS `.icns`（Dock）、Windows 可执行文件图标和 NSIS 安装器图标，以及 Linux 桌面项图标。应用没有托盘菜单，因此不另做托盘图；启动时同一张 PNG 也会设到窗口（Windows / Linux）和 Dock（macOS）。
 
@@ -179,19 +179,19 @@ go run ./cmd/tulai-cdp-smoke   # Chrome CDP 连通性冒烟
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
-## 发布 0.1.7
+## 发布 0.1.8
 
-桌面端产品版本是 **0.1.7**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.10**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+桌面端产品版本是 **0.1.8**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.10**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
 
-0.1.7 相对 0.1.6：按可用账号数自动同时出图，不同浏览器里的页面桥可以并行；失败自动分类并给出一键处理按钮，审核不通过会改写提示词再试 2 次，发送间隔随机抖动，每个账号每天默认最多 20 次并自动换号。扩展版本是 0.3.10。完整说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。
+0.1.8 相对 0.1.7：出图页按账号显示车道，左侧图标导航和左右分栏，设置页改成分组卡片。扩展版本仍是 0.3.10。完整说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 `.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet`，并上传 macOS、Windows、Linux 的安装包。合并进 `main` 之后，推送和 `mygo.json` 一致的标签，用 `GITHUB_TOKEN` 创建 GitHub Release。没有配置 Apple 公证或 Windows 代码签名。
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.7
-git push origin v0.1.7
+git tag v0.1.8
+git push origin v0.1.8
 ```
 
 附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。
