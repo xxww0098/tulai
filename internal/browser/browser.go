@@ -156,6 +156,7 @@ func NewManager() *Manager { return &Manager{procs: map[int64]*runningProc{}} }
 // startURL 写在命令行最后，窗口先打开这一页；调试连不上时进程照样留着。
 // 同一 profile 的调试端口已经在听时，不再起第二个进程（Edge/Chrome 会把新进程交回旧实例，并再开一个窗口）。
 // backend 接受 Chrome、Edge、Builtin。选中的浏览器不在时按系统顺序回落，仍使用独立的 --user-data-dir。
+// 每次启动都重新 Resolve，不沿用进程刚起来时看到的安装路径。
 func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, minimize bool) (string, error) {
 	if strings.TrimSpace(startURL) == "" {
 		startURL = "about:blank"
@@ -196,7 +197,7 @@ func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, min
 	extDir := m.extDir
 	stderr := m.log
 	m.mu.Unlock()
-	cmd := exec.Command(rt.Path, launchArgs(b.Port, userData, startURL, extDir, extra)...)
+	cmd := exec.Command(rt.Path, launchArgs(b.Port, userData, startURL, extDir, CurrentProxyServer(), extra)...)
 	cmd.Stdout, cmd.Stderr = nil, stderr
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动%s失败: %w", ChoiceLabel(rt.Kind), err)
@@ -260,7 +261,8 @@ func noteDebugPort(name, startURL string) {
 // launchArgs 是调试参数。startURL 必须放在最后，作为窗口的起始页。
 // 不带 --enable-automation，避免 navigator.webdriver 被打开。
 // --edge-skip-compat-layer-relaunch 让 Edge 不要在兼容层里再启动一次并把地址丢掉。
-func launchArgs(port int, userData, startURL, extDir string, extra []string) []string {
+// proxy 非空时加上 --proxy-server。Chrome 在 Linux 上不会自己读 HTTPS_PROXY。
+func launchArgs(port int, userData, startURL, extDir, proxy string, extra []string) []string {
 	if strings.TrimSpace(startURL) == "" {
 		startURL = "about:blank"
 	}
@@ -286,6 +288,9 @@ func launchArgs(port int, userData, startURL, extDir string, extra []string) []s
 			"--enable-unsafe-extension-debugging",
 		)
 	}
+	if p := strings.TrimSpace(proxy); p != "" {
+		args = append(args, "--proxy-server="+p)
+	}
 	args = append(args, extra...)
 	args = append(args, startURL)
 	return args
@@ -293,7 +298,7 @@ func launchArgs(port int, userData, startURL, extDir string, extra []string) []s
 
 // debugArgs 给仍直接拼命令行的测试用。
 func debugArgs(port int, userData, startURL string) []string {
-	return launchArgs(port, userData, startURL, "", nil)
+	return launchArgs(port, userData, startURL, "", "", nil)
 }
 
 // RemoveProfile 删掉这个账号的用户数据目录。

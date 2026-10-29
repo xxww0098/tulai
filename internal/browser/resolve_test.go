@@ -224,3 +224,27 @@ func TestFormatDetected(t *testing.T) {
 		t.Fatalf("detail = %s", detail)
 	}
 }
+
+func TestResolveRechecksOnEachLaunch(t *testing.T) {
+	const chrome = "/usr/bin/google-chrome"
+	present := false
+	l := lookup{
+		goos: "linux", goarch: "amd64",
+		env: func(string) string { return "" },
+		stat: func(path string) error {
+			if present && path == chrome {
+				return nil
+			}
+			return os.ErrNotExist
+		},
+		lookPath: func(string) (string, error) { return "", exec.ErrNotFound },
+	}
+	if _, err := resolve(l, KindChrome, ""); err == nil {
+		t.Fatal("first launch should miss a browser that is not installed yet")
+	}
+	present = true
+	rt, err := resolve(l, KindChrome, "")
+	if err != nil || rt.Kind != KindChrome || rt.Path != chrome {
+		t.Fatalf("second launch = %+v %v", rt, err)
+	}
+}

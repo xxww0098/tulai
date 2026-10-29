@@ -126,6 +126,27 @@ func TestAddUseResetsOnNewDay(t *testing.T) {
 	}
 }
 
+func TestRenameBrowserKeepsProfileDir(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	b, err := s.AddBrowser("豆包", "账号1", "/data/账号1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.RenameBrowser(b.ID, "  ")
+	s.RenameBrowser(b.ID, "工作室")
+	got := browser(t, s, b.ID)
+	if got.Name != "工作室" || got.UserDataDir != "/data/账号1" {
+		t.Fatalf("renamed = %+v", got)
+	}
+	if s.Get("proxy_mode") != "system" {
+		t.Fatalf("proxy mode = %q", s.Get("proxy_mode"))
+	}
+}
+
 func browser(t *testing.T, s *Store, id int64) Browser {
 	t.Helper()
 	for _, b := range s.Browsers() {

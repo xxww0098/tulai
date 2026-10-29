@@ -81,7 +81,7 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
 	}
-	for _, label := range []string{"请在弹出的浏览器中扫码登录", "已登录? 重新检测", "豆包 · 账号1"} {
+	for _, label := range []string{"用手机扫码登录", "已登录? 重新检测", "豆包 · 账号1", "账号名称"} {
 		assertVisible(t, tt, label, 1280, 900)
 	}
 	if a.wizardStep != wizard.StepAccount || probes != 1 {

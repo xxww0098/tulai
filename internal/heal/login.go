@@ -10,6 +10,7 @@ const (
 	StateIn        = "in"
 	StateOut       = "out"
 	StateChallenge = "challenge"
+	StateRegion    = "region"
 	StateUnknown   = "unknown"
 	StateDown      = "down"
 )
@@ -50,7 +51,7 @@ func NormalizeState(raw string, err error) string {
 		return StateDown
 	}
 	switch strings.TrimSpace(raw) {
-	case StateIn, StateOut, StateChallenge, StateUnknown, StateDown:
+	case StateIn, StateOut, StateChallenge, StateRegion, StateUnknown, StateDown:
 		return strings.TrimSpace(raw)
 	default:
 		return StateUnknown
@@ -84,8 +85,17 @@ func Observe(prev, next, label string) LoginOutcome {
 			Log:    label + " 遇到安全验证",
 			Focus:  true,
 		}
+	case StateRegion:
+		if prev == StateRegion {
+			return LoginOutcome{}
+		}
+		return LoginOutcome{
+			Mark:   "region",
+			Notice: label + " 当前地区无法访问，请到设置的「网络」里填写代理",
+			Log:    label + " 遇到地区限制，请设置代理",
+		}
 	case StateIn:
-		if prev == StateOut || prev == StateChallenge {
+		if prev == StateOut || prev == StateChallenge || prev == StateRegion {
 			return LoginOutcome{
 				Mark:        "restore",
 				Log:         label + " 已恢复，回到轮换",

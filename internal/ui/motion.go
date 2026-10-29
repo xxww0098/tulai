@@ -104,6 +104,9 @@ func (a *App) noteTab() {
 		a.tabDir = -1
 	}
 	a.tabSeen = a.tab
+	if a.tab == pageBrowser && !a.cftBusy {
+		a.refreshDetected()
+	}
 }
 
 func (a *App) pageMotion() ui.ElementTransition {
@@ -130,6 +133,9 @@ func (a *App) goWizard(step wizard.Step) {
 		a.wizardDir = -1
 	}
 	a.wizardStep = step
+	if step == wizard.StepBrowser {
+		a.refreshWizardPlan()
+	}
 }
 
 func pressPose(e ui.Element) ui.Element {

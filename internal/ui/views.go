@@ -18,6 +18,7 @@ import (
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 const browserInstanceHint = "每个实例单独登录。同一平台再添加一个并登录后，额度用尽、限流或验证码会自动换号。扩展账号会在对应的浏览器配置文件连上后出现在这里。"
@@ -106,11 +107,13 @@ func (a *App) browserInstances(c *ui.Context) {
 			}
 			ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted)
 			ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
+			a.accountLoginLine(c, b)
 			if b.LastError != "" && !b.Usable(time.Now()) {
 				ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
 			}
 		})
 	}).Grow(1).MinHeight(56).Border(1, c.Theme().Border).Radius(12)
+	a.loginQRCard(c)
 	selected, hasSelection := a.selectedBrowser()
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Button(c, "启动选中").Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
@@ -328,7 +331,11 @@ func (a *App) addBrowser() {
 	if name == "" {
 		name = fmt.Sprintf("浏览器%d", len(a.browserRows)+1)
 	}
-	if _, err := a.store.AddBrowser(a.newBrowserPlat, name, ""); err != nil {
+	dir := ""
+	if strings.TrimSpace(a.dataRoot) != "" {
+		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
+	}
+	if _, err := a.store.AddBrowser(a.newBrowserPlat, name, dir); err != nil {
 		logging.Log.Errorf("添加浏览器失败: %v", err)
 		return
 	}
@@ -343,6 +350,69 @@ func (a *App) selectedBrowser() (store.Browser, bool) {
 	return a.browserRows[a.browserSel], true
 }
 
+func (a *App) accountLoginLine(c *ui.Context, b store.Browser) {
+	if b.ExtAccount != "" {
+		return
+	}
+	shot := a.loginShots[b.ID]
+	if b.IsLoggedIn || shot.state == wizard.ProbeIn {
+		ui.Text(c, "已登录").FontSize(12).TextColor(c.Theme().Success)
+	}
+}
+
+func (a *App) loginQRCard(c *ui.Context) {
+	b, shot, ok := a.pendingLogin()
+	if !ok {
+		return
+	}
+	ui.Column(c).Width(220).Shrink(0).Padding(12, 12).Gap(8).Radius(12).
+		Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+		title := b.Name
+		if title == "" {
+			title = b.Platform
+		}
+		if b.Platform != "" && b.Name != "" {
+			title = b.Platform + " · " + b.Name
+		}
+		ui.Text(c, title).FontSize(14).Bold().SingleLine()
+		if shot.state == wizard.ProbeRegion {
+			ui.Text(c, regionProxyHint).FontSize(12).TextColor(c.Theme().Warning)
+			return
+		}
+		if shot.bmp != nil {
+			ui.Image(c, shot.bmp).Size(168, 168).Fit(ui.Contain).Radius(8)
+			ui.Text(c, "用手机扫码，过期会自动刷新").FontSize(12).TextColor(c.Theme().TextMuted)
+		}
+	})
+}
+
+func (a *App) pendingLogin() (store.Browser, loginShot, bool) {
+	consider := func(b store.Browser) (store.Browser, loginShot, bool) {
+		if b.ExtAccount != "" || b.IsLoggedIn {
+			return store.Browser{}, loginShot{}, false
+		}
+		shot := a.loginShots[b.ID]
+		if shot.state == wizard.ProbeIn {
+			return store.Browser{}, loginShot{}, false
+		}
+		if shot.bmp != nil || shot.state == wizard.ProbeRegion {
+			return b, shot, true
+		}
+		return store.Browser{}, loginShot{}, false
+	}
+	if sel, ok := a.selectedBrowser(); ok {
+		if b, shot, ok := consider(sel); ok {
+			return b, shot, true
+		}
+	}
+	for _, row := range a.browserRows {
+		if b, shot, ok := consider(row); ok {
+			return b, shot, true
+		}
+	}
+	return store.Browser{}, loginShot{}, false
+}
+
 func (a *App) launchBrowser() {
 	b, ok := a.selectedBrowser()
 	if !ok {
@@ -353,6 +423,8 @@ func (a *App) launchBrowser() {
 		logging.Log.Errorf("无法识别浏览器平台: %s", b.Platform)
 		return
 	}
+	a.pushProxy()
+	a.refreshDetected()
 	go func() {
 		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, platform.HomeURL(), false)
 		if err != nil && !errors.Is(err, browser.ErrDebugPort) {
@@ -364,8 +436,11 @@ func (a *App) launchBrowser() {
 			a.window.Update(func() { a.refreshBrowsers() })
 			return
 		}
-		err = cdp.OpenURL(ws, platform.HomeURL())
+		err = cdp.OpenURLBackground(context.Background(), ws, platform.HomeURL())
 		a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
+		if err == nil || errors.Is(err, cdp.ErrDebugUnavailable) {
+			a.followLogin(b, ws)
+		}
 		if err != nil && !errors.Is(err, cdp.ErrDebugUnavailable) {
 			logging.Log.Errorf("浏览器[%s] 打开登录页失败：%v", b.Name, err)
 		} else if err != nil {

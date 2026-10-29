@@ -95,6 +95,7 @@ func ConfigDir() string {
 
 // Resolve 按系统顺序找可执行文件。backend 是用户的选择（Chrome、Edge、Builtin），空串表示按系统默认顺序。
 // dataDir 是 <UserConfigDir>/tulai，用来找已经下载的内置浏览器。
+// 每次调用都重新查本机，不缓存进程启动时的结果。后装上的 Chrome 或 Edge，下一次启动就能用。
 func Resolve(goos, backend, dataDir string) (Runtime, error) {
 	return resolve(hostLookup(goos, runtime.GOARCH), backend, dataDir)
 }

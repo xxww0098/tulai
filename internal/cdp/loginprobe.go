@@ -10,7 +10,8 @@ import (
 
 // loginProbeJS 跟页面桥的 loginWall、composer 的 hasComposer 用同一组信号：
 // 看得见输入框，并且没有扫码登录层，才算已登录。
-// 滑块、安全验证或 punish 页是 challenge，不算退出登录。连接断开时不关用户的标签页。
+// 滑块、安全验证或 punish 页是 challenge，不算退出登录。
+// 地区限制页是 region，不算退出登录。连接断开时不关用户的标签页。
 const loginProbeJS = `(function () {
   function visible(el) {
     if (!el) return false;
@@ -54,6 +55,13 @@ const loginProbeJS = `(function () {
     var body = String((document.body && document.body.innerText) || '').slice(0, 1200);
     return /安全验证|滑动验证|拖动滑块|请按住滑块|请完成下方验证/.test(body);
   }
+  var href = String(location.href || '');
+  if (href.indexOf('/security/doubao-region-ban') >= 0 || href.indexOf('qianwen-region-ban') >= 0 || href.indexOf('tongyi-region-ban') >= 0 || href.indexOf('qwen-region-ban') >= 0) return {state:'region'};
+  var host = String(location.hostname || '');
+  if (/qianwen|tongyi|qwen/i.test(host)) {
+    var top = String((document.body && document.body.innerText) || '').slice(0, 500);
+    if (/受区域限制|当前地区暂不支持|所在地区暂不可用|服务在当前地区不可用/.test(top)) return {state:'region'};
+  }
   if (challenge()) return {state:'challenge'};
   var hasComposer = composer();
   if (hasComposer && !loginDialog()) return {state:'in'};
@@ -69,7 +77,24 @@ type loginProbeResult struct {
 
 // ProbeLogin 附着到已经打开的页面，读一次登录状态，然后只断开调试连接。
 // endpoint 可以是浏览器的 WebSocket 地址，或 http://127.0.0.1:端口。
-// 返回 in、out、challenge 或 unknown。没有页面时返回 unknown，方便继续等。
+// RegionBlocked 是地区限制页。向导应提示去设置代理，而不是继续等扫码。
+const RegionBlocked = "region"
+
+// RegionBlockedURL 报告这个地址是不是地区限制页。
+// 豆包是 /security/doubao-region-ban。千问没有公开的固定路径，平行的
+// qianwen-region-ban、tongyi-region-ban、qwen-region-ban 一并认。
+func RegionBlockedURL(raw string) bool {
+	u := strings.ToLower(strings.TrimSpace(raw))
+	if u == "" {
+		return false
+	}
+	return strings.Contains(u, "/security/doubao-region-ban") ||
+		strings.Contains(u, "qianwen-region-ban") ||
+		strings.Contains(u, "tongyi-region-ban") ||
+		strings.Contains(u, "qwen-region-ban")
+}
+
+// 返回 in、out、challenge、region 或 unknown。没有页面时返回 unknown，方便继续等。
 func ProbeLogin(ctx context.Context, endpoint string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -89,6 +114,9 @@ func ProbeLogin(ctx context.Context, endpoint string) (string, error) {
 	if !ok {
 		return "unknown", nil
 	}
+	if RegionBlockedURL(targetURL(targets, id)) {
+		return RegionBlocked, nil
+	}
 	var result loginProbeResult
 	if err := conn.EvalJSON(ctx, id, loginProbeJS, &result); err != nil {
 		return "", err
@@ -96,7 +124,16 @@ func ProbeLogin(ctx context.Context, endpoint string) (string, error) {
 	return NormalizeLoginState(result.State), nil
 }
 
-// NormalizeLoginState 只保留 in、out、challenge、unknown。
+func targetURL(list []sliderTarget, id string) string {
+	for _, item := range list {
+		if item.ID == id {
+			return item.URL
+		}
+	}
+	return ""
+}
+
+// NormalizeLoginState 只保留 in、out、challenge、region、unknown。
 func NormalizeLoginState(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -111,7 +148,7 @@ func NormalizeLoginState(raw string) string {
 		return NormalizeLoginState(encoded)
 	}
 	switch raw {
-	case "in", "out", "challenge", "unknown":
+	case "in", "out", "challenge", "unknown", RegionBlocked:
 		return raw
 	default:
 		return "unknown"
