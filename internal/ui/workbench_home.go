@@ -66,9 +66,15 @@ func (a *App) homePage(c *ui.Context) {
 		ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
 			a.loginBanner(c)
 			a.flowStepper(c, flow)
+			if flow.Run.State != stepCurrent {
+				a.accountPanel(c, true)
+			}
 			a.stepImages(c, flow.Images)
 			a.stepPrompt(c, flow.Prompt)
 			a.stepRun(c, flow.Run)
+			if flow.Run.State == stepCurrent {
+				a.accountPanel(c, false)
+			}
 			a.progressPane(c)
 			ui.Collapsible(c, "高级", &a.advancedOpen, func() {
 				a.advancedFields(c)
@@ -407,25 +413,96 @@ func (a *App) stepRun(c *ui.Context, step flowStep) {
 		if plan.Action == StartWizard && !a.running {
 			a.accountCallout(c)
 		}
-		var b ui.Element
-		switch {
-		case a.running:
-			b = ui.Button(c, "").Height(48).FillWidth().OnClick(func() { a.stopTasks() })
-			b.Children(func() {
-				ui.Spinner(c).Size(18, 18)
-				ui.Text(c, "停止").FontSize(tok.title)
+		board := a.accountBoard(c.Now())
+		ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				summary := a.stepLead(board)
+				ui.Text(c, summary).FontSize(tok.body).SingleLine().Tooltip(summary)
+				if note := a.runNote(); note != "" {
+					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(note)
+				}
+				path := a.resolvedOutputDir()
+				ui.Text(c, path).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(path)
 			})
-		case plan.Action == StartNone:
-			b = ui.Button(c, "开始出图").Height(48).FontSize(tok.title).FillWidth().Disabled(true)
-		default:
-			b = ui.PrimaryButton(c, "开始出图").Height(48).FontSize(tok.title).FillWidth().OnClick(func() { a.startTasks() })
+			a.runButton(c, plan)
+		})
+	})
+}
+
+// runButton 是出图步骤右侧的按钮。开始是主按钮，跑起来以后同一位置换成「停止」，文字交叉淡出。
+func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
+	tok := a.look
+	th := c.Theme()
+	running := a.running
+	// 一个账号都没有时，按钮仍打开设置向导。有账号但今天都不能用，则关掉。
+	disabled := !running && plan.Action == StartNone
+	if !running && plan.Action == StartGenerate && a.liveParallel() == 0 {
+		disabled = true
+	}
+	label := "开始出图"
+	if running {
+		label = "停止"
+	}
+	b := ui.ButtonBase(c.Key("run-go")).Padding(8, 16).Gap(8).Radius(th.Radius).Shrink(0).
+		AlignItems(ui.Center).AlignSelf(ui.Center)
+	bg, fg := th.Accent, th.AccentText
+	border := ui.Color{}
+	switch {
+	case disabled:
+		bg, fg, border = th.Surface, th.TextMuted, th.Border
+	case running:
+		bg, fg, border = th.Surface, th.Text, th.Border
+	}
+	if !disabled {
+		switch {
+		case b.Pressed():
+			if running {
+				bg = th.SurfacePressed
+			} else {
+				bg = th.AccentPressed
+			}
+		case b.Hovered():
+			if running {
+				bg = th.SurfaceHover
+			} else {
+				bg = th.AccentHover
+			}
 		}
-		pressPose(b)
-		if hint := a.startHint(plan); hint != "" {
-			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(hint)
+	}
+	if border.A == 0 {
+		border = bg
+	}
+	b.Background(b.AnimateColor("face", bg, motionEaseFast)).TextColor(fg).Border(1, border)
+	if !disabled {
+		hoverPressPose(b)
+	}
+	b.Disabled(disabled)
+	if running {
+		b.OnClick(func() { a.stopTasks() })
+	} else if !disabled {
+		b.OnClick(func() { a.startTasks() })
+	}
+	b.Children(func() {
+		runGlyph(c, running, fg)
+		ui.Text(c.Key("run-label"), label).FontSize(tok.body).
+			ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
+	})
+}
+
+func runGlyph(c *ui.Context, stop bool, ink ui.Color) {
+	box := ui.Box(c.Key("run-glyph")).Size(12, 12).Shrink(0)
+	target := float32(0)
+	if stop {
+		target = 1
+	}
+	shown := box.AnimateTo("stop", target, motionEaseFast)
+	box.Draw(func(p *ui.Painter, r ui.Rect) {
+		if shown < 0.98 {
+			play := (&ui.Path{}).MoveTo(r.X+2, r.Y+1).LineTo(r.X+2, r.Y+r.H-1).LineTo(r.X+r.W-1, r.Y+r.H/2).Close()
+			p.FillPath(play, ink.Alpha(1-shown))
 		}
-		if a.running || a.progress > 0 {
-			motionProgress(c, "run-progress", a.progress, a.running && a.progress <= 0)
+		if shown > 0.02 {
+			p.Fill(ui.Rect{X: r.X + 2, Y: r.Y + 2, W: r.W - 4, H: r.H - 4}, ink.Alpha(shown), 1.5)
 		}
 	})
 }
@@ -440,36 +517,36 @@ func (a *App) accountCallout(c *ui.Context) {
 	})
 }
 
-func (a *App) startHint(plan WorkbenchPlan) string {
-	if !a.running && hasNeedsUser(a.queueItems()) {
-		return ""
+// stepLead 是出图步骤左侧的一行。跑起来写进度，没有能用的账号就写原因，避免和面板标题重复。
+func (a *App) stepLead(board tasks.Board) string {
+	cards := ProgressCards(a.queueItems())
+	done, _, _, _, _ := ProgressTally(cards)
+	if a != nil && a.running {
+		return fmt.Sprintf("正在出图 · 已完成 %d/%d", done, len(cards))
 	}
-	if a.running {
-		if a.progText != "" {
-			return a.progText
+	if a.liveParallel() == 0 {
+		if len(board.Lanes) > 0 {
+			return BlockedAccounts(board.Lanes)
 		}
-		return "正在出图"
+		if len(a.sources) == 0 && len(a.taskPromptList()) == 0 {
+			return "先添加图片，或写一条提示词"
+		}
+		return "还没有可用账号"
 	}
-	if a.progText != "" && plan.Action != StartWizard {
-		return a.progText
-	}
-	switch plan.Action {
-	case StartNone:
-		return "先添加图片，或写一条提示词。不放图片也可以只按提示词出图"
-	case StartGenerate:
-		return "将使用" + strings.Join(plan.Platforms, "、") + "，账号自动轮换 · 保存到 " + a.resolvedOutputDir()
-	default:
-		return ""
-	}
+	return RunSummary(len(a.sources), len(a.taskPromptList()) > 0)
 }
 
-func hasNeedsUser(items []tasks.Task) bool {
-	for _, task := range items {
+// runNote 是出图步骤上的一行进度。待验证已经写在卡片上，这里不再重复成一条失败。
+func (a *App) runNote() string {
+	if a == nil || a.progText == "" {
+		return ""
+	}
+	for _, task := range a.queueItems() {
 		if task.Status == tasks.StatusNeedsUser {
-			return true
+			return ""
 		}
 	}
-	return false
+	return a.progText
 }
 
 func (a *App) loginBanner(c *ui.Context) {
@@ -540,15 +617,7 @@ func (a *App) progressPane(c *ui.Context) {
 		if needs > 0 {
 			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
 		}
-		width, _ := c.Size()
-		cols := int((width - 40) / 280)
-		if cols < 1 {
-			cols = 1
-		}
-		if cols > 3 {
-			cols = 3
-		}
-		ui.Grid(c).Columns(cols).Gap(12).Children(func() {
+		ui.Grid(c).Columns(progressCols(c)).FillWidth().Gap(12).AlignItems(ui.Stretch).Children(func() {
 			for _, card := range cards {
 				a.progressCard(c, card)
 			}
@@ -621,31 +690,61 @@ func (a *App) chooseReplacement() (string, error) {
 	return paths[0], nil
 }
 
+// progressCols 按窗口里出图进度实际能用的宽度分列，避免卡片比格子宽、叠出面板。
+func progressCols(c *ui.Context) int {
+	width, _ := c.Size()
+	inner := width - 28*2 - 14*2
+	cols := int(inner / 300)
+	if cols < 1 {
+		cols = 1
+	}
+	if cols > 3 {
+		cols = 3
+	}
+	return cols
+}
+
 func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 	tok := a.look
-	ui.Column(c.Key("card:"+card.Key)).Gap(8).Padding(10).Radius(tok.radiusM).
-		Background(tok.paper).Border(1, tok.border).Transition(motionItem()).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+	box := ui.Column(c.Key("card:"+card.Key)).MinWidth(0).Gap(8).Padding(10).Radius(tok.radiusM).
+		Background(tok.paper).Border(1, tok.border).Clip().Label("结果卡" + card.Title).Transition(motionItem())
+	if card.Status == "生成中" {
+		accent := c.Theme().Accent
+		reduce := c.Preferences().ReduceMotion
+		box.DrawOver(func(p *ui.Painter, r ui.Rect) {
+			paintGenBar(p, ui.Rect{X: r.X + 10, Y: r.Y + r.H - 16, W: r.W - 20, H: 6}, accent, reduce)
+		})
+	}
+	box.Children(func() {
+		ui.Row(c).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
 			a.inputThumb(c, card)
-			if len(card.Results) > 0 {
+			if len(card.Shots) > 0 {
 				ui.Row(c).Gap(6).Grow(1).MinWidth(0).Children(func() {
-					n := len(card.Results)
+					n := len(card.Shots)
 					if n > 3 {
 						n = 3
 					}
-					for _, path := range card.Results[:n] {
-						a.resultThumb(c, path, card.Status == "生成中")
+					flown := map[int]bool{}
+					for _, shot := range card.Shots[:n] {
+						fly := shot.Task > 0 && !flown[shot.Task]
+						if fly {
+							flown[shot.Task] = true
+						}
+						a.resultThumb(c, shot, card.Status == "生成中", fly)
 					}
 				})
 			}
 			statusPill(c, card.Status)
 		})
-		ui.Text(c, card.Title).Bold().FontSize(tok.body).SingleLine().Tooltip(card.Title)
+		ui.Text(c, card.Title).Bold().FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(card.Title)
 		if line := a.siteLine(card); line != "" {
-			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
+			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(line)
 		}
-		if card.Status == "生成中" {
-			motionProgress(c, "gen", 0, true)
+		switch card.Status {
+		case "生成中":
+			ui.Box(c.Key("gen-slot")).FillWidth().Height(6)
+		case "排队中":
+			ui.Box(c.Key("wait-slot")).FillWidth().Height(6).Radius(3).Background(tok.sunken)
 		}
 		if card.Reason != "" {
 			color := tok.danger
@@ -658,7 +757,7 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 			line := "已改写：" + card.Rewrite
 			ui.Text(c.Key("rewrite"), line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
 		}
-		if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 || len(card.Results) > 0 {
+		if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 || len(card.Shots) > 0 {
 			ui.Row(c).Gap(8).Children(func() {
 				if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 {
 					label := card.Action
@@ -667,8 +766,8 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 					}
 					ui.Button(c.Key("retry"), label).Disabled(a.running).Transition(motionReveal()).OnClick(func() { a.failAction(card) })
 				}
-				if len(card.Results) > 0 {
-					path := card.Results[0]
+				if len(card.Shots) > 0 {
+					path := card.Shots[0].Path
 					ui.Button(c, "打开文件").OnClick(func() { a.openResult(path) })
 				}
 			})
@@ -693,22 +792,37 @@ func (a *App) inputThumb(c *ui.Context, card ProgressCard) {
 	})
 }
 
-func (a *App) resultThumb(c *ui.Context, path string, shimmer bool) {
+func (a *App) resultThumb(c *ui.Context, shot CardShot, shimmer, fly bool) {
 	tok := a.look
-	tile := ui.Box(c.Key(path)).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0).Transition(motionItem())
+	tile := ui.Box(c.Key(shot.Path)).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
+	if fly {
+		tile.Transition(ui.ElementTransition{
+			Animation: &motionEaseOut,
+			Position:  true,
+			Size:      true,
+			Match:     jobFly{shot.Task},
+		})
+	} else {
+		tile.Transition(motionItem())
+	}
 	tile.Children(func() {
-		bmp := a.cachedThumb(path)
-		if bmp == nil {
-			return
+		bmp := a.cachedThumb(shot.Path)
+		if bmp != nil {
+			img := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS).
+				ContentTransition(ui.ContentTransition{Animation: &motionEaseOut}).
+				Cursor(ui.CursorPointer).Label("预览")
+			if shimmer {
+				img.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
+			}
+			if img.Clicked() {
+				a.showPreview(shot.Path)
+			}
 		}
-		shot := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS).
-			ContentTransition(ui.ContentTransition{Animation: &motionEaseOut}).
-			Cursor(ui.CursorPointer).Label("预览")
-		if shimmer {
-			shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
-		}
-		if shot.Clicked() {
-			a.showPreview(path)
+		if badge := shotBadge(shot.Platform, a.accountName(shot.BrowserID)); badge != "" {
+			ui.Row(c).Label("产出"+badge).Absolute().Bottom(4).Left(4).Padding(1, 4).Radius(4).
+				Background(tok.accent.Alpha(0.92)).Children(func() {
+				ui.Text(c, badge).FontSize(10).TextColor(tok.onAccent).SingleLine()
+			})
 		}
 	})
 }

@@ -215,8 +215,33 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if cards[0].Title != "风景.png" || cards[0].Status != "失败" || cards[0].Reason != "账号额度已用完" || cards[0].Action != "换账号重试" || len(cards[0].Retry) != 1 || cards[0].Retry[0].Platform != "千问" {
 		t.Fatalf("image card = %+v", cards[0])
 	}
-	if len(cards[0].Results) != 1 || cards[0].Results[0] != "out/a.png" {
-		t.Fatalf("results = %v", cards[0].Results)
+	if len(cards[0].Shots) != 1 || cards[0].Shots[0].Path != "out/a.png" {
+		t.Fatalf("results = %+v", cards[0].Shots)
+	}
+	if got := RunSummary(3, false); got != "3 张图" {
+		t.Fatal(got)
+	}
+	running := ProgressCards([]tasks.Task{
+		{Index: 1, Platform: "豆包", BrowserID: 1, Images: []string{"风景.png"}, Status: tasks.StatusRunning, Results: []string{"out.png"}},
+		{Index: 4, Platform: "豆包", BrowserID: 1, Images: []string{"风景.png"}, Status: tasks.StatusSuccess, Results: []string{"out.png"}},
+		{Index: 2, Platform: "豆包", BrowserID: 2, Images: []string{"人像.png"}, Status: tasks.StatusRunning},
+		{Index: 3, Platform: "千问", BrowserID: 3, Images: []string{"静物.png"}, Status: tasks.StatusRunning},
+	})
+	done, gen, queued, failedN, needs := ProgressTally(running)
+	if len(running) != 3 || done != 0 || gen != 3 || queued != 0 || failedN != 0 || needs != 0 || len(running[0].Shots) != 0 {
+		t.Fatalf("running tally cards=%d done=%d gen=%d shots=%d", len(running), done, gen, len(running[0].Shots))
+	}
+	if got := LaneHeader(3, done, len(running)); got != "3 个账号同时出图 · 完成 0 / 共 3" {
+		t.Fatal(got)
+	}
+	if got := FormatProgressTally(done, gen, queued, failedN, needs); got != "完成 0 · 生成中 3 · 排队 0 · 失败 0" {
+		t.Fatal(got)
+	}
+	finished := ProgressCards([]tasks.Task{
+		{Index: 1, Platform: "豆包", BrowserID: 1, Images: []string{"风景.png"}, Status: tasks.StatusSuccess, Results: []string{"out.png"}},
+	})
+	if finished[0].Status != "完成" || len(finished[0].Shots) != 1 {
+		t.Fatalf("finished card %+v", finished[0])
 	}
 	if cards[1].Status != "排队中" || cards[1].Title != "画一只猫" || cards[1].Reason != "" {
 		t.Fatalf("text card = %+v", cards[1])

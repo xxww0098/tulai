@@ -195,8 +195,16 @@ type ProgressCard struct {
 	Rewrite   string
 	Platforms []string
 	Sites     []CardSite
-	Results   []string
+	Shots     []CardShot
 	Retry     []tasks.Task
+}
+
+// CardShot 是结果格里的一张图，以及产出它的那一单。
+type CardShot struct {
+	Path      string
+	Task      int
+	BrowserID int64
+	Platform  string
 }
 
 // CardSite 是这张卡上的一个平台账号。
@@ -293,6 +301,18 @@ func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs i
 	return done, running, queued, failed, needs
 }
 
+// RunSummary 是出图步骤左侧的一行。账号数写在面板上，这里只说这一批有几张图。
+func RunSummary(images int, prompts bool) string {
+	switch {
+	case images > 0:
+		return fmt.Sprintf("%d 张图", images)
+	case prompts:
+		return "按提示词"
+	default:
+		return "先添加图片，或写一条提示词"
+	}
+}
+
 // FormatProgressTally 是进度条上的那一行。
 func FormatProgressTally(done, running, queued, failed, needs int) string {
 	parts := []string{
@@ -337,7 +357,11 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 				card.Platforms = append(card.Platforms, task.Platform)
 			}
 			card.addSite(task.Platform, task.BrowserID)
-			card.Results = append(card.Results, task.Results...)
+			for _, path := range task.Results {
+				card.Shots = append(card.Shots, CardShot{
+					Path: path, Task: task.Index, BrowserID: task.BrowserID, Platform: task.Platform,
+				})
+			}
 			if task.Rewritten && card.Rewrite == "" {
 				card.Rewrite = shortLine(task.Prompt, 36)
 			}
@@ -351,6 +375,14 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 			}
 		}
 		card.Status = DisplayStatus(statuses)
+		// 还在出或还在排队时，不把已经落下的图当成完成结果。
+		// 排队的还没分到账号，不把构建队列时占的浏览器写上去。
+		if card.Status == "生成中" || card.Status == "排队中" {
+			card.Shots = nil
+		}
+		if card.Status == "排队中" {
+			card.Sites = nil
+		}
 		if card.Status == "待验证" {
 			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)
 			card.Reason = hint.Sentence
