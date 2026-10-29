@@ -68,6 +68,17 @@ func TestHelloAccountOptional(t *testing.T) {
 	if id, name := HelloAccount(Envelope{Payload: []byte(`{"token":"t"}`)}); id != "" || name != "" {
 		t.Fatalf("old hello should not invent an account: %q %q", id, name)
 	}
+	if loggedIn, known := HelloLogin(Envelope{Payload: []byte(`{"token":"t","account":"p"}`)}); loggedIn || known {
+		t.Fatal("hello without loggedIn is only a connection")
+	}
+	rawTrue, _ := json.Marshal(map[string]any{"token": "t", "loggedIn": true})
+	if loggedIn, known := HelloLogin(Envelope{Payload: rawTrue}); !loggedIn || !known {
+		t.Fatal("loggedIn true")
+	}
+	rawFalse, _ := json.Marshal(map[string]any{"token": "t", "loggedIn": false})
+	if loggedIn, known := HelloLogin(Envelope{Payload: rawFalse}); loggedIn || !known {
+		t.Fatal("loggedIn false")
+	}
 	if !WeakToken(" dev-token ") || !WeakToken("  ") || WeakToken("abc") {
 		t.Fatal("weak token")
 	}

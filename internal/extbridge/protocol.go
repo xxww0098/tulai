@@ -321,6 +321,21 @@ func HelloAccount(e Envelope) (id, name string) {
 	return strings.TrimSpace(body.Account), strings.TrimSpace(body.AccountName)
 }
 
+// HelloLogin 读取 hello payload.loggedIn。
+// 旧扩展不带这个字段时 known 为 false，不能当成已登录，也不能当成已退出。
+func HelloLogin(e Envelope) (loggedIn, known bool) {
+	if len(e.Payload) == 0 {
+		return false, false
+	}
+	var body struct {
+		LoggedIn *bool `json:"loggedIn"`
+	}
+	if json.Unmarshal(e.Payload, &body) != nil || body.LoggedIn == nil {
+		return false, false
+	}
+	return *body.LoggedIn, true
+}
+
 // HelloVersion 读取 hello payload.version。旧扩展没有这个字段时返回空字符串。
 func HelloVersion(e Envelope) string {
 	if len(e.Payload) == 0 {

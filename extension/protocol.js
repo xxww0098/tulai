@@ -59,9 +59,11 @@ globalThis.TULAI.envelope = function envelope(type, fields) {
 
 // platform 省略时仍是千问，和原先单个套接字的 hello 一样。豆包套接字传入 'doubao'。
 // account 是这个浏览器配置文件的稳定 id，旧扩展可以不传。
-globalThis.TULAI.hello = function hello(token, platform, account) {
+// loggedIn 只有布尔值才写上。没探测到登录时不要传，桌面端不会因此建账号。
+globalThis.TULAI.hello = function hello(token, platform, account, loggedIn) {
   const payload = { token: token || '', version: '0.3.10' }
   if (account) payload.account = String(account)
+  if (typeof loggedIn === 'boolean') payload.loggedIn = loggedIn
   const env = globalThis.TULAI.envelope('hello', { payload })
   if (platform) env.platform = platform
   return env

@@ -411,8 +411,14 @@ func (a *App) wizardNext() {
 }
 
 func (a *App) wizardBack() {
+	account := a.wizardAccount
+	leavingLogin := a.wizardStep == wizard.StepAccount
 	a.stopWizardLoop()
 	a.wizardPickExtra = false
+	if leavingLogin {
+		a.abandonUnlogged(account)
+		a.wizardAccount = store.Browser{}
+	}
 	switch a.wizardStep {
 	case wizard.StepDone, wizard.StepPlugin, wizard.StepAccount:
 		a.goWizard(wizard.StepPlatform)
@@ -588,7 +594,7 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			if gen != a.wizardGen || a.store == nil {
 				return
 			}
-			a.store.UpdateBrowser(account.ID, true, false)
+			a.store.UpdateBrowser(account.ID, true, account.IsLoggedIn)
 			a.wizardPhase = "waiting"
 			a.wizardNote = scanLoginTitle
 			a.wizardErr = ""
@@ -747,8 +753,8 @@ func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 		return wizard.PollWait
 	}
 	if a.store != nil && a.wizardAccount.ID != 0 {
-		a.store.UpdateBrowser(a.wizardAccount.ID, true, true)
-		a.store.ResetBrowserHealth(a.wizardAccount.ID)
+		a.store.ConfirmLogin(a.wizardAccount.ID)
+		a.clearLoginHold(a.wizardAccount.ID)
 	}
 	if a.wizardPhase != "in" {
 		a.wizardPhase = "in"
@@ -1066,8 +1072,8 @@ func (a *App) publishLogin(id int64, gen int, state string, png []byte, hint str
 		}
 		a.setLoginShot(id, state, png, hint)
 		if state == wizard.ProbeIn && a.store != nil {
-			a.store.UpdateBrowser(id, true, true)
-			a.store.ResetBrowserHealth(id)
+			a.store.ConfirmLogin(id)
+			a.clearLoginHold(id)
 			a.refreshBrowsers()
 		}
 	}

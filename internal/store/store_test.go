@@ -147,6 +147,96 @@ func TestRenameBrowserKeepsProfileDir(t *testing.T) {
 	}
 }
 
+func TestOnlyLoggedInAccountsAreKept(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, platform := range []string{"豆包", "千问"} {
+		junk, err := s.AddBrowser(platform, platform+"未登录", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		stale, err := s.AddBrowser(platform, platform+"过期", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, err := s.AddBrowser(platform, platform+"已登录", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.UpdateBrowser(saved.ID, false, true)
+		if _, err := s.UpsertExtensionAccount(platform, "bare-"+platform, ""); err != nil {
+			t.Fatal(err)
+		}
+		ext, err := s.SaveLoggedInExtension(platform, "live-"+platform, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ext.IsLoggedIn || ext.Health != HealthReady || ext.Platform != platform {
+			t.Fatalf("saved extension = %+v", ext)
+		}
+		s.UpdateBrowserHealth(stale.ID, HealthExhausted, 0, "未登录")
+		if !s.ConfirmLogin(stale.ID) {
+			t.Fatal("confirm")
+		}
+		got := browser(t, s, stale.ID)
+		if !got.IsLoggedIn || !got.Usable(time.Now()) || got.Health != HealthReady || got.LastError != "" {
+			t.Fatalf("%s login did not clear 未登录: %+v", platform, got)
+		}
+		if browser(t, s, junk.ID).IsLoggedIn || browser(t, s, saved.ID).Name == "" {
+			t.Fatalf("setup junk=%+v saved=%+v", browser(t, s, junk.ID), browser(t, s, saved.ID))
+		}
+	}
+	quota, err := s.SaveLoggedInExtension("千问", "quota", "扩展千问")
+	if err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(time.Hour).Unix()
+	s.UpdateBrowserHealth(quota.ID, HealthExhausted, until, "额度已用尽")
+	if s.ConfirmLogin(quota.ID) {
+		t.Fatal("quota hold is not a login")
+	}
+	held := browser(t, s, quota.ID)
+	if !held.IsLoggedIn || held.LastError != "额度已用尽" || held.CoolUntil != until {
+		t.Fatalf("quota should stay: %+v", held)
+	}
+	s.DropUnloggedExtensions()
+	dropped := s.DropUnloggedLocal(nil)
+	if len(dropped) != 2 {
+		t.Fatalf("unlogged locals = %+v", dropped)
+	}
+	for _, row := range dropped {
+		if row.IsLoggedIn || (row.Platform != "豆包" && row.Platform != "千问") {
+			t.Fatalf("dropped = %+v", row)
+		}
+	}
+	for _, row := range s.Browsers() {
+		if !row.IsLoggedIn {
+			t.Fatalf("unlogged row kept: %+v", row)
+		}
+		if row.ExtAccount != "" && row.Platform != "豆包" && row.Platform != "千问" {
+			t.Fatalf("extension platform = %+v", row)
+		}
+	}
+	var doubaoExt, qianwenExt bool
+	for _, row := range s.Browsers() {
+		if row.ExtAccount == "live-豆包" {
+			doubaoExt = true
+		}
+		if row.ExtAccount == "live-千问" {
+			qianwenExt = true
+		}
+		if row.ExtAccount == "bare-豆包" || row.ExtAccount == "bare-千问" {
+			t.Fatalf("connected-only extension kept: %+v", row)
+		}
+	}
+	if !doubaoExt || !qianwenExt {
+		t.Fatalf("logged-in extension rows = %+v", s.Browsers())
+	}
+}
+
 func browser(t *testing.T, s *Store, id int64) Browser {
 	t.Helper()
 	for _, b := range s.Browsers() {

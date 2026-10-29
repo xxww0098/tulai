@@ -691,6 +691,9 @@ func (a *App) loginBanner(c *ui.Context) {
 }
 
 func (a *App) openAttention(id int64) {
+	if id > 0 {
+		a.holdLogin(id)
+	}
 	a.tab = pageBrowser
 	a.refreshBrowsers()
 	for i, row := range a.browserRows {
@@ -781,6 +784,9 @@ func (a *App) reloginCard(card ProgressCard) {
 
 // showBrowserAccount 切到浏览器页并选中这个账号，方便二维码出现在它那一行。
 func (a *App) showBrowserAccount(id int64) store.Browser {
+	if id > 0 {
+		a.holdLogin(id)
+	}
 	row := store.Browser{ID: id}
 	for _, b := range a.configuredBrowsers() {
 		if id != 0 && b.ID == id {

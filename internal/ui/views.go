@@ -21,7 +21,7 @@ import (
 	"github.com/xxww0098/tulai/internal/wizard"
 )
 
-const browserInstanceHint = "每个实例单独登录。同一平台再添加一个并登录后，额度用尽、限流或验证码会自动换号。扩展账号会在对应的浏览器配置文件连上后出现在这里。"
+const browserInstanceHint = "只有登录成功的账号会留在这里。同一平台再登录一个后，额度用尽、限流或验证码会自动换号。扩展账号只保留当前连上的页面桥。"
 
 // browserPane 浏览器管理。网页方式是 Chrome、Edge，或下载到本机的内置浏览器。
 func (a *App) browserPane(c *ui.Context) {
@@ -73,7 +73,7 @@ func (a *App) browserInstances(c *ui.Context) {
 	if hint := missingBrowserHint(a.missingBrowserNames()); hint != "" {
 		ui.Text(c, hint).Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
 	} else if len(a.browserRows) == 0 {
-		ui.Text(c, "尚无浏览器。添加豆包或千问实例，启动并登录后再开始任务。").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "尚无已登录的账号。添加豆包或千问，在打开的页面登录后即可使用。").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
 	}
 	active := map[int64]bool{}
 	if a.engine != nil {
@@ -81,6 +81,7 @@ func (a *App) browserInstances(c *ui.Context) {
 	}
 	if a.store != nil {
 		rows := a.store.Browsers()
+		shown := make([]store.Browser, 0, len(rows))
 		for i := range rows {
 			if a.manager != nil {
 				rows[i].IsRunning = a.manager.IsRunning(rows[i].ID)
@@ -88,8 +89,12 @@ func (a *App) browserInstances(c *ui.Context) {
 			if active[rows[i].ID] {
 				rows[i].IsRunning = true
 			}
+			if rows[i].ExtAccount != "" && !rows[i].IsLoggedIn {
+				continue
+			}
+			shown = append(shown, rows[i])
 		}
-		a.browserRows = rows
+		a.browserRows = shown
 	}
 	if len(a.browserRows) > 0 {
 		ui.Scroll(c.Key("accounts")).FillWidth().Shrink(0).MaxHeight(420).Children(func() {
@@ -196,6 +201,7 @@ func (a *App) openSelectedPages() {
 }
 
 func (a *App) refreshBrowsers() {
+	a.dropAbandoned()
 	a.mu.Lock()
 	if a.store != nil {
 		a.browserRows = a.store.Browsers()
@@ -207,6 +213,92 @@ func (a *App) refreshBrowsers() {
 	}
 	a.mu.Unlock()
 	a.refreshDetected()
+}
+
+func (a *App) loginKeepIDs() []int64 {
+	if a == nil {
+		return nil
+	}
+	var ids []int64
+	if a.wizardOn && a.wizardStep == wizard.StepAccount && a.wizardAccount.ID > 0 {
+		ids = append(ids, a.wizardAccount.ID)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id := range a.loginHold {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (a *App) holdLogin(id int64) {
+	if a == nil || id <= 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.loginHold == nil {
+		a.loginHold = map[int64]struct{}{}
+	}
+	a.loginHold[id] = struct{}{}
+}
+
+func (a *App) clearLoginHold(id int64) {
+	if a == nil || id <= 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.loginHold, id)
+}
+
+// dropAbandoned 去掉没登录成功、也没在登录过程中的本机账号。
+// 任务进行中不动。浏览器还开着或向导停在登录步时留着，方便扫码。
+func (a *App) dropAbandoned() {
+	if a == nil || a.store == nil || a.running {
+		return
+	}
+	keep := a.loginKeepIDs()
+	if a.manager != nil {
+		for _, b := range a.store.Browsers() {
+			if b.ExtAccount == "" && a.manager.IsRunning(b.ID) {
+				keep = append(keep, b.ID)
+			}
+		}
+	}
+	for _, b := range a.store.DropUnloggedLocal(keep) {
+		if err := browser.RemoveProfile(a.dataRoot, a.browserBackend, b); err != nil {
+			logging.Log.Warning("删除未登录账号 %s 的配置目录失败：%v", b.Name, err)
+		}
+	}
+	a.store.DropUnloggedExtensions()
+}
+
+// abandonUnlogged 停掉并删掉一个还没登录成功的本机账号。已经登录的不动。
+func (a *App) abandonUnlogged(b store.Browser) {
+	if a == nil || a.store == nil || b.ID <= 0 {
+		return
+	}
+	a.clearLoginHold(b.ID)
+	var row store.Browser
+	found := false
+	for _, item := range a.store.Browsers() {
+		if item.ID == b.ID {
+			row = item
+			found = true
+			break
+		}
+	}
+	if !found || row.IsLoggedIn || row.ExtAccount != "" {
+		return
+	}
+	if a.manager != nil {
+		a.manager.Stop(row.ID)
+	}
+	a.store.DeleteBrowser(row.ID)
+	if err := browser.RemoveProfile(a.dataRoot, a.browserBackend, row); err != nil {
+		logging.Log.Warning("删除未登录账号 %s 的配置目录失败：%v", row.Name, err)
+	}
 }
 
 func (a *App) syncBrowserChoice() {
@@ -322,7 +414,14 @@ func (a *App) downloadBuiltin() {
 }
 
 func (a *App) addBrowser() {
-	name := a.newBrowserName
+	if a == nil || a.store == nil || a.running {
+		return
+	}
+	if a.manager == nil {
+		logging.Log.Errorf("没有浏览器，无法添加账号")
+		return
+	}
+	name := strings.TrimSpace(a.newBrowserName)
 	if name == "" {
 		name = fmt.Sprintf("浏览器%d", len(a.browserRows)+1)
 	}
@@ -330,12 +429,22 @@ func (a *App) addBrowser() {
 	if strings.TrimSpace(a.dataRoot) != "" {
 		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
 	}
-	if _, err := a.store.AddBrowser(a.newBrowserPlat, name, dir); err != nil {
+	row, err := a.store.AddBrowser(a.newBrowserPlat, name, dir)
+	if err != nil {
 		logging.Log.Errorf("添加浏览器失败: %v", err)
 		return
 	}
-	logging.Log.Info("已添加浏览器 %s（%s）", name, a.newBrowserPlat)
+	a.newBrowserName = ""
+	a.holdLogin(row.ID)
+	logging.Log.Info("正在打开 %s（%s），登录成功后才会留在列表里", name, a.newBrowserPlat)
 	a.refreshBrowsers()
+	for i := range a.browserRows {
+		if a.browserRows[i].ID == row.ID {
+			a.browserSel = i
+			break
+		}
+	}
+	a.launchBrowser()
 }
 
 func (a *App) selectedBrowser() (store.Browser, bool) {
@@ -364,9 +473,10 @@ func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
 	ui.Column(c).FillWidth().Padding(10, 12).Gap(6).Children(func() {
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				signedIn := accountSignedIn(b, shot)
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, b.Name).Bold().SingleLine()
-					ui.Badge(c, accountHealthLabel(b, active)).Shrink(0)
+					ui.Badge(c, accountHealthLabel(b, active, signedIn)).Shrink(0)
 				})
 				line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
 				if b.ExtAccount != "" {
@@ -374,7 +484,7 @@ func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
 				}
 				ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
 				ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
-				if b.LastError != "" && !b.Usable(time.Now()) {
+				if b.LastError != "" && !b.Usable(time.Now()) && !staleLoginCopy(b, signedIn) {
 					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
 				}
 			})
@@ -403,9 +513,24 @@ func (a *App) accountLoginStatus(c *ui.Context, b store.Browser, shot loginShot)
 		}
 		return
 	}
-	if b.IsLoggedIn || shot.state == wizard.ProbeIn {
+	if accountSignedIn(b, shot) {
 		ui.Text(c, "已登录").FontSize(12).TextColor(c.Theme().Success)
 	}
+}
+
+func accountSignedIn(b store.Browser, shot loginShot) bool {
+	switch shot.state {
+	case wizard.ProbeIn:
+		return true
+	case wizard.ProbeOut, wizard.ProbeRegion:
+		return false
+	default:
+		return b.IsLoggedIn
+	}
+}
+
+func staleLoginCopy(b store.Browser, signedIn bool) bool {
+	return signedIn && strings.Contains(b.LastError, "登录")
 }
 
 func (a *App) launchBrowser() {
@@ -424,14 +549,22 @@ func (a *App) launchBrowser() {
 		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, platform.HomeURL(), false)
 		if err != nil && !errors.Is(err, browser.ErrDebugPort) {
 			logging.Log.Errorf("启动失败: %v", err)
+			if !b.IsLoggedIn {
+				a.onUI(func() {
+					a.abandonUnlogged(b)
+					a.browserSel = -1
+					a.refreshBrowsers()
+				})
+			}
 			return
 		}
 		if errors.Is(err, browser.ErrDebugPort) {
 			a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
 			a.watchLogin(b, loginEndpoint(b))
-			a.window.Update(func() { a.refreshBrowsers() })
+			a.onUI(func() { a.refreshBrowsers() })
 			return
 		}
+		a.clearLoginHold(b.ID)
 		err = cdp.OpenURLBackground(context.Background(), ws, platform.HomeURL())
 		a.store.UpdateBrowser(b.ID, true, b.IsLoggedIn)
 		if err == nil || errors.Is(err, cdp.ErrDebugUnavailable) {
@@ -444,7 +577,7 @@ func (a *App) launchBrowser() {
 		} else {
 			logging.Log.Success("浏览器[%s]已打开%s，可在浏览器中登录账号", b.Name, b.Platform)
 		}
-		a.window.Update(func() { a.refreshBrowsers() })
+		a.onUI(func() { a.refreshBrowsers() })
 	}()
 }
 
@@ -453,8 +586,25 @@ func (a *App) stopBrowser() {
 	if !ok {
 		return
 	}
-	a.manager.Stop(b.ID)
-	a.store.UpdateBrowser(b.ID, false, false)
+	if a.store != nil {
+		for _, row := range a.store.Browsers() {
+			if row.ID == b.ID {
+				b.IsLoggedIn = row.IsLoggedIn
+				break
+			}
+		}
+	}
+	if a.manager != nil {
+		a.manager.Stop(b.ID)
+	}
+	if !b.IsLoggedIn {
+		a.abandonUnlogged(b)
+		logging.Log.Info("浏览器[%s] 未登录，已从列表移除", b.Name)
+		a.browserSel = -1
+		a.refreshBrowsers()
+		return
+	}
+	a.store.UpdateBrowser(b.ID, false, true)
 	logging.Log.Info("浏览器[%s] 已停止", b.Name)
 	a.refreshBrowsers()
 }
@@ -505,7 +655,7 @@ func (a *App) bridgePairLabel() string {
 	return "等待扩展自动对接，也可复制令牌手动填写"
 }
 
-func accountHealthLabel(b store.Browser, active bool) string {
+func accountHealthLabel(b store.Browser, active, signedIn bool) string {
 	if !b.Usable(time.Now()) {
 		if b.Health == store.HealthCooling {
 			if strings.Contains(b.LastError, "验证") {
@@ -514,10 +664,17 @@ func accountHealthLabel(b store.Browser, active bool) string {
 			return "冷却中"
 		}
 		if strings.Contains(b.LastError, "登录") {
+			if signedIn {
+				return accountReadyLabel(b, active)
+			}
 			return "未登录"
 		}
 		return "已用尽"
 	}
+	return accountReadyLabel(b, active)
+}
+
+func accountReadyLabel(b store.Browser, active bool) string {
 	if active {
 		return "使用中"
 	}

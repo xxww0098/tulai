@@ -67,13 +67,10 @@ type Account struct {
 }
 
 // KeepsClosed 为真时，这个账号说明用户已经能用 tulai，启动时不再摊开向导。
-// 登录过（或是扩展会话），并且不是要等人点「恢复」的永久失败。
+// 必须已经登录。只连上的扩展会话不算。不是要等人点「恢复」的永久失败。
 // 冷却和额度用尽只要写了恢复时间，就算暂时不可用也先留在主界面。
 func KeepsClosed(a Account, now time.Time) bool {
-	if strings.TrimSpace(a.Platform) == "" {
-		return false
-	}
-	if !a.LoggedIn && !a.Extension {
+	if strings.TrimSpace(a.Platform) == "" || !a.LoggedIn {
 		return false
 	}
 	switch strings.TrimSpace(a.Health) {

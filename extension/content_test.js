@@ -31,7 +31,7 @@ function load(page) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'refuse.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8'), context)
   assert.strictEqual(listeners.length, 1)
-  return function command(payload) {
+  function command(payload) {
     const env = { v: 1, id: 't-' + payload.name, type: 'command', payload }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('hung ' + payload.name)), 8000)
@@ -41,6 +41,16 @@ function load(page) {
       })
     })
   }
+  command.ask = function (msg) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('hung ' + (msg && msg.type))), 2000)
+      listeners[0](msg, {}, (resp) => {
+        clearTimeout(timer)
+        resolve(resp)
+      })
+    })
+  }
+  return command
 }
 
 function composerPage(extra) {
@@ -134,6 +144,17 @@ async function main() {
   assert.strictEqual(refusedWait.payload.code, 'E_MODERATION')
   assert.match(refusedWait.payload.message, /审核不通过/)
   assert.ok(Date.now() - started < 1000, '审核失败应马上返回，用时 ' + (Date.now() - started))
+
+  const signed = load(composerPage())
+  assert.strictEqual((await signed.ask({ type: 'LOGIN_STATE' })).loggedIn, true)
+  const signedOut = load(composerPage({ loginWall() { return true } }))
+  assert.strictEqual((await signedOut.ask({ type: 'LOGIN_STATE' })).loggedIn, false)
+  const proto = vm.createContext({ globalThis: {} })
+  proto.globalThis = proto
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'protocol.js'), 'utf8'), proto)
+  assert.strictEqual(proto.TULAI.hello('t', 'qianwen', 'profile-1').payload.loggedIn, undefined)
+  assert.strictEqual(proto.TULAI.hello('t', 'doubao', 'profile-2', true).payload.loggedIn, true)
+  assert.strictEqual(proto.TULAI.hello('t', 'qianwen', 'profile-3', false).payload.loggedIn, false)
   console.log('content wait ok')
 }
 

@@ -54,11 +54,20 @@ func TestPlanWorkbenchPicksLoggedInPlatforms(t *testing.T) {
 		HasPrompts: true, AutoPlatform: true, ExtensionMode: true, Now: now,
 		Accounts: []AccountSnap{
 			{Platform: "豆包", LoggedIn: true, Health: store.HealthReady},
-			{Platform: "千问", Extension: true, Health: store.HealthReady},
+			{Platform: "千问", Extension: true, LoggedIn: true, Health: store.HealthReady},
 		},
 	})
 	if ext.Action != StartGenerate || len(ext.Platforms) != 1 || ext.Platforms[0] != "千问" {
 		t.Fatalf("extension pick = %+v", ext)
+	}
+	for _, platform := range []string{"豆包", "千问"} {
+		onlyConnected := PlanWorkbench(WorkbenchInput{
+			HasPrompts: true, AutoPlatform: true, ExtensionMode: true, Now: now,
+			Accounts: []AccountSnap{{Platform: platform, Extension: true, Health: store.HealthReady}},
+		})
+		if onlyConnected.Action != StartWizard {
+			t.Fatalf("%s extension without login = %+v", platform, onlyConnected)
+		}
 	}
 }
 
