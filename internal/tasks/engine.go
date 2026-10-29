@@ -713,7 +713,8 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if strat != nil {
 		home = strat.HomeURL()
 	}
-	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, home, false)
+	// 出图冷启动不要盖住 tulai。登录走界面的 Start(..., false)，窗口可以到前面。
+	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, home, true)
 	if startErr != nil {
 		return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
 	}
@@ -722,6 +723,8 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 		return nil, clientErr
 	}
 	sess, err := client.NewBackgroundSession(home, onLog)
+	// 第一次把窗口挪到屏幕外时，setWindowBounds 可能再激活一次。挪完再把 tulai 拉回来。
+	e.browsers.KeepAppInFront()
 	e.traceTask(&Task{Index: 0, Platform: platform, BrowserID: browserID}, "open", "打开页面", 0, 0, err)
 	if err != nil {
 		client.Close()

@@ -288,6 +288,14 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 			Content: ui.View(a.view),
 		})
 		applyAppIcon(a.window)
+		if a.manager != nil {
+			w := a.window
+			a.manager.SetAppFocus(func() {
+				if w != nil && !w.IsDestroyed() {
+					w.Focus()
+				}
+			})
+		}
 		a.startUpdateLoop()
 		if a.engine != nil {
 			a.engine.EnsureExtensionBridge(func() {
