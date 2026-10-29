@@ -189,6 +189,15 @@ func TestSaveSettingsIncludesLatestBoundInput(t *testing.T) {
 	if err := tt.Click("自动求解验证码"); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.Click("免费离线识别"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("自定义视觉模型"); err != nil {
+		t.Fatal(err)
+	}
+	if a.captchaBackend != "custom" {
+		t.Fatalf("backend = %q", a.captchaBackend)
+	}
 	if err := tt.Click("API 地址"); err != nil {
 		t.Fatal(err)
 	}

@@ -121,6 +121,7 @@ type App struct {
 	// 验证码设置
 	captchaEnabled bool
 	captchaBackend string
+	captchaChoice  string
 	customURL      string
 	customKey      string
 	customModel    string

@@ -64,6 +64,21 @@ func fitCols(inner, min float32, max int) int {
 	return cols
 }
 
+// gridCols 按右栏实际宽度分列。张数更少时不留空列；最后一行只剩一张时少排一列，避免孤卡。
+func gridCols(windowW, minCol float32, n, max int) int {
+	cols := fitCols(homeStageW(windowW)-24, minCol, max)
+	if n > 0 && cols > n {
+		cols = n
+	}
+	if cols > 2 && n > cols && n%cols == 1 {
+		cols--
+	}
+	if cols < 1 {
+		return 1
+	}
+	return cols
+}
+
 func (a *App) navRail(c *ui.Context) {
 	tok := a.look
 	ui.Column(c.Key("nav-rail")).Width(railWidth).FillHeight().Padding(12, 0, 10, 0).Gap(4).
@@ -176,7 +191,6 @@ func (a *App) homePage(c *ui.Context) {
 		ui.Scroll(c.Key("home")).Grow(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
 				a.loginBanner(c)
-				a.flowStepper(c, flow)
 				if flow.Run.State != stepCurrent {
 					a.accountPanel(c, true)
 				}
@@ -199,7 +213,6 @@ func (a *App) homePage(c *ui.Context) {
 func (a *App) homeComposer(c *ui.Context, flow flowLayout) {
 	ui.Scroll(c.Key("home-side")).Width(composerW).Shrink(0).MinHeight(0).Children(func() {
 		ui.Column(c).FillWidth().Gap(10).Padding(0, 0, 8, 0).Children(func() {
-			a.flowStepper(c, flow)
 			a.stepImages(c, flow.Images)
 			a.stepPrompt(c, flow.Prompt)
 			a.stepRun(c, flow.Run)
@@ -211,90 +224,33 @@ func (a *App) homeComposer(c *ui.Context, flow flowLayout) {
 }
 
 func (a *App) homeStage(c *ui.Context, flow flowLayout) {
+	_, winH := c.Size()
 	ui.Scroll(c.Key("home-stage")).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
-		ui.Column(c).FillWidth().Gap(10).Padding(0, 0, 8, 0).Children(func() {
+		ui.Column(c).FillWidth().MinHeight(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
 			if flow.Run.State == stepCurrent {
 				a.accountPanel(c, false)
 			} else {
 				a.accountPanel(c, true)
 			}
+			if len(ProgressCards(a.queueItems())) == 0 {
+				a.stageEmpty(c)
+				return
+			}
 			a.progressPane(c)
-			a.stageEmpty(c)
 		})
 	})
 }
 
 func (a *App) stageEmpty(c *ui.Context) {
-	if len(a.accountBoard(c.Now()).Lanes) > 0 || len(ProgressCards(a.queueItems())) > 0 {
-		return
-	}
 	tok := a.look
-	ui.Column(c.Key("stage-empty")).FillWidth().Padding(22, 16).Radius(tok.radiusL).
-		Border(1, tok.border).BorderStyle(ui.BorderDashed).Children(func() {
-		ui.Text(c, "登录后，账号和出图结果会显示在这里").FontSize(tok.caption).TextColor(tok.muted)
+	ui.Column(c.Key("stage-empty")).Grow(1).MinHeight(140).FillWidth().Center().Gap(8).Children(func() {
+		ui.Icon(c, iconImages).FontSize(22).TextColor(tok.muted.Alpha(0.55))
+		ui.Text(c, "出图结果会出现在这里").FontSize(tok.caption).TextColor(tok.muted)
 	})
 }
 
 func (a *App) flowNow() flowLayout {
 	return LayoutFlow(len(a.sources) > 0, len(a.taskPromptList()) > 0, a.skipImages, len(a.queueItems()) > 0, a.flowPin)
-}
-
-func (a *App) flowStepper(c *ui.Context, flow flowLayout) {
-	tok := a.look
-	type item struct {
-		n, label string
-		state    int
-		pin      int
-	}
-	items := []item{
-		{"1", "选图片", flow.Images.State, 1},
-		{"2", "写提示词", flow.Prompt.State, 2},
-		{"3", "出图", flow.Run.State, 3},
-	}
-	ui.Row(c.Key("flow-steps")).Gap(0).AlignItems(ui.Center).Children(func() {
-		for i, it := range items {
-			if i > 0 {
-				line := tok.border
-				if items[i-1].state == stepDone {
-					line = tok.accent.Alpha(0.5)
-				}
-				ui.Box(c).Width(16).Height(2).Radius(1).Margin(0, 6).Background(line)
-			}
-			pin := it.pin
-			state := it.state
-			mark := it.n
-			name := it.label
-			if state == stepDone {
-				mark = "✓"
-			}
-			step := ui.Row(c.Key(pin)).Gap(8).AlignItems(ui.Center).Padding(2, 0)
-			if step.Clicked() {
-				if a.flowPin == pin {
-					a.flowPin = 0
-				} else {
-					a.flowPin = pin
-				}
-			}
-			step.Children(func() {
-				fg, fill := tok.muted, tok.sunken
-				switch state {
-				case stepCurrent:
-					fg, fill = tok.onAccent, tok.accent
-				case stepDone:
-					fg, fill = tok.accent, tok.accent.Alpha(0.14)
-				}
-				ui.Column(c).Size(26, 26).Radius(13).Background(fill).Center().Children(func() {
-					ui.Text(c, mark).FontSize(12).Bold().TextColor(fg)
-				})
-				label := ui.Text(c, name).FontSize(tok.body).TextColor(tok.muted)
-				if state == stepCurrent {
-					label.Bold().TextColor(tok.text)
-				} else if state == stepDone {
-					label.TextColor(tok.text)
-				}
-			})
-		}
-	})
 }
 
 func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
@@ -572,11 +528,30 @@ func (a *App) stepRun(c *ui.Context, step flowStep) {
 				if note := a.runNote(); note != "" {
 					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine().Tooltip(note)
 				}
-				path := a.resolvedOutputDir()
-				ui.Text(c, path).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine().Tooltip(path)
+				a.outputLink(c, tok)
 			})
 			a.runButton(c, plan)
 		})
+	})
+}
+
+func (a *App) outputLink(c *ui.Context, tok tokens) {
+	path := a.resolvedOutputDir()
+	line := "保存到 " + path
+	row := ui.Row(c).Gap(4).AlignItems(ui.Center).MinWidth(0).Cursor(ui.CursorPointer)
+	if row.Clicked() {
+		a.openOutputFolder()
+	}
+	row.Children(func() {
+		paintFolder(c, tok.muted)
+		ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine().Tooltip(line)
+	})
+}
+
+func paintFolder(c *ui.Context, ink ui.Color) {
+	ui.Box(c).Size(14, 12).Shrink(0).Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * 0.52, H: 3.2}, ink, 1)
+		p.Fill(ui.Rect{X: r.X, Y: r.Y + 2.2, W: r.W, H: r.H - 2.2}, ink, 1.6)
 	})
 }
 
@@ -768,7 +743,7 @@ func (a *App) progressPane(c *ui.Context) {
 		if needs > 0 {
 			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
 		}
-		ui.Grid(c).Columns(progressCols(c)).FillWidth().Gap(12).AlignItems(ui.Stretch).Children(func() {
+		ui.Grid(c).Columns(a.progressCols(c)).FillWidth().Gap(8).AlignItems(ui.Stretch).Children(func() {
 			for _, card := range cards {
 				a.progressCard(c, card)
 			}
@@ -842,14 +817,14 @@ func (a *App) chooseReplacement() (string, error) {
 }
 
 // progressCols 按窗口里出图进度实际能用的宽度分列，避免卡片比格子宽、叠出面板。
-func progressCols(c *ui.Context) int {
+func (a *App) progressCols(c *ui.Context) int {
 	width, _ := c.Size()
-	return fitCols(homeStageW(width)-28, 268, 3)
+	return gridCols(width, 230, len(ProgressCards(a.queueItems())), 3)
 }
 
 func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 	tok := a.look
-	box := ui.Column(c.Key("card:"+card.Key)).MinWidth(0).Gap(8).Padding(10).Radius(tok.radiusM).
+	box := ui.Column(c.Key("card:"+card.Key)).MinWidth(0).Gap(6).Padding(8).Radius(tok.radiusM).
 		Background(tok.paper).Border(1, tok.border).Clip().Label("结果卡" + card.Title).Transition(motionItem())
 	if card.Status == "生成中" {
 		accent := c.Theme().Accent
@@ -920,14 +895,14 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 
 func (a *App) inputThumb(c *ui.Context, card ProgressCard) {
 	tok := a.look
-	frame := ui.Box(c.Key("in")).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
+	frame := ui.Box(c.Key("in")).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
 	frame.Children(func() {
 		if card.Source == "" {
-			promptMark(c, tok)
+			promptMarkBox(c, tok, 56)
 			return
 		}
 		if bmp := a.cachedThumb(card.Source); bmp != nil {
-			shot := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS)
+			shot := ui.Image(c, bmp).Size(56, 56).Fit(ui.Cover).Radius(tok.radiusS)
 			if card.Status == "生成中" {
 				shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
 			}
@@ -937,7 +912,7 @@ func (a *App) inputThumb(c *ui.Context, card ProgressCard) {
 
 func (a *App) resultThumb(c *ui.Context, shot CardShot, shimmer, fly bool) {
 	tok := a.look
-	tile := ui.Box(c.Key(shot.Path)).Size(72, 72).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
+	tile := ui.Box(c.Key(shot.Path)).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
 	if fly {
 		tile.Transition(ui.ElementTransition{
 			Animation: &motionEaseOut,
@@ -951,7 +926,7 @@ func (a *App) resultThumb(c *ui.Context, shot CardShot, shimmer, fly bool) {
 	tile.Children(func() {
 		bmp := a.cachedThumb(shot.Path)
 		if bmp != nil {
-			img := ui.Image(c, bmp).Size(72, 72).Fit(ui.Cover).Radius(tok.radiusS).
+			img := ui.Image(c, bmp).Size(56, 56).Fit(ui.Cover).Radius(tok.radiusS).
 				ContentTransition(ui.ContentTransition{Animation: &motionEaseOut}).
 				Cursor(ui.CursorPointer).Label("预览")
 			if shimmer {
@@ -970,15 +945,17 @@ func (a *App) resultThumb(c *ui.Context, shot CardShot, shimmer, fly bool) {
 	})
 }
 
-func promptMark(c *ui.Context, tok tokens) {
-	ui.Box(c).Size(72, 72).Draw(func(p *ui.Painter, r ui.Rect) {
+func promptMark(c *ui.Context, tok tokens) { promptMarkBox(c, tok, 72) }
+
+func promptMarkBox(c *ui.Context, tok tokens, size float32) {
+	ui.Box(c).Size(size, size).Draw(func(p *ui.Painter, r ui.Rect) {
 		ink := tok.muted
 		for i := 0; i < 3; i++ {
 			w := r.W * 0.46
 			if i == 2 {
 				w = r.W * 0.28
 			}
-			p.Fill(ui.Rect{X: r.X + 16, Y: r.Y + 20 + float32(i)*12, W: w, H: 3}, ink, 1.5)
+			p.Fill(ui.Rect{X: r.X + r.W*0.22, Y: r.Y + r.H*0.28 + float32(i)*r.H*0.16, W: w, H: 2}, ink, 1)
 		}
 	})
 }

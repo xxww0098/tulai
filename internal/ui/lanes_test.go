@@ -77,7 +77,7 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 		}
 	}
 	sum, ok := tt.Find("1 张图")
-	path, pathOK := tt.Find("图片/输出结果")
+	path, pathOK := tt.Find("保存到 图片/输出结果")
 	if !ok || !pathOK {
 		t.Fatal("summary lines missing")
 	}

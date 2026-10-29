@@ -199,16 +199,13 @@ func (a *App) laneStrip(c *ui.Context, board tasks.Board) {
 
 func (a *App) laneCards(c *ui.Context, board tasks.Board) {
 	tok := a.look
-	ui.Column(c.Key("lane-board")).FillWidth().Gap(10).Padding(12, 14).Radius(tok.radiusL).
+	ui.Column(c.Key("lane-board")).FillWidth().Gap(8).Padding(10, 12).Radius(tok.radiusL).
 		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
 		Transition(motionReveal()).Children(func() {
 		a.laneHeader(c)
 		width, _ := c.Size()
-		cols := fitCols(homeStageW(width)-28, 268, 3)
-		if n := len(board.Lanes); cols > n {
-			cols = n
-		}
-		ui.Grid(c).Columns(cols).Gap(10).AlignItems(ui.Stretch).Children(func() {
+		cols := gridCols(width, 168, len(board.Lanes), 4)
+		ui.Grid(c).Columns(cols).Gap(8).AlignItems(ui.Stretch).Children(func() {
 			for i, ln := range board.Lanes {
 				a.laneCard(c, ln, i)
 			}
@@ -229,7 +226,7 @@ func laneEnter(i int) ui.ElementTransition {
 
 func (a *App) laneCard(c *ui.Context, ln tasks.AccountLane, i int) {
 	tok := a.look
-	card := ui.Column(c.Key(ln.ID)).Gap(8).Padding(10, 12).Radius(tok.radiusM).
+	card := ui.Column(c.Key(ln.ID)).Gap(6).Padding(8, 10).Radius(tok.radiusM).
 		Background(tok.paper).Border(1, tok.border).AlignSelf(ui.Stretch).
 		Label("车道" + ln.Name).Transition(laneEnter(i))
 	if ln.State == tasks.LaneLogin {
@@ -365,22 +362,22 @@ func gapRing(c *ui.Context, ln tasks.AccountLane, tok tokens) {
 func (a *App) laneJob(c *ui.Context, ln tasks.AccountLane) {
 	tok := a.look
 	job := ln.Job
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		frame := ui.Box(c.Key("job")).Size(64, 64).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		frame := ui.Box(c.Key("job")).Size(40, 40).Radius(6).Background(tok.sunken).Shrink(0)
 		if job.Index > 0 {
 			frame.Transition(ui.ElementTransition{Animation: &motionEaseOut, Position: true, Size: true, Match: jobFly{job.Index}})
 		}
 		frame.Children(func() {
 			if job.Image == "" {
-				promptMark(c, tok)
+				promptMarkBox(c, tok, 40)
 				return
 			}
 			if bmp := a.cachedThumb(job.Image); bmp != nil {
-				shot := ui.Image(c, bmp).Size(64, 64).Fit(ui.Cover).Radius(tok.radiusS)
+				shot := ui.Image(c, bmp).Size(40, 40).Fit(ui.Cover).Radius(6)
 				shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
 			}
 		})
-		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			line := laneCaption(job.Prompt, job.Image)
 			ui.Text(c, line).FontSize(tok.caption).SingleLine().Tooltip(line)
 			ui.Text(c.Key("elapsed"), elapsedLabel(c.Now().Sub(job.Started))).FontSize(tok.caption).TextColor(tok.muted).MinWidth(72).
@@ -437,7 +434,7 @@ func (a *App) laneQuota(c *ui.Context, ln tasks.AccountLane) {
 	case used*5 >= capN*4:
 		fill = tok.warning
 	}
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, "今日").FontSize(tok.caption).TextColor(tok.muted)
 		ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).TextColor(tok.text).
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
