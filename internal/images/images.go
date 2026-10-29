@@ -18,6 +18,24 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
+// 界面图标和豆包的空 SVG 壳落成 PNG 后只有几百到一千字节，边长远小于生成图。
+const (
+	MinGeneratedBytes = 1536
+	MinGeneratedSide  = 128
+)
+
+// AcceptGenerated 只认够大的位图。魔法数字对了但边长或体积像图标的，不当成出图结果。
+func AcceptGenerated(b []byte) bool {
+	if len(b) < MinGeneratedBytes || !IsValidImageBytes(b) {
+		return false
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(b))
+	if err != nil || cfg.Width < MinGeneratedSide || cfg.Height < MinGeneratedSide {
+		return false
+	}
+	return true
+}
+
 // IsValidImageBytes 校验字节流是否为 PNG/JPEG/GIF/WEBP 图片。
 func IsValidImageBytes(b []byte) bool {
 	switch {

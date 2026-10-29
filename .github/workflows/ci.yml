@@ -36,7 +36,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Test
-        run: go test ./... -short
+        run: go test ./... -short -race
       - name: Vet
         run: go tool mygo vet
       - name: Extension tests

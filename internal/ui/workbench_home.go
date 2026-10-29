@@ -191,17 +191,18 @@ func (a *App) homePage(c *ui.Context) {
 		ui.Scroll(c.Key("home")).Grow(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
 				a.loginBanner(c)
-				if flow.Run.State != stepCurrent {
-					a.accountPanel(c, true)
-				}
 				a.stepImages(c, flow.Images)
 				a.stepPrompt(c, flow.Prompt)
 				a.stepRun(c, flow.Run)
+				a.platformTabs(c)
 				if flow.Run.State == stepCurrent {
 					a.accountPanel(c, false)
+				} else {
+					a.accountPanel(c, true)
 				}
 				a.progressPane(c)
-				ui.Collapsible(c, "高级", &a.advancedOpen, func() {
+				a.runLog(c)
+				ui.Collapsible(c, "更多设置", &a.advancedOpen, func() {
 					a.advancedFields(c)
 				})
 			})
@@ -216,7 +217,7 @@ func (a *App) homeComposer(c *ui.Context, flow flowLayout) {
 			a.stepImages(c, flow.Images)
 			a.stepPrompt(c, flow.Prompt)
 			a.stepRun(c, flow.Run)
-			ui.Collapsible(c, "高级", &a.advancedOpen, func() {
+			ui.Collapsible(c, "更多设置", &a.advancedOpen, func() {
 				a.advancedFields(c)
 			})
 		})
@@ -227,18 +228,151 @@ func (a *App) homeStage(c *ui.Context, flow flowLayout) {
 	_, winH := c.Size()
 	ui.Scroll(c.Key("home-stage")).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
 		ui.Column(c).FillWidth().MinHeight(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
-			if flow.Run.State == stepCurrent {
-				a.accountPanel(c, false)
-			} else {
-				a.accountPanel(c, true)
-			}
-			if len(ProgressCards(a.queueItems())) == 0 {
-				a.stageEmpty(c)
-				return
-			}
-			a.progressPane(c)
+			a.platformStage(c, flow)
 		})
 	})
+}
+
+func (a *App) platformStage(c *ui.Context, flow flowLayout) {
+	a.platformTabs(c)
+	if flow.Run.State == stepCurrent {
+		a.accountPanel(c, false)
+	} else {
+		a.accountPanel(c, true)
+	}
+	if len(a.platformCards()) == 0 {
+		a.stageEmpty(c)
+	} else {
+		a.progressPane(c)
+	}
+	a.runLog(c)
+}
+
+func (a *App) platformTabs(c *ui.Context) {
+	doubaoN := a.runningOn("豆包")
+	qianwenN := a.runningOn("千问")
+	if !a.stagePicked {
+		if qianwenN > doubaoN {
+			a.stageTab = 1
+		} else {
+			a.stageTab = 0
+		}
+	}
+	ui.Row(c.Key("platform-tabs")).Gap(6).AlignItems(ui.Center).Children(func() {
+		a.stageButton(c, 0, "豆包", doubaoN)
+		a.stageButton(c, 1, "千问", qianwenN)
+	})
+}
+
+func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
+	text := label
+	if n > 0 {
+		text = fmt.Sprintf("%s %d", label, n)
+	}
+	b := ui.Button(c, text)
+	if a.stageTab == index {
+		b.Border(1, c.Theme().Accent).TextColor(c.Theme().Accent)
+	}
+	b.OnClick(func() {
+		a.stageTab = index
+		a.stagePicked = true
+	})
+}
+
+func (a *App) stagePlatform() string {
+	if a != nil && a.stageTab == 1 {
+		return "千问"
+	}
+	return "豆包"
+}
+
+func (a *App) runningOn(platform string) int {
+	n := 0
+	for _, ln := range a.accountBoard(time.Now()).Lanes {
+		if ln.Platform == platform && ln.State == tasks.LaneRunning {
+			n++
+		}
+	}
+	return n
+}
+
+func (a *App) platformCards() []ProgressCard {
+	return cardsForPlatform(ProgressCards(a.queueItems()), a.stagePlatform())
+}
+
+func cardsForPlatform(cards []ProgressCard, platform string) []ProgressCard {
+	var out []ProgressCard
+	for _, card := range cards {
+		if cardHasPlatform(card, platform) {
+			out = append(out, card)
+		}
+	}
+	return out
+}
+
+func cardHasPlatform(card ProgressCard, platform string) bool {
+	if platform == "" {
+		return true
+	}
+	if len(card.Platforms) == 0 && len(card.Sites) == 0 {
+		return true
+	}
+	for _, name := range card.Platforms {
+		if name == platform {
+			return true
+		}
+	}
+	for _, site := range card.Sites {
+		if site.Platform == platform {
+			return true
+		}
+	}
+	for _, shot := range card.Shots {
+		if shot.Platform == platform {
+			return true
+		}
+	}
+	for _, task := range card.Retry {
+		if task.Platform == platform {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) runLog(c *ui.Context) {
+	tok := a.look
+	ui.Column(c.Key("run-log")).FillWidth().Gap(4).Padding(8, 10).Radius(tok.radiusM).
+		Background(tok.card).Border(1, tok.border).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "运行日志").FontSize(tok.body).Bold().Grow(1)
+			ui.Button(c, "打开日志文件").OnClick(func() { a.openLogFile() })
+		})
+		notes := logging.Log.Entries()
+		if len(notes) == 0 {
+			ui.Text(c, "每个任务的开始、提交和结束会写在这里").FontSize(tok.caption).TextColor(tok.muted)
+			return
+		}
+		start := 0
+		if len(notes) > 6 {
+			start = len(notes) - 6
+		}
+		for _, line := range notes[start:] {
+			if line.Level == logging.Debug {
+				continue
+			}
+			text := line.Text
+			ui.Text(c, text).FontSize(tok.caption).SingleLine().Tooltip(text)
+		}
+	})
+}
+
+func (a *App) openLogFile() {
+	path := logging.Path()
+	if path == "" {
+		return
+	}
+	_ = mygo.Shell.OpenPath(path)
 }
 
 func (a *App) stageEmpty(c *ui.Context) {
@@ -645,10 +779,8 @@ func (a *App) accountCallout(c *ui.Context) {
 
 // stepLead 是出图步骤左侧的一行。跑起来写进度，没有能用的账号就写原因，避免和面板标题重复。
 func (a *App) stepLead(board tasks.Board) string {
-	cards := ProgressCards(a.queueItems())
-	done, _, _, _, _ := ProgressTally(cards)
 	if a != nil && a.running {
-		return fmt.Sprintf("正在出图 · 已完成 %d/%d", done, len(cards))
+		return "正在出图"
 	}
 	if a.liveParallel() == 0 {
 		if len(board.Lanes) > 0 {
@@ -723,7 +855,7 @@ func (a *App) openAttention(id int64) {
 
 func (a *App) progressPane(c *ui.Context) {
 	items := a.queueItems()
-	cards := ProgressCards(items)
+	cards := a.platformCards()
 	if len(cards) == 0 {
 		return
 	}
@@ -741,7 +873,6 @@ func (a *App) progressPane(c *ui.Context) {
 			if len(failed) > 0 {
 				ui.Button(c, "全部重试失败项").Disabled(a.running).OnClick(func() { a.retryTasks(failed) })
 			}
-			ui.Button(c, "打开输出文件夹").OnClick(func() { a.openOutputFolder() })
 		})
 		if needs > 0 {
 			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)

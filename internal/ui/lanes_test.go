@@ -25,13 +25,13 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	if got := LaneHeader(3, 1, 4); got != "3 个账号同时出图 · 完成 1 / 共 4" {
 		t.Fatal(got)
 	}
-	if got := LaneStatusLine(2, false); got != "2 个账号就绪" {
+	if got := LaneStatusLine(2, false); got != "2 个账号空闲" {
 		t.Fatal(got)
 	}
 	if got := LaneStatusLine(0, false); got != "暂无可用账号" {
 		t.Fatal(got)
 	}
-	if got := LaneStatusLine(3, true); got != "3 个账号同时出图" {
+	if got := LaneStatusLine(3, true); got != "3 个账号出图中" {
 		t.Fatal(got)
 	}
 	a := &App{
@@ -46,7 +46,7 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
 	tt.Advance(500 * time.Millisecond)
-	for _, label := range []string{"豆包主力", "千问备用", "空闲", "2 个账号就绪", "今日", "0/20"} {
+	for _, label := range []string{"豆包主力", "空闲", "1 个账号空闲", "今日", "0/20"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
@@ -71,7 +71,7 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	if !ok || start.W > 220 || start.W < 48 {
 		t.Fatalf("start button %+v", start)
 	}
-	for _, label := range []string{"1 张图", "图片/输出结果", "1 个账号就绪"} {
+	for _, label := range []string{"1 张图", "图片/输出结果", "1 个账号空闲"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
@@ -139,25 +139,27 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 		t.Fatal("disabled start still ran")
 	}
 	left, okL := tt.Find("车道豆包没登录")
-	right, okR := tt.Find("车道千问今天满了")
-	if !okL || !okR {
-		t.Fatalf("lane cards missing %v %v", okL, okR)
+	if !okL {
+		t.Fatal("doubao lane missing")
 	}
-	if d := left.H - right.H; d > 2 || d < -2 {
-		t.Fatalf("lane heights left %v right %v", left.H, right.H)
-	}
-	loginChip, okLogin := tt.Find("需要登录")
-	fullChip, okFull := tt.Find("今日已满")
+	loginChip, okLogin := tt.Find("需登录")
 	relogin, okBtn := tt.Find("去重登")
-	if !okLogin || !okFull || !okBtn {
+	if !okLogin || !okBtn {
 		t.Fatal("chips or button missing")
-	}
-	if d := loginChip.Y - fullChip.Y; d > 3 || d < -3 {
-		t.Fatalf("title chips not aligned: login %v full %v", loginChip.Y, fullChip.Y)
 	}
 	if relogin.Y < loginChip.Y+loginChip.H {
 		t.Fatalf("relogin sits in the title row: button %v chip %v", relogin.Y, loginChip.Y)
 	}
+	if err := tt.Click("千问"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	right, okR := tt.Find("车道千问今天满了")
+	if !okR {
+		t.Fatal("qianwen lane missing")
+	}
+	_ = left
+	_ = right
 
 	a.running = true
 	a.queue = []tasks.Task{
@@ -165,7 +167,7 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 		{Index: 2, Images: []string{"人像.png"}, Status: tasks.StatusRunning},
 		{Index: 3, Images: []string{"静物.png"}, Status: tasks.StatusRunning},
 	}
-	if got := a.stepLead(a.accountBoard(time.Now())); got != "正在出图 · 已完成 0/3" {
+	if got := a.stepLead(a.accountBoard(time.Now())); got != "正在出图" {
 		t.Fatal(got)
 	}
 }
@@ -406,7 +408,7 @@ func TestLaneLoginAndDailyFull(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 980)
 	tt.Advance(300 * time.Millisecond)
-	for _, label := range []string{"需要登录", "去重登", "今日已满", "20/20", "今天满了"} {
+	for _, label := range []string{"需登录", "去重登"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}

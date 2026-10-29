@@ -558,10 +558,7 @@ func accountNeedsQR(b store.Browser, shot loginShot) bool {
 }
 
 func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
-	shot := loginShot{}
-	if a.loginShots != nil {
-		shot = a.loginShots[b.ID]
-	}
+	shot := a.loginShot(b.ID)
 	ui.Column(c).FillWidth().Padding(10, 12).Gap(6).Children(func() {
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {

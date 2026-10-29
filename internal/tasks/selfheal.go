@@ -201,6 +201,13 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 	if !found || row.ExtAccount != "" {
 		return
 	}
+	if e.accountBusy(id) {
+		logging.Event(logging.Line{
+			Stage: "probe", Platform: row.Platform, Account: accountLabel(row), Port: row.Port,
+			Msg: "账号正在出图，跳过登录探测",
+		})
+		return
+	}
 	e.mu.Lock()
 	if e.loginLast == nil {
 		e.loginLast = map[int64]time.Time{}
@@ -215,6 +222,13 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 
 func (e *Engine) applyLogin(b store.Browser, state string) {
 	if e == nil || e.store == nil || b.ID <= 0 {
+		return
+	}
+	if state == heal.StateOut && e.accountBusy(b.ID) {
+		logging.Event(logging.Line{
+			Stage: "probe", Platform: b.Platform, Account: accountLabel(b), Port: b.Port,
+			Msg: "生成中的探测结果是退出登录，没有正面证据，已忽略", Error: "busy",
+		})
 		return
 	}
 	e.mu.Lock()
@@ -372,14 +386,17 @@ func (e *Engine) notify() {
 
 func (e *Engine) poke() {
 	e.mu.Lock()
-	ch := e.wake
-	e.mu.Unlock()
-	if ch == nil {
-		return
+	chs := make([]chan struct{}, 0, len(e.wakes)+1)
+	if e.wake != nil {
+		chs = append(chs, e.wake)
 	}
-	select {
-	case ch <- struct{}{}:
-	default:
+	chs = append(chs, e.wakes...)
+	e.mu.Unlock()
+	for _, ch := range chs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
 	}
 }
 

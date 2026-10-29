@@ -313,17 +313,18 @@ func RunSummary(images int, prompts bool) string {
 	}
 }
 
-// FormatProgressTally 是进度条上的那一行。
+// FormatProgressTally 是一个平台的进度。并发上限写在同一行，不再另起一条「同时出图」。
 func FormatProgressTally(done, running, queued, failed, needs int) string {
 	parts := []string{
 		fmt.Sprintf("完成 %d", done),
-		fmt.Sprintf("生成中 %d", running),
+		fmt.Sprintf("进行中 %d", running),
 		fmt.Sprintf("排队 %d", queued),
 		fmt.Sprintf("失败 %d", failed),
 	}
 	if needs > 0 {
 		parts = append(parts, fmt.Sprintf("待验证 %d", needs))
 	}
+	parts = append(parts, fmt.Sprintf("%d/%d 并发", running, tasks.PlatformInFlight))
 	return strings.Join(parts, " · ")
 }
 

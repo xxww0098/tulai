@@ -11,6 +11,7 @@ import (
 	"image/gif"
 	"image/png"
 	"io"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
@@ -939,11 +940,16 @@ func writeSolidPNG(t *testing.T, path string, w, h int, c color.NRGBA) {
 
 func solidPNG(t *testing.T, w, h int, c color.NRGBA) []byte {
 	t.Helper()
+	if w < 128 {
+		w = 128
+	}
+	if h < 128 {
+		h = 128
+	}
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			img.SetNRGBA(x, y, c)
-		}
+	rnd := rand.New(rand.NewPCG(uint64(c.R)+1, uint64(w)))
+	for i := range img.Pix {
+		img.Pix[i] = byte(rnd.Uint32())
 	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {

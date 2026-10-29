@@ -62,10 +62,16 @@ func TestLoginProbeUsesComposerAndScanLogin(t *testing.T) {
 			t.Fatalf("probe script missing %q", needle)
 		}
 	}
-	button := strings.Index(loginProbeJS, "loginDialog() || loginButton()")
-	loggedIn := strings.Index(loginProbeJS, "if (hasComposer) return {state:'in'}")
-	if button < 0 || loggedIn < button {
-		t.Fatal("a visible 登录 button must count as logged out before the composer counts as logged in")
+	for _, needle := range []string{"evidence:'generating'", "evidence:'login_dialog'", "signedIn()", "passwordField()"} {
+		if !strings.Contains(loginProbeJS, needle) {
+			t.Fatalf("probe script missing %q", needle)
+		}
+	}
+	busy := strings.Index(loginProbeJS, "if (generating()) return {state:'unknown', evidence:'generating'}")
+	button := strings.Index(loginProbeJS, "if (loginButton() && !signedIn()) return {state:'out', evidence:'login_button'}")
+	loggedIn := strings.Index(loginProbeJS, "if (hasComposer || signedIn()) return {state:'in', evidence:'composer'}")
+	if busy < 0 || button < busy || loggedIn < button {
+		t.Fatal("generating must not count as logged out, and a login button still beats the composer")
 	}
 }
 

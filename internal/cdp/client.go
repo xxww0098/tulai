@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
+	cdt "github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
 
@@ -30,6 +33,15 @@ func NewClient(wsURL string) (*Client, error) {
 	alloc, cancel := chromedp.NewRemoteAllocator(context.Background(), wsURL)
 	c := &Client{alloc: alloc, allocCan: cancel, wsURL: wsURL}
 	return c, nil
+}
+
+// quietCDP 丢掉 cdproto 尚未识别的 IPAddressSpace=Loopback。其余错误仍打到标准日志。
+func quietCDP(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if strings.Contains(msg, "IPAddressSpace") || strings.Contains(msg, "Loopback") {
+		return
+	}
+	log.Printf("%s", msg)
 }
 
 // Close 释放分配器。
@@ -53,8 +65,56 @@ type Session struct {
 }
 
 // NewSession 在浏览器上新建标签页并打开 url。
-func (c *Client) NewSession(url string, onLog func(string)) (*Session, error) {
-	ctx, cancel := chromedp.NewContext(c.alloc)
+// NewBackgroundSession 复用已经打开的站点标签，没有才在后台开一页。不把窗口拉到前面。
+func (c *Client) NewBackgroundSession(rawURL string, onLog func(string)) (*Session, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, err := DialSlider(ctx, c.wsURL)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	targets, err := conn.targets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	host := strings.ToLower(hostOf(rawURL))
+	var id string
+	for _, item := range targets {
+		if item.Type != "page" || item.ID == "" {
+			continue
+		}
+		if host != "" && strings.Contains(strings.ToLower(item.URL), host) {
+			id = item.ID
+		}
+	}
+	if id == "" {
+		back := context.WithValue(ctx, stayBackKey{}, true)
+		id, err = conn.createPage(back, rawURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+	tab, tabCancel := chromedp.NewContext(c.alloc, chromedp.WithTargetID(targetID(id)), chromedp.WithErrorf(quietCDP))
+	return c.finishSession(tab, tabCancel, "", onLog)
+}
+
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+func targetID(id string) cdt.ID { return cdt.ID(id) }
+
+func (c *Client) NewSession(rawURL string, onLog func(string)) (*Session, error) {
+	ctx, cancel := chromedp.NewContext(c.alloc, chromedp.WithErrorf(quietCDP))
+	return c.finishSession(ctx, cancel, rawURL, onLog)
+}
+
+func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, rawURL string, onLog func(string)) (*Session, error) {
 	s := &Session{client: c, ctx: ctx, cancel: cancel, hooks: map[string]func(data string) string{}, onLog: onLog}
 	// 桥事件监听：页面 → Go
 	chromedp.ListenTarget(ctx, func(ev any) {
@@ -85,8 +145,8 @@ func (c *Client) NewSession(url string, onLog func(string)) (*Session, error) {
 		return nil, err
 	}
 	_ = s.InjectBase() // 基础运行时（幂等）
-	if url != "" {
-		if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
+	if rawURL != "" {
+		if err := chromedp.Run(ctx, chromedp.Navigate(rawURL), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
 			// 页面可能加载慢，导航错误不致命
 			_ = err
 		}
