@@ -12,6 +12,14 @@ let pageMark = null
 let cancelRequested = false
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'LOGIN_STATE') {
+    let loggedIn = false
+    try {
+      loggedIn = !!(Page && Page.composer(document) && !(Page.loginWall && Page.loginWall(document)))
+    } catch (err) {}
+    sendResponse({ loggedIn })
+    return true
+  }
   if (!msg || msg.type !== 'COMMAND_FROM_HOST') return
   const env = msg.envelope || {}
   handleCommand(env).then(sendResponse).catch((err) => {

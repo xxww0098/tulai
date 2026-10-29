@@ -20,6 +20,7 @@ import (
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
@@ -207,7 +208,9 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 		Addr:    addr,
 		Token:   token,
 		OnHello: e.noteHello,
+		OnEvent: e.noteExtensionLogin,
 		OnChange: func() {
+			e.PruneIdleExtensions()
 			e.fireBridgeChange()
 		},
 	})
@@ -234,18 +237,125 @@ func (e *Engine) noteHello(sess *extbridge.Session) {
 	e.poke()
 }
 
+// PruneIdleExtensions 删掉还没确认登录的扩展账号。豆包和千问一样。
+// 已经登录的行留着，短暂断开不会清掉冷却和今日次数。
+func (e *Engine) PruneIdleExtensions() {
+	if e == nil || e.store == nil {
+		return
+	}
+	e.store.DropUnloggedExtensions()
+}
+
 func (e *Engine) rememberExtension(sess *extbridge.Session) {
 	e.noteExtensionVersion(sess)
 	if e == nil || e.store == nil || sess == nil || sess.Account() == "" {
 		return
 	}
-	platform := "千问"
-	if sess.Platform() == extbridge.PlatformDoubao {
-		platform = "豆包"
+	loggedIn, known := sess.Login()
+	if !known {
+		return
 	}
-	if _, err := e.store.UpsertExtensionAccount(platform, sess.Account(), sess.AccountName()); err != nil {
-		logging.Log.Warning("登记扩展账号失败: %v", err)
+	e.applyExtensionLogin(extensionPlatformLabel(sess.Platform()), sess.Account(), sess.AccountName(), loggedIn)
+}
+
+func (e *Engine) noteExtensionLogin(sess *extbridge.Session, env extbridge.Envelope) {
+	if e == nil || e.store == nil || env.Type != extbridge.TypeEvent || len(env.Payload) == 0 {
+		return
 	}
+	var body struct {
+		Name     string `json:"name"`
+		LoggedIn *bool  `json:"loggedIn"`
+		Account  string `json:"account"`
+	}
+	if json.Unmarshal(env.Payload, &body) != nil || body.Name != "login" || body.LoggedIn == nil {
+		return
+	}
+	account := strings.TrimSpace(body.Account)
+	if account == "" && sess != nil {
+		account = sess.Account()
+	}
+	if account == "" {
+		return
+	}
+	platform := ""
+	if sess != nil {
+		platform = extensionPlatformLabel(sess.Platform())
+	}
+	if env.Platform != "" {
+		platform = extensionPlatformLabel(env.Platform)
+	}
+	name := ""
+	if sess != nil {
+		name = sess.AccountName()
+	}
+	e.applyExtensionLogin(platform, account, name, *body.LoggedIn)
+}
+
+func (e *Engine) applyExtensionLogin(platform, account, name string, loggedIn bool) {
+	if e == nil || e.store == nil {
+		return
+	}
+	platform = strings.TrimSpace(platform)
+	account = strings.TrimSpace(account)
+	if platform == "" || account == "" {
+		return
+	}
+	if !loggedIn {
+		e.store.DropExtensionAccount(platform, account)
+		return
+	}
+	if _, err := e.store.SaveLoggedInExtension(platform, account, name); err != nil {
+		logging.Log.Warning("登记已登录扩展账号失败: %v", err)
+	}
+}
+
+func extensionPlatformLabel(protocol string) string {
+	if protocol == extbridge.PlatformDoubao || protocol == "豆包" {
+		return "豆包"
+	}
+	return "千问"
+}
+
+func loggedInExtension(st *store.Store, platform, account string) (store.Browser, bool) {
+	if st == nil {
+		return store.Browser{}, false
+	}
+	for _, row := range st.Browsers() {
+		if row.Platform == platform && row.ExtAccount == account && row.IsLoggedIn {
+			return row, true
+		}
+	}
+	return store.Browser{}, false
+}
+
+func (e *Engine) noteExtensionTaskLogin(platform string, sess *extbridge.Session, err error) {
+	if e == nil || e.store == nil || sess == nil || sess.Account() == "" {
+		return
+	}
+	if errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) || extbridge.CodeOf(err) == extbridge.ENotLoggedIn {
+		e.store.DropExtensionAccount(platform, sess.Account())
+		return
+	}
+	if !extensionSawLogin(err) {
+		return
+	}
+	if _, saveErr := e.store.SaveLoggedInExtension(platform, sess.Account(), sess.AccountName()); saveErr != nil {
+		logging.Log.Warning("登记已登录扩展账号失败: %v", saveErr)
+	}
+}
+
+func extensionSawLogin(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) || extbridge.CodeOf(err) == extbridge.ENotLoggedIn {
+		return false
+	}
+	switch extbridge.CodeOf(err) {
+	case extbridge.EQuota, extbridge.ERateLimit, extbridge.ECaptchaHuman, extbridge.EModeration, extbridge.ESendUncertain:
+		return true
+	}
+	return errors.Is(err, strategy.ErrAccountQuota) || errors.Is(err, strategy.ErrAccountRate) || errors.Is(err, strategy.ErrModeration) || errors.Is(err, captcha.ErrVerificationRequired)
 }
 
 const extensionReloadNotice = "插件有新版本，点「重新加载」即可"
@@ -408,7 +518,7 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		return err
 	}
 	if sess != nil && sess.Account() != "" && e.store != nil {
-		if row, rowErr := e.store.UpsertExtensionAccount(label, sess.Account(), sess.AccountName()); rowErr == nil {
+		if row, ok := loggedInExtension(e.store, label, sess.Account()); ok {
 			if t.BrowserID <= 0 {
 				t.BrowserID = row.ID
 			}
@@ -436,6 +546,7 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		Wait:              wait,
 		SkipSubmit:        t.submitted,
 	}, label)
+	e.noteExtensionTaskLogin(label, sess, err)
 	if out.Submitted {
 		t.submitted = true
 		logging.Log.Info("#%d 已发送提示词（%.20s…）", t.Index, t.Prompt)

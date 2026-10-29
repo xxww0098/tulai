@@ -1050,6 +1050,119 @@ func serveFakeExt(addr, token, platform string, fn func(extbridge.Envelope) extb
 	}
 }
 
+func TestExtensionHelloSavesOnlyLoggedInAccounts(t *testing.T) {
+	for _, tc := range []struct{ protocol, label string }{
+		{extbridge.PlatformQianwen, "千问"},
+		{extbridge.PlatformDoubao, "豆包"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			st := openTaskStore(t)
+			port := freePort(t)
+			st.Set(extbridge.SettingExtPort, port)
+			st.Set(extbridge.SettingExtToken, "token-a")
+			e := NewEngine(st, nil, nil, t.TempDir())
+			t.Cleanup(func() { e.CloseSessions() })
+			if _, err := e.extensionServer(); err != nil {
+				t.Fatal(err)
+			}
+			addr := "127.0.0.1:" + port
+			closeHello := func(account string, loggedIn *bool) {
+				t.Helper()
+				conn := dialExtensionHello(t, addr, "token-a", tc.protocol, account, loggedIn)
+				conn.Close()
+			}
+			closeHello("profile-x", nil)
+			time.Sleep(80 * time.Millisecond)
+			if rows := st.Browsers(); len(rows) != 0 {
+				t.Fatalf("connect without login saved %+v", rows)
+			}
+			loggedOut := false
+			if _, err := st.UpsertExtensionAccount(tc.label, "profile-x", "扩展"); err != nil {
+				t.Fatal(err)
+			}
+			closeHello("profile-x", &loggedOut)
+			if rows := waitBrowserCount(st, 0, time.Second); len(rows) != 0 {
+				t.Fatalf("explicit logout kept %+v", rows)
+			}
+			loggedIn := true
+			closeHello("profile-x", &loggedIn)
+			rows := waitBrowserCount(st, 1, time.Second)
+			if len(rows) != 1 || rows[0].Platform != tc.label || !rows[0].IsLoggedIn || !rows[0].Usable(time.Now()) || rows[0].ExtAccount != "profile-x" {
+				t.Fatalf("logged-in hello = %+v", rows)
+			}
+			conn := dialExtensionHello(t, addr, "token-a", tc.protocol, "profile-y", nil)
+			defer conn.Close()
+			time.Sleep(80 * time.Millisecond)
+			if rows := st.Browsers(); len(rows) != 1 {
+				t.Fatalf("second connect saved %+v", rows)
+			}
+			raw, _ := json.Marshal(map[string]any{"name": "login", "loggedIn": true, "account": "profile-y"})
+			if err := writeClient(conn, extbridge.Envelope{
+				V: extbridge.Version, ID: "login-y", Type: extbridge.TypeEvent,
+				TS: time.Now().UnixMilli(), Platform: tc.protocol, Payload: raw,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			rows = waitBrowserCount(st, 2, time.Second)
+			if len(rows) != 2 {
+				t.Fatalf("login event = %+v", rows)
+			}
+			var sawY bool
+			for _, row := range rows {
+				if row.ExtAccount == "profile-y" {
+					sawY = row.Platform == tc.label && row.IsLoggedIn && row.Usable(time.Now())
+				}
+			}
+			if !sawY {
+				t.Fatalf("profile-y = %+v", rows)
+			}
+		})
+	}
+}
+
+func dialExtensionHello(t *testing.T, addr, token, platform, account string, loggedIn *bool) net.Conn {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, br, _, err := ws.Dial(ctx, "ws://"+addr+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{"token": token, "version": "0.3.10", "account": account}
+	if loggedIn != nil {
+		payload["loggedIn"] = *loggedIn
+	}
+	raw, _ := json.Marshal(payload)
+	hello := extbridge.Envelope{
+		V: extbridge.Version, ID: "hello-" + account, Type: extbridge.TypeHello,
+		TS: time.Now().UnixMilli(), Platform: platform, Payload: raw,
+	}
+	if err := writeClient(conn, hello); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	reader := io.Reader(conn)
+	if br != nil {
+		reader = br
+	}
+	ack, err := readServer(conn, reader)
+	if err != nil || ack.Type != extbridge.TypeAck {
+		conn.Close()
+		t.Fatalf("ack = %+v err=%v", ack, err)
+	}
+	return conn
+}
+
+func waitBrowserCount(st *store.Store, n int, wait time.Duration) []store.Browser {
+	deadline := time.Now().Add(wait)
+	rows := st.Browsers()
+	for len(rows) != n && time.Now().Before(deadline) {
+		time.Sleep(15 * time.Millisecond)
+		rows = st.Browsers()
+	}
+	return rows
+}
+
 func writeClient(conn net.Conn, env extbridge.Envelope) error {
 	raw, err := extbridge.Encode(env)
 	if err != nil {

@@ -291,6 +291,81 @@ func (s *Store) DeleteBrowser(id int64) {
 	s.db.Exec(`DELETE FROM browsers WHERE id=?`, id)
 }
 
+func loginHold(health, last string) bool {
+	if health != HealthExhausted && health != HealthCooling {
+		return false
+	}
+	return strings.Contains(last, "登录") || strings.Contains(last, "验证")
+}
+
+// ConfirmLogin 记下一次成功的登录探测。
+// 未登录或安全验证的挂起会清掉，账号可以继续轮换。额度和限流的冷却不动。
+// 已经登录且没有这类挂起时返回 false。
+func (s *Store) ConfirmLogin(id int64) bool {
+	if s == nil || id <= 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var login int
+	var health, last string
+	err := s.db.QueryRow(`SELECT is_logged_in, COALESCE(health,'ready'), COALESCE(last_error,'') FROM browsers WHERE id=?`, id).Scan(&login, &health, &last)
+	if err != nil {
+		return false
+	}
+	hold := loginHold(health, last)
+	if login != 0 && !hold {
+		return false
+	}
+	if hold {
+		_, err = s.db.Exec(`UPDATE browsers SET is_running=1, is_logged_in=1, health=?, cool_until=0, last_error='' WHERE id=?`, HealthReady, id)
+	} else {
+		_, err = s.db.Exec(`UPDATE browsers SET is_running=1, is_logged_in=1 WHERE id=?`, id)
+	}
+	return err == nil
+}
+
+// DropUnloggedLocal 删掉还没登录成功的本机账号。
+// 扩展行和 keep 里的 id 留着（登录还在进行）。返回实际删掉的行，便于清配置目录。
+func (s *Store) DropUnloggedLocal(keep []int64) []Browser {
+	if s == nil {
+		return nil
+	}
+	hold := map[int64]struct{}{}
+	for _, id := range keep {
+		if id > 0 {
+			hold[id] = struct{}{}
+		}
+	}
+	var candidates []Browser
+	for _, b := range s.Browsers() {
+		if b.ExtAccount != "" || b.IsLoggedIn {
+			continue
+		}
+		if _, ok := hold[b.ID]; ok {
+			continue
+		}
+		candidates = append(candidates, b)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var dropped []Browser
+	for _, b := range candidates {
+		res, err := s.db.Exec(`DELETE FROM browsers WHERE id=? AND is_logged_in=0 AND COALESCE(ext_account,'')=''`, b.ID)
+		if err != nil {
+			continue
+		}
+		n, _ := res.RowsAffected()
+		if n > 0 {
+			dropped = append(dropped, b)
+		}
+	}
+	return dropped
+}
+
 // DeleteByExtensionAccount 删掉这个配置文件标识在各平台上的扩展账号。
 // 空标识不能用：本地浏览器的 ext_account 就是空字符串，一刀会把它们全删掉。
 func (s *Store) DeleteByExtensionAccount(account string) {
@@ -350,8 +425,65 @@ func (s *Store) TouchBrowser(id int64, now time.Time) {
 	s.db.Exec(`UPDATE browsers SET last_used=? WHERE id=?`, now.Unix(), id)
 }
 
-// UpsertExtensionAccount 按扩展 hello 里的 profile id 登记或取回账号。
-// 同一配置文件重连不会清掉冷却状态。
+// SaveLoggedInExtension 记下一个已经确认登录的扩展账号。豆包和千问同一规则。
+// 只是连上页面桥还不调用这里。已有行的冷却和今日次数保留，登录挂起会清掉。
+func (s *Store) SaveLoggedInExtension(platform, account, name string) (Browser, error) {
+	b, err := s.UpsertExtensionAccount(platform, account, name)
+	if err != nil {
+		return Browser{}, err
+	}
+	s.ConfirmLogin(b.ID)
+	for _, row := range s.Browsers() {
+		if row.ID == b.ID {
+			return row, nil
+		}
+	}
+	b.IsLoggedIn = true
+	if b.Health == "" {
+		b.Health = HealthReady
+	}
+	return b, nil
+}
+
+// DropExtensionAccount 删掉这个平台上的一条扩展账号。空标识不能用。
+func (s *Store) DropExtensionAccount(platform, account string) {
+	if s == nil {
+		return
+	}
+	platform = strings.TrimSpace(platform)
+	account = strings.TrimSpace(account)
+	if platform == "" || account == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`DELETE FROM browsers WHERE platform=? AND ext_account=?`, platform, account)
+}
+
+// DropUnloggedExtensions 删掉还没确认登录的扩展账号，豆包和千问都算。
+func (s *Store) DropUnloggedExtensions() {
+	if s == nil {
+		return
+	}
+	var ids []int64
+	for _, b := range s.Browsers() {
+		if b.ExtAccount != "" && !b.IsLoggedIn {
+			ids = append(ids, b.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		s.db.Exec(`DELETE FROM browsers WHERE id=? AND is_logged_in=0 AND COALESCE(ext_account,'')<>''`, id)
+	}
+}
+
+// UpsertExtensionAccount 按扩展 profile id 登记或取回账号。
+// 同一配置文件重连不会清掉冷却状态。hello 只是连上时不要调用它；
+// 确认登录后走 SaveLoggedInExtension。
 func (s *Store) UpsertExtensionAccount(platform, account, name string) (Browser, error) {
 	if s == nil {
 		return Browser{}, fmt.Errorf("没有配置库")

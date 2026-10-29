@@ -20,6 +20,7 @@ func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	st.UpdateBrowser(local.ID, false, true)
 	dir := browser.ProfileDir(root, browser.KindEdge, local.Name)
 	if err := os.MkdirAll(filepath.Join(dir, "Default"), 0o755); err != nil {
 		t.Fatal(err)
@@ -27,16 +28,17 @@ func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "Local State"), []byte("profile"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.UpsertExtensionAccount("豆包", "profile-a", "扩展甲"); err != nil {
+	if _, err := st.SaveLoggedInExtension("豆包", "profile-a", "扩展甲"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.UpsertExtensionAccount("千问", "profile-a", "扩展甲"); err != nil {
+	if _, err := st.SaveLoggedInExtension("千问", "profile-a", "扩展甲"); err != nil {
 		t.Fatal(err)
 	}
 	other, err := st.AddBrowser("千问", "账号2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	st.UpdateBrowser(other.ID, false, true)
 	otherDir := browser.ProfileDir(root, browser.KindEdge, other.Name)
 	if err := os.MkdirAll(otherDir, 0o755); err != nil {
 		t.Fatal(err)

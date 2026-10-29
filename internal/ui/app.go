@@ -197,6 +197,7 @@ type App struct {
 	wizardNameFor      int64
 	loginShots         map[int64]loginShot
 	loginWatchGen      map[int64]int
+	loginHold          map[int64]struct{}
 	loginPoll          time.Duration
 	loginFollow        func(store.Browser, string)
 	wizardQR           func(ctx context.Context, endpoint string) ([]byte, bool, error)

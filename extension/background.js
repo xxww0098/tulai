@@ -123,6 +123,33 @@ function refreshBadge() {
   remember('off', '', platforms)
 }
 
+async function pageLoggedIn(platform) {
+  try {
+    const tab = await pickTab(platform)
+    if (!tab || tab.id == null) return null
+    const res = await Promise.race([
+      chrome.tabs.sendMessage(tab.id, { type: 'LOGIN_STATE' }),
+      new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+    ])
+    if (!res || typeof res.loggedIn !== 'boolean') return null
+    return res.loggedIn
+  } catch (err) {
+    return null
+  }
+}
+
+function notePageLogin(link) {
+  pageLoggedIn(link.platform).then((loggedIn) => {
+    if (loggedIn !== true || link.reportedLogin === true) return
+    link.reportedLogin = true
+    const env = TULAI.envelope('event', {
+      payload: { name: 'login', loggedIn: true, account: link.profileId || '' },
+    })
+    env.platform = link.platform
+    try { sendToHost(link, env) } catch (err) {}
+  }).catch(() => {})
+}
+
 function stopPing(link) {
   if (link.pingTimer) {
     clearInterval(link.pingTimer)
@@ -142,6 +169,7 @@ function startPing(link) {
       reconnect(link)
       return
     }
+    notePageLogin(link)
     link.pingAwaiting = true
     const env = TULAI.envelope('ping')
     env.platform = link.platform
@@ -245,12 +273,24 @@ async function connect(link) {
   }, 8000)
   ws.onopen = () => {
     clearTimeout(openTimer)
-    try {
-      ws.send(JSON.stringify(TULAI.hello(cfg.token, link.platform, cfg.profileId)))
-    } catch (err) {
-      link.linkError = TULAIBridge.refusedMessage(port)
-      try { ws.close() } catch (e) {}
-    }
+    link.profileId = cfg.profileId
+    pageLoggedIn(link.platform).then((loggedIn) => {
+      if (link.socket !== ws) return
+      link.reportedLogin = loggedIn === true
+      try {
+        ws.send(JSON.stringify(TULAI.hello(cfg.token, link.platform, cfg.profileId, loggedIn)))
+      } catch (err) {
+        link.linkError = TULAIBridge.refusedMessage(port)
+        try { ws.close() } catch (e) {}
+      }
+    }).catch(() => {
+      if (link.socket !== ws) return
+      try {
+        ws.send(JSON.stringify(TULAI.hello(cfg.token, link.platform, cfg.profileId)))
+      } catch (err) {
+        try { ws.close() } catch (e) {}
+      }
+    })
   }
   ws.onmessage = (ev) => {
     if (typeof ev.data !== 'string') return

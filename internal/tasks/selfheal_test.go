@@ -253,6 +253,30 @@ func TestProbeLogoutWaitsThenDispatches(t *testing.T) {
 	})
 }
 
+func TestProbeInClearsStaleLogout(t *testing.T) {
+	for _, platform := range []string{"豆包", "千问"} {
+		t.Run(platform, func(t *testing.T) {
+			st := openRotateStore(t)
+			row := addNamed(t, st, platform, platform+"2")
+			st.UpdateBrowser(row.ID, true, false)
+			st.UpdateBrowserHealth(row.ID, store.HealthExhausted, 0, "未登录")
+			e := NewEngine(st, nil, nil, "")
+			e.applyLogin(browserByID(t, st, row.ID), heal.StateIn)
+			back := browserByID(t, st, row.ID)
+			if !back.Usable(time.Now()) || !back.IsLoggedIn || back.Health != store.HealthReady || back.LastError != "" {
+				t.Fatalf("confirm = %+v", back)
+			}
+			st.UpdateBrowser(row.ID, false, false)
+			st.UpdateBrowserHealth(row.ID, store.HealthExhausted, 0, "未登录")
+			e.applyLogin(browserByID(t, st, row.ID), heal.StateIn)
+			back = browserByID(t, st, row.ID)
+			if !back.Usable(time.Now()) || !back.IsLoggedIn || back.Health != store.HealthReady || back.LastError != "" {
+				t.Fatalf("stale prev still blocked rotation: %+v", back)
+			}
+		})
+	}
+}
+
 func TestLoginCheckSkipsWhenRecent(t *testing.T) {
 	st := openRotateStore(t)
 	row := addNamed(t, st, "豆包", "账号1")

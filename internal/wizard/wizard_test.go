@@ -68,9 +68,16 @@ func TestShouldShowSkipsHealthyAccounts(t *testing.T) {
 	if ShouldShow(CompleteYes, []Account{ready}, now) {
 		t.Fatal("completed wizard with a healthy account should stay closed")
 	}
-	ext := Account{Platform: "千问", Name: "扩展账号abcd", Extension: true, Health: "ready"}
-	if ShouldShow("", []Account{ext}, now) {
-		t.Fatal("a connected extension account should skip the browser wizard")
+	for _, platform := range []string{"豆包", "千问"} {
+		connected := Account{Platform: platform, Name: "扩展账号abcd", Extension: true, Health: "ready"}
+		if !ShouldShow("", []Account{connected}, now) {
+			t.Fatalf("%s extension that only connected should still show the wizard", platform)
+		}
+		signed := connected
+		signed.LoggedIn = true
+		if ShouldShow("", []Account{signed}, now) {
+			t.Fatalf("logged-in %s extension should skip the wizard", platform)
+		}
 	}
 	cooling := Account{Platform: "豆包", LoggedIn: true, Health: "cooling", CoolUntil: now.Unix() + 60}
 	if ShouldShow(CompleteYes, []Account{cooling}, now) {

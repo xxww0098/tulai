@@ -636,9 +636,19 @@ func TestChromeQianwenWithoutBrowserCannotStart(t *testing.T) {
 	if _, err := st.UpsertExtensionAccount("千问", "profile-1", "扩展千问"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.UpsertExtensionAccount("豆包", "profile-2", "扩展豆包"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.canStart() {
+		t.Fatal("只连上、还没登录的扩展账号不能出图")
+	}
+	if _, err := st.SaveLoggedInExtension("千问", "profile-1", "扩展千问"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Frame()
 	if !a.canStart() {
-		t.Fatal("已连接的扩展账号不能出图")
+		t.Fatal("已登录的千问扩展账号不能出图")
 	}
 }
 

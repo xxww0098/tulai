@@ -67,6 +67,8 @@ type Session struct {
 	account     string
 	accountName string
 	extVersion  string
+	loggedIn    bool
+	loginKnown  bool
 	conn        net.Conn
 	reader      io.Reader
 	srv         *Server
@@ -270,6 +272,14 @@ func (s *Session) AccountName() string {
 	return s.accountName
 }
 
+// Login 是 hello 里有没有带上登录结果。known 为 false 时只是连上了，还不能当已登录。
+func (s *Session) Login() (loggedIn, known bool) {
+	if s == nil {
+		return false, false
+	}
+	return s.loggedIn, s.loginKnown
+}
+
 // Alive 在连接还没关掉时为真。
 func (s *Session) Alive() bool {
 	if s == nil {
@@ -332,12 +342,15 @@ func (s *Server) handshake(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 	account, accountName := HelloAccount(env)
+	loggedIn, loginKnown := HelloLogin(env)
 	sess := &Session{
 		id:          newID(),
 		platform:    env.Platform,
 		account:     account,
 		accountName: accountName,
 		extVersion:  HelloVersion(env),
+		loggedIn:    loggedIn,
+		loginKnown:  loginKnown,
 		conn:        conn,
 		reader:      reader,
 		srv:         s,

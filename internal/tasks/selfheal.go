@@ -226,8 +226,14 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 		e.loginPrev[b.ID] = state
 	}
 	e.mu.Unlock()
+	// 先按库里的当前行确认。上次探测已经是 in 时，Observe 不会再发事件，
+	// 但任务可能把这一行写成了 exhausted / 未登录。
+	repaired := false
+	if state == heal.StateIn {
+		repaired = e.store.ConfirmLogin(b.ID)
+	}
 	out := heal.Observe(prev, state, accountLabel(b))
-	if out.Mark == "" && out.Log == "" && out.Notice == "" {
+	if out.Mark == "" && out.Log == "" && out.Notice == "" && !repaired {
 		return
 	}
 	switch out.Mark {
@@ -241,10 +247,7 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 		e.store.ResetBrowserHealth(b.ID)
 		e.store.UpdateBrowser(b.ID, true, true)
 	case "confirm":
-		e.store.UpdateBrowser(b.ID, true, true)
-		if heldForUser(b) {
-			e.store.ResetBrowserHealth(b.ID)
-		}
+		e.store.ConfirmLogin(b.ID)
 	}
 	if out.Log != "" {
 		e.noteAuto(out.Log)
@@ -258,7 +261,7 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 	if out.Focus {
 		e.focusBrowser(b)
 	}
-	if out.Mark == "restore" {
+	if out.Mark == "restore" || repaired {
 		e.poke()
 	}
 	e.notify()

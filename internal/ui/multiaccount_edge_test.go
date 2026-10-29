@@ -96,9 +96,10 @@ func TestEdgeMultiAccount(t *testing.T) {
 		{"千问", "账号2"},
 		{"豆包", "账号3"},
 	} {
-		a.newBrowserPlat = row.plat
-		a.newBrowserName = row.name
-		a.addBrowser()
+		dir := browser.ProfileDir(dataRoot, browser.KindEdge, row.name)
+		if _, err := st.AddBrowser(row.plat, row.name, dir); err != nil {
+			t.Fatal(err)
+		}
 	}
 	locals := localAccounts(st)
 	if len(locals) != 3 {
@@ -212,15 +213,9 @@ func TestEdgeMultiAccount(t *testing.T) {
 	if len(gotPath) != len(locals) {
 		t.Fatalf("extension hook ran %d times", len(gotPath))
 	}
-	extRows := map[string]int{}
 	for _, row := range st.Browsers() {
-		if row.ExtAccount != "" {
-			extRows[row.ExtAccount]++
-		}
-	}
-	for id, name := range ids {
-		if extRows[id] < 1 {
-			t.Fatalf("%s profile %s did not register an extension account: %+v", name, id, st.Browsers())
+		if row.ExtAccount != "" && !row.IsLoggedIn {
+			t.Fatalf("extension paired before login was saved: %+v", row)
 		}
 	}
 
