@@ -215,3 +215,43 @@ func cleanBrainPath(home, path string) (string, bool) {
 	}
 	return abs, true
 }
+
+// TranscriptQuota 在这次运行之后写过的对话记录里找额度报错。
+// 出图常由子智能体完成，429 只记在子对话里，主结果仍是 SUCCESS。
+func TranscriptQuota(home string, started, now time.Time) (bool, time.Time) {
+	root := filepath.Join(cliDir(home), "brain")
+	dirs, err := os.ReadDir(root)
+	if err != nil {
+		return false, time.Time{}
+	}
+	found := false
+	var until time.Time
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		path := filepath.Join(root, d.Name(), ".system_generated", "logs", "transcript.jsonl")
+		info, err := os.Stat(path)
+		if err != nil || info.ModTime().Before(started) {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			var step struct {
+				Status string `json:"status"`
+				Error  string `json:"error"`
+			}
+			if json.Unmarshal([]byte(line), &step) != nil || step.Status != "ERROR" || !quotaText(step.Error) {
+				continue
+			}
+			found = true
+			if t := parseReset(step.Error, now); !t.IsZero() {
+				until = t
+			}
+		}
+	}
+	return found, until
+}
