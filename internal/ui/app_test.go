@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -20,17 +21,23 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"tulai", "生图", "洗图", "浏览器", "提示词", "设置", "开始出图", "更多设置", "拖入或点击添加图片", "检查更新", "设置向导"} {
+	for _, label := range []string{"回到生图", "生图", "洗图", "浏览器", "提示词", "设置", "开始出图", "提示词内容", "从文件载入", "拖入或点击添加图片", "检查更新", "设置向导"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
+	if tt.HasText("更多设置") || tt.HasText("输出目录") || tt.HasText("每日上限") {
+		t.Fatal("生图页还留着配置")
+	}
+	prompt := assertVisible(t, tt, "每行一条，空行隔开的段落收成一条", 1280, 840)
 	drop := assertVisible(t, tt, "拖入或点击添加图片", 1280, 840)
 	start := assertVisible(t, tt, "开始出图", 1280, 840)
-	advanced := assertVisible(t, tt, "更多设置", 1280, 840)
+	if prompt.Y > drop.Y {
+		t.Fatal("提示词应该在参考图上面")
+	}
 	if start.Y < drop.Y+drop.H+24 {
 		t.Fatalf("start button crowds the drop zone: drop=%+v start=%+v", drop, start)
 	}
-	if advanced.Y < start.Y+start.H-1 {
-		t.Fatalf("advanced overlaps the start button: start=%+v advanced=%+v", start, advanced)
+	if start.X < drop.X+80 {
+		t.Fatalf("start button is not to the right: %+v", start)
 	}
 	if tt.HasText("清空") {
 		t.Fatal("empty drop zone shows the filled-state importer")
@@ -38,7 +45,7 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	for _, tab := range []struct{ label, want string }{
 		{"浏览器", "浏览器实例"},
 		{"提示词", "保存提示词"},
-		{"设置", "自动求解验证码"},
+		{"设置", "账号与并发"},
 		{"洗图", "开始洗图"},
 		{"生图", "开始出图"},
 	} {
@@ -46,6 +53,27 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertVisible(t, tt, tab.want, 1280, 840)
+	}
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{"输出目录", "生图和洗图按日期放进各自的文件夹。", "每日上限", "审核改写词", "去水印（实验）", "自动求解验证码", "跟随系统"} {
+		scrollIntoView(t, tt, label, 1280, 840)
+	}
+	if tt.HasText("更多设置") || tt.HasText("保存方式") || tt.HasText("命名规则") {
+		t.Fatal("设置页还留着已经去掉的保存选项")
+	}
+}
+
+func TestSettingsShowsBothDayFolders(t *testing.T) {
+	root := t.TempDir()
+	day := time.Now().Format("2006-01-02")
+	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), tab: pageSettings, outputPath: root, platformAuto: true}
+	tt := ui.NewTester(a.view, 1280, 900)
+	gen := "生图保存到 " + filepath.Join(root, "生图", day)
+	wash := "洗图保存到 " + filepath.Join(root, "洗图", day)
+	if !tt.HasText(gen) || !tt.HasText(wash) {
+		t.Fatalf("missing day folders: %v", tt.Texts())
 	}
 }
 
@@ -61,7 +89,7 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"开始出图", "拖入或点击添加图片", "不使用图片，只用提示词", "检查更新"} {
+	for _, label := range []string{"开始出图", "拖入或点击添加图片", "不放图片也可以只写提示词", "从文件载入", "检查更新"} {
 		if !tt.HasText(label) {
 			t.Fatalf("缺少文生图说明 %q", label)
 		}
@@ -142,7 +170,7 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"tulai", "检查更新", "开始出图", "出图进度", "排队中", "更多设置", "添加图片"} {
+				for _, label := range []string{"回到生图", "检查更新", "开始出图", "出图进度", "排队中", "添加图片", "运行日志"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})
@@ -186,7 +214,8 @@ func TestSaveSettingsIncludesLatestBoundInput(t *testing.T) {
 		tab: pageSettings,
 	}
 	a.loadSettings()
-	tt := ui.NewTester(a.view, 1280, 840)
+	tt := ui.NewTester(a.view, 1280, 1800)
+	scrollIntoView(t, tt, "自动求解验证码", 1280, 1800)
 	if err := tt.Click("自动求解验证码"); err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +261,10 @@ func TestWatermarkOptionDefaultsPersistsAndReachesTask(t *testing.T) {
 	if a.removeWatermark || a.taskOptions(nil, nil, nil).RemoveWatermark {
 		t.Fatal("watermark repair must be disabled until explicitly enabled")
 	}
-	tt := ui.NewTester(a.advancedFields, 720, 1400)
-	assertVisible(t, tt, "去水印（实验）", 720, 1400)
+	a.tab = pageSettings
+	tt := ui.NewTester(a.view, 760, 900)
+	scrollIntoView(t, tt, "去水印（实验）", 760, 900)
+	assertVisible(t, tt, "去水印（实验）", 760, 900)
 	if !tt.HasText("已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。") {
 		t.Fatal("watermark repair does not explain output preservation and limitations")
 	}

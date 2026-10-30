@@ -120,7 +120,7 @@ func TestUpdateBannerSlidesDownAndStaysClickable(t *testing.T) {
 }
 
 func TestPromptSelectChoosesWhileOpening(t *testing.T) {
-	a := &App{}
+	a := &App{tab: pagePrompts}
 	tt := ui.NewTester(a.view, 1280, 840)
 	if err := tt.Click(prompts.LabelCustom); err != nil {
 		t.Fatal(err)

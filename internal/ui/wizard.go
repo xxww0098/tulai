@@ -195,7 +195,10 @@ func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string, on *bool) {
 	hoverPressPose(card)
 	card.Children(func() {
 		ui.Column(c).FillWidth().Gap(12).Padding(8, 4).Children(func() {
-			ui.Text(c, name).FontSize(26).Bold()
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+				platformIcon(c, name, 28, a.look)
+				ui.Text(c, name).FontSize(26).Bold()
+			})
 			ui.Text(c, blurb).FontSize(14).TextColor(c.Theme().TextMuted)
 			label, color := "点击选择", c.Theme().TextMuted
 			if *on {

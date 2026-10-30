@@ -46,6 +46,25 @@ func utf8DecodeFirst(s string) (rune, int) {
 	return []rune(s)[0], 1
 }
 
+func TestImportTextKeepsLinesAndBlankParagraphs(t *testing.T) {
+	if got := ImportText("甲\r\n乙\n"); got != "甲\n乙" {
+		t.Fatalf("lines = %q", got)
+	}
+	if got := ImportText("\uFEFF甲\n\n乙\n"); got != "甲\n乙" {
+		t.Fatalf("blank lines = %q", got)
+	}
+	if got := ImportText("甲\n\n乙\n丙\n\n丁"); got != "甲\n乙 丙\n丁" {
+		t.Fatalf("paragraphs = %q", got)
+	}
+	if got := ImportText("  \n"); got != "" {
+		t.Fatalf("empty = %q", got)
+	}
+	lines := TaskPrompts("", ImportText("画一只猫\n\n画一条鱼"))
+	if len(lines) != 2 || lines[0] != "画一只猫" || lines[1] != "画一条鱼" {
+		t.Fatalf("task prompts = %#v", lines)
+	}
+}
+
 func TestTemplateIsOnePromptAndLinesStaySplit(t *testing.T) {
 	oil, _ := Builtin(IDOil)
 	got := TaskPrompts(IDOil, oil.Body)

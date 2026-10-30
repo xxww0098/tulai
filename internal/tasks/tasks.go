@@ -3,7 +3,6 @@
 package tasks
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -70,12 +69,6 @@ type Options struct {
 	TaskSwitching      bool
 	TaskSwitchingCount int
 	StartBrowserIndex  int
-	SaveMode           string // 单文件夹汇总 / 按源图片分文件夹
-	NamingRule         string // 原文件名 / 时间戳 / 自定义
-	FilePrefix         string
-	FilePrefixEnabled  bool
-	FileSuffix         string
-	FileSuffixEnabled  bool
 	OutputPath         string
 	RemoveWatermark    bool // 另存计算去水印版本，始终保留原图
 	DailyCap           int
@@ -184,7 +177,7 @@ func RebuildRetry(items []Task) []Task {
 	return out
 }
 
-// resultSource 是命名和分文件夹用的路径。文生图没有源图，用提示词第一行造一个文件名。
+// resultSource 是洗图命名用的源路径。没有源图时用提示词第一行造一个文件名。
 func resultSource(t *Task) string {
 	if t != nil && len(t.Images) > 0 {
 		return t.Images[0]
@@ -225,56 +218,35 @@ func promptFileName(prompt string) string {
 	return name + ".png"
 }
 
-// promptBatchBase 是一条回复里第 seq 张图的文件名（不含扩展名），从 01 起。
-func promptBatchBase(prompt string, seq int) string {
-	if seq < 1 {
-		seq = 1
-	}
-	return fmt.Sprintf("%s_%02d", strings.TrimSuffix(promptFileName(prompt), ".png"), seq)
-}
-
-// resultBase 有提示词时用「提示词_01」。没有提示词时沿用源文件名和前后缀。
-func (o Options) resultBase(prompt, source string, seq, total int) string {
+// resultStem 是序号前面的名字。生图用提示词，洗图用源文件名。
+func (o Options) resultStem(prompt, source string) string {
 	if o.Wash {
-		return fmt.Sprintf("%s_%02d", strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)), max(seq, 1))
+		return sourceStem(source)
 	}
-	if strings.TrimSpace(prompt) != "" {
-		return promptBatchBase(prompt, seq)
-	}
-	return strings.TrimSuffix(o.NameFor(source, seq, total), ".png")
+	return strings.TrimSuffix(promptFileName(prompt), ".png")
 }
 
-// NameFor 结果文件名：按命名规则 + 前后缀。
-func (o Options) NameFor(sourcePath string, seq, total int) string {
-	base := strings.TrimSuffix(filepath.Base(sourcePath), filepath.Ext(sourcePath))
-	switch o.NamingRule {
-	case "时间戳":
-		base = timestamp()
-	case "序号":
-		base = fmt.Sprintf("%03d", seq)
+func sourceStem(source string) string {
+	base := filepath.Base(strings.TrimSpace(source))
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	base = strings.Trim(base, " .")
+	if base == "" || base == ".." {
+		return "洗图"
 	}
-	if o.FilePrefixEnabled && o.FilePrefix != "" {
-		base = o.FilePrefix + base
-	}
-	if o.FileSuffixEnabled && o.FileSuffix != "" {
-		base = base + o.FileSuffix
-	}
-	if total > 1 {
-		base = fmt.Sprintf("%s_%02d", base, seq)
-	}
-	return base + ".png"
+	return base
 }
 
-// ResultDir 结果目录：单文件夹汇总 / 按源图片分文件夹。
-func (o Options) ResultDir(sourcePath string) string {
-	if o.SaveMode == "按源图片分文件夹" {
-		base := strings.TrimSuffix(filepath.Base(sourcePath), filepath.Ext(sourcePath))
-		return filepath.Join(o.OutputPath, base)
+// ResultDir 是这次保存用的日期目录。生图和洗图分开，按本地日期轮换，同一天进同一个文件夹。
+func (o Options) ResultDir(when time.Time) string {
+	if when.IsZero() {
+		when = time.Now()
 	}
-	return o.OutputPath
+	kind := "生图"
+	if o.Wash {
+		kind = "洗图"
+	}
+	return filepath.Join(o.OutputPath, kind, when.Format("2006-01-02"))
 }
-
-func timestamp() string { return time.Now().Format("20060102_150405") }
 
 // QueueView 队列快照（UI 读取）。
 type QueueView struct {

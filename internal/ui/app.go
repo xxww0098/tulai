@@ -1,5 +1,5 @@
-// Package ui mygo 原生界面。左侧是图标导航；出图页左边写步骤，右边是账号和进度。
-// 平台、轮换和输出在「高级」里。浏览器、提示词和设置仍是单独的页。
+// Package ui mygo 原生界面。左侧是图标导航。
+// 生图和洗图左边是输入和开始，右边是账号、进度和运行日志。配置在设置页。
 package ui
 
 import (
@@ -89,12 +89,6 @@ type App struct {
 	taskSwitch      bool
 	switchCount     float64
 	startBrowserIdx float64
-	saveMode        string
-	namingRule      string
-	filePrefix      string
-	prefixOn        bool
-	fileSuffix      string
-	suffixOn        bool
 	outputPath      string
 	removeWatermark bool
 	prompts         string
@@ -107,9 +101,7 @@ type App struct {
 	useSuffix       bool
 	batchMode       int // batchText 文生图 / batchImage 图生图
 	platformAuto    bool
-	advancedOpen    bool
 	logScroll       ui.ScrollState
-	logsOpen        bool
 	stageTab        int
 	stagePicked     bool
 	outputNote      string
@@ -163,7 +155,6 @@ type App struct {
 	queue    []tasks.Task
 	queueTbl ui.ListState
 	logs     []logging.Entry
-	logList  ui.ListState
 	progress float64
 	progText string
 	running  bool
@@ -175,6 +166,7 @@ type App struct {
 	splitSz      float32
 	sourceHeight float32
 	updateBusy   bool
+	updateChecks int // 手动检查更新的次数。点下去就加，不等网络返回。
 
 	autoCheck          bool
 	updateMirror       string
@@ -364,12 +356,6 @@ func (a *App) loadSettings() {
 	a.taskSwitch = s.GetBool("task_switching")
 	a.switchCount = float64(clampInt(s.GetInt("task_switching_count"), 1, 9999))
 	a.startBrowserIdx = float64(clampInt(s.GetInt("start_browser_index"), 1, 999))
-	a.saveMode = pickStr(s.Get("save_mode"), "单文件夹汇总", []string{"单文件夹汇总", "按源图片分文件夹"})
-	a.namingRule = pickStr(s.Get("naming_rule"), "原文件名", []string{"原文件名", "时间戳", "序号"})
-	a.filePrefix = s.Get("file_prefix")
-	a.prefixOn = s.GetBool("file_prefix_enabled")
-	a.fileSuffix = s.Get("file_suffix")
-	a.suffixOn = s.GetBool("file_suffix_enabled")
 	a.outputPath = s.Get("output_path")
 	a.removeWatermark = s.GetBool("remove_watermark")
 	a.prompts = s.Get("prompts")
@@ -470,12 +456,6 @@ func (a *App) saveSettings() {
 	s.SetInt("task_switching", boolInt(a.taskSwitch))
 	s.SetInt("task_switching_count", int(a.switchCount))
 	s.SetInt("start_browser_index", int(a.startBrowserIdx))
-	s.Set("save_mode", a.saveMode)
-	s.Set("naming_rule", a.namingRule)
-	s.Set("file_prefix", a.filePrefix)
-	s.SetInt("file_prefix_enabled", boolInt(a.prefixOn))
-	s.Set("file_suffix", a.fileSuffix)
-	s.SetInt("file_suffix_enabled", boolInt(a.suffixOn))
 	s.Set("output_path", a.outputPath)
 	s.SetInt("remove_watermark", boolInt(a.removeWatermark))
 	gen, wash := a.stateOf(pageHome), a.stateOf(pageWash)
@@ -649,12 +629,6 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		TaskSwitching:      a.taskSwitch,
 		TaskSwitchingCount: int(a.switchCount),
 		StartBrowserIndex:  int(a.startBrowserIdx),
-		SaveMode:           a.saveMode,
-		NamingRule:         a.namingRule,
-		FilePrefix:         a.filePrefix,
-		FilePrefixEnabled:  a.prefixOn,
-		FileSuffix:         a.fileSuffix,
-		FileSuffixEnabled:  a.suffixOn,
 		OutputPath:         a.outputPath,
 		RemoveWatermark:    a.removeWatermark,
 		DailyCap:           a.shownDailyCap(),

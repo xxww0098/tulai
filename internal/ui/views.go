@@ -602,7 +602,10 @@ func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
 				if b.ExtAccount != "" {
 					line = b.Platform + " · 扩展会话"
 				}
-				ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+				ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(0).Children(func() {
+					platformIcon(c, b.Platform, 16, a.look)
+					ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().MinWidth(0)
+				})
 				ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
 				if b.LastError != "" && !b.Usable(time.Now()) && !staleLoginCopy(b, signedIn) {
 					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)

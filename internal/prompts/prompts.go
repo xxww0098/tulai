@@ -281,6 +281,49 @@ func LabelFromBody(body string) string {
 	return line
 }
 
+// ImportText 把 txt 收成「每行一条」。
+// 空行隔开、且其中有一段超过一行时，按空行分段，段内换行并成一条。
+// 否则丢掉空行，每行一条。这样两种常见写法都进得了 TaskPrompts。
+func ImportText(raw string) string {
+	raw = strings.TrimPrefix(raw, "\uFEFF")
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+	var blocks [][]string
+	var cur []string
+	blank := false
+	sawBlank := false
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if len(cur) > 0 {
+				blocks = append(blocks, cur)
+				cur = nil
+				blank = true
+			}
+			continue
+		}
+		if blank && len(blocks) > 0 {
+			sawBlank = true
+		}
+		blank = false
+		cur = append(cur, line)
+	}
+	if len(cur) > 0 {
+		blocks = append(blocks, cur)
+	}
+	var out []string
+	if sawBlank {
+		for _, block := range blocks {
+			out = append(out, strings.Join(block, " "))
+		}
+	} else {
+		for _, block := range blocks {
+			out = append(out, block...)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 // TaskPrompts 是这次要送出去的提示词。
 // 选了模板时，整段正文是一条（换行留在正文里，不按行拆开）。
 // 「每行一条」才按非空行拆开。

@@ -164,7 +164,6 @@ func TestExtensionQianwenHappyPathRetriesWaitWithoutResend(t *testing.T) {
 		WaitResult:        true,
 		WaitResultSeconds: 30,
 		OutputPath:        filepath.Join(dir, "out"),
-		NamingRule:        "原文件名",
 	}, func(task Task) { last = task }, func(Progress) {})
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +279,6 @@ func TestQianwenCaptchaDoesNotDragOrRetrySend(t *testing.T) {
 		WaitResult:        true,
 		WaitResultSeconds: 30,
 		OutputPath:        filepath.Join(dir, "out"),
-		NamingRule:        "原文件名",
 	}, func(task Task) { last = task }, func(Progress) {})
 	if last.Status != StatusNeedsUser {
 		t.Fatalf("status=%s err=%s", last.Status, last.Error)
@@ -446,7 +444,6 @@ func TestExtensionDoubaoHappyPath(t *testing.T) {
 		WaitResult:        true,
 		WaitResultSeconds: 30,
 		OutputPath:        filepath.Join(dir, "out"),
-		NamingRule:        "原文件名",
 	}, func(task Task) { last = task }, func(Progress) {})
 	if err != nil {
 		t.Fatal(err)
@@ -705,14 +702,15 @@ func TestExtensionDownloadStripsDoubaoWatermarkAndRepairs(t *testing.T) {
 		e.opts = Options{OutputPath: t.TempDir(), RemoveWatermark: enabled}
 		start := len(logging.Log.Entries())
 		saved, err := e.saveResults(context.Background(), &Task{Platform: "豆包", Images: []string{"source.png"}}, nil, nil, out.Results)
-		if err != nil || len(saved) != 1 || filepath.Base(saved[0]) != "source.png" {
+		day := e.opts.ResultDir(time.Now())
+		if err != nil || len(saved) != 1 || saved[0] != filepath.Join(day, "文生图_01.png") {
 			t.Fatalf("enabled=%t saved=%v err=%v", enabled, saved, err)
 		}
 		file, err := os.ReadFile(saved[0])
 		if err != nil || !bytes.Equal(file, want) {
 			t.Fatalf("enabled=%t 落盘应是去水印 PNG: %v", enabled, err)
 		}
-		files, err := os.ReadDir(e.opts.OutputPath)
+		files, err := os.ReadDir(day)
 		if err != nil || len(files) != 1 {
 			t.Fatalf("enabled=%t 不应另存第二份: %v %v", enabled, files, err)
 		}

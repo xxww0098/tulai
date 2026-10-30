@@ -988,8 +988,11 @@ func TestWaitAndSaveCancellationDuringResultRead(t *testing.T) {
 func TestWaitAndSaveRetainsPartialResultsOnDiskError(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{OutputPath: t.TempDir(), WaitResultSeconds: 60}
-	base := strings.Repeat("s", 40)
-	blocker := filepath.Join(e.opts.OutputPath, base+"_02.png")
+	day := e.opts.ResultDir(time.Now())
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(day, "雪景_01.png")
 	if err := os.WriteFile(blocker, []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -998,17 +1001,12 @@ func TestWaitAndSaveRetainsPartialResultsOnDiskError(t *testing.T) {
 		rounds: [][]strategy.Result{{{URL: "first"}, {URL: "second"}}},
 		data:   map[string][]byte{"first": first, "second": second},
 	}
-	task := &Task{Images: []string{base + ".png"}}
+	task := &Task{Prompt: "雪景", Images: []string{"source.png"}}
 	if err := e.waitAndSave(context.Background(), task, strat, nil); err != nil || len(task.Results) != 2 {
-		t.Fatalf("重名应改存时间戳目录，而不是失败: %v %v", task.Results, err)
+		t.Fatalf("重名应继续编号，而不是失败: %v %v", task.Results, err)
 	}
-	for _, path := range task.Results {
-		if path == blocker || strings.Contains(filepath.Base(path), "_1.png") {
-			t.Fatalf("冲突文件被覆盖或加了混乱后缀: %s", path)
-		}
-		if filepath.Dir(path) == e.opts.OutputPath {
-			t.Fatal("整批应离开已被占用的文件名")
-		}
+	if task.Results[0] != filepath.Join(day, "雪景_02.png") || task.Results[1] != filepath.Join(day, "雪景_03.png") {
+		t.Fatalf("应从已占用的 _01 继续编号: %v", task.Results)
 	}
 	if data, err := os.ReadFile(blocker); err != nil || string(data) != "keep" {
 		t.Fatalf("已有文件不应覆盖: %v", err)
@@ -1069,13 +1067,14 @@ func TestSaveResultsUsesImageFormat(t *testing.T) {
 	}{{".png", resultPNG(t, 1)}, {".jpg", jpg.Bytes()}, {".gif", animation.Bytes()}} {
 		t.Run(tc.ext, func(t *testing.T) {
 			e := NewEngine(nil, nil, nil, "")
-			e.opts = Options{OutputPath: t.TempDir(), FilePrefix: "pre_", FilePrefixEnabled: true}
-			saved, err := e.saveResults(context.Background(), &Task{Images: []string{"source.png"}}, resultBytesStrategy{data: tc.data}, nil, []strategy.Result{{URL: "result"}})
+			e.opts = Options{OutputPath: t.TempDir()}
+			saved, err := e.saveResults(context.Background(), &Task{Prompt: "雪景", Images: []string{"source.png"}}, resultBytesStrategy{data: tc.data}, nil, []strategy.Result{{URL: "result"}})
 			if err != nil || len(saved) != 1 {
 				t.Fatalf("保存结果 = %v, %v", saved, err)
 			}
-			if filepath.Base(saved[0]) != "pre_source"+tc.ext {
-				t.Errorf("结果文件名 = %s, want pre_source%s", saved[0], tc.ext)
+			want := filepath.Join(e.opts.ResultDir(time.Now()), "雪景_01"+tc.ext)
+			if saved[0] != want {
+				t.Errorf("结果文件名 = %s, want %s", saved[0], want)
 			}
 			data, err := os.ReadFile(saved[0])
 			if err != nil || !bytes.Equal(data, tc.data) {
@@ -1092,14 +1091,15 @@ func TestSaveResultsWatermarkKeepsOriginalByDefaultAndOnNoMatch(t *testing.T) {
 			e := NewEngine(nil, nil, nil, "")
 			e.opts = Options{OutputPath: t.TempDir(), RemoveWatermark: enabled}
 			start := len(logging.Log.Entries())
-			saved, err := e.saveResults(context.Background(), &Task{Platform: "千问", Images: []string{"source.png"}}, resultBytesStrategy{}, nil, []strategy.Result{{Data: data}})
-			if err != nil || len(saved) != 1 || filepath.Base(saved[0]) != "source.png" {
+			saved, err := e.saveResults(context.Background(), &Task{Platform: "千问", Prompt: "雪景", Images: []string{"source.png"}}, resultBytesStrategy{}, nil, []strategy.Result{{Data: data}})
+			day := e.opts.ResultDir(time.Now())
+			if err != nil || len(saved) != 1 || saved[0] != filepath.Join(day, "雪景_01.png") {
 				t.Fatalf("默认或不匹配须返回原图: paths=%v, err=%v", saved, err)
 			}
 			if original, err := os.ReadFile(saved[0]); err != nil || !bytes.Equal(original, data) {
 				t.Fatalf("原图字节必须完整保留: %v", err)
 			}
-			files, err := os.ReadDir(e.opts.OutputPath)
+			files, err := os.ReadDir(day)
 			if err != nil || len(files) != 1 {
 				t.Fatalf("未处理不得新增修复文件: %v, %v", files, err)
 			}
@@ -1165,18 +1165,19 @@ func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/enabled=%t", platform, enabled), func(t *testing.T) {
 				e := NewEngine(nil, nil, nil, "")
 				e.opts = Options{OutputPath: t.TempDir(), RemoveWatermark: enabled, WaitResultSeconds: 60}
-				task := &Task{Platform: platform, Images: []string{"source.png"}}
+				task := &Task{Platform: platform, Prompt: "雪景", Images: []string{"source.png"}}
 				strat := &resultSequenceStrategy{rounds: [][]strategy.Result{{{Data: data}}}}
 				if err := e.waitAndSave(context.Background(), task, strat, nil); err != nil || len(task.Results) != 1 {
 					t.Fatalf("一张生成图只应有一个结果路径: %v, %v", task.Results, err)
 				}
-				original := filepath.Join(e.opts.OutputPath, "source.png")
+				day := e.opts.ResultDir(time.Now())
+				original := filepath.Join(day, "雪景_01.png")
 				if saved, err := os.ReadFile(original); err != nil || !bytes.Equal(saved, data) {
 					t.Fatalf("原图始终保留下载字节: %v", err)
 				}
-				wantName, wantFiles := "source.png", 1
+				wantName, wantFiles := "雪景_01.png", 1
 				if enabled {
-					wantName, wantFiles = "source_去水印.png", 2
+					wantName, wantFiles = "雪景_01_去水印.png", 2
 					repaired, err := os.ReadFile(task.Results[0])
 					if err != nil || bytes.Equal(repaired, data) {
 						t.Fatalf("命中应另存处理版: %v", err)
@@ -1189,7 +1190,7 @@ func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
 				if filepath.Base(task.Results[0]) != wantName {
 					t.Fatalf("结果路径 = %s, want %s", task.Results[0], wantName)
 				}
-				files, err := os.ReadDir(e.opts.OutputPath)
+				files, err := os.ReadDir(day)
 				if err != nil || len(files) != wantFiles {
 					t.Fatalf("落盘文件数应为 %d: %v, %v", wantFiles, files, err)
 				}
@@ -1200,11 +1201,11 @@ func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
 
 func TestSaveResultsWatermarkWriteFailureKeepsOriginalWithoutRetry(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
-	e.opts = Options{OutputPath: t.TempDir(), RemoveWatermark: true, WaitResultSeconds: 60, RetryCount: 2}
+	e.opts = Options{OutputPath: t.TempDir(), RemoveWatermark: true, WaitResultSeconds: 60, RetryCount: 2, Wash: true}
 	data := watermarkResultPNG(t, "豆包")
 	strat := &resultSequenceStrategy{rounds: [][]strategy.Result{{{Data: data}}}}
-	// 原图名合法，另存的中文后缀将超过文件系统单文件名上限。
-	task := Task{Platform: "豆包", Images: []string{strings.Repeat("s", 248) + ".png"}}
+	// 原图名合法，另存的「_01_去水印」将超过文件系统单文件名上限。
+	task := Task{Platform: "豆包", Images: []string{strings.Repeat("s", 240) + ".png"}}
 	start := len(logging.Log.Entries())
 	task = e.execute(context.Background(), task, func(ctx context.Context, task *Task) error {
 		return e.waitAndSave(ctx, task, strat, nil)
@@ -1224,7 +1225,8 @@ func TestSaveResultsWatermarkWriteFailureKeepsOriginalWithoutRetry(t *testing.T)
 	if !warned {
 		t.Fatal("修复版本写失败须明确警告")
 	}
-	if files, err := os.ReadDir(e.opts.OutputPath); err != nil || len(files) != 1 {
+	files, err := os.ReadDir(e.opts.ResultDir(time.Now()))
+	if err != nil || len(files) != 1 {
 		t.Fatalf("修复失败只应留完整原图: %v, %v", files, err)
 	}
 }
@@ -1249,7 +1251,7 @@ func TestSaveResultsWatermarkCancellationRetainsOriginal(t *testing.T) {
 	if original, err := os.ReadFile(task.Results[0]); err != nil || !bytes.Equal(original, data) {
 		t.Fatalf("取消不得删除已完成原图: %v", err)
 	}
-	files, err := os.ReadDir(e.opts.OutputPath)
+	files, err := os.ReadDir(e.opts.ResultDir(time.Now()))
 	if err != nil || len(files) != 1 || !e.seenHash[images.SHA256(data)] {
 		t.Fatalf("取消只保留原图和已完成去重状态: files=%v, hashes=%v, err=%v", files, e.seenHash, err)
 	}
@@ -1325,10 +1327,13 @@ func TestWatermarkStaticWebP(t *testing.T) {
 func TestSaveResultsConcurrentNamesNeverOverwrite(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{OutputPath: t.TempDir()}
-	for _, name := range []string{"source.png", "source_1.png"} {
-		if err := os.WriteFile(filepath.Join(e.opts.OutputPath, name), []byte("keep"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	day := e.opts.ResultDir(time.Now())
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(day, "雪景_01.png")
+	if err := os.WriteFile(keep, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	const count = 32
 	start := make(chan struct{})
@@ -1340,7 +1345,7 @@ func TestSaveResultsConcurrentNamesNeverOverwrite(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			saved, err := e.saveResults(context.Background(), &Task{Images: []string{"source.png"}}, resultBytesStrategy{data: data}, nil, []strategy.Result{{URL: "result"}})
+			saved, err := e.saveResults(context.Background(), &Task{Prompt: "雪景"}, resultBytesStrategy{data: data}, nil, []strategy.Result{{URL: "result"}})
 			if err != nil || len(saved) != 1 {
 				t.Errorf("并发保存 = %v, %v", saved, err)
 				return
@@ -1353,19 +1358,20 @@ func TestSaveResultsConcurrentNamesNeverOverwrite(t *testing.T) {
 	close(paths)
 	unique := map[string]bool{}
 	for path := range paths {
-		if unique[path] {
-			t.Errorf("并发结果覆盖同一个路径: %s", path)
+		if unique[path] || path == keep {
+			t.Errorf("并发结果撞了同一个路径: %s", path)
+		}
+		if filepath.Dir(path) != day {
+			t.Errorf("并发结果离开了当天目录: %s", path)
 		}
 		unique[path] = true
 	}
 	if len(unique) != count {
 		t.Errorf("独立结果文件数 = %d, want %d", len(unique), count)
 	}
-	for _, name := range []string{"source.png", "source_1.png"} {
-		data, err := os.ReadFile(filepath.Join(e.opts.OutputPath, name))
-		if err != nil || string(data) != "keep" {
-			t.Errorf("既有文件被覆盖: %s, %v", name, err)
-		}
+	data, err := os.ReadFile(keep)
+	if err != nil || string(data) != "keep" {
+		t.Errorf("既有文件被覆盖: %v", err)
 	}
 }
 
@@ -1398,106 +1404,105 @@ func TestSaveResultsRetryAfterDiskFailure(t *testing.T) {
 	}
 }
 
-func TestNameFor(t *testing.T) {
-	opts := Options{
-		NamingRule:        "原文件名",
-		FilePrefix:        "pre_",
-		FilePrefixEnabled: true,
-		FileSuffix:        "_suf",
-		FileSuffixEnabled: true,
+func TestResultStemAndDayDir(t *testing.T) {
+	when := time.Date(2026, 10, 30, 15, 4, 5, 0, time.Local)
+	gen := Options{OutputPath: "/out"}
+	if d := gen.ResultDir(when); d != filepath.Join("/out", "生图", "2026-10-30") {
+		t.Fatalf("生图目录: %s", d)
 	}
-	got := opts.NameFor("/tmp/照片 01.png", 1, 3)
-	if !strings.HasPrefix(got, "pre_") || !strings.Contains(got, "照片 01") || !strings.Contains(got, "_suf_01.png") {
-		t.Errorf("命名: %s", got)
+	wash := Options{OutputPath: "/out", Wash: true}
+	if d := wash.ResultDir(when); d != filepath.Join("/out", "洗图", "2026-10-30") {
+		t.Fatalf("洗图目录: %s", d)
 	}
-	opts2 := Options{NamingRule: "时间戳"}
-	if got := opts2.NameFor("x.png", 1, 1); !strings.HasSuffix(got, ".png") || filepath.Base(got) == "x.png" {
-		t.Errorf("时间戳命名: %s", got)
+	if got := gen.resultStem("画一只猫\n高清 4K", "/in/cat.png"); got != "画一只猫" {
+		t.Fatalf("生图用提示词: %s", got)
 	}
-}
-
-func TestTextOnlyResultName(t *testing.T) {
-	opts := Options{NamingRule: "原文件名", SaveMode: "按源图片分文件夹", OutputPath: "/out"}
-	src := resultSource(&Task{Prompt: "画一只猫\n高清 4K"})
-	if got := opts.NameFor(src, 1, 1); got != "画一只猫.png" {
-		t.Fatalf("文生图文件名: %s", got)
+	if got := gen.resultStem("a/b:c*?", ""); got != "a_b_c__" {
+		t.Fatalf("非法字符: %s", got)
 	}
-	if got := opts.ResultDir(src); got != filepath.Join("/out", "画一只猫") {
-		t.Fatalf("文生图目录: %s", got)
+	if got := gen.resultStem(strings.Repeat("猫", 50), ""); got != strings.Repeat("猫", 40) {
+		t.Fatalf("过长提示词: %s", got)
 	}
-	src = resultSource(&Task{Prompt: "a/b:c*?"})
-	if got := opts.NameFor(src, 1, 1); got != "a_b_c__.png" {
-		t.Fatalf("非法字符文件名: %s", got)
+	if got := gen.resultStem("  ", ""); got != "文生图" {
+		t.Fatalf("空提示词: %s", got)
 	}
-	long := strings.Repeat("猫", 50)
-	src = resultSource(&Task{Prompt: long})
-	if got := opts.NameFor(src, 1, 1); got != strings.Repeat("猫", 40)+".png" {
-		t.Fatalf("过长提示词文件名: %s", got)
+	if got := wash.resultStem("提取商品主体", "/in/海报 A.jpg"); got != "海报 A" {
+		t.Fatalf("洗图用源文件名: %s", got)
 	}
-	if got := opts.NameFor(resultSource(&Task{}), 1, 1); got != "文生图.png" {
-		t.Fatalf("空提示词文件名: %s", got)
-	}
-	if got := resultSource(&Task{Images: []string{"a/cat.png"}, Prompt: "忽略"}); got != "a/cat.png" {
-		t.Fatalf("图生图仍用源图命名: %s", got)
+	if got := wash.resultStem("提取商品主体", ""); got != "洗图" {
+		t.Fatalf("洗图空文件名: %s", got)
 	}
 }
 
 func TestSaveResultsTextOnlyUsesPromptName(t *testing.T) {
 	dir := t.TempDir()
 	e := NewEngine(nil, nil, nil, "")
-	e.opts = Options{OutputPath: dir, NamingRule: "原文件名", SaveMode: "按源图片分文件夹"}
+	e.opts = Options{OutputPath: dir}
 	saved, err := e.saveResults(context.Background(), &Task{Prompt: "画一只猫"}, nil, nil, []strategy.Result{{Data: resultPNG(t, 9)}})
 	if err != nil || len(saved) != 1 {
 		t.Fatalf("保存文生图结果: %v, %v", saved, err)
 	}
-	want := filepath.Join(dir, "画一只猫", "画一只猫_01.png")
+	want := filepath.Join(e.opts.ResultDir(time.Now()), "画一只猫_01.png")
 	if saved[0] != want {
 		t.Fatalf("路径 = %s, want %s", saved[0], want)
 	}
 }
 
-func TestSaveResultsNamesEveryImageAndAvoidsSuffixCollision(t *testing.T) {
+func TestSaveResultsNumberingContinuesAcrossRuns(t *testing.T) {
 	dir := t.TempDir()
-	e := NewEngine(nil, nil, nil, "")
-	e.opts = Options{OutputPath: dir}
-	task := &Task{Prompt: "雪山下的小木屋", Images: []string{"source.png"}}
-	var results []strategy.Result
-	for i := range 4 {
-		results = append(results, strategy.Result{Data: resultPNG(t, uint8(i+1))})
+	day := Options{OutputPath: dir}.ResultDir(time.Now())
+	saveN := func(n int, seed byte) []string {
+		t.Helper()
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputPath: dir}
+		var results []strategy.Result
+		for i := range n {
+			results = append(results, strategy.Result{Data: resultPNG(t, seed+byte(i))})
+		}
+		saved, err := e.saveResults(context.Background(), &Task{Prompt: "雪山下的小木屋", Images: []string{"source.png"}}, nil, nil, results)
+		if err != nil || len(saved) != n {
+			t.Fatalf("保存 %d 张: %v %v", n, saved, err)
+		}
+		return saved
 	}
-	saved, err := e.saveResults(context.Background(), task, nil, nil, results)
-	if err != nil || len(saved) != 4 {
-		t.Fatalf("四张都要落下: %v %v", saved, err)
+	first := saveN(2, 1)
+	kept, err := os.ReadFile(first[0])
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i, path := range saved {
-		want := filepath.Join(dir, fmt.Sprintf("雪山下的小木屋_%02d.png", i+1))
+	second := saveN(2, 10)
+	got := append(append([]string{}, first...), second...)
+	for i, path := range got {
+		want := filepath.Join(day, fmt.Sprintf("雪山下的小木屋_%02d.png", i+1))
 		if path != want {
 			t.Fatalf("路径 = %s, want %s", path, want)
 		}
 	}
-	again, err := e.saveResults(context.Background(), &Task{Prompt: "雪山下的小木屋"}, nil, nil, []strategy.Result{{Data: resultPNG(t, 9)}})
-	if err != nil || len(again) != 1 {
-		t.Fatalf("重名再保存: %v %v", again, err)
-	}
-	if filepath.Base(again[0]) != "雪山下的小木屋_01.png" {
-		t.Fatalf("重名仍用原文件名: %s", again[0])
-	}
-	if filepath.Dir(again[0]) == dir {
-		t.Fatal("重名应进时间戳子目录，而不是 _1 / _108 后缀")
-	}
-	if strings.Contains(filepath.Base(again[0]), "_1") || strings.Contains(again[0], "_108") {
-		t.Fatalf("出现混乱后缀: %s", again[0])
+	if data, err := os.ReadFile(first[0]); err != nil || !bytes.Equal(data, kept) {
+		t.Fatal("后一次运行覆盖了已有文件")
 	}
 }
 
-func TestResultDir(t *testing.T) {
-	opts := Options{OutputPath: "/out", SaveMode: "单文件夹汇总"}
-	if d := opts.ResultDir("a/b/cat.png"); d != "/out" {
-		t.Errorf("单文件夹: %s", d)
+func TestSaveResultsWashUsesSourceNameInDayFolder(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{OutputPath: dir, Wash: true}
+	saved, err := e.saveResults(context.Background(), &Task{Prompt: "提取商品主体", Images: []string{"/in/海报 A.jpg"}}, nil, nil, []strategy.Result{
+		{Data: resultPNG(t, 1)},
+		{Data: resultPNG(t, 2)},
+	})
+	if err != nil || len(saved) != 2 {
+		t.Fatalf("洗图保存: %v %v", saved, err)
 	}
-	opts.SaveMode = "按源图片分文件夹"
-	if d := opts.ResultDir("a/b/cat.png"); d != filepath.Join("/out", "cat") {
-		t.Errorf("分文件夹: %s", d)
+	day := e.opts.ResultDir(time.Now())
+	if saved[0] != filepath.Join(day, "海报 A_01.png") || saved[1] != filepath.Join(day, "海报 A_02.png") {
+		t.Fatalf("洗图路径: %v", saved)
+	}
+	again := NewEngine(nil, nil, nil, "")
+	again.opts = Options{OutputPath: dir, Wash: true}
+	more, err := again.saveResults(context.Background(), &Task{Prompt: "别的指令", Images: []string{"/in/海报 A.jpg"}}, nil, nil, []strategy.Result{{Data: resultPNG(t, 3)}})
+	if err != nil || len(more) != 1 || more[0] != filepath.Join(day, "海报 A_03.png") {
+		t.Fatalf("洗图同一天应继续编号: %v %v", more, err)
 	}
 }
 
@@ -1534,10 +1539,7 @@ func TestQueueViewUpdate(t *testing.T) {
 
 func TestWashNamesResultsAfterTheSourceFile(t *testing.T) {
 	o := Options{Wash: true}
-	if got := o.resultBase("提取商品主体", "/in/海报 A.jpg", 1, 3); got != "海报 A_01" {
-		t.Fatalf("first = %q", got)
-	}
-	if got := o.resultBase("提取商品主体", "/in/海报 A.jpg", 2, 3); got != "海报 A_02" {
-		t.Fatalf("second = %q", got)
+	if got := o.resultStem("提取商品主体", "/in/海报 A.jpg"); got != "海报 A" {
+		t.Fatalf("stem = %q", got)
 	}
 }

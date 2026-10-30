@@ -52,31 +52,32 @@ func (a *App) promptNoteLine(c *ui.Context) {
 }
 
 func (a *App) settingsPage(c *ui.Context) {
-	w, _ := c.Size()
 	ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).Children(func() {
-		ui.Column(c).MaxWidth(920).Gap(16).Padding(4, 0, 20, 0).Children(func() {
+		ui.Column(c).MaxWidth(720).Gap(12).Padding(4, 0, 20, 0).Children(func() {
 			ui.Text(c, "设置").FontSize(22).Bold()
-			ui.Text(c, "验证码在这里调。平台和输出文件夹在出图页的「更多设置」里。").FontSize(13).TextColor(c.Theme().TextMuted)
-			cards := func() {
-				a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
-				a.settingsCard(c, "验证码", "出图遇到验证时怎么处理。", func() { a.captchaFields(c) })
-				a.settingsCard(c, "网络", "浏览器和内置浏览器下载走同一条代理。", func() { a.proxyFields(c) })
-			}
-			if homeSplit(w) {
-				ui.Row(c).Gap(16).AlignItems(ui.Start).Children(cards)
-				return
-			}
-			ui.Column(c).FillWidth().Gap(16).Children(cards)
+			ui.Text(c, "生图和洗图只负责输入和开始。输出、并发和生成规则都在这里。").FontSize(13).TextColor(c.Theme().TextMuted)
+			a.settingsCard(c, "输出", "生图和洗图按日期放进各自的文件夹。", func() { a.outputSettings(c) })
+			a.settingsCard(c, "账号与并发", "用哪些平台、同时跑几个账号、每天的上限。", func() { a.accountSettings(c) })
+			a.settingsCard(c, "生成规则", "发送节奏、审核改写、等待和去水印。", func() { a.ruleSettings(c) })
+			a.settingsCard(c, "验证码 / 高级", "遇到验证时怎么处理，以及浏览器走的代理。", func() {
+				a.captchaFields(c)
+				ui.Text(c, "网络").Bold().Margin(8, 0, 0, 0)
+				ui.Text(c, "浏览器和内置浏览器下载走同一条代理。").FontSize(12).TextColor(c.Theme().TextMuted)
+				a.proxyFields(c)
+			})
+			a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
 		})
 	})
 }
 
 func (a *App) settingsCard(c *ui.Context, title, blurb string, body func()) {
 	tok := a.look
-	ui.Column(c).Grow(1).MinWidth(280).Gap(10).Padding(14, 16).Radius(tok.radiusL).
+	ui.Column(c).FillWidth().Gap(8).Padding(12, 14).Radius(tok.radiusL).
 		Background(tok.card).Border(1, tok.border).Children(func() {
 		ui.Text(c, title).FontSize(tok.title).Bold()
-		ui.Text(c, blurb).FontSize(tok.caption).TextColor(tok.muted)
+		if blurb != "" {
+			ui.Text(c, blurb).FontSize(tok.caption).TextColor(tok.muted)
+		}
 		body()
 	})
 }
@@ -202,147 +203,112 @@ func (a *App) captchaFields(c *ui.Context) {
 	})
 }
 
-// advancedFields 是出图页里收起来的「更多设置」。平台勾选、运行日志和并发不在这里。
-func (a *App) advancedFields(c *ui.Context) {
-	if a.platformAuto {
-		a.platDoubao, a.platQianwen = true, true
-		a.platformAuto = false
-	}
+func (a *App) outputSettings(c *ui.Context) {
 	ui.Form(c, func() {
-		ui.Text(c, "用已登录的账号。额度用尽、限流或验证码时，自动换到同平台下一个健康账号。").FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Row(c).Gap(16).Children(func() {
-			ui.Checkbox(c, &a.platDoubao, "豆包").Disabled(a.running).OnChange(func() { a.platformAuto = false })
-			ui.Checkbox(c, &a.platQianwen, "千问").Disabled(a.running).OnChange(func() { a.platformAuto = false })
-		})
-		ui.Text(c, a.platformLine()).FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "输出目录", func() {
 			ui.Row(c).Gap(8).Children(func() {
 				ui.TextInput(c, &a.outputPath).Grow(1).MinWidth(0).Placeholder("留空则保存到输出结果")
 				ui.Button(c, "选择…").Disabled(a.running).OnClick(func() { a.pickOutputDir() })
 			})
 		})
-		resolved := a.resolvedOutputDir()
-		ui.Text(c, "图片会保存到 "+resolved).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(resolved)
+		root := a.resolvedOutputDir()
+		gen := tasks.Options{OutputPath: root}.ResultDir(time.Now())
+		wash := tasks.Options{OutputPath: root, Wash: true}.ResultDir(time.Now())
+		a.outputPathLine(c, "生图保存到 "+gen, gen)
+		a.outputPathLine(c, "洗图保存到 "+wash, wash)
+		ui.Text(c, "同一天的结果放进同一个日期文件夹，文件从 _01 起编，不覆盖已有文件。").FontSize(12).TextColor(c.Theme().TextMuted)
 		if a.outputNote != "" {
 			ui.Text(c, a.outputNote).FontSize(12).TextColor(c.Theme().Danger)
 		}
-		ui.Field(c, "保存方式", func() {
-			motionSelect(c, &a.saveMode, []string{"单文件夹汇总", "按源图片分文件夹"})
-		})
-		ui.Field(c, "命名规则", func() {
-			motionSelect(c, &a.namingRule, []string{"原文件名", "时间戳", "序号"})
-		})
-		ui.Field(c, "文件名前缀", func() {
-			ui.Row(c).Gap(8).Children(func() {
-				ui.TextInput(c, &a.filePrefix).Grow(1).MinWidth(0)
-				ui.Checkbox(c, &a.prefixOn, "启用")
+	}).FillWidth().Gap(8)
+}
+
+func (a *App) outputPathLine(c *ui.Context, line, dir string) {
+	text := ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(line).Cursor(ui.CursorPointer)
+	if text.Clicked() {
+		a.openResultFolder(dir)
+	}
+}
+
+func (a *App) accountSettings(c *ui.Context) {
+	tok := a.look
+	ui.Form(c, func() {
+		ui.Text(c, "额度用尽、限流或验证码时，自动换到同平台下一个健康账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Checkbox(c, &a.platformAuto, "自动使用已登录的平台").Disabled(a.running)
+		if !a.platformAuto {
+			ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+				a.platformCheck(c, "豆包", &a.platDoubao)
+				a.platformCheck(c, "千问", &a.platQianwen)
 			})
-		})
-		ui.Field(c, "文件名后缀", func() {
-			ui.Row(c).Gap(8).Children(func() {
-				ui.TextInput(c, &a.fileSuffix).Grow(1).MinWidth(0)
-				ui.Checkbox(c, &a.suffixOn, "启用")
+		}
+		ui.Text(c, a.platformLine()).FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Checkbox(c, &a.concurrencyAuto, "按可用账号自动并发").Disabled(a.running)
+		ui.Text(c, ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots())).FontSize(12).TextColor(c.Theme().TextMuted)
+		if !a.concurrencyAuto {
+			ui.Field(c, "同时出图上限", func() {
+				ui.NumberInput(c, &a.concurrency, 1, 16, 1).Disabled(a.running)
 			})
+		}
+		ui.Text(c, fmt.Sprintf("每个平台同时最多 %d 张。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(12).TextColor(tok.muted)
+		ui.Field(c, "每日上限", func() {
+			ui.NumberInput(c, &a.dailyCap, 1, 200, 1).Disabled(a.running)
 		})
+		ui.Text(c, "每个账号每天最多出这么多次，到了就换下一个账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+	}).FillWidth().Gap(8)
+}
+
+func (a *App) platformCheck(c *ui.Context, name string, on *bool) {
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		platformIcon(c, name, 16, a.look)
+		ui.Checkbox(c, on, name).Disabled(a.running).OnChange(func() { a.platformAuto = false })
+	})
+}
+
+func (a *App) ruleSettings(c *ui.Context) {
+	ui.Form(c, func() {
 		ui.Field(c, "后缀", func() {
 			ui.TextInput(c, &a.promptSuffix)
 		})
 		ui.Checkbox(c, &a.useSuffix, "附加提示词后缀")
 		ui.Checkbox(c, &a.removeWatermark, "去水印（实验）").Disabled(a.running)
 		ui.Text(c, "已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。").FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Text(c, "调度与等待").Bold().Margin(12, 0, 4, 0)
 		ui.Field(c, "发送策略", func() {
-			motionSelect(c, &a.sendStrategy, []string{"顺序循环", "随机循环"})
+			motionSelect(c, &a.sendStrategy, []string{"顺序循环", "随机循环"}).Disabled(a.running)
 		})
-		ui.Text(c, "在豆包或千问页点开始，只跑这一边的账号，各同时出 2 张。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "失败重试", func() {
-			ui.NumberInput(c, &a.retryCount, 0, 20, 1)
+			ui.NumberInput(c, &a.retryCount, 0, 20, 1).Disabled(a.running)
 		})
 		ui.Field(c, "发送间隔(秒)", func() {
-			ui.NumberInput(c, &a.sendWait, 0, 600, 1)
+			ui.NumberInput(c, &a.sendWait, 0, 600, 1).Disabled(a.running)
 		})
 		ui.Text(c, "实际等待会在这个秒数上下浮动，避免每次都卡在同一拍。").FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Field(c, "每日上限", func() {
-			ui.NumberInput(c, &a.dailyCap, 1, 200, 1)
-		})
-		ui.Text(c, "每个账号每天最多出这么多次，到了就换下一个账号。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "审核改写词", func() {
-			ui.TextInput(c, &a.riskyWords).Placeholder("逗号分隔")
+			ui.TextInput(c, &a.riskyWords).Placeholder("逗号分隔").Disabled(a.running)
 		})
 		ui.Text(c, "审核不通过时去掉这些词，并加上温和说法，最多自动重试 2 次。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "发送前等待(秒)", func() {
-			ui.NumberInput(c, &a.waitBefore, 0, 60, 1)
+			ui.NumberInput(c, &a.waitBefore, 0, 60, 1).Disabled(a.running)
 		})
 		ui.Field(c, "等待结果", func() {
 			ui.Row(c).Gap(8).Children(func() {
-				ui.Switch(c, &a.waitResult)
+				ui.Switch(c, &a.waitResult).Disabled(a.running)
 				if a.waitResult {
-					ui.NumberInput(c, &a.waitResultS, 10, 1800, 10)
+					ui.NumberInput(c, &a.waitResultS, 10, 1800, 10).Disabled(a.running)
 				}
 			})
 		})
 		ui.Field(c, "定时切换浏览器", func() {
 			ui.Row(c).Gap(8).Children(func() {
-				ui.Switch(c, &a.taskSwitch)
+				ui.Switch(c, &a.taskSwitch).Disabled(a.running)
 				if a.taskSwitch {
-					ui.NumberInput(c, &a.switchCount, 1, 9999, 1)
+					ui.NumberInput(c, &a.switchCount, 1, 9999, 1).Disabled(a.running)
 				}
 			})
 		})
 		ui.Field(c, "起始浏览器序号", func() {
-			ui.NumberInput(c, &a.startBrowserIdx, 1, 999, 1)
+			ui.NumberInput(c, &a.startBrowserIdx, 1, 999, 1).Disabled(a.running)
 		})
-		ui.Collapsible(c, "详细日志", &a.logsOpen, func() {
-			a.logPane(c)
-		})
-	}).FillWidth().Gap(12)
-}
-
-func (a *App) autoLogPane(c *ui.Context) {
-	var notes []string
-	if a.engine != nil {
-		notes = a.engine.AutoNotes()
-	}
-	if len(notes) == 0 {
-		ui.Text(c, "自动处理账号和浏览器的记录会显示在这里").FontSize(12).TextColor(c.Theme().TextMuted)
-		return
-	}
-	start := 0
-	if len(notes) > 6 {
-		start = len(notes) - 6
-	}
-	for i, line := range notes[start:] {
-		ui.Text(c.Key(noteLine{start + i}), line).FontSize(12).SingleLine().Tooltip(line).Transition(motionItem())
-	}
-}
-
-type noteLine struct{ i int }
-
-func (a *App) logPane(c *ui.Context) {
-	if len(a.logs) == 0 {
-		ui.Text(c, "操作与任务进展会记录在这里").FontSize(12).TextColor(c.Theme().TextMuted)
-		return
-	}
-	a.logList.Key = func(i int) any { return i }
-	a.logList.FollowEnd = true
-	a.logList.FollowAnimation = &motionEaseOut
-	ui.List(c, &a.logList, len(a.logs), func(i int) {
-		e := a.logs[i]
-		color := c.Theme().TextMuted
-		switch e.Level {
-		case logging.Error:
-			color = c.Theme().Danger
-		case logging.Warning:
-			color = c.Theme().Warning
-		case logging.Success:
-			color = c.Theme().Success
-		}
-		ui.Row(c).Gap(10).Padding(5, 2).Children(func() {
-			ui.Text(c, e.Time.Format("15:04:05")).FontSize(11).TextColor(c.Theme().TextMuted)
-			ui.Text(c, e.Level.String()).FontSize(12).TextColor(color)
-			ui.Text(c, e.Text).FontSize(12).Grow(1).MinWidth(0).SingleLine().Tooltip(e.Text)
-		})
-	}).Height(180)
+	}).FillWidth().Gap(8)
 }
 
 func (a *App) platformLine() string {
@@ -467,8 +433,17 @@ func (a *App) resolvedOutputDir() string {
 	return DefaultOutputDir(a.outputPath, mustWd())
 }
 
+// resultFolder 是当前页今天的结果目录。生图和洗图各看各的。
+func (a *App) resultFolder() string {
+	return tasks.Options{OutputPath: a.resolvedOutputDir(), Wash: a.washing()}.ResultDir(time.Now())
+}
+
 func (a *App) openOutputFolder() {
-	dir, err := EnsureOutputDir(a.resolvedOutputDir())
+	a.openResultFolder(a.resultFolder())
+}
+
+func (a *App) openResultFolder(dir string) {
+	dir, err := EnsureOutputDir(dir)
 	if err != nil {
 		a.outputNote = "无法创建输出文件夹"
 		logging.Log.Errorf("创建输出文件夹失败: %v", err)
@@ -567,7 +542,6 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	if page == pageWash {
 		opts.Wash = true
 		opts.UseSuffix = false
-		opts.SaveMode = "单文件夹汇总"
 	}
 	// 上一批属于别的页时，把它的进度收回那一页再接手引擎。
 	if a.runPage != page && a.engine.View() != nil {
