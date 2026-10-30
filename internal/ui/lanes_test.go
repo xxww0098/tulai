@@ -59,7 +59,7 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
 	tt.Advance(500 * time.Millisecond)
-	for _, label := range []string{"豆包主力", "空闲", "1 个账号空闲", "今日", "0/20"} {
+	for _, label := range []string{"豆包主力", "空闲", "1 个账号空闲", "今日", "0/100"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}

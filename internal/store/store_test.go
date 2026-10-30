@@ -121,7 +121,7 @@ func TestAddUseResetsOnNewDay(t *testing.T) {
 	if got.UsedToday(today) != 1 {
 		t.Fatalf("today = %d", got.UsedToday(today))
 	}
-	if s.Get("daily_cap") != "20" || s.Get("risky_words") == "" {
+	if s.Get("daily_cap") != "100" || s.Get("risky_words") == "" {
 		t.Fatalf("defaults cap=%q words=%q", s.Get("daily_cap"), s.Get("risky_words"))
 	}
 }
