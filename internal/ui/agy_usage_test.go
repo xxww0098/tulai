@@ -234,8 +234,8 @@ func TestAgyUsageRefreshHoldAndLogin(t *testing.T) {
 	}
 	a.markAgyUsageForce(row.ID)
 	a.pullDueAgyUsage(context.Background())
-	if _, err := os.Stat(agy.TokenPath(home)); !os.IsNotExist(err) {
-		t.Fatal("login failure should remove the token file")
+	if _, err := os.Stat(agy.TokenPath(home)); err != nil {
+		t.Fatal("读额度需登录时不应删凭证:", err)
 	}
 	got = findUsageBrowser(st, row.ID)
 	if got.IsLoggedIn || got.LastError != agy.ErrNeedLogin.Error() || got.CoolUntil != 0 {
