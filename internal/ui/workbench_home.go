@@ -1260,11 +1260,20 @@ func (a *App) sourceButtons(c *ui.Context) {
 	if len(a.sources) == 0 && !a.washing() {
 		return
 	}
-	ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
+	a.sideButton(c, "添加图片").OnClick(func() { a.addImages() })
 	if a.washing() {
-		ui.Button(c, "选文件夹").Disabled(a.running).OnClick(func() { a.addFolder() })
+		a.sideButton(c, "选文件夹").OnClick(func() { a.addFolder() })
 	}
 	if len(a.sources) > 0 {
-		ui.Button(c, "清空").Disabled(a.running).OnClick(func() { a.clearSources() })
+		a.sideButton(c, "清空").OnClick(func() { a.clearSources() })
 	}
+}
+
+// sideButton 是选图卡标题行右侧的小按钮。洗图有三个，收成 12px，避免顶满标题。
+func (a *App) sideButton(c *ui.Context, label string) ui.Element {
+	b := ui.Button(c, label).Disabled(a.running).Shrink(0)
+	if a.washing() {
+		b.FontSize(a.look.caption).Padding(3, 8).Radius(a.look.radiusS)
+	}
+	return b
 }

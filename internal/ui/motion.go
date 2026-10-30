@@ -180,14 +180,14 @@ func quotaBar(c *ui.Context, key string, fraction float64, fill, track ui.Color)
 	if fraction > 1 {
 		fraction = 1
 	}
-	host := ui.Box(c.Key(key)).FillWidth().Height(6).Radius(3).Background(track)
+	host := ui.Box(c.Key(key)).FillWidth().Height(3).Radius(2).Background(track)
 	shown := host.AnimateTo("fraction", float32(fraction), motionEaseOut)
 	host.Draw(func(p *ui.Painter, r ui.Rect) {
 		w := r.W * shown
 		if w <= 0 {
 			return
 		}
-		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: w, H: r.H}, fill, 3)
+		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: w, H: r.H}, fill, 2)
 	})
 }
 

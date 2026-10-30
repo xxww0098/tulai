@@ -239,7 +239,7 @@ func laneEnter(i int) ui.ElementTransition {
 func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
 	label := ln.Action
 	id := ln.ID
-	ui.Button(c.Key("act"), label).FontSize(12).Height(22).Padding(0, 8).Shrink(0).OnClick(func() { a.openLane(id) })
+	ui.Button(c.Key("act"), label).FontSize(12).Height(24).Padding(0, 8).Radius(8).Shrink(0).OnClick(func() { a.openLane(id) })
 }
 
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
@@ -249,7 +249,7 @@ func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
 	if ln.State == tasks.LaneGap {
 		text = fmt.Sprintf("等待间隔 %d", gapSeconds(ln.NextReadyAt, c.Now()))
 	}
-	pill := ui.Row(c.Key("chip")).Padding(1, tok.body/2+2).Radius(999).Shrink(0).AlignItems(ui.Center)
+	pill := ui.Row(c.Key("chip")).Padding(1, 7).Radius(999).Shrink(0).AlignItems(ui.Center)
 	pill.Background(pill.AnimateColor("bg", bg, motionEaseFast))
 	pill.Children(func() {
 		ui.Text(c.Key("chip-label"), text).FontSize(tok.caption).TextColor(fg).SingleLine().
@@ -273,16 +273,24 @@ func laneLabel(state tasks.LaneState) string {
 }
 
 func laneInk(tok tokens, state tasks.LaneState) (fg, bg ui.Color) {
+	var base ui.Color
+	var wash float32
 	switch state {
 	case tasks.LaneRunning:
-		return tok.accent, tok.accent.Alpha(0.14)
+		base, wash = tok.accent, 0.14
 	case tasks.LaneGap, tasks.LaneCooling, tasks.LaneCaptcha:
-		return tok.warning, tok.warning.Alpha(0.16)
+		base, wash = tok.warning, 0.16
 	case tasks.LaneFull, tasks.LaneLogin:
-		return tok.danger, tok.danger.Alpha(0.14)
+		base, wash = tok.danger, 0.14
 	default:
 		return tok.muted, tok.text.Alpha(0.08)
 	}
+	fg = base
+	// 浅色里状态色直接写在浅底上，12px 不到 4.5:1。往正文色收一点，色相还在。
+	if !tok.dark {
+		fg = base.Mix(tok.text, 0.35)
+	}
+	return fg, base.Alpha(wash)
 }
 
 func gapSeconds(until, now time.Time) int {

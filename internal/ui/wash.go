@@ -205,11 +205,18 @@ func (a *App) washPromptCard(c *ui.Context) {
 	a.stepCard(c, "wash-prompt", stepDone).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "② 洗图指令").FontSize(tok.title).Bold().Grow(1).MinWidth(0)
-			ui.Button(c, "恢复默认").Disabled(a.running || a.washPrompt() == DefaultWashPrompt).OnClick(func() {
-				a.prompts = DefaultWashPrompt
-			})
+			a.washReset(c)
 		})
-		ui.TextArea(c, &a.prompts).Height(64).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
-		ui.Text(c, "每张图单独发一次，结果存成「原文件名_01.png」").FontSize(tok.caption).TextColor(tok.muted)
+		ui.TextArea(c, &a.prompts).Height(84).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
+		ui.Text(c, "每张图单独发一次，结果存成「原文件名_01.png」").FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip("每张图单独发一次，结果存成「原文件名_01.png」")
+	})
+}
+
+// washReset 是标题行右侧的次要按钮，尺寸跟选图卡的按钮对齐，不跟「开始洗图」抢主色。
+func (a *App) washReset(c *ui.Context) {
+	tok := a.look
+	ui.Button(c, "恢复默认").FontSize(tok.caption).Padding(3, 8).Radius(tok.radiusS).Shrink(0).
+		Disabled(a.running || a.washPrompt() == DefaultWashPrompt).OnClick(func() {
+		a.prompts = DefaultWashPrompt
 	})
 }

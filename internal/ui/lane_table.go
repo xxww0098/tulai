@@ -26,9 +26,10 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	ui.Column(c.Key("lane-table")).FillWidth().Gap(6).Padding(8, 10).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border).Transition(motionReveal()).Children(func() {
 		a.laneHeader(c)
-		ui.Row(c.Key("lane-head")).FillWidth().Gap(8).Padding(0, 6).AlignItems(ui.Center).Children(func() {
+		ui.Row(c.Key("lane-head")).FillWidth().Gap(8).Padding(2, 6, 4, 6).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 			head := func(label string) ui.Element {
-				return ui.Text(c, label).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+				return ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).SingleLine()
 			}
 			head("账号").Grow(2).Basis(0).MinWidth(0)
 			head("状态").Width(laneColState).Shrink(0)
@@ -51,13 +52,10 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 	row := ui.Row(c.Key(ln.ID)).FillWidth().Height(laneRowH).Gap(8).Padding(0, 6).AlignItems(ui.Center).
 		Radius(tok.radiusS).Label("车道" + ln.Name).Transition(laneEnter(i))
 	if i%2 == 1 {
-		row.Background(tok.text.Alpha(0.025))
+		row.Background(tok.text.Alpha(0.035))
 	}
 	if row.Hovered() {
-		row.Background(tok.accent.Alpha(0.06))
-	}
-	if ln.State == tasks.LaneLogin {
-		row.Opacity(0.72)
+		row.Background(tok.sunken)
 	}
 	if ln.State == tasks.LaneRunning && !c.Preferences().ReduceMotion {
 		row.DrawOver(func(p *ui.Painter, r ui.Rect) {
@@ -79,11 +77,12 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 		ui.Row(c).Width(laneColState).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
 			a.laneChip(c, ln)
 		})
-		ui.Column(c).Width(laneColQuota).Shrink(0).Gap(3).Children(func() {
+		ui.Column(c).Width(laneColQuota).Shrink(0).Gap(2).Justify(ui.Center).Children(func() {
 			used, capN, frac, fill := laneQuotaFill(tok, ln)
 			ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).
+				FontFeatures("tnum").SingleLine().
 				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
-			quotaBar(c, "quota", frac, fill, tok.border)
+			quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
 		})
 		ui.Row(c).Grow(3).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
 			switch {
@@ -91,7 +90,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 				line := laneCaption(ln.Job.Prompt, ln.Job.Image)
 				ui.Text(c, line).FontSize(tok.caption).SingleLine().MinWidth(0).Shrink(1).Tooltip(line)
 				ui.Text(c.Key("elapsed"), elapsedLabel(c.Now().Sub(ln.Job.Started))).FontSize(tok.caption).
-					TextColor(tok.muted).Shrink(0).
+					FontFeatures("tnum").TextColor(tok.muted).Shrink(0).SingleLine().
 					ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseFast})
 			case ln.State == tasks.LaneRunning:
 				ui.Text(c, "同一窗口正在出图").FontSize(tok.caption).TextColor(tok.muted).SingleLine()
@@ -99,7 +98,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 				ui.Text(c, "—").FontSize(tok.caption).TextColor(tok.muted)
 			}
 		})
-		ui.Row(c).Width(laneColOps).Shrink(0).Gap(4).Justify(ui.End).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Width(laneColOps).Shrink(0).Gap(6).Justify(ui.End).AlignItems(ui.Center).Children(func() {
 			if ln.State == tasks.LaneGap {
 				gapRing(c, ln, tok)
 			}
@@ -114,16 +113,26 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 }
 
 func (a *App) laneRenameButton(c *ui.Context, ln tasks.AccountLane) {
-	pen := ui.ButtonBase(c.Key("pen")).Size(22, 22).Radius(6).Shrink(0).Center().
+	tok := a.look
+	pen := ui.ButtonBase(c.Key("pen")).Size(24, 24).Radius(6).Shrink(0).Center().
 		Label("改名 " + ln.Name).Tooltip("改名").Cursor(ui.CursorPointer)
-	if pen.Hovered() {
-		pen.Background(c.Theme().Border.Alpha(0.45))
+	ink := tok.muted
+	switch {
+	case pen.Pressed():
+		pen.Background(tok.text.Alpha(0.12))
+		ink = tok.text
+	case pen.Hovered() || pen.FocusVisible():
+		pen.Background(tok.sunkenHi)
+		ink = tok.text
+	}
+	if pen.FocusVisible() {
+		pen.Border(1, tok.accent)
 	}
 	if pen.Clicked() && !a.running {
 		a.renameID, a.renameDraft, a.renameFocus = ln.ID, ln.Name, true
 	}
 	pen.Children(func() {
-		ui.Icon(c, iconPen).FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Icon(c, iconPen).FontSize(12).TextColor(ink)
 	})
 }
 
@@ -135,10 +144,8 @@ func laneQuotaFill(tok tokens, ln tasks.AccountLane) (used, capN int, frac float
 	fill = tok.accent
 	switch {
 	case used >= capN:
-		fill = ui.Hex("#CBD5E1")
-		if tok.dark {
-			fill = ui.Hex("#64748B")
-		}
+		// 满额用能看清的中性色。浅灰贴在白底上几乎看不见。
+		fill = tok.muted
 	case used*5 >= capN*4:
 		fill = tok.warning
 	}
