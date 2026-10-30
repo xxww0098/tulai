@@ -204,7 +204,7 @@ func (a *App) agyChooserPanel(c *ui.Context) {
 				if hint == "" {
 					hint = agy.MsgNotFound
 				}
-				ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).Tooltip(hint)
+				a.agyChooserHint(c, hint)
 			})
 			ui.Row(c).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Button(c, "选择文件夹…").Label("agy-pick-folder").Shrink(0).Height(36).AlignSelf(ui.Center).
@@ -228,6 +228,37 @@ func (a *App) agyChooserPanel(c *ui.Context) {
 			})
 		}
 	})
+}
+
+// agyChooserHint 把「已检查 <路径>」单独放在一行。路径不换行，放不下就在行尾省略。
+func (a *App) agyChooserHint(c *ui.Context, hint string) {
+	tok := a.look
+	lead, checked := splitCheckedHint(hint)
+	if lead == "" && checked == "" {
+		lead = agy.MsgNotFound
+	}
+	if lead != "" {
+		ui.Text(c, lead).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).Tooltip(hint)
+	}
+	if checked == "" {
+		return
+	}
+	ui.Text(c, checked).FontSize(tok.caption).TextColor(tok.muted).FillWidth().MinWidth(0).SingleLine().Tooltip(hint)
+}
+
+// splitCheckedHint 拆开「说明（已检查 路径）」。没有这段时第二段为空。
+func splitCheckedHint(hint string) (lead, checked string) {
+	const open = "（已检查 "
+	const close = "）"
+	i := strings.LastIndex(hint, open)
+	if i < 0 || !strings.HasSuffix(hint, close) {
+		return strings.TrimSpace(hint), ""
+	}
+	path := strings.TrimSpace(strings.TrimSuffix(hint[i+len(open):], close))
+	if path == "" || strings.Contains(path, "\n") {
+		return strings.TrimSpace(hint), ""
+	}
+	return strings.TrimSpace(hint[:i]), "已检查 " + path
 }
 
 func (a *App) agyMethodRow(c *ui.Context, title, hint, button, label string, busy bool, click func()) {

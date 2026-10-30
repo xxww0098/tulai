@@ -184,12 +184,24 @@ func TestHistoryClickStaysOpen(t *testing.T) {
 	if !ok || !a.historyOpen {
 		t.Fatal("opening click closed the history panel")
 	}
+	tt.Advance(300 * time.Millisecond)
+	panel, ok = tt.Find("历史任务")
+	if !ok || !a.historyOpen {
+		t.Fatal("history panel closed after opening")
+	}
 	add, ok := tt.Find("+ 添加账号")
 	if !ok {
 		t.Fatal("add account missing")
 	}
 	if rectsOverlap(panel, add) {
 		t.Fatalf("panel covers add: panel %v add %v", panel, add)
+	}
+	row, ok := tt.Find("车道豆包主力")
+	if !ok {
+		t.Fatal("account row missing")
+	}
+	if rectsOverlap(panel, row) {
+		t.Fatalf("panel covers account row: panel %v row %v", panel, row)
 	}
 }
 
@@ -210,9 +222,15 @@ func TestHistoryPopupClearsHeaderAndLog(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		logging.Log.Info("日志对齐行 %02d", i)
 	}
+	for _, name := range []string{"豆包主力", "豆包小号"} {
+		row, err := st.AddBrowser("豆包", name, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.UpdateBrowser(row.ID, false, true)
+	}
 	a := &App{
 		store: st, platformAuto: true, historyOpen: true, prompts: "当前提示词",
-		browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")},
 	}
 	for _, sz := range [][2]int{{1024, 700}, {1280, 800}} {
 		tt := ui.NewTester(a.view, sz[0], sz[1])
@@ -230,13 +248,37 @@ func TestHistoryPopupClearsHeaderAndLog(t *testing.T) {
 			t.Fatal("运行日志 missing")
 		}
 		if rectsOverlap(panel, add) {
-			t.Fatalf("%v: popup covers 添加账号 panel %v add %v", sz, panel, add)
+			t.Fatalf("%v: history covers 添加账号 panel %v add %v", sz, panel, add)
 		}
 		if rectsOverlap(panel, logCard) {
-			t.Fatalf("%v: popup covers 运行日志 panel %v log %v", sz, panel, logCard)
+			t.Fatalf("%v: history covers 运行日志 panel %v log %v", sz, panel, logCard)
 		}
-		if panel.Y < add.Y+add.H-1 {
-			t.Fatalf("%v: popup is not below the account header panel %v add %v", sz, panel, add)
+		if panel.Y+panel.H > add.Y+1 {
+			t.Fatalf("%v: history is not above 添加账号 panel %v add %v", sz, panel, add)
+		}
+		for _, name := range []string{"豆包主力", "豆包小号"} {
+			row, found := tt.Find("车道" + name)
+			if !found {
+				t.Fatalf("%v: account row %s missing", sz, name)
+			}
+			if rectsOverlap(panel, row) {
+				t.Fatalf("%v: history covers %s panel %v row %v", sz, name, panel, row)
+			}
+			if row.Y+1 < panel.Y+panel.H {
+				t.Fatalf("%v: %s is not below history panel %v row %v", sz, name, panel, row)
+			}
+			if row.Y < 0 || row.Y+row.H > float32(sz[1])+1 {
+				t.Fatalf("%v: %s left the window row %v", sz, name, row)
+			}
+		}
+		for _, label := range []string{"今日", "当前任务"} {
+			cell, found := tt.Find(label)
+			if !found {
+				t.Fatalf("%v: %s missing", sz, label)
+			}
+			if rectsOverlap(panel, cell) {
+				t.Fatalf("%v: history covers %s panel %v cell %v", sz, label, panel, cell)
+			}
 		}
 		scroll, ok := tt.Find("运行日志内容")
 		if !ok {

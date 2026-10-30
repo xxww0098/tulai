@@ -70,24 +70,17 @@ func (a *App) historyControl(c *ui.Context) {
 	open := a.historyOpen
 	btn := ui.Button(c.Key("history"), "历史").FontSize(a.look.caption).Padding(3, 8).Radius(a.look.radiusS).Shrink(0)
 	btn.OnClick(func() { a.historyOpen = !open })
-	btn.Bind(&a.historyAnchor)
 }
 
-// historyPanel 挂在账号表头下面、靠右。表头上的「添加账号」留在外面，左边的运行日志也不会被挡住。
-func (a *App) historyPanel(c *ui.Context, place ui.Element) {
+// historyPanel 在工作区标题和平台页签之间展开。列表占右栏自己的高度，把页签和账号表往下推，不盖住账号行、添加账号或运行日志。
+func (a *App) historyPanel(c *ui.Context) {
 	if a == nil || !a.historyOpen {
 		return
 	}
-	anchor := c.Resolve(a.historyAnchor)
-	if !anchor.Valid() {
-		return
-	}
 	tok := a.look
-	ui.PopoverBase(c, anchor, &a.historyOpen, func(panel ui.Element) {
-		panel.Label("历史任务").AttachTo(place, ui.AnchorBottomEnd, ui.AnchorTopEnd).
-			Width(280).MaxHeight(216).Padding(6).Gap(4).
-			Radius(tok.radiusM).Background(tok.card).Border(1, tok.border).
-			Shadow(0, 8, 24, 0, tok.shadow).Margin(4, 0, 0, 0)
+	ui.Column(c.Key("history-panel")).Label("历史任务").FillWidth().Shrink(0).Gap(6).Padding(8, 10).
+		Radius(tok.radiusM).Background(tok.card).Border(1, tok.border).Children(func() {
+		ui.Text(c, "历史任务").FontSize(tok.caption).Bold().TextColor(tok.muted).SingleLine()
 		a.historyBody(c)
 	})
 }
