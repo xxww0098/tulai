@@ -54,7 +54,11 @@ func statePageFor(tab int) int {
 }
 
 // syncPage 让 App 字段里装着当前导航页那一份状态。
+// 去重页有自己的图片列表和阈值，不借用生图、洗图那一份。
 func (a *App) syncPage() {
+	if a.tab == pageDedup {
+		return
+	}
 	want := statePageFor(a.tab)
 	if a.statePage == want {
 		return
