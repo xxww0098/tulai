@@ -19,12 +19,22 @@ import (
 )
 
 const (
-	railWidth    float32 = 56
-	composerW    float32 = 360
-	homeSplitMin float32 = 900
-	pagePadX     float32 = 16
-	homeGap      float32 = 12
+	railWidth     float32 = 56
+	composerW     float32 = 360
+	homeSplitMin  float32 = 900
+	pagePadX      float32 = 16
+	homeGap       float32 = 12
+	workspaceBarH float32 = 36
 )
+
+// columnHeight 扣掉页头和「新建任务」那一行，避免把运行日志顶出窗口。
+func columnHeight(winH float32) float32 {
+	h := winH - 48 - workspaceBarH - 8
+	if h < 220 {
+		return 220
+	}
+	return h
+}
 
 func homeSplit(w float32) bool { return w >= homeSplitMin }
 
@@ -54,21 +64,6 @@ func fitCols(inner, min float32, max int) int {
 	}
 	if max > 0 && cols > max {
 		cols = max
-	}
-	return cols
-}
-
-// gridCols 按右栏实际宽度分列。张数更少时不留空列；最后一行只剩一张时少排一列，避免孤卡。
-func gridCols(windowW, minCol float32, n, max int) int {
-	cols := fitCols(homeStageW(windowW)-24, minCol, max)
-	if n > 0 && cols > n {
-		cols = n
-	}
-	if cols > 2 && n > cols && n%cols == 1 {
-		cols--
-	}
-	if cols < 1 {
-		return 1
 	}
 	return cols
 }
@@ -175,32 +170,20 @@ func (a *App) homePage(c *ui.Context) {
 	a.workColumns(c, func() { a.genInput(c) })
 }
 
-// homeStage 上面是平台和账号，出图结果撑满剩下的高度并自己滚动。
+// homeStage 上面是平台和账号，出图结果撑满剩下的高度。
 func (a *App) homeStage(c *ui.Context) {
 	_, winH := c.Size()
-	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).Height(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
+	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).Height(columnHeight(winH)).Gap(10).Padding(0, 0, 8, 0).Children(func() {
 		a.platformTabs(c)
 		a.accountPanel(c)
-		if len(a.platformCards()) == 0 {
-			a.stageEmpty(c)
-			return
-		}
-		ui.Scroll(c.Key("home-stage-results")).FillWidth().Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(10).Children(func() {
-				a.progressPane(c)
-			})
-		})
+		a.resultsPane(c)
 	})
 }
 
 func (a *App) platformStage(c *ui.Context) {
 	a.platformTabs(c)
 	a.accountPanel(c)
-	if len(a.platformCards()) == 0 {
-		a.stageEmpty(c)
-	} else {
-		a.progressPane(c)
-	}
+	a.resultsPane(c)
 }
 
 func (a *App) platformTabs(c *ui.Context) {
@@ -340,14 +323,6 @@ func (a *App) openLogFile() {
 	_ = mygo.Shell.OpenPath(path)
 }
 
-func (a *App) stageEmpty(c *ui.Context) {
-	tok := a.look
-	ui.Column(c.Key("stage-empty")).Grow(1).MinHeight(140).FillWidth().Center().Gap(8).Children(func() {
-		ui.Icon(c, iconImages).FontSize(22).TextColor(tok.muted.Alpha(0.55))
-		ui.Text(c, "出图结果会出现在这里").FontSize(tok.caption).TextColor(tok.muted)
-	})
-}
-
 func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 	tok := a.look
 	card := ui.Column(c.Key(key)).FillWidth().Padding(12, 14).Gap(8).Radius(tok.radiusL).
@@ -369,14 +344,18 @@ const (
 	washThumbMaxRows         = 2
 )
 
-// washThumbViewport 是原图网格的可视高度：最多两整行，不把一行切在缩略图中间。
-func washThumbViewport(n int) float32 {
+// washThumbViewport 是原图网格的可视高度：窗口矮时一整行，否则最多两整行，不把一行切在缩略图中间。
+func washThumbViewport(n int, winH float32) float32 {
 	if n <= 0 {
 		return 0
 	}
 	rows := (n + washThumbCols - 1) / washThumbCols
-	if rows > washThumbMaxRows {
-		rows = washThumbMaxRows
+	maxRows := washThumbMaxRows
+	if winH < 760 {
+		maxRows = 1
+	}
+	if rows > maxRows {
+		rows = maxRows
 	}
 	return float32(rows)*washThumbSize + float32(rows-1)*washThumbGap
 }
@@ -390,7 +369,8 @@ func (a *App) washSourceGrid(c *ui.Context) {
 	for i := range tracks {
 		tracks[i] = ui.Fixed(washThumbSize)
 	}
-	ui.Scroll(c.Key("wash-thumbs")).FillWidth().Height(washThumbViewport(n)).Children(func() {
+	_, winH := c.Size()
+	ui.Scroll(c.Key("wash-thumbs")).FillWidth().Height(washThumbViewport(n, winH)).Children(func() {
 		ui.Grid(c).ColumnTracks(tracks...).Gap(washThumbGap).JustifyItems(ui.Start).AlignItems(ui.Start).Children(func() {
 			for i := range a.sources {
 				a.washThumb(c, i)
@@ -672,38 +652,6 @@ func (a *App) openAttention(id int64) {
 	}(row)
 }
 
-func (a *App) progressPane(c *ui.Context) {
-	items := a.queueItems()
-	cards := a.platformCards()
-	if len(cards) == 0 {
-		return
-	}
-	tok := a.look
-	failed := FailedTasks(items)
-	done, running, queued, failN, needs := ProgressTally(cards)
-	ui.Column(c.Key("progress-pane")).FillWidth().Padding(12, 14).Gap(10).Radius(tok.radiusL).
-		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
-		Transition(motionReveal()).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				ui.Text(c, "出图进度").FontSize(tok.title).Bold()
-				ui.Text(c, FormatProgressTally(done, running, queued, failN, needs)).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
-			})
-			if len(failed) > 0 {
-				ui.Button(c, "全部重试失败项").Disabled(a.running).OnClick(func() { a.retryTasks(failed) })
-			}
-		})
-		if needs > 0 {
-			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
-		}
-		ui.Grid(c).Columns(a.progressCols(c)).FillWidth().Gap(8).AlignItems(ui.Stretch).Children(func() {
-			for _, card := range cards {
-				a.progressCard(c, card)
-			}
-		})
-	})
-}
-
 func (a *App) failAction(card ProgressCard) {
 	switch card.Action {
 	case "去重登":
@@ -792,151 +740,6 @@ func (a *App) chooseReplacement() (string, error) {
 	return paths[0], nil
 }
 
-// progressCols 按窗口里出图进度实际能用的宽度分列，避免卡片比格子宽、叠出面板。
-func (a *App) progressCols(c *ui.Context) int {
-	width, _ := c.Size()
-	return gridCols(width, 230, len(a.platformCards()), 3)
-}
-
-func (a *App) progressCard(c *ui.Context, card ProgressCard) {
-	tok := a.look
-	box := ui.Column(c.Key("card:"+card.Key)).MinWidth(0).Gap(6).Padding(8).Radius(tok.radiusM).
-		Background(tok.paper).Border(1, tok.border).Clip().Label("结果卡" + card.Title).Transition(motionItem())
-	if card.Status == "生成中" {
-		accent := c.Theme().Accent
-		reduce := c.Preferences().ReduceMotion
-		box.DrawOver(func(p *ui.Painter, r ui.Rect) {
-			paintGenBar(p, ui.Rect{X: r.X + 10, Y: r.Y + r.H - 16, W: r.W - 20, H: 6}, accent, reduce)
-		})
-	}
-	box.Children(func() {
-		ui.Row(c).FillWidth().MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
-			a.inputThumb(c, card)
-			if len(card.Shots) > 0 {
-				shown, extra := visibleShots(len(card.Shots))
-				ui.Row(c).Gap(4).Grow(1).MinWidth(0).Wrap().Children(func() {
-					flown := map[int]bool{}
-					for _, shot := range card.Shots[:shown] {
-						fly := shot.Task > 0 && !flown[shot.Task]
-						if fly {
-							flown[shot.Task] = true
-						}
-						a.resultThumb(c, shot, card.Status == "生成中", fly)
-					}
-					if extra > 0 {
-						ui.Box(c.Key("more")).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Center().Children(func() {
-							ui.Text(c, fmt.Sprintf("+%d", extra)).FontSize(12).TextColor(tok.muted)
-						})
-					}
-				})
-			}
-			statusPill(c, card.Status)
-		})
-		ui.Text(c, card.Title).Bold().FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(card.Title)
-		a.siteRow(c, card)
-		if card.Moved != "" {
-			ui.Text(c.Key("moved"), card.Moved).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(card.Moved)
-		}
-		if card.MoveWhy != "" {
-			ui.Text(c.Key("movewhy"), card.MoveWhy).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(card.MoveWhy)
-		}
-		switch card.Status {
-		case "生成中":
-			ui.Box(c.Key("gen-slot")).FillWidth().Height(6)
-		case "排队中":
-			ui.Box(c.Key("wait-slot")).FillWidth().Height(6).Radius(3).Background(tok.sunken)
-		}
-		if card.Reason != "" {
-			color := tok.danger
-			if card.Status == "待验证" || card.Status == "需要人工验证" {
-				color = tok.warning
-			}
-			ui.Text(c.Key("reason"), card.Reason).FontSize(tok.caption).TextColor(color).SingleLine().Tooltip(card.Reason).Transition(motionReveal())
-		}
-		if card.Rewrite != "" {
-			line := "已改写：" + card.Rewrite
-			ui.Text(c.Key("rewrite"), line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
-		}
-		if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 || len(card.Shots) > 0 {
-			ui.Row(c).Gap(8).Children(func() {
-				if (card.Status == "失败" || card.Status == "待验证") && len(card.Retry) > 0 {
-					label := card.Action
-					if label == "" {
-						label = "重试"
-					}
-					ui.Button(c.Key("retry"), label).Disabled(a.running).Transition(motionReveal()).OnClick(func() { a.failAction(card) })
-				}
-				if len(card.Shots) > 0 {
-					path := card.Shots[0].Path
-					ui.Button(c, "打开文件").OnClick(func() { a.openResult(path) })
-				}
-			})
-		}
-	})
-}
-
-func (a *App) inputThumb(c *ui.Context, card ProgressCard) {
-	tok := a.look
-	frame := ui.Box(c.Key("in")).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Shrink(0)
-	frame.Children(func() {
-		if card.Source == "" {
-			promptMarkBox(c, tok, 56)
-			return
-		}
-		if bmp := a.cachedThumb(card.Source); bmp != nil {
-			shot := ui.Image(c, bmp).Size(56, 56).Fit(ui.Cover).Radius(tok.radiusS)
-			if card.Status == "生成中" {
-				shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
-			}
-		}
-	})
-}
-
-// visibleShots 把结果缩略图都摆出来。太多时留下一格显示还剩几张。
-func visibleShots(n int) (shown, extra int) {
-	if n <= 6 {
-		return n, 0
-	}
-	return 5, n - 5
-}
-
-func (a *App) resultThumb(c *ui.Context, shot CardShot, shimmer, fly bool) {
-	tok := a.look
-	tile := ui.Box(c.Key(shot.Path)).Size(56, 56).Radius(tok.radiusS).Background(tok.sunken).Shrink(0).Label("结果图")
-	if fly {
-		tile.Transition(ui.ElementTransition{
-			Animation: &motionEaseOut,
-			Position:  true,
-			Size:      true,
-			Match:     jobFly{shot.Task},
-		})
-	} else {
-		tile.Transition(motionItem())
-	}
-	tile.Children(func() {
-		bmp := a.cachedThumb(shot.Path)
-		if bmp != nil {
-			img := ui.Image(c, bmp).Size(56, 56).Fit(ui.Cover).Radius(tok.radiusS).
-				ContentTransition(ui.ContentTransition{Animation: &motionEaseOut}).
-				Cursor(ui.CursorPointer).Label("预览")
-			if shimmer {
-				img.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
-			}
-			if img.Clicked() {
-				a.showPreview(shot.Path)
-			}
-		}
-		if badge := shotBadge(shot.Platform, a.accountName(shot.BrowserID)); badge != "" {
-			ui.Row(c).Label("产出"+badge).Absolute().Bottom(4).Left(4).Padding(1, 4).Radius(4).
-				Background(tok.accent.Alpha(0.92)).Children(func() {
-				ui.Text(c, badge).FontSize(10).TextColor(tok.onAccent).SingleLine()
-			})
-		}
-	})
-}
-
-func promptMark(c *ui.Context, tok tokens) { promptMarkBox(c, tok, 72) }
-
 func promptMarkBox(c *ui.Context, tok tokens, size float32) {
 	ui.Box(c).Size(size, size).Draw(func(p *ui.Painter, r ui.Rect) {
 		ink := tok.muted
@@ -948,46 +751,6 @@ func promptMarkBox(c *ui.Context, tok tokens, size float32) {
 			p.Fill(ui.Rect{X: r.X + r.W*0.22, Y: r.Y + r.H*0.28 + float32(i)*r.H*0.16, W: w, H: 2}, ink, 1)
 		}
 	})
-}
-
-func (a *App) siteRow(c *ui.Context, card ProgressCard) {
-	if len(card.Sites) == 0 {
-		return
-	}
-	tok := a.look
-	ui.Row(c).Gap(10).AlignItems(ui.Center).MinWidth(0).Children(func() {
-		for i, site := range card.Sites {
-			line := site.Platform
-			if site.BrowserID > 0 {
-				if name := a.accountName(site.BrowserID); name != "" && name != line {
-					line += " · " + name
-				}
-			}
-			if line == "" {
-				continue
-			}
-			ui.Row(c.Key(i)).Gap(4).AlignItems(ui.Center).Shrink(1).MinWidth(0).Children(func() {
-				platformIcon(c, site.Platform, 16, tok)
-				ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(line)
-			})
-		}
-	})
-}
-
-func (a *App) siteLine(card ProgressCard) string {
-	var parts []string
-	for _, site := range card.Sites {
-		line := site.Platform
-		if site.BrowserID > 0 {
-			if name := a.accountName(site.BrowserID); name != "" && name != line {
-				line += " · " + name
-			}
-		}
-		if line != "" {
-			parts = append(parts, line)
-		}
-	}
-	return strings.Join(parts, "、")
 }
 
 // paintShimmer 在生成中的缩略图上扫一条高光。只重绘，不重建视图。

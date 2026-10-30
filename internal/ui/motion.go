@@ -263,7 +263,7 @@ func doneMark(c *ui.Context) {
 	})
 }
 
-func statusPill(c *ui.Context, status string) {
+func statusPill(c *ui.Context, status string) ui.Element {
 	t := c.Theme()
 	fg, bg := t.TextMuted, t.Text.Alpha(0.08)
 	switch status {
@@ -271,23 +271,20 @@ func statusPill(c *ui.Context, status string) {
 		fg, bg = t.Success, t.Success.Alpha(0.16)
 	case "失败":
 		fg, bg = t.Danger, t.Danger.Alpha(0.14)
-	case "生成中":
+	case "生成中", "进行中":
 		fg, bg = t.Accent, t.Accent.Alpha(0.14)
 	case "排队中":
 		fg, bg = t.TextMuted, t.Text.Alpha(0.08)
 	case "待验证", "需要人工验证":
 		fg, bg = t.Warning, t.Warning.Alpha(0.16)
 	}
-	size := t.FontSize - 2
-	if size < 11 {
-		size = 11
-	}
-	pill := ui.Row(c.Key("status")).Padding(1, t.Space(1.5)).Radius(999).Shrink(0).AlignItems(ui.Center)
+	pill := ui.Row(c.Key("status")).Padding(1, 6).Radius(999).Shrink(0).AlignItems(ui.Center)
 	pill.Background(pill.AnimateColor("bg", bg, motionEaseFast))
 	pill.Children(func() {
-		ui.Text(c.Key("status-label"), status).FontSize(size).TextColor(fg).SingleLine().
+		ui.Text(c.Key("status-label"), status).FontSize(12).TextColor(fg).SingleLine().
 			ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
 	})
+	return pill
 }
 
 // motionSelect 是带弹出过渡的下拉。外观跟主题里的 Select 对齐，打开和关上时面板淡入淡出。

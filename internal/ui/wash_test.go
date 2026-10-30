@@ -139,7 +139,7 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 				name := fmt.Sprintf("t%d.png", i)
 				r, found := tt.Find(name)
 				row := (i - 1) / washThumbCols
-				if row < washThumbMaxRows {
+				if row < 1 { // 700 高时只露一整行
 					if !found || r.H < washThumbSize-4 {
 						t.Fatalf("row %d thumb %s clipped: ok=%v %+v", row, name, found, r)
 					}
@@ -153,10 +153,10 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 					t.Fatalf("thumb %s cut mid-row: %+v", name, r)
 				}
 				if found && r.H >= washThumbSize-4 {
-					t.Fatalf("thumb %s should stay in the scroll, not a third full row: %+v", name, r)
+					t.Fatalf("thumb %s should stay in the scroll, not an extra full row: %+v", name, r)
 				}
 			}
-			if y0, y1 := rows[0], rows[1]; n > washThumbCols && y1 < y0+washThumbSize-1 {
+			if y0, y1 := rows[0], rows[1]; n > washThumbCols && len(rows) > 1 && y1 < y0+washThumbSize-1 {
 				t.Fatalf("rows overlap %v %v", y0, y1)
 			}
 		})

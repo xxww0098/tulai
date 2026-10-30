@@ -59,6 +59,7 @@ func (a *App) syncPage() {
 	if a.statePage == want {
 		return
 	}
+	a.historyOpen = false
 	cur := a.capturePage()
 	a.restorePage(a.parked)
 	a.parked = cur
