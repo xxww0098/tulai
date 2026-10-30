@@ -108,6 +108,7 @@ type App struct {
 	batchMode       int // batchText 文生图 / batchImage 图生图
 	platformAuto    bool
 	advancedOpen    bool
+	logScroll       ui.ScrollState
 	logsOpen        bool
 	stageTab        int
 	stagePicked     bool

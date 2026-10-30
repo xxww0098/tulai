@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -201,7 +202,7 @@ func (a *App) homePage(c *ui.Context) {
 					a.accountPanel(c, true)
 				}
 				a.progressPane(c)
-				a.runLog(c)
+				a.runLog(c, false)
 				ui.Collapsible(c, "更多设置", &a.advancedOpen, func() {
 					a.advancedFields(c)
 				})
@@ -224,12 +225,17 @@ func (a *App) homeComposer(c *ui.Context, flow flowLayout) {
 	})
 }
 
+// homeStage 上面是平台、账号和进度，运行日志撑满剩下的高度。
+// 上面内容太高时它自己滚动，日志至少留 140。
 func (a *App) homeStage(c *ui.Context, flow flowLayout) {
 	_, winH := c.Size()
-	ui.Scroll(c.Key("home-stage")).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
-		ui.Column(c).FillWidth().MinHeight(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
-			a.platformStage(c, flow)
+	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).Height(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
+		ui.Scroll(c.Key("home-stage-top")).FillWidth().Shrink(1).MinHeight(0).Children(func() {
+			ui.Column(c).FillWidth().Gap(10).Children(func() {
+				a.platformStage(c, flow)
+			})
 		})
+		a.runLog(c, true)
 	})
 }
 
@@ -245,7 +251,6 @@ func (a *App) platformStage(c *ui.Context, flow flowLayout) {
 	} else {
 		a.progressPane(c)
 	}
-	a.runLog(c)
 }
 
 func (a *App) platformTabs(c *ui.Context) {
@@ -313,23 +318,42 @@ func tasksForPlatform(items []tasks.Task, platform string) []tasks.Task {
 	return out
 }
 
-func (a *App) runLog(c *ui.Context) {
+// runLog 在右栏里撑满剩下的高度，日志在卡片里滚动，停在底部时跟着最新一行。
+func (a *App) runLog(c *ui.Context, fill bool) {
 	tok := a.look
-	ui.Column(c.Key("run-log")).FillWidth().Gap(4).Padding(8, 10).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border).Children(func() {
+	card := ui.Column(c.Key("run-log")).FillWidth().Gap(4).Padding(8, 10).Radius(tok.radiusM).
+		Background(tok.card).Border(1, tok.border)
+	limit := 6
+	if fill {
+		card.Grow(1).Shrink(0).MinHeight(140)
+		limit = 300
+	}
+	card.Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "运行日志").FontSize(tok.body).Bold().Grow(1)
 			ui.Button(c, "打开日志文件").OnClick(func() { a.openLogFile() })
 		})
-		notes := logging.VisibleTail(logging.Log.Entries(), 6)
+		notes := logging.VisibleTail(logging.Log.Entries(), limit)
 		if len(notes) == 0 {
 			ui.Text(c, "每个任务的开始、提交和结束会写在这里").FontSize(tok.caption).TextColor(tok.muted)
 			return
 		}
-		for _, line := range notes {
-			text := line.Text
-			ui.Text(c, text).FontSize(tok.caption).SingleLine().Tooltip(text)
+		lines := func() {
+			for _, line := range notes {
+				text := line.Text
+				ui.Text(c, text).FontSize(tok.caption).SingleLine().Tooltip(text)
+			}
 		}
+		if !fill {
+			lines()
+			return
+		}
+		if a.logScroll.Y >= a.logScroll.MaxY {
+			a.logScroll.Y = math.MaxFloat32
+		}
+		ui.Scroll(c.Key("run-log-lines")).FillWidth().Grow(1).MinHeight(0).TrackScroll(&a.logScroll).Children(func() {
+			ui.Column(c).FillWidth().Gap(2).Children(lines)
+		})
 	})
 }
 
