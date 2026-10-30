@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/store"
 )
@@ -17,6 +18,7 @@ const (
 	LaneGap     LaneState = "等待间隔"
 	LaneCooling LaneState = "冷却中"
 	LaneFull    LaneState = "今日已满"
+	LaneQuota   LaneState = "额度不足"
 	LaneLogin   LaneState = "需要登录"
 	LaneCaptcha LaneState = "验证码"
 	LaneOffline LaneState = "离线"
@@ -58,6 +60,8 @@ type AccountLane struct {
 	Cap         int
 	Action      string
 	Job         *LaneJob
+	Email       string
+	CoolUntil   int64
 }
 
 // Board 是这一帧全部账号。
@@ -184,6 +188,7 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 	ln := AccountLane{
 		ID: f.ID, Platform: f.Platform, Name: name, Extension: f.Extension,
 		UsedToday: f.UsedToday, Cap: cap, NextReadyAt: f.NextReady, Gap: f.Gap,
+		CoolUntil: f.CoolUntil,
 	}
 	switch {
 	case f.Awaiting:
@@ -197,10 +202,16 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 		ln.State = LaneOffline
 	case needsLogin(f, now):
 		ln.State = LaneLogin
-		ln.Action = "去重登"
+		if f.Platform == agy.Platform {
+			ln.Action = "去登录"
+		} else {
+			ln.Action = "去重登"
+		}
 	case needsCaptcha(f, now):
 		ln.State = LaneCaptcha
 		ln.Action = "去处理"
+	case agyExhausted(f, now):
+		ln.State = LaneQuota
 	case dayFull(f, now):
 		ln.State = LaneFull
 	case f.Offline:
@@ -233,6 +244,14 @@ func needsCaptcha(f LaneFact, now time.Time) bool {
 		return false
 	}
 	return !factUsable(f, now)
+}
+
+func agyExhausted(f LaneFact, now time.Time) bool {
+	if f.Platform != agy.Platform || factUsable(f, now) {
+		return false
+	}
+	msg := strings.ToLower(f.LastError)
+	return strings.Contains(f.LastError, "额度") || strings.Contains(msg, "quota")
 }
 
 func dayFull(f LaneFact, now time.Time) bool {
@@ -416,6 +435,10 @@ func (e *Engine) laneRows() []store.Browser {
 	wantExt := e.useExtension("豆包")
 	var out []store.Browser
 	for _, b := range e.store.Browsers() {
+		if b.Platform == agy.Platform {
+			out = append(out, b)
+			continue
+		}
 		if b.Platform != "豆包" && b.Platform != "千问" {
 			continue
 		}

@@ -93,6 +93,10 @@ var defaults = map[string]string{
 	"proxy_server":            "",
 	"daily_cap":               "100",
 	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
+	"agy_bin":                 "",
+	"agy_home_root":           "",
+	"agy_model":               "gemini-3.8-flash",
+	"agy_timeout_seconds":     "360",
 }
 
 const schema = `
@@ -236,6 +240,16 @@ func nextPlatformName(platform string, used []string) string {
 
 // Close 关闭数据库。
 func (s *Store) Close() error { return s.db.Close() }
+
+// File 是配置库文件路径。
+func (s *Store) File() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.path
+}
 
 // Get 读取设置（缺失时回默认值）。
 func (s *Store) Get(key string) string {

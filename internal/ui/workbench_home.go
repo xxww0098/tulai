@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -208,16 +209,22 @@ func (a *App) platformStage(c *ui.Context) {
 func (a *App) platformTabs(c *ui.Context) {
 	doubaoN := a.runningOn("豆包")
 	qianwenN := a.runningOn("千问")
+	agyN := a.runningOn(agy.Platform)
 	if !a.stagePicked {
-		if qianwenN > doubaoN {
+		a.stageTab = 0
+		best := doubaoN
+		if qianwenN > best {
 			a.stageTab = 1
-		} else {
-			a.stageTab = 0
+			best = qianwenN
+		}
+		if agyN > best {
+			a.stageTab = 2
 		}
 	}
 	ui.Row(c.Key("platform-tabs")).Gap(6).AlignItems(ui.Center).Children(func() {
 		a.stageButton(c, 0, "豆包", doubaoN)
 		a.stageButton(c, 1, "千问", qianwenN)
+		a.stageButton(c, 2, agy.Platform, agyN)
 	})
 }
 
@@ -249,10 +256,17 @@ func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
 }
 
 func (a *App) stagePlatform() string {
-	if a != nil && a.stageTab == 1 {
-		return "千问"
+	if a == nil {
+		return "豆包"
 	}
-	return "豆包"
+	switch a.stageTab {
+	case 1:
+		return "千问"
+	case 2:
+		return agy.Platform
+	default:
+		return "豆包"
+	}
 }
 
 func (a *App) runningOn(platform string) int {
@@ -540,7 +554,10 @@ func (a *App) loggedOutCallout() bool {
 	stage := a.stagePlatform()
 	any := false
 	for _, account := range in.Accounts {
-		if account.Platform != stage || account.Extension != in.ExtensionMode {
+		if account.Platform != stage {
+			continue
+		}
+		if account.Platform != agy.Platform && account.Extension != in.ExtensionMode {
 			continue
 		}
 		if account.LoggedIn {
@@ -556,8 +573,20 @@ func (a *App) accountCallout(c *ui.Context) {
 	ui.Row(c.Key("account-callout")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
 		Radius(tok.radiusM).Background(tok.warning.Alpha(0.14)).Border(1, tok.warning).
 		Transition(motionBanner()).Children(func() {
-		ui.Text(c, "还没有可用账号。先去设置登录，再开始出图。").FontSize(tok.body).Grow(1).MinWidth(0)
-		ui.Button(c, "去设置").OnClick(func() { a.openWizard() })
+		text := "还没有可用账号。先去设置登录，再开始出图。"
+		button := "去设置"
+		if a.stagePlatform() == agy.Platform {
+			text = "还没有可用账号。在右侧点「+ 添加账号」登录。"
+			button = "+ 添加账号"
+		}
+		ui.Text(c, text).FontSize(tok.body).Grow(1).MinWidth(0)
+		ui.Button(c, button).OnClick(func() {
+			if a.stagePlatform() == agy.Platform {
+				a.addAgyAccount()
+				return
+			}
+			a.openWizard()
+		})
 	})
 }
 

@@ -274,6 +274,39 @@ func TestExportWorkbenchShots(t *testing.T) {
 		})
 		saveAt("settings-"+tag, sz[0], sz[1], settingsShot(shotOut))
 	}
+	agyHome := filepath.Join(t.TempDir(), "acc1")
+	writeAgyHome(t, agyHome, "li@gmail.com")
+	y, m, d := time.Now().Date()
+	midnight := time.Date(y, m, d+1, 0, 0, 0, 0, time.Local).Unix()
+	agyAccount := func(exhausted bool) []store.Browser {
+		row := store.Browser{
+			ID: 1, Name: "acc1", Platform: "Antigravity", UserDataDir: agyHome,
+			IsLoggedIn: true, Health: store.HealthReady,
+		}
+		if exhausted {
+			row.Health = store.HealthExhausted
+			row.LastError = "额度不足"
+			row.CoolUntil = midnight
+		}
+		return []store.Browser{row}
+	}
+	agyBase := func(exhausted bool) *App {
+		return &App{
+			platformAuto: true, stageTab: 2, stagePicked: true, outputPath: shotOut,
+			prompts:     "一只坐在窗边的猫",
+			browserRows: agyAccount(exhausted),
+		}
+	}
+	saveAt("antigravity-gen", 1024, 700, agyBase(false))
+	washAgy := agyBase(false)
+	washAgy.tab, washAgy.statePage = pageWash, pageWash
+	washAgy.sources = []sourceImage{{Path: land, Hash: "land"}}
+	washAgy.preloadThumbs([]string{land})
+	saveAt("antigravity-wash", 1024, 700, washAgy)
+	loginAgy := agyBase(false)
+	loginAgy.agyLogin = &agyLoginState{url: "https://accounts.google.com/o/oauth2/auth?client_id=agy", name: "acc1"}
+	saveAt("antigravity-login", 1024, 700, loginAgy)
+	saveAt("antigravity-exhausted", 1024, 700, agyBase(true))
 	tip := ui.NewTester(idle.view, 1280, 800)
 	tip.Advance(450 * time.Millisecond)
 	r, ok := tip.Find("检查更新")
@@ -288,6 +321,21 @@ func TestExportWorkbenchShots(t *testing.T) {
 	}
 	defer f.Close()
 	if err := png.Encode(f, tip.Image()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeAgyHome(t *testing.T, home, email string) {
+	t.Helper()
+	dir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := "noise\nOAuth: authenticated successfully as old@example.com\nOAuth: authenticated successfully as " + email + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "cli.log"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "antigravity-oauth-token"), []byte{}, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

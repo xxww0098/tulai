@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -58,6 +59,7 @@ func (a *App) settingsPage(c *ui.Context) {
 			ui.Text(c, "生图和洗图只负责输入和开始。输出、并发和生成规则都在这里。").FontSize(13).TextColor(c.Theme().TextMuted)
 			a.settingsCard(c, "输出", "生图和洗图按日期放进各自的文件夹。", func() { a.outputSettings(c) })
 			a.settingsCard(c, "账号与并发", "用哪些平台、同时跑几个账号、每天的上限。", func() { a.accountSettings(c) })
+			a.settingsCard(c, "Antigravity", "agy 路径、账号目录、模型和单任务超时。一次只跑一个账号。", func() { a.agySettings(c) })
 			a.settingsCard(c, "生成规则", "发送节奏、审核改写、等待和去水印。", func() { a.ruleSettings(c) })
 			a.settingsCard(c, "验证码 / 高级", "遇到验证时怎么处理，以及浏览器走的代理。", func() {
 				a.captchaFields(c)
@@ -239,6 +241,7 @@ func (a *App) accountSettings(c *ui.Context) {
 			ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
 				a.platformCheck(c, "豆包", &a.platDoubao)
 				a.platformCheck(c, "千问", &a.platQianwen)
+				a.platformCheck(c, agy.Platform, &a.platAntigravity)
 			})
 		}
 		ui.Text(c, a.platformLine()).FontSize(12).TextColor(c.Theme().TextMuted)
@@ -249,7 +252,7 @@ func (a *App) accountSettings(c *ui.Context) {
 				ui.NumberInput(c, &a.concurrency, 1, 16, 1).Disabled(a.running)
 			})
 		}
-		ui.Text(c, fmt.Sprintf("每个平台同时最多 %d 张。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(12).TextColor(tok.muted)
+		ui.Text(c, fmt.Sprintf("豆包、千问每个平台同时最多 %d 张。Antigravity 一次只跑一个账号。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(12).TextColor(tok.muted)
 		ui.Field(c, "每日上限", func() {
 			ui.NumberInput(c, &a.dailyCap, 1, 200, 1).Disabled(a.running)
 		})
@@ -319,8 +322,8 @@ func (a *App) platformLine() string {
 		}
 		return "当前将使用：" + strings.Join(names, "、")
 	}
-	if !a.platDoubao && !a.platQianwen {
-		return "请勾选豆包或千问"
+	if !a.platDoubao && !a.platQianwen && !a.platAntigravity {
+		return "请勾选豆包、千问或 Antigravity"
 	}
 	return "按勾选的平台出图，仍会在健康账号之间自动轮换"
 }
@@ -338,15 +341,16 @@ func (a *App) carryingPlatforms(auto bool) []string {
 
 func (a *App) workbenchInput() WorkbenchInput {
 	return WorkbenchInput{
-		Running:       a.running,
-		HasImages:     len(a.sources) > 0,
-		HasPrompts:    len(a.taskPromptList()) > 0,
-		AutoPlatform:  a.platformAuto,
-		WantDoubao:    a.platDoubao,
-		WantQianwen:   a.platQianwen,
-		ExtensionMode: a.extensionTasks(),
-		Accounts:      a.accountSnaps(),
-		Now:           time.Now(),
+		Running:         a.running,
+		HasImages:       len(a.sources) > 0,
+		HasPrompts:      len(a.taskPromptList()) > 0,
+		AutoPlatform:    a.platformAuto,
+		WantDoubao:      a.platDoubao,
+		WantQianwen:     a.platQianwen,
+		WantAntigravity: a.platAntigravity,
+		ExtensionMode:   a.extensionTasks(),
+		Accounts:        a.accountSnaps(),
+		Now:             time.Now(),
 	}
 }
 
@@ -389,6 +393,7 @@ func (a *App) parallelSlots() int {
 	}
 	wantDoubao := a.platformAuto || a.platDoubao
 	wantQianwen := a.platformAuto || a.platQianwen
+	wantAgy := a.platformAuto || a.platAntigravity
 	var rows []store.Browser
 	for _, b := range a.configuredBrowsers() {
 		if stage != "" && b.Platform != stage {
@@ -399,19 +404,30 @@ func (a *App) parallelSlots() int {
 			if !wantDoubao {
 				continue
 			}
+			if extension != (b.ExtAccount != "") {
+				continue
+			}
 		case "千问":
 			if !wantQianwen {
+				continue
+			}
+			if extension != (b.ExtAccount != "") {
+				continue
+			}
+		case agy.Platform:
+			if !wantAgy {
 				continue
 			}
 		default:
 			continue
 		}
-		if extension != (b.ExtAccount != "") {
-			continue
-		}
 		rows = append(rows, b)
 	}
-	return tasks.ParallelSlots(rows, now, a.shownDailyCap())
+	n := tasks.ParallelSlots(rows, now, a.shownDailyCap())
+	if stage == agy.Platform && n > 1 {
+		return 1
+	}
+	return n
 }
 
 func (a *App) accountSnaps() []AccountSnap {
@@ -514,7 +530,7 @@ func (a *App) retryTasks(items []tasks.Task) {
 		}
 	}
 	var names []string
-	for _, name := range []string{"豆包", "千问"} {
+	for _, name := range []string{"豆包", "千问", agy.Platform} {
 		if platforms[name] {
 			names = append(names, name)
 		}

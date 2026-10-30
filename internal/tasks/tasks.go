@@ -73,6 +73,10 @@ type Options struct {
 	RemoveWatermark    bool // 另存计算去水印版本，始终保留原图
 	DailyCap           int
 	RiskyWords         []string
+	AgyBin             string
+	AgyModel           string
+	AgyHomeRoot        string
+	AgyTimeoutSec      int
 	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
 	Wash bool
 }

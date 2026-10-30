@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/heal"
@@ -161,6 +162,7 @@ func (e *Engine) scanLogins(ctx context.Context) {
 
 // settleAccount 在派发前探测当前账号。探测把它标成不可用时，改派到下一个并再探一次。
 func (e *Engine) settleAccount(ctx context.Context, task *Task) (wait time.Time, dead bool) {
+	e.syncAgyAccounts()
 	seen := map[int64]bool{}
 	for n := 0; n < 8; n++ {
 		if task.BrowserID > 0 && !seen[task.BrowserID] {
@@ -198,7 +200,7 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 			break
 		}
 	}
-	if !found || row.ExtAccount != "" {
+	if !found || row.ExtAccount != "" || row.Platform == agy.Platform {
 		return
 	}
 	if e.accountBusy(id) {

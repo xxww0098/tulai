@@ -3,11 +3,13 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/logging"
 )
@@ -168,7 +170,13 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 	jobs := make(chan Task)
 	completed := make(chan Task, len(queue)+1)
 	var wg sync.WaitGroup
-	for range PlatformInFlight {
+	workers := PlatformInFlight
+	budget := e.taskBudget()
+	if platform == agy.Platform {
+		workers = 1
+		budget = e.agyBudget()
+	}
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -177,7 +185,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					completed <- t
 					continue
 				}
-				tctx, cancel := e.budgetContext(ctx, t.BrowserID, e.taskBudget())
+				tctx, cancel := e.budgetContext(ctx, t.BrowserID, budget)
 				t.slot = t.BrowserID
 				if t.BrowserID > 0 {
 					e.setActive(t.BrowserID, true)
@@ -203,7 +211,14 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				stage, msg := "done", "#"+itoa(t.Index)+" "+name+" 结束"
 				if t.rotated && t.Status == StatusPending {
 					stage = "retry"
-					msg = "#" + itoa(t.Index) + " 发送未确认，等待空闲账号"
+					switch {
+					case strings.Contains(t.Error, "已换到"):
+						msg = "#" + itoa(t.Index) + " " + t.Error
+					case t.Platform == agy.Platform && t.Error == "":
+						msg = "#" + itoa(t.Index) + " 等待账号额度恢复"
+					default:
+						msg = "#" + itoa(t.Index) + " 发送未确认，等待空闲账号"
+					}
 				}
 				var logErr error
 				if t.Status != StatusSuccess && t.Error != "" {
@@ -374,6 +389,9 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 
 func (e *Engine) platformCap(platform string, now time.Time) int {
 	usable := ParallelSlots(e.accountsFor(platform), now, e.capNow())
+	if platform == agy.Platform {
+		return 1
+	}
 	if usable < 1 {
 		return 1
 	}
