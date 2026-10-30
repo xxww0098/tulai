@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,44 @@ func TestAntigravityAddChooser(t *testing.T) {
 	}
 	if tt.HasText("导入本地 Antigravity CLI 账号") {
 		t.Fatal("授权面板打开后选择方式还在")
+	}
+}
+
+func TestAgyImportSuccessClosesChooser(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	home := filepath.Join(dir, "acc1")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{
+		store: st, platformAuto: true, stageTab: 2, stagePicked: true,
+		agyChooser: &agyChooserState{busy: true, canImport: true, home: home, email: "a@b.c"},
+	}
+	a.finishAgyImport(agy.ImportResult{}, errors.New("验证没通过"))
+	if a.agyChooser == nil || a.agyChooser.err == "" || !a.agyChooser.retry {
+		t.Fatal("失败时应留着选择器")
+	}
+	before := len(logging.Log.Entries())
+	a.finishAgyImport(agy.ImportResult{Home: home, Name: "acc1", Email: "a@b.c"}, nil)
+	if a.agyChooser != nil {
+		t.Fatal("导入成功后选择器还开着")
+	}
+	entries := logging.Log.Entries()
+	if len(entries) <= before || !strings.Contains(entries[len(entries)-1].Text, "a@b.c") || !strings.Contains(entries[len(entries)-1].Text, agy.MsgImported) {
+		t.Fatalf("日志 = %+v", entries[before:])
+	}
+	tt := ui.NewTester(a.view, 1280, 800)
+	tt.Advance(200 * time.Millisecond)
+	if tt.HasText("导入本地 Antigravity CLI 账号") {
+		t.Fatal("选择器还在界面上")
+	}
+	if !tt.HasText("acc1") {
+		t.Fatalf("新账号没出现: %v", tt.Texts())
 	}
 }
 

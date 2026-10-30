@@ -60,15 +60,22 @@ func ParseWords(raw string) []string {
 
 // ClassifyFailure 给一条失败任务一句话和一个按钮。
 // 额度、限流、验证码、登录沿用 classifyFault，不另写一套探测。
+// 超时、额度不足、需登录、已停止要写出类别，不能收成一句「出图失败」。
 func ClassifyFailure(status Status, raw string) FailHint {
 	if status == StatusNeedsUser {
 		return FailHint{FailCaptcha, "需要在网页里完成验证", "重试"}
 	}
 	text := strings.TrimSpace(raw)
-	if text == "" || strings.Contains(text, "已停止") {
-		if strings.Contains(text, "已停止") {
-			return FailHint{FailUnknown, "已停止", "重试"}
-		}
+	if status == StatusSkipped || strings.Contains(text, "已停止") {
+		return FailHint{FailUnknown, "已停止", "重试"}
+	}
+	if strings.Contains(text, "出图超时") {
+		return FailHint{FailUnknown, "出图超时，请重试", "重试"}
+	}
+	if strings.Contains(text, "需登录") {
+		return FailHint{FailAuth, "需登录，请重试", "去重登"}
+	}
+	if text == "" {
 		return FailHint{FailUnknown, "出图失败，请重试", "重试"}
 	}
 	if isModeration(errors.New(text)) {
@@ -76,7 +83,11 @@ func ClassifyFailure(status Status, raw string) FailHint {
 	}
 	switch classifyFault(errors.New(text)) {
 	case faultQuota:
-		return FailHint{FailQuota, "账号额度已用完", "换账号重试"}
+		sentence := "账号额度已用完"
+		if strings.Contains(text, "额度不足") {
+			sentence = "额度不足，请重试"
+		}
+		return FailHint{FailQuota, sentence, "换账号重试"}
 	case faultRate:
 		return FailHint{FailQuota, "请求太频繁，请稍后再试", "换账号重试"}
 	case faultAuth:

@@ -58,18 +58,77 @@ func TestWorkspaceRestoresAfterRestart(t *testing.T) {
 
 	b := &App{store: st}
 	b.loadSettings()
-	if b.genSession != a.genSession || b.prompts != "窗边的猫" || len(b.sources) != 1 || b.sources[0].Path != img {
-		t.Fatalf("生图恢复失败 prompts=%q sources=%v id=%d", b.prompts, b.sources, b.genSession)
+	if b.tab != pageWash {
+		t.Fatalf("应打开上次的洗图页，tab=%d", b.tab)
 	}
-	if len(b.queue) != 1 || b.queue[0].Status != tasks.StatusSuccess || len(b.queue[0].Results) != 1 || b.queue[0].Results[0] != out || b.progText != "1 / 1" {
-		t.Fatalf("生图任务恢复失败 %+v %q", b.queue, b.progText)
+	gen := b.stateOf(pageHome)
+	if b.genSession != a.genSession || gen.prompts != "窗边的猫" || len(gen.sources) != 1 || gen.sources[0].Path != img {
+		t.Fatalf("生图恢复失败 prompts=%q sources=%v id=%d", gen.prompts, gen.sources, b.genSession)
 	}
-	w := b.stateOf(pageWash)
-	if b.washSession != washID || w.prompts != "白底" || len(w.sources) != 1 || w.sources[0].Path != img {
-		t.Fatalf("洗图恢复失败 %+v id=%d", w, b.washSession)
+	if len(gen.queue) != 1 || gen.queue[0].Status != tasks.StatusSuccess || len(gen.queue[0].Results) != 1 || gen.queue[0].Results[0] != out || gen.progText != "1 / 1" {
+		t.Fatalf("生图任务恢复失败 %+v %q", gen.queue, gen.progText)
 	}
-	if len(w.queue) != 1 || w.queue[0].Status != tasks.StatusFailed || w.queue[0].Error != "上传失败" || w.queue[0].Images[0] != img {
-		t.Fatalf("洗图任务恢复失败 %+v", w.queue)
+	if b.washSession != washID || b.prompts != "白底" || len(b.sources) != 1 || b.sources[0].Path != img {
+		t.Fatalf("洗图恢复失败 prompts=%q sources=%v id=%d", b.prompts, b.sources, b.washSession)
+	}
+	if len(b.queue) != 1 || b.queue[0].Status != tasks.StatusFailed || b.queue[0].Error != "上传失败" || b.queue[0].Images[0] != img {
+		t.Fatalf("洗图任务恢复失败 %+v", b.queue)
+	}
+}
+
+func TestWashPageRestoresSourcesAndResults(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cat := filepath.Join(dir, "cat.png")
+	poster := filepath.Join(dir, "poster.png")
+	mug := filepath.Join(dir, "mug.png")
+	out := filepath.Join(dir, "poster_01.png")
+	for _, path := range []string{cat, poster, mug, out} {
+		writeTinyPNG(t, path)
+	}
+
+	a := &App{store: st, engine: tasks.NewEngine(st, nil, nil, ""), platformAuto: true}
+	a.loadSettings()
+	a.prompts = "窗边的猫"
+	a.sources = []sourceImage{{Path: cat}}
+	a.tab = pageWash
+	a.syncPage()
+	a.prompts = "只要主体，白底"
+	a.sources = []sourceImage{{Path: poster}, {Path: mug}}
+	a.queue = []tasks.Task{
+		{Index: 1, Platform: "豆包", Status: tasks.StatusSuccess, Prompt: "只要主体，白底", Images: []string{poster}, Results: []string{out}},
+		{Index: 2, Platform: "豆包", Status: tasks.StatusFailed, Prompt: "只要主体，白底", Images: []string{mug}, Error: "出图超时"},
+	}
+	a.progText = taskResultSummary(a.queue)
+	a.stageTab = 0
+	a.stagePicked = true
+	a.saveSettings()
+
+	b := &App{store: st, engine: tasks.NewEngine(st, nil, nil, ""), platformAuto: true}
+	b.loadSettings()
+	if b.tab != pageWash || b.prompts != "只要主体，白底" || len(b.sources) != 2 || len(b.queue) != 2 {
+		t.Fatalf("洗图会话没回到界面 tab=%d prompts=%q sources=%d queue=%d", b.tab, b.prompts, len(b.sources), len(b.queue))
+	}
+	tt := ui.NewTester(b.view, 1280, 900)
+	tt.Advance(200 * time.Millisecond)
+	for _, label := range []string{"原图", "poster.png", "mug.png", "已选 2 张", "poster_01.png", "出图超时，请重试", "洗图指令"} {
+		if !tt.HasText(label) {
+			t.Fatalf("洗图页缺少 %q，看到 %v", label, tt.Texts())
+		}
+	}
+	if err := tt.Click("生图"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if b.tab != pageHome || b.prompts != "窗边的猫" || len(b.sources) != 1 || b.sources[0].Path != cat {
+		t.Fatalf("生图被洗图盖住: tab=%d %q %+v", b.tab, b.prompts, b.sources)
+	}
+	if !tt.HasText("cat.png") {
+		t.Fatalf("参考图没回来: %v", tt.Texts())
 	}
 }
 

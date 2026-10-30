@@ -581,13 +581,8 @@ func (a *App) finishAgyImport(res agy.ImportResult, err error) {
 		line = who + " " + agy.MsgImported
 	}
 	logging.Log.Success("%s", line)
-	if a.agyChooser != nil {
-		a.agyChooser.busy = false
-		a.agyChooser.retry = false
-		a.agyChooser.err = ""
-		a.agyChooser.canImport = false
-		a.agyChooser.status = line
-	}
+	// 账号已经在表里，选择方式可以收起来。失败时留着面板给重试。
+	a.agyChooser = nil
 }
 
 func (a *App) beginAgyLogin(row store.Browser) {

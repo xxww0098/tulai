@@ -43,6 +43,29 @@ func TestClassifyFailure(t *testing.T) {
 	}
 }
 
+func TestClassifyFailureNamesTheCategory(t *testing.T) {
+	cases := []struct {
+		status        Status
+		raw, sentence string
+		class         FailClass
+	}{
+		{StatusFailed, "出图超时", "出图超时，请重试", FailUnknown},
+		{StatusFailed, "失败: 出图超时", "出图超时，请重试", FailUnknown},
+		{StatusFailed, "额度不足", "额度不足，请重试", FailQuota},
+		{StatusFailed, "需登录", "需登录，请重试", FailAuth},
+		{StatusSkipped, "已停止", "已停止", FailUnknown},
+		{StatusSkipped, "", "已停止", FailUnknown},
+		{StatusFailed, "账号额度已用尽", "账号额度已用完", FailQuota},
+		{StatusFailed, "登录已失效", "登录失效了，请重新登录", FailAuth},
+	}
+	for _, tc := range cases {
+		got := ClassifyFailure(tc.status, tc.raw)
+		if got.Class != tc.class || got.Sentence != tc.sentence {
+			t.Errorf("Classify(%q) = %+v, want class %d sentence %q", tc.raw, got, tc.class, tc.sentence)
+		}
+	}
+}
+
 func TestSoftenPromptStripsWordsAndStaysMild(t *testing.T) {
 	got := SoftenPrompt("血腥的战场，武器特写", []string{"血腥", "武器"})
 	if strings.Contains(got, "血腥") || strings.Contains(got, "武器") || !strings.Contains(got, mildPhrase) {

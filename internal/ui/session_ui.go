@@ -17,6 +17,19 @@ import (
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
+// noteWorkspacePage 记下当前是生图还是洗图。浏览器、设置这些页不覆盖它。
+func (a *App) noteWorkspacePage() {
+	if a == nil {
+		return
+	}
+	switch a.tab {
+	case pageHome:
+		a.workspacePage = store.PageGen
+	case pageWash:
+		a.workspacePage = store.PageWash
+	}
+}
+
 func workspacePageKey(page int) string {
 	if page == pageWash {
 		return store.PageWash

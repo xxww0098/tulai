@@ -54,8 +54,7 @@ func (a *App) resultsPane(c *ui.Context) {
 	}
 	pane.Children(func() {
 		a.resultsHead(c)
-		_, _, _, _, needs := ProgressTally(a.platformCards())
-		if needs > 0 {
+		if TallyTasks(tasksForPlatform(a.queueItems(), a.stagePlatform())).Needs > 0 {
 			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
 		}
 		if len(rows) == 0 {
@@ -94,14 +93,13 @@ func (a *App) resultsPane(c *ui.Context) {
 func (a *App) resultsHead(c *ui.Context) {
 	tok := a.look
 	items := tasksForPlatform(a.queueItems(), a.stagePlatform())
-	cards := ProgressCards(items)
 	failed := FailedTasks(items)
+	tally := TallyTasks(items)
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Text(c, "出图进度").FontSize(tok.title).Bold()
-			if len(cards) > 0 {
-				done, running, queued, failN, needs := ProgressTally(cards)
-				ui.Text(c, FormatProgressTally(done, running, queued, failN, needs, a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+			if len(items) > 0 {
+				ui.Text(c, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 			}
 		})
 		if len(failed) > 0 {
@@ -378,8 +376,10 @@ func tileStatus(task tasks.Task) string {
 		return "进行中"
 	case tasks.StatusSuccess:
 		return "完成"
-	case tasks.StatusFailed, tasks.StatusSkipped:
+	case tasks.StatusFailed:
 		return "失败"
+	case tasks.StatusSkipped:
+		return "已停止"
 	case tasks.StatusPending:
 		return "排队中"
 	case tasks.StatusNeedsUser:
