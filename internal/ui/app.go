@@ -143,6 +143,9 @@ type App struct {
 	srcGrid ui.GridState
 	srcSel  int
 
+	// 去重页
+	dedup dedupState
+
 	// 浏览器
 	browserRows    []store.Browser
 	browserSel     int
@@ -250,6 +253,7 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		sourceHeight: 210,
 		srcSel:       -1,
 		browserSel:   -1,
+		dedup:        dedupState{level: dedupDefaultLevel},
 	}
 	a.loadSettings()
 	if dir, err := extbundle.Install(browser.ConfigDir()); err != nil {
@@ -444,6 +448,7 @@ func (a *App) loadSettings() {
 		wash.sources = append(wash.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
 	}
 	a.parked = wash
+	a.loadDedupSettings(s)
 	a.autoCheck = update.AutoOn(s.Get(update.KeyAutoCheck))
 	a.updateMirror = strings.TrimSpace(s.Get(update.KeyMirror))
 	switch s.Get("batch_mode") {
@@ -528,6 +533,7 @@ func (a *App) saveSettings() {
 	a.persistProxy()
 	// 源图列表持久化
 	s.Set("source_images", joinPaths(sourcePaths(gen.sources)))
+	a.saveDedupSettings(s)
 	a.persistUpdatePrefs()
 	a.persistWorkspace(pageHome)
 	a.persistWorkspace(pageWash)
@@ -594,6 +600,8 @@ func (a *App) view(c *ui.Context) {
 				switch a.tab {
 				case pageWash:
 					a.washPage(c)
+				case pageDedup:
+					a.dedupPage(c)
 				case pageBrowser:
 					a.browserPane(c)
 				case pagePrompts:

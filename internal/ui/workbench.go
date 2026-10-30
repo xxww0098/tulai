@@ -16,6 +16,7 @@ import (
 const (
 	pageHome = iota
 	pageWash
+	pageDedup
 	pageBrowser
 	pagePrompts
 	pageSettings

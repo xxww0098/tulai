@@ -102,6 +102,7 @@ func (a *App) pageTabs(c *ui.Context) {
 	items := []item{
 		{"生图", iconImages},
 		{"洗图", iconWash},
+		{"去重", iconDedup},
 		{"浏览器", iconGlobe},
 		{"提示词", iconPen},
 		{"设置", iconSettings},
