@@ -81,6 +81,11 @@ func TestExportWorkbenchShots(t *testing.T) {
 
 	const shotOut = "图片/输出结果"
 	save("after-empty", &App{platformAuto: true, outputPath: shotOut})
+	save("gen-prompts", &App{
+		platformAuto: true, outputPath: shotOut,
+		prompts: "一只坐在窗边的猫\n傍晚的街景，暖光\n一束白花",
+	})
+	save("settings", settingsShot(shotOut))
 	var twelve []store.Browser
 	today := time.Now().Format("2006-01-02")
 	for i := 1; i <= 12; i++ {
@@ -100,10 +105,12 @@ func TestExportWorkbenchShots(t *testing.T) {
 	save("accounts-12-wash", &App{platformAuto: true, concurrencyAuto: true, outputPath: shotOut, browserRows: twelve, tab: pageWash, statePage: pageWash, runPage: pageWash,
 		sources: []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}}, queue: busy, running: true})
 	save("wash-empty", &App{platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash})
-	save("wash", &App{
+	washShot := &App{
 		platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash, flowPin: 1, srcSel: -1,
 		sources: []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}},
-	})
+	}
+	washShot.preloadThumbs([]string{land, face, still})
+	save("wash", washShot)
 
 	picked := &App{
 		platformAuto: true,
@@ -265,7 +272,7 @@ func TestExportWorkbenchShots(t *testing.T) {
 				{ID: 2, Name: "千问备用", Platform: "千问", Port: 9334, IsLoggedIn: true, Health: store.HealthReady},
 			},
 		})
-		saveAt("settings-"+tag, sz[0], sz[1], &App{tab: pageSettings, autoCheck: true, captchaEnabled: true, captchaBackend: "free"})
+		saveAt("settings-"+tag, sz[0], sz[1], settingsShot(shotOut))
 	}
 	tip := ui.NewTester(idle.view, 1280, 800)
 	tip.Advance(450 * time.Millisecond)
@@ -282,6 +289,20 @@ func TestExportWorkbenchShots(t *testing.T) {
 	defer f.Close()
 	if err := png.Encode(f, tip.Image()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func settingsShot(output string) *App {
+	return &App{
+		tab:             pageSettings,
+		platformAuto:    true,
+		concurrencyAuto: true,
+		autoCheck:       true,
+		captchaEnabled:  true,
+		captchaBackend:  "free",
+		outputPath:      output,
+		dailyCap:        20,
+		sendStrategy:    "顺序循环",
 	}
 }
 

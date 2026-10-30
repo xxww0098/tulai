@@ -74,6 +74,7 @@ func TestUpdateDefersWhileTasksRun(t *testing.T) {
 func TestSettingsShowVersionAndCheck(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), tab: pageSettings, autoCheck: true}
 	tt := ui.NewTester(a.view, 1280, 900)
+	scrollIntoView(t, tt, "当前版本 "+currentVersion(), 1280, 900)
 	for _, label := range []string{"当前版本 " + currentVersion(), "自动检查更新", "检查更新"} {
 		assertVisible(t, tt, label, 1280, 900)
 	}

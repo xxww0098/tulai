@@ -357,16 +357,7 @@ func elapsedLabel(d time.Duration) string {
 }
 
 func platformMark(c *ui.Context, platform string, tok tokens) {
-	label, bg := "账", tok.muted
-	switch platform {
-	case "豆包":
-		label, bg = "豆", tok.accent
-	case "千问":
-		label, bg = "千", tok.success
-	}
-	ui.Column(c.Key("mark")).Size(22, 22).Radius(7).Background(bg).Center().Shrink(0).Children(func() {
-		ui.Text(c, label).FontSize(12).Bold().TextColor(tok.onAccent)
-	})
+	platformIcon(c, platform, 18, tok)
 }
 
 func shotBadge(platform, name string) string {

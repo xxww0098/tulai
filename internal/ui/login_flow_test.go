@@ -19,6 +19,7 @@ func TestProxyCardAndAccountQR(t *testing.T) {
 		proxyCustom: true, proxyURL: "http://127.0.0.1:7890", proxySaved: "http://127.0.0.1:7890",
 	}
 	st := ui.NewTester(settings.view, 1280, 900)
+	scrollIntoView(t, st, "跟随系统", 1280, 900)
 	for _, label := range []string{"网络", "跟随系统", "自定义代理", "浏览器和内置浏览器下载走同一条代理。"} {
 		assertVisible(t, st, label, 1280, 900)
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -480,6 +481,27 @@ func TestDropZoneAddsAndRemovesImages(t *testing.T) {
 	}
 	if len(a.sources) != 1 {
 		t.Fatalf("after remove = %d", len(a.sources))
+	}
+}
+
+func TestDropTxtLoadsLineAndParagraphPrompts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "prompts.txt")
+	if err := os.WriteFile(path, []byte("甲\n\n乙\n丙\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{platformAuto: true}
+	tt := ui.NewTester(a.view, 1280, 840)
+	r := assertVisible(t, tt, "每行一条，空行隔开的段落收成一条", 1280, 840)
+	if !tt.DropFiles(r.X+8, r.Y+4, path, filepath.Join(dir, "skip.png")) {
+		t.Fatal("提示词卡片没有接住文件")
+	}
+	tt.Frame()
+	if a.prompts != "甲\n乙 丙" || a.promptPick != "" || a.promptChoice != prompts.LabelCustom {
+		t.Fatalf("prompts=%q pick=%q choice=%q", a.prompts, a.promptPick, a.promptChoice)
+	}
+	if !tt.HasText("已载入 2 条提示词") {
+		t.Fatal("没有载入提示")
 	}
 }
 

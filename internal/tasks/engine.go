@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1062,12 +1063,10 @@ func prefetchResults(strat strategy.Strategy, sess *cdp.Session, results []strat
 	return out
 }
 
-// saveResults 校验 + 去重 + 按命名规则落盘。
+// saveResults 校验 + 去重 + 按日期目录落盘。
 func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) ([]string, error) {
 	t.matchedSavedResult = false
 	var saved []string
-	var dir, root string
-	seq := 0
 	batched := prefetchResults(strat, sess, results)
 	for i, r := range results {
 		if err := ctx.Err(); err != nil {
@@ -1157,31 +1156,8 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			}
 			data, ext = png, ".png"
 		}
-		seq++
-		src := resultSource(t)
-		base := e.opts.resultBase(t.Prompt, src, seq, len(results))
-		if dir == "" {
-			root = e.opts.ResultDir(src)
-			bases := make([]string, len(results))
-			for n := range bases {
-				bases[n] = e.opts.resultBase(t.Prompt, src, n+1, len(results))
-			}
-			dir, err = chooseBatchDir(root, bases)
-			if err != nil {
-				e.mu.Lock()
-				delete(e.seenHash, hash)
-				e.mu.Unlock()
-				return saved, err
-			}
-		}
-		path, err := writeResultFile(ctx, dir, base, ext, data)
-		for try := 0; errors.Is(err, os.ErrExist) && try < 5; try++ {
-			dir, err = timestampBatchDir(root)
-			if err != nil {
-				break
-			}
-			path, err = writeResultFile(ctx, dir, base, ext, data)
-		}
+		dir := e.opts.ResultDir(time.Now())
+		path, err := writeNumberedFile(ctx, dir, e.opts.resultStem(t.Prompt, resultSource(t)), ext, data)
 		if err != nil {
 			e.mu.Lock()
 			delete(e.seenHash, hash)
@@ -1222,12 +1198,8 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			repairBase := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)) + "_去水印"
 			var repairPath string
 			repairPath, repairErr = writeResultFile(ctx, dir, repairBase, ".png", repairData)
-			if errors.Is(repairErr, os.ErrExist) && root != "" {
-				var sub string
-				sub, repairErr = timestampBatchDir(root)
-				if repairErr == nil {
-					repairPath, repairErr = writeResultFile(ctx, sub, repairBase, ".png", repairData)
-				}
+			if errors.Is(repairErr, os.ErrExist) {
+				repairPath, repairErr = writeNumberedFile(ctx, dir, repairBase, ".png", repairData)
 			}
 			if repairErr == nil {
 				saved[len(saved)-1] = repairPath
@@ -1247,62 +1219,116 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 	return saved, nil
 }
 
-// chooseBatchDir 用结果目录。这一批文件名已经有了，就换到时间戳子目录，避免 _1、_108 这种后缀。
-func chooseBatchDir(root string, bases []string) (string, error) {
-	if err := os.MkdirAll(root, 0o755); err != nil {
+// fileSlot 串行分配同一个目录、同一个词根的序号。
+// 两个任务同时保存同一个名字时，必须先占住下一个号再写，避免写到同一个文件。
+type fileSlot struct {
+	mu   sync.Mutex
+	next int
+}
+
+var fileSlots sync.Map
+
+func slotFor(dir, stem string) *fileSlot {
+	key := dir + "\x00" + stem
+	if v, ok := fileSlots.Load(key); ok {
+		return v.(*fileSlot)
+	}
+	v, _ := fileSlots.LoadOrStore(key, &fileSlot{})
+	return v.(*fileSlot)
+}
+
+// writeNumberedFile 写成 stem_01、stem_02……同一天已有的号继续往后排，不覆盖。
+func writeNumberedFile(ctx context.Context, dir, stem, ext string, data []byte) (string, error) {
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if namesFree(root, bases) {
-		return root, nil
+	if strings.TrimSpace(stem) == "" {
+		stem = "文生图"
 	}
-	return timestampBatchDir(root)
-}
-
-func timestampBatchDir(root string) (string, error) {
-	for i := 0; i < 20; i++ {
-		name := time.Now().Format("20060102_150405.000000000")
-		if i > 0 {
-			name = fmt.Sprintf("%s-%d", name, i)
-		}
-		dir := filepath.Join(root, name)
-		if _, err := os.Stat(dir); err == nil {
-			continue
-		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("创建结果目录失败: %w", err)
+	}
+	slot := slotFor(dir, stem)
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.next < 1 {
+		slot.next = highestNumber(dir, stem) + 1
+	}
+	for slot.next <= 100000 {
+		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		return dir, nil
+		path := filepath.Join(dir, fmt.Sprintf("%s_%02d%s", stem, slot.next, ext))
+		err := createExclusive(ctx, path, data)
+		if errors.Is(err, os.ErrExist) {
+			slot.next++
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		slot.next++
+		return path, nil
 	}
-	return "", errors.New("结果目录重名")
+	return "", errors.New("结果序号已用尽")
 }
 
-func namesFree(dir string, bases []string) bool {
+// highestNumber 是目录里 stem_序号 的最大序号。去水印副本带别的后缀，不占这个号。
+func highestNumber(dir, stem string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return true
+		return 0
 	}
-	have := map[string]bool{}
+	prefix := stem + "_"
+	max := 0
 	for _, entry := range entries {
-		have[strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))] = true
-	}
-	for _, base := range bases {
-		if have[base] {
-			return false
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		ext := filepath.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		if !strings.HasPrefix(base, prefix) {
+			continue
+		}
+		num := base[len(prefix):]
+		if num == "" || strings.TrimLeft(num, "0123456789") != "" {
+			continue
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil || n <= 0 {
+			continue
+		}
+		if n > max {
+			max = n
 		}
 	}
-	return true
+	return max
 }
 
-// writeResultFile 独占创建，取消或写入失败只清理本次未完成文件。
-// 重名不改文件名，交给调用方换时间戳子目录。
+// writeResultFile 按给定文件名独占创建。重名返回 os.ErrExist，不覆盖。
 func writeResultFile(ctx context.Context, dir, base, ext string, data []byte) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("创建结果目录失败: %w", err)
+	}
 	path := filepath.Join(dir, base+ext)
+	if err := createExclusive(ctx, path, data); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// createExclusive 独占创建。取消或写入失败只清理本次未完成文件。
+func createExclusive(ctx context.Context, path string, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if err = ctx.Err(); err == nil {
 		_, err = file.Write(data)
@@ -1312,9 +1338,9 @@ func writeResultFile(ctx context.Context, dir, base, ext string, data []byte) (s
 		err = ctx.Err()
 	}
 	if err != nil {
-		return "", errors.Join(err, os.Remove(path))
+		return errors.Join(err, os.Remove(path))
 	}
-	return path, nil
+	return nil
 }
 
 func watermarkStaticImage(data []byte, format string) bool {

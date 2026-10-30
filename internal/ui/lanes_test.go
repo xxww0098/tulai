@@ -84,13 +84,15 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	if !ok || start.W > 220 || start.W < 48 {
 		t.Fatalf("start button %+v", start)
 	}
+	day := time.Now().Format("2006-01-02")
+	saveLine := "保存到 " + filepath.Join("图片/输出结果", "生图", day)
 	for _, label := range []string{"1 张图", "图片/输出结果", "1 个账号空闲"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
 	}
 	sum, ok := tt.Find("1 张图")
-	path, pathOK := tt.Find("保存到 图片/输出结果")
+	path, pathOK := tt.Find(saveLine)
 	if !ok || !pathOK {
 		t.Fatal("summary lines missing")
 	}
@@ -111,6 +113,32 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	}
 	if tt.FramePending() {
 		t.Fatal("stop button kept asking for frames")
+	}
+	if err := tt.Click(saveLine); err != nil {
+		t.Fatal(err)
+	}
+	if a.tab != pageSettings {
+		t.Fatal("输出位置应该打开设置")
+	}
+}
+
+func TestOutputHintUsesTodayFolder(t *testing.T) {
+	day := time.Now().Format("2006-01-02")
+	root := "图片/输出结果"
+	newApp := func(tab int) *App {
+		return &App{
+			platformAuto: true, concurrencyAuto: true, prompts: "一只猫", outputPath: root, tab: tab,
+			sources:     []sourceImage{{Path: "风景.png"}},
+			browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")},
+		}
+	}
+	home := ui.NewTester(newApp(pageHome).view, 1280, 900)
+	if !home.HasText("保存到 " + filepath.Join(root, "生图", day)) {
+		t.Fatalf("生图提示: %v", home.Texts())
+	}
+	wash := ui.NewTester(newApp(pageWash).view, 1280, 1200)
+	if !wash.HasText("保存到 " + filepath.Join(root, "洗图", day)) {
+		t.Fatalf("洗图提示: %v", wash.Texts())
 	}
 }
 

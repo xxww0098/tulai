@@ -31,9 +31,6 @@ func TestLoginBannerAndAutoLog(t *testing.T) {
 	tt := ui.NewTester(a.view, width, height)
 	assertVisible(t, tt, "账号2 需要重新扫码登录", width, height)
 	assertVisible(t, tt, "去处理", width, height)
-	if err := tt.Click("更多设置"); err != nil {
-		t.Fatal(err)
-	}
 	tt.Advance(250 * time.Millisecond)
 	scrollIntoView(t, tt, "运行日志", width, height)
 	scrollIntoView(t, tt, "账号1 浏览器崩溃，已自动重启", width, height)

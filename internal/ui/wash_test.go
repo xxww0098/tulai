@@ -105,7 +105,7 @@ func TestExpandImagePathsReadsFolder(t *testing.T) {
 func TestWashPageShowsFolderPickerAndNoTextOnlyLink(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true, tab: pageWash}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"② 洗图指令", "选文件夹", "开始洗图", "恢复默认"} {
+	for _, label := range []string{"洗图指令", "选文件夹", "开始洗图", "恢复默认", "添加图片"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
 	if tt.HasText("不使用图片，只用提示词") {

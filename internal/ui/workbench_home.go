@@ -13,7 +13,6 @@ import (
 
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
-	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -86,7 +85,7 @@ func (a *App) navRail(c *ui.Context) {
 		AlignItems(ui.Center).Background(tok.card).
 		BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
 		logo := ui.Column(c.Key("logo")).Size(36, 36).Radius(10).Center().
-			Label("tulai").Cursor(ui.CursorPointer)
+			Label("回到生图").Cursor(ui.CursorPointer)
 		if logo.Hovered() {
 			logo.Background(tok.sunken)
 		}
@@ -96,7 +95,7 @@ func (a *App) navRail(c *ui.Context) {
 		logo.Children(func() {
 			ui.Icon(c, iconLogo).FontSize(22).TextColor(tok.text)
 		})
-		railTip(c, logo, "tulai")
+		railTip(c, logo, "回到生图")
 		ui.Box(c).Height(8)
 		a.pageTabs(c)
 		ui.Spacer(c)
@@ -179,64 +178,24 @@ func railTip(c *ui.Context, anchor ui.Element, text string) {
 }
 
 func (a *App) homePage(c *ui.Context) {
-	flow := a.flowNow()
-	w, _ := c.Size()
-	if homeSplit(w) {
-		ui.Column(c).Grow(1).MinHeight(0).Gap(10).Children(func() {
-			a.loginBanner(c)
-			ui.Row(c).Grow(1).MinHeight(0).Gap(homeGap).AlignItems(ui.Stretch).Children(func() {
-				a.homeComposer(c, flow)
-				a.homeStage(c, flow)
-			})
-		})
-	} else {
-		ui.Scroll(c.Key("home")).Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
-				a.loginBanner(c)
-				a.stepImages(c, flow.Images)
-				a.stepPrompt(c, flow.Prompt)
-				a.stepRun(c, flow.Run)
-				a.platformTabs(c)
-				a.accountPanel(c)
-				a.progressPane(c)
-				a.runLog(c, false)
-				ui.Collapsible(c, "更多设置", &a.advancedOpen, func() {
-					a.advancedFields(c)
-				})
-			})
-		})
-	}
-	a.previewModal(c)
-}
-
-func (a *App) homeComposer(c *ui.Context, flow flowLayout) {
-	ui.Scroll(c.Key("home-side")).Width(composerW).Shrink(0).MinHeight(0).Children(func() {
-		ui.Column(c).FillWidth().Gap(10).Padding(0, 0, 8, 0).Children(func() {
-			a.stepImages(c, flow.Images)
-			a.stepPrompt(c, flow.Prompt)
-			a.stepRun(c, flow.Run)
-			ui.Collapsible(c, "更多设置", &a.advancedOpen, func() {
-				a.advancedFields(c)
-			})
-		})
-	})
+	a.workColumns(c, func() { a.genInput(c) })
 }
 
 // homeStage 上面是平台、账号和进度，运行日志撑满剩下的高度。
 // 上面内容太高时它自己滚动，日志至少留 140。
-func (a *App) homeStage(c *ui.Context, flow flowLayout) {
+func (a *App) homeStage(c *ui.Context) {
 	_, winH := c.Size()
 	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).Height(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
 		ui.Scroll(c.Key("home-stage-top")).FillWidth().Shrink(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().Gap(10).Children(func() {
-				a.platformStage(c, flow)
+				a.platformStage(c)
 			})
 		})
 		a.runLog(c, true)
 	})
 }
 
-func (a *App) platformStage(c *ui.Context, flow flowLayout) {
+func (a *App) platformStage(c *ui.Context) {
 	a.platformTabs(c)
 	a.accountPanel(c)
 	if len(a.platformCards()) == 0 {
@@ -267,13 +226,25 @@ func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
 	if n > 0 {
 		text = fmt.Sprintf("%s %d", label, n)
 	}
-	b := ui.Button(c, text)
-	if a.stageTab == index {
-		b.Border(1, c.Theme().Accent).TextColor(c.Theme().Accent)
+	th := c.Theme()
+	bg, fg, border := th.Surface, th.Text, th.Border
+	on := a.stageTab == index
+	if on {
+		bg, fg, border = th.Accent.Alpha(0.12), th.Accent, th.Accent
+	}
+	b := ui.ButtonBase(c.Key("stage-"+label)).Padding(4, 10).Gap(6).Radius(8).
+		AlignItems(ui.Center).Cursor(ui.CursorPointer).
+		Background(bg).TextColor(fg).Border(1, border)
+	if !on && b.Hovered() {
+		b.Background(th.SurfaceHover)
 	}
 	b.OnClick(func() {
 		a.stageTab = index
 		a.stagePicked = true
+	})
+	b.Children(func() {
+		platformIcon(c, label, 16, a.look)
+		ui.Text(c, text).FontSize(a.look.body).SingleLine()
 	})
 }
 
@@ -366,10 +337,6 @@ func (a *App) stageEmpty(c *ui.Context) {
 	})
 }
 
-func (a *App) flowNow() flowLayout {
-	return LayoutFlow(len(a.sources) > 0, len(a.taskPromptList()) > 0, a.skipImages, len(a.queueItems()) > 0, a.flowPin)
-}
-
 func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 	tok := a.look
 	card := ui.Column(c.Key(key)).FillWidth().Padding(12, 14).Gap(8).Radius(tok.radiusL).
@@ -382,74 +349,6 @@ func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 		card.Border(1.5, tok.accent).Shadow(0, 8, 24, 0, tok.lift)
 	}
 	return card
-}
-
-func (a *App) stepImages(c *ui.Context, step flowStep) {
-	key := "step-images"
-	if !step.Open {
-		key = "step-images-compact"
-	}
-	card := a.stepCard(c, key, step.State)
-	if paths := card.DroppedFiles(); len(paths) > 0 {
-		a.ingestSources(paths)
-	}
-	if card.FileDragOver() && !a.running {
-		card.Border(2, a.look.accent).Background(a.look.accent.Alpha(0.08))
-	}
-	card.Children(func() {
-		if step.Open {
-			a.imageStepOpen(c)
-			return
-		}
-		a.imageStepCompact(c)
-	})
-}
-
-func (a *App) imageStepOpen(c *ui.Context) {
-	tok := a.look
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "① 选图片").FontSize(tok.title).Bold().Grow(1).SingleLine()
-		// 洗图多一个选文件夹，张数留给下面的开始按钮那一行。
-		if n := len(a.sources); n > 0 && !a.washing() {
-			ui.Text(c, fmt.Sprintf("已选 %d 张", n)).FontSize(tok.body).TextColor(tok.muted)
-		}
-		a.sourceButtons(c)
-	})
-	if len(a.sources) == 0 {
-		a.emptyDrop(c)
-		if a.washing() {
-			return
-		}
-		link := ui.Text(c, "不使用图片，只用提示词").FontSize(tok.body).TextColor(tok.accent)
-		if link.Clicked() && !a.running {
-			a.skipImages = true
-			a.flowPin = 2
-		}
-		return
-	}
-	a.sourceGrid(c)
-}
-
-func (a *App) emptyDrop(c *ui.Context) {
-	tok := a.look
-	zone := ui.Column(c.Key("drop-zone")).FillWidth().MinHeight(156).Radius(tok.radiusM).
-		Border(1.5, tok.accent.Alpha(0.45)).BorderStyle(ui.BorderDashed).
-		Background(tok.sunken).Center().Gap(6).Cursor(ui.CursorPointer)
-	if zone.Hovered() && !a.running {
-		zone.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
-	}
-	hoverPressPose(zone)
-	if zone.Clicked() && !a.running {
-		a.addImages()
-	}
-	zone.Children(func() {
-		ui.Text(c, "拖入或点击添加图片").FontSize(tok.title).Bold()
-		hint := "可以一次选多张。不放图片也可以只写提示词"
-		if a.washing() {
-			hint = "可以一次选多张，或选整个文件夹"
-		}
-		ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted)
-	})
 }
 
 func (a *App) sourceGrid(c *ui.Context) {
@@ -517,51 +416,10 @@ func (a *App) thumbRemove(c *ui.Context, host ui.Element, index int) {
 	})
 }
 
-func (a *App) imageStepCompact(c *ui.Context) {
-	tok := a.look
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		title := "还没选图片"
-		if a.skipImages && len(a.sources) == 0 {
-			title = "未选图片，按提示词出图"
-		}
-		if n := len(a.sources); n > 0 {
-			title = fmt.Sprintf("已选 %d 张", n)
-		}
-		head := ui.Text(c, "① 选图片").FontSize(tok.caption).TextColor(tok.muted).SingleLine().Shrink(0)
-		// 洗图多一个选文件夹按钮，摘要省掉，下面的缩略图已经说明选了什么。
-		if !a.washing() || len(a.sources) == 0 {
-			ui.Text(c, title).FontSize(tok.body).Bold().MinWidth(0).SingleLine()
-		}
-		if head.Clicked() {
-			a.flowPin = 1
-		}
-		ui.Row(c).Grow(1).MinWidth(0)
-		if len(a.sources) > 0 || a.washing() {
-			a.sourceButtons(c)
-			return
-		}
-		ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
-		link := ui.Text(c, "只用提示词").FontSize(tok.body).TextColor(tok.accent)
-		if link.Clicked() && !a.running {
-			a.skipImages = true
-			a.flowPin = 2
-		}
-	})
-	if len(a.sources) == 0 {
-		return
-	}
-	ui.ScrollHorizontal(c).FillWidth().Height(40).Children(func() {
-		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			for i := range a.sources {
-				a.miniThumb(c, i)
-			}
-		})
-	})
-}
-
 func (a *App) miniThumb(c *ui.Context, i int) {
 	si := a.sources[i]
-	frame := ui.Box(c.Key(si.Path)).Size(36, 36).Radius(6).Background(a.look.sunken).Transition(motionItem())
+	frame := ui.Box(c.Key(si.Path)).Size(36, 36).Radius(6).Background(a.look.sunken).
+		Label(filepath.Base(si.Path)).Transition(motionItem())
 	frame.Children(func() {
 		if bmp := a.cachedThumb(si.Path); bmp != nil {
 			ui.Image(c, bmp).Size(36, 36).Fit(ui.Cover).Radius(6)
@@ -577,105 +435,6 @@ func (a *App) clearSources() {
 	a.sources = nil
 	a.srcSel = -1
 	a.skipImages = false
-}
-
-func (a *App) stepPrompt(c *ui.Context, step flowStep) {
-	key := "step-prompt"
-	if !step.Open {
-		key = "step-prompt-compact"
-	}
-	card := a.stepCard(c, key, step.State)
-	card.Children(func() {
-		if !step.Open {
-			a.promptCompact(c)
-			return
-		}
-		a.promptOpen(c)
-	})
-}
-
-func (a *App) promptOpen(c *ui.Context) {
-	tok := a.look
-	labels := prompts.Labels(a.userPrompts)
-	if !containsStr(labels, a.promptChoice) {
-		a.promptChoice = prompts.LabelFor(a.promptPick, a.userPrompts)
-	}
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "② 写提示词").FontSize(tok.title).Bold().Grow(1).MinWidth(0)
-		ui.Button(c, "编辑提示词").Disabled(a.running).OnClick(func() { a.tab = pagePrompts })
-	})
-	motionSelect(c.Key("prompt-template"), &a.promptChoice, labels).FillWidth().Disabled(a.running).OnChange(func() {
-		a.applyPromptChoice()
-	})
-	h := float32(72)
-	if len(a.queueItems()) > 0 {
-		h = 48
-	}
-	ui.TextArea(c, &a.prompts).Height(h).FillWidth().Label("提示词内容").Placeholder("不放图片时，每行一条。选了模板就整段发送")
-	if a.promptNote != "" {
-		ui.Text(c, a.promptNote).FontSize(tok.caption).TextColor(tok.muted)
-	}
-}
-
-func (a *App) promptCompact(c *ui.Context) {
-	tok := a.look
-	preview := oneLine(a.prompts)
-	if preview == "" {
-		preview = "还没写提示词"
-	}
-	rs := []rune(preview)
-	if len(rs) > 32 {
-		preview = string(rs[:32]) + "…"
-	}
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "② 写提示词").FontSize(tok.caption).TextColor(tok.muted)
-		body := ui.Text(c, preview).FontSize(tok.body).Grow(1).MinWidth(0).SingleLine().Tooltip(oneLine(a.prompts))
-		if body.Clicked() {
-			a.flowPin = 2
-		}
-		ui.Button(c, "修改").Disabled(a.running).OnClick(func() { a.flowPin = 2 })
-	})
-}
-
-func (a *App) stepRun(c *ui.Context, step flowStep) {
-	tok := a.look
-	plan := a.workbenchPlan()
-	card := a.stepCard(c, "step-run", step.State)
-	card.Children(func() {
-		title := "③ 出图"
-		if a.washing() {
-			title = "③ 洗图"
-		}
-		ui.Text(c, title).FontSize(tok.title).Bold()
-		if !a.running && (plan.Action == StartWizard || a.loggedOutCallout()) {
-			a.accountCallout(c)
-		}
-		board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
-		ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Clip().Children(func() {
-				summary := a.stepLead(board)
-				ui.Text(c, summary).FontSize(tok.body).MinWidth(0).SingleLine().Tooltip(summary)
-				if note := a.runNote(); note != "" {
-					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine().Tooltip(note)
-				}
-				a.outputLink(c, tok)
-			})
-			a.runButton(c, plan)
-		})
-	})
-}
-
-func (a *App) outputLink(c *ui.Context, tok tokens) {
-	path := a.resolvedOutputDir()
-	line := "保存到 " + path
-	row := ui.Row(c).Gap(4).AlignItems(ui.Center).MinWidth(0).Cursor(ui.CursorPointer)
-	if row.Clicked() {
-		a.openOutputFolder()
-	}
-	row.Children(func() {
-		paintFolder(c, tok.muted)
-		ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine().Tooltip(line)
-	})
 }
 
 func paintFolder(c *ui.Context, ink ui.Color) {
@@ -1048,9 +807,7 @@ func (a *App) progressCard(c *ui.Context, card ProgressCard) {
 			statusPill(c, card.Status)
 		})
 		ui.Text(c, card.Title).Bold().FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(card.Title)
-		if line := a.siteLine(card); line != "" {
-			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(line)
-		}
+		a.siteRow(c, card)
 		if card.Moved != "" {
 			ui.Text(c.Key("moved"), card.Moved).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(card.Moved)
 		}
@@ -1167,6 +924,30 @@ func promptMarkBox(c *ui.Context, tok tokens, size float32) {
 	})
 }
 
+func (a *App) siteRow(c *ui.Context, card ProgressCard) {
+	if len(card.Sites) == 0 {
+		return
+	}
+	tok := a.look
+	ui.Row(c).Gap(10).AlignItems(ui.Center).MinWidth(0).Children(func() {
+		for i, site := range card.Sites {
+			line := site.Platform
+			if site.BrowserID > 0 {
+				if name := a.accountName(site.BrowserID); name != "" && name != line {
+					line += " · " + name
+				}
+			}
+			if line == "" {
+				continue
+			}
+			ui.Row(c.Key(i)).Gap(4).AlignItems(ui.Center).Shrink(1).MinWidth(0).Children(func() {
+				platformIcon(c, site.Platform, 16, tok)
+				ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(line)
+			})
+		}
+	})
+}
+
 func (a *App) siteLine(card ProgressCard) string {
 	var parts []string
 	for _, site := range card.Sites {
@@ -1253,27 +1034,4 @@ func (a *App) openResult(path string) {
 		a.outputNote = "无法打开文件"
 		logging.Log.Errorf("打开文件失败: %v", err)
 	}
-}
-
-// sourceButtons 是选图卡右上角的按钮。洗图多一个选文件夹；生图没图时只靠拖放区。
-func (a *App) sourceButtons(c *ui.Context) {
-	if len(a.sources) == 0 && !a.washing() {
-		return
-	}
-	a.sideButton(c, "添加图片").OnClick(func() { a.addImages() })
-	if a.washing() {
-		a.sideButton(c, "选文件夹").OnClick(func() { a.addFolder() })
-	}
-	if len(a.sources) > 0 {
-		a.sideButton(c, "清空").OnClick(func() { a.clearSources() })
-	}
-}
-
-// sideButton 是选图卡标题行右侧的小按钮。洗图有三个，收成 12px，避免顶满标题。
-func (a *App) sideButton(c *ui.Context, label string) ui.Element {
-	b := ui.Button(c, label).Disabled(a.running).Shrink(0)
-	if a.washing() {
-		b.FontSize(a.look.caption).Padding(3, 8).Radius(a.look.radiusS)
-	}
-	return b
 }

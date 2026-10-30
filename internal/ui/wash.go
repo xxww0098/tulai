@@ -166,37 +166,7 @@ func pageLabel(page int) string {
 }
 
 func (a *App) washPage(c *ui.Context) {
-	flow := a.flowNow()
-	w, _ := c.Size()
-	if homeSplit(w) {
-		ui.Column(c).Grow(1).MinHeight(0).Gap(10).Children(func() {
-			a.loginBanner(c)
-			ui.Row(c).Grow(1).MinHeight(0).Gap(homeGap).AlignItems(ui.Stretch).Children(func() {
-				ui.Scroll(c.Key("wash-side")).Width(composerW).Shrink(0).MinHeight(0).Children(func() {
-					ui.Column(c).FillWidth().Gap(10).Padding(0, 0, 8, 0).Children(func() {
-						a.washSteps(c, flow)
-					})
-				})
-				a.homeStage(c, flow)
-			})
-		})
-	} else {
-		ui.Scroll(c.Key("wash")).Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
-				a.loginBanner(c)
-				a.washSteps(c, flow)
-				a.platformStage(c, flow)
-				a.runLog(c, false)
-			})
-		})
-	}
-	a.previewModal(c)
-}
-
-func (a *App) washSteps(c *ui.Context, flow flowLayout) {
-	a.stepImages(c, flow.Images)
-	a.washPromptCard(c)
-	a.stepRun(c, flow.Run)
+	a.workColumns(c, func() { a.washInput(c) })
 }
 
 // washPromptCard 是洗图指令。默认是内置的一段，改过的会保存。
@@ -204,7 +174,7 @@ func (a *App) washPromptCard(c *ui.Context) {
 	tok := a.look
 	a.stepCard(c, "wash-prompt", stepDone).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "② 洗图指令").FontSize(tok.title).Bold().Grow(1).MinWidth(0)
+			ui.Text(c, "洗图指令").FontSize(tok.title).Bold().Grow(1).MinWidth(0)
 			a.washReset(c)
 		})
 		ui.TextArea(c, &a.prompts).Height(84).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
