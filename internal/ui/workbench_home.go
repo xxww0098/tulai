@@ -344,14 +344,18 @@ const (
 	washThumbMaxRows         = 2
 )
 
-// washThumbViewport 是原图网格的可视高度：最多两整行，不把一行切在缩略图中间。
-func washThumbViewport(n int) float32 {
+// washThumbViewport 是原图网格的可视高度：窗口矮时一整行，否则最多两整行，不把一行切在缩略图中间。
+func washThumbViewport(n int, winH float32) float32 {
 	if n <= 0 {
 		return 0
 	}
 	rows := (n + washThumbCols - 1) / washThumbCols
-	if rows > washThumbMaxRows {
-		rows = washThumbMaxRows
+	maxRows := washThumbMaxRows
+	if winH < 760 {
+		maxRows = 1
+	}
+	if rows > maxRows {
+		rows = maxRows
 	}
 	return float32(rows)*washThumbSize + float32(rows-1)*washThumbGap
 }
@@ -365,7 +369,8 @@ func (a *App) washSourceGrid(c *ui.Context) {
 	for i := range tracks {
 		tracks[i] = ui.Fixed(washThumbSize)
 	}
-	ui.Scroll(c.Key("wash-thumbs")).FillWidth().Height(washThumbViewport(n)).Children(func() {
+	_, winH := c.Size()
+	ui.Scroll(c.Key("wash-thumbs")).FillWidth().Height(washThumbViewport(n, winH)).Children(func() {
 		ui.Grid(c).ColumnTracks(tracks...).Gap(washThumbGap).JustifyItems(ui.Start).AlignItems(ui.Start).Children(func() {
 			for i := range a.sources {
 				a.washThumb(c, i)
