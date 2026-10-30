@@ -6,41 +6,31 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-//go:embed assets/platforms/qianwen.svg
-var qianwenSVG []byte
+// 平台标都用 @lobehub/icons-static-svg 的彩色版（unpkg.com/@lobehub/icons-static-svg/icons/<id>-color.svg）。
+//
+//go:embed assets/platforms/doubao.svg
+var doubaoSVG []byte
+
+//go:embed assets/platforms/qwen.svg
+var qwenSVG []byte
 
 //go:embed assets/platforms/antigravity.svg
 var antigravitySVG []byte
 
-//go:embed assets/platforms/doubao-192.png
-var doubaoPNG []byte
-
-// 千问用官方矢量，颜色留在稿里。豆包没有官方 SVG，用官网 192 的圆形头像。
-// Antigravity 用同一套强调色画的简单标记。
 var (
-	iconQianwen     = ui.MustParseSVG(qianwenSVG)
+	iconDoubao      = ui.MustParseSVG(doubaoSVG)
+	iconQianwen     = ui.MustParseSVG(qwenSVG)
 	iconAntigravity = ui.MustParseSVG(antigravitySVG)
-	iconDoubao      = mustPlatformBitmap(doubaoPNG)
 )
 
-func mustPlatformBitmap(data []byte) *ui.Bitmap {
-	bmp, err := ui.DecodeBitmap(data)
-	if err != nil {
-		panic(err)
-	}
-	return bmp
-}
-
-// platformIcon 在 16–20 左右画平台标。豆包裁成圆；不认识的平台用中性圆，不再写「豆」「千」。
+// platformIcon 在 16–20 左右画平台标。不认识的平台用中性圆。
 func platformIcon(c *ui.Context, platform string, size float32, tok tokens) {
 	if size < 12 {
 		size = 12
 	}
 	switch platform {
 	case "豆包":
-		ui.Box(c.Key("plat-doubao")).Size(size, size).Radius(size / 2).Clip().Shrink(0).Children(func() {
-			ui.Image(c, iconDoubao).Size(size, size).Fit(ui.Cover)
-		})
+		ui.Image(c.Key("plat-doubao"), iconDoubao).Size(size, size).Fit(ui.Contain).Shrink(0)
 	case "千问":
 		ui.Image(c.Key("plat-qianwen"), iconQianwen).Size(size, size).Fit(ui.Contain).Shrink(0)
 	case "Antigravity":

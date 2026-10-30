@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"github.com/xxww0098/tulai/internal/agy"
 	"math"
 
 	"github.com/egoist/mygo/ui"
@@ -104,7 +105,11 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 		})
 		ui.Column(c).Width(quotaW).Shrink(0).Gap(2).Justify(ui.Center).Children(func() {
 			used, capN, frac, fill := laneQuotaFill(tok, ln)
-			ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).
+			usedText := fmt.Sprintf("%d/%d", used, capN)
+			if ln.Platform == agy.Platform {
+				usedText = fmt.Sprintf("%d", used)
+			}
+			ui.Text(c.Key("used"), usedText).FontSize(tok.caption).
 				FontFeatures("tnum").SingleLine().
 				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 			quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))

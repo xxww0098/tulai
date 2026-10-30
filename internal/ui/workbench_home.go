@@ -182,17 +182,21 @@ func (a *App) homePage(c *ui.Context) {
 	a.workColumns(c, func() { a.genInput(c) })
 }
 
-// homeStage 上面是平台、账号和进度，运行日志撑满剩下的高度。
-// 上面内容太高时它自己滚动，日志至少留 140。
+// homeStage 上面是平台和账号，出图结果撑满剩下的高度并自己滚动。
 func (a *App) homeStage(c *ui.Context) {
 	_, winH := c.Size()
 	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).Height(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
-		ui.Scroll(c.Key("home-stage-top")).FillWidth().Shrink(1).MinHeight(0).Children(func() {
+		a.platformTabs(c)
+		a.accountPanel(c)
+		if len(a.platformCards()) == 0 {
+			a.stageEmpty(c)
+			return
+		}
+		ui.Scroll(c.Key("home-stage-results")).FillWidth().Grow(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().Gap(10).Children(func() {
-				a.platformStage(c)
+				a.progressPane(c)
 			})
 		})
-		a.runLog(c, true)
 	})
 }
 
@@ -296,7 +300,7 @@ func tasksForPlatform(items []tasks.Task, platform string) []tasks.Task {
 	return out
 }
 
-// runLog 在右栏里撑满剩下的高度，日志在卡片里滚动，停在底部时跟着最新一行。
+// runLog 在左栏里撑满剩下的高度，日志在卡片里滚动，停在底部时跟着最新一行。
 func (a *App) runLog(c *ui.Context, fill bool) {
 	tok := a.look
 	card := ui.Column(c.Key("run-log")).FillWidth().Gap(4).Padding(8, 10).Radius(tok.radiusM).
