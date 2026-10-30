@@ -212,8 +212,9 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				if t.rotated && t.Status == StatusPending {
 					stage = "retry"
 					switch {
-					case strings.Contains(t.Error, "已换到"):
-						msg = "#" + itoa(t.Index) + " " + t.Error
+					case strings.Contains(t.Error, "已换到"), t.pauseNote == "login":
+						// 换号那一行已经写过。登录停住用「没有可用账号」，不要再写成额度恢复。
+						msg = ""
 					case t.Platform == agy.Platform && t.Error == "":
 						msg = "#" + itoa(t.Index) + " 等待账号额度恢复"
 					default:
@@ -244,6 +245,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 	var claimed int64
 	for len(pending) > 0 || active > 0 {
 		if ctx.Err() != nil {
+			e.stopQueued(pending, events)
 			pending, ctxDone = nil, nil
 			if active == 0 {
 				break
@@ -375,6 +377,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		case <-nudge:
 		case <-sched.notify:
 		case <-ctxDone:
+			e.stopQueued(pending, events)
 			pending, ctxDone = nil, nil
 		}
 		if !sent && claimed != 0 {
@@ -384,6 +387,40 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		if timer != nil {
 			timer.Stop()
 		}
+	}
+}
+
+// stopQueued 把还没开跑的任务标成已停止，卡片和页头不再留在排队里。
+func (e *Engine) stopQueued(pending []Task, events chan<- runEvent) {
+	for _, t := range pending {
+		switch t.Status {
+		case StatusSuccess, StatusFailed, StatusSkipped, StatusNeedsUser:
+			continue
+		}
+		t.Status = StatusSkipped
+		t.Error = "已停止"
+		if e != nil && e.view != nil {
+			e.view.Update(t)
+		}
+		if events != nil {
+			events <- runEvent{task: t, terminal: true}
+		}
+	}
+}
+
+// stopLeftovers 在这一批结束时再扫一遍。调度丢掉的排队项也要变成已停止。
+func (e *Engine) stopLeftovers() {
+	if e == nil || e.view == nil {
+		return
+	}
+	for _, t := range e.view.Snapshot() {
+		switch t.Status {
+		case StatusSuccess, StatusFailed, StatusSkipped, StatusNeedsUser:
+			continue
+		}
+		t.Status = StatusSkipped
+		t.Error = "已停止"
+		e.view.Update(t)
 	}
 }
 

@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -416,6 +418,86 @@ func TestResultCardShowsEveryShot(t *testing.T) {
 	}
 	if more.HasText("+2") {
 		t.Fatal("结果不再收成 +N")
+	}
+}
+
+func TestStopTurnsQueuedItemsIntoStopped(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	row, err := st.AddBrowser("豆包", "豆包主力", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(row.ID, false, true)
+	eng := tasks.NewEngine(st, nil, nil, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered := make(chan struct{}, 1)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- eng.RunObserved(ctx, tasks.Options{
+			Platforms:   []string{"豆包"},
+			Prompts:     []string{"一只猫", "另一只"},
+			OutputPath:  dir,
+			SendWait:    0,
+			Concurrency: 1,
+		}, func(tasks.Task) {}, func(tasks.Progress) {}, func(ctx context.Context, task *tasks.Task) error {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-ctx.Done()
+			task.Results = []string{filepath.Join(dir, "kept.png")}
+			return ctx.Err()
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("第一单没有开始")
+	}
+	eng.Stop()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("停止后没有结束")
+	}
+	items := eng.View().Snapshot()
+	if len(items) != 2 {
+		t.Fatalf("queue %+v", items)
+	}
+	for _, task := range items {
+		if task.Status != tasks.StatusSkipped || task.Error != "已停止" {
+			t.Fatalf("停止后不应再排队: %+v", task)
+		}
+	}
+	a := &App{
+		store: st, engine: eng, platformAuto: true, concurrencyAuto: true,
+		queue: items, prompts: "一只猫\n另一只", stagePicked: true,
+	}
+	tt := ui.NewTester(a.view, 1280, 900)
+	tt.Advance(200 * time.Millisecond)
+	if tt.HasText("排队中") {
+		t.Fatalf("停止后还显示排队中: %v", tt.Texts())
+	}
+	if !tt.HasText("已停止") {
+		t.Fatalf("缺少已停止: %v", tt.Texts())
+	}
+	for _, text := range tt.Texts() {
+		if strings.Contains(text, "排队 1") || strings.Contains(text, "排队 2") {
+			t.Fatalf("页头仍在排队: %s", text)
+		}
+	}
+	tally := TallyTasks(tasksForPlatform(a.queueItems(), a.stagePlatform()))
+	if tally.Queued != 0 || tally.Stopped != 2 {
+		t.Fatalf("tally %+v header %q", tally, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.liveParallel()))
 	}
 }
 

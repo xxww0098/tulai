@@ -77,6 +77,7 @@ func TestAgyQuotaSwitchesAccount(t *testing.T) {
 	addAgyAccount(t, st, "acc2", second, "ok")
 	writeAgyJPEG(t, filepath.Join(second, "sample.jpg"))
 	out := filepath.Join(root, "out")
+	from := len(logging.Log.Entries())
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := eng.Run(ctx, agyOpts(out, "一只猫", false, nil), nil, nopProgress); err != nil {
@@ -98,6 +99,13 @@ func TestAgyQuotaSwitchesAccount(t *testing.T) {
 	}
 	if !exhausted || !ok {
 		t.Fatalf("accounts %+v", rows)
+	}
+	log := logSince(from)
+	if !strings.Contains(log, "#1「acc1」额度已用尽，改用「acc2」") {
+		t.Fatalf("换号日志: %s", log)
+	}
+	if strings.Contains(log, "已换到") {
+		t.Fatalf("换号不应再写第二句: %s", log)
 	}
 }
 
@@ -146,26 +154,35 @@ func TestAgyUnauthenticatedNeedsLogin(t *testing.T) {
 	eng, st, root := newAgyEngine(t)
 	home := filepath.Join(root, "acc1")
 	addAgyAccount(t, st, "acc1", home, "unauth")
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	start := time.Now()
-	if err := eng.Run(ctx, agyOpts(filepath.Join(root, "out"), "一只猫", false, nil), nil, nopProgress); err != nil {
-		t.Fatal(err)
-	}
-	if time.Since(start) > 4*time.Second {
-		t.Fatalf("需登录应马上结束，用了 %s", time.Since(start))
-	}
-	items := eng.View().Snapshot()
-	if len(items) != 1 || items[0].Status != StatusFailed || items[0].Error != "需登录" {
-		t.Fatalf("%+v", items)
+	from := len(logging.Log.Entries())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- eng.Run(ctx, agyOpts(filepath.Join(root, "out"), "一只猫", false, nil), nil, nopProgress)
+	}()
+	text := waitHeld(t, eng, from, "没有可用账号：Antigravity需要重新登录")
+	if strings.Contains(text, "没有正面证据") || strings.Contains(text, "失败") || strings.Contains(text, "等待账号额度恢复") || strings.Contains(text, "已换到") {
+		cancel()
+		<-done
+		t.Fatalf("log = %s", text)
 	}
 	if agy.LoggedIn(home) {
+		cancel()
+		<-done
 		t.Fatal("凭证应被删掉")
 	}
 	for _, row := range st.Browsers() {
-		if row.Name == "acc1" && row.IsLoggedIn {
-			t.Fatal("账号仍显示已登录")
+		if row.Name == "acc1" && (row.IsLoggedIn || !strings.Contains(row.LastError, "需登录")) {
+			cancel()
+			<-done
+			t.Fatalf("account %+v", row)
 		}
+	}
+	cancel()
+	waitRun(t, done)
+	items := eng.View().Snapshot()
+	if len(items) != 1 || items[0].Status != StatusSkipped || items[0].Error != "已停止" {
+		t.Fatalf("停下后应是已停止: %+v", items)
 	}
 }
 
@@ -175,14 +192,98 @@ func TestAgyMissingTokenNeedsLogin(t *testing.T) {
 	row := addAgyAccount(t, st, "acc1", home, "ok")
 	agy.ForgetToken(home)
 	st.UpdateBrowser(row.ID, false, true)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	from := len(logging.Log.Entries())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- eng.Run(ctx, agyOpts(filepath.Join(root, "out"), "一只猫", false, nil), nil, nopProgress)
+	}()
+	text := waitHeld(t, eng, from, "没有可用账号：Antigravity需要重新登录")
+	if strings.Contains(text, "没有正面证据") || strings.Contains(text, "失败") || strings.Contains(text, "已换到") {
+		cancel()
+		<-done
+		t.Fatalf("log = %s", text)
+	}
+	if agy.LoggedIn(home) {
+		cancel()
+		<-done
+		t.Fatal("凭证应被删掉")
+	}
+	for _, got := range st.Browsers() {
+		if got.ID == row.ID && (got.IsLoggedIn || !strings.Contains(got.LastError, "需登录")) {
+			cancel()
+			<-done
+			t.Fatalf("account %+v", got)
+		}
+	}
+	cancel()
+	waitRun(t, done)
+	items := eng.View().Snapshot()
+	if len(items) != 1 || items[0].Status != StatusSkipped || items[0].Error != "已停止" {
+		t.Fatalf("停下后应是已停止: %+v", items)
+	}
+}
+
+func TestAgyLoginSwitchesAccount(t *testing.T) {
+	eng, st, root := newAgyEngine(t)
+	first := filepath.Join(root, "acc1")
+	second := filepath.Join(root, "acc2")
+	addAgyAccount(t, st, "acc1", first, "unauth")
+	addAgyAccount(t, st, "acc2", second, "ok")
+	writeAgyJPEG(t, filepath.Join(second, "sample.jpg"))
+	from := len(logging.Log.Entries())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := eng.Run(ctx, agyOpts(filepath.Join(root, "out"), "一只猫", false, nil), nil, nopProgress); err != nil {
 		t.Fatal(err)
 	}
 	items := eng.View().Snapshot()
-	if len(items) != 1 || items[0].Error != "需登录" {
+	if len(items) != 1 || items[0].Status != StatusSuccess || len(items[0].Results) != 1 {
 		t.Fatalf("%+v", items)
+	}
+	log := logSince(from)
+	if !strings.Contains(log, "#1「acc1」需登录，改用「acc2」") {
+		t.Fatalf("换号日志: %s", log)
+	}
+	if strings.Contains(log, "已换到") || strings.Contains(log, "没有正面证据") || strings.Contains(log, "失败") {
+		t.Fatalf("log = %s", log)
+	}
+	for _, row := range st.Browsers() {
+		if row.Name == "acc1" && (row.IsLoggedIn || !strings.Contains(row.LastError, "需登录")) {
+			t.Fatalf("account %+v", row)
+		}
+	}
+}
+
+func TestAgyQuotaThenLoginHolds(t *testing.T) {
+	eng, st, root := newAgyEngine(t)
+	addAgyAccount(t, st, "acc1", filepath.Join(root, "acc1"), "quota")
+	addAgyAccount(t, st, "acc2", filepath.Join(root, "acc2"), "quota")
+	addAgyAccount(t, st, "acc3", filepath.Join(root, "acc3"), "unauth")
+	from := len(logging.Log.Entries())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- eng.Run(ctx, agyOpts(filepath.Join(root, "out"), "一只猫", false, nil), nil, nopProgress)
+	}()
+	text := waitHeld(t, eng, from, "没有可用账号：Antigravity额度不足，Antigravity需要重新登录")
+	for _, line := range []string{"#1「acc1」额度已用尽，改用「acc2」", "#1「acc2」额度已用尽，改用「acc3」"} {
+		if !strings.Contains(text, line) {
+			cancel()
+			<-done
+			t.Fatalf("缺少 %s\n%s", line, text)
+		}
+	}
+	if strings.Contains(text, "已换到") || strings.Contains(text, "没有正面证据") || strings.Contains(text, "失败") || strings.Contains(text, "全部账号额度不足") {
+		cancel()
+		<-done
+		t.Fatalf("log = %s", text)
+	}
+	cancel()
+	waitRun(t, done)
+	items := eng.View().Snapshot()
+	if len(items) != 1 || items[0].Status != StatusSkipped || items[0].Error != "已停止" {
+		t.Fatalf("停下后应是已停止: %+v", items)
 	}
 }
 
@@ -264,6 +365,52 @@ func writeAgyJPEG(t *testing.T, path string) {
 	defer f.Close()
 	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: 95}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func logSince(n int) string {
+	entries := logging.Log.Entries()
+	if n < 0 || n > len(entries) {
+		n = 0
+	}
+	var b strings.Builder
+	for _, entry := range entries[n:] {
+		b.WriteString(entry.Text)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func waitHeld(t *testing.T, eng *Engine, from int, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	var text string
+	for time.Now().Before(deadline) {
+		text = logSince(from)
+		view := eng.View()
+		if view == nil || !strings.Contains(text, want) {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		items := view.Snapshot()
+		if len(items) == 1 && items[0].Status == StatusPending {
+			return text
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("没有停在 %q\n%s", want, text)
+	return text
+}
+
+func waitRun(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("停止后没有结束")
 	}
 }
 

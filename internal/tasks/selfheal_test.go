@@ -8,8 +8,10 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/heal"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
@@ -223,6 +225,25 @@ func TestSliderSuccessRetriesSameAccount(t *testing.T) {
 	}
 	if notes := strings.Join(e.AutoNotes(), "\n"); !strings.Contains(notes, "滑块已通过，继续出图") {
 		t.Fatalf("notes = %v", e.AutoNotes())
+	}
+}
+
+func TestAgyProbeDoesNotLogOut(t *testing.T) {
+	st := openRotateStore(t)
+	row := addNamed(t, st, agy.Platform, "acc1")
+	st.UpdateBrowser(row.ID, true, true)
+	e := NewEngine(st, nil, nil, "")
+	e.setActive(row.ID, true)
+	from := len(logging.Log.Entries())
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	held := browserByID(t, st, row.ID)
+	if !held.IsLoggedIn || held.Health == store.HealthExhausted {
+		t.Fatalf("Antigravity 探测改了账号: %+v", held)
+	}
+	for _, entry := range logging.Log.Entries()[from:] {
+		if strings.Contains(entry.Text, "没有正面证据") {
+			t.Fatalf("probe log %q", entry.Text)
+		}
 	}
 }
 

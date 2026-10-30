@@ -160,8 +160,10 @@ func TestRunStopDuringResourceCooldown(t *testing.T) {
 			return nil
 		})
 		queue := e.View().Snapshot()
-		if err != nil || calls != 1 || time.Since(start) != time.Second || queue[1].Status != StatusPending || queue[2].Status != StatusPending {
-			t.Fatalf("停止应立即打断间隔，后续任务不得启动: calls=%d elapsed=%v queue=%+v err=%v", calls, time.Since(start), queue, err)
+		if err != nil || calls != 1 || time.Since(start) != time.Second ||
+			queue[1].Status != StatusSkipped || queue[1].Error != "已停止" || queue[1].Attempts != 0 ||
+			queue[2].Status != StatusSkipped || queue[2].Error != "已停止" || queue[2].Attempts != 0 {
+			t.Fatalf("停止应立即打断间隔，还没跑的改为已停止: calls=%d elapsed=%v queue=%+v err=%v", calls, time.Since(start), queue, err)
 		}
 	})
 }
@@ -198,8 +200,8 @@ func TestRunStopCancelsActiveTaskAndPreservesResults(t *testing.T) {
 			t.Fatalf("停止须保留已保存的部分结果: %+v", queue[0])
 		}
 		for _, task := range queue[1:] {
-			if task.Status != StatusPending || task.Attempts != 0 {
-				t.Fatalf("停止后待执行任务不得提交: %+v", task)
+			if task.Status != StatusSkipped || task.Error != "已停止" || task.Attempts != 0 {
+				t.Fatalf("停止后还在排队的应变成已停止: %+v", task)
 			}
 		}
 	})

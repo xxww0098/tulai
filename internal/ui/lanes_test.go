@@ -216,6 +216,38 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	}
 }
 
+func TestAgyLoginHoldStepLead(t *testing.T) {
+	login := &App{
+		platformAuto: true, running: true, stageTab: 2, stagePicked: true,
+		queue: []tasks.Task{{
+			Index: 1, Platform: "Antigravity", Status: tasks.StatusPending, Prompt: "一只猫",
+		}},
+		browserRows: []store.Browser{{
+			ID: 1, Name: "acc3", Platform: "Antigravity",
+			Health: store.HealthExhausted, LastError: "需登录",
+		}},
+	}
+	if got := login.stepLead(login.accountBoard(time.Now())); got != "没有可用账号：Antigravity需要重新登录" {
+		t.Fatal(got)
+	}
+	now := time.Now()
+	y, m, d := now.Date()
+	midnight := time.Date(y, m, d+1, 0, 0, 0, 0, now.Location()).Unix()
+	quota := &App{
+		platformAuto: true, running: true, stageTab: 2, stagePicked: true,
+		queue: []tasks.Task{{
+			Index: 1, Platform: "Antigravity", Status: tasks.StatusPending, Prompt: "一只猫",
+		}},
+		browserRows: []store.Browser{{
+			ID: 1, Name: "acc1", Platform: "Antigravity", IsLoggedIn: true,
+			Health: store.HealthExhausted, LastError: "额度不足", CoolUntil: midnight,
+		}},
+	}
+	if got := quota.stepLead(quota.accountBoard(time.Now())); got != "正在出图" {
+		t.Fatalf("额度暂停应留在正在出图: %s", got)
+	}
+}
+
 func TestProgressCardsDoNotOverflow(t *testing.T) {
 	for _, width := range []int{1024, 1280} {
 		for _, n := range []int{3, 6} {

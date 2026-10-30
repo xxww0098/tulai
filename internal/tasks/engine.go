@@ -62,20 +62,21 @@ type Engine struct {
 	pairErr     error
 	extNotice   string
 
-	loginProbe  func(context.Context, store.Browser) (string, error)
-	loginFocus  func(context.Context, store.Browser) error
-	sliderFn    func(context.Context, store.Browser) error
-	onHeal      func()
-	onRecover   func(heal.Action, int64)
-	loginLast   map[int64]time.Time
-	loginPrev   map[int64]string
-	attention   string
-	attentionID int64
-	notes       []string
-	wake        chan struct{}
-	wakes       []chan struct{}
-	gap         func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
-	agyNoted    bool
+	loginProbe     func(context.Context, store.Browser) (string, error)
+	loginFocus     func(context.Context, store.Browser) error
+	sliderFn       func(context.Context, store.Browser) error
+	onHeal         func()
+	onRecover      func(heal.Action, int64)
+	loginLast      map[int64]time.Time
+	loginPrev      map[int64]string
+	attention      string
+	attentionID    int64
+	notes          []string
+	wake           chan struct{}
+	wakes          []chan struct{}
+	gap            func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
+	agyNoted       bool
+	noAccountNoted bool
 
 	liveMu sync.Mutex
 	clock  laneClock
@@ -203,6 +204,7 @@ func (e *Engine) claimRun() error {
 func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	e.opts = opts
 	e.agyNoted = false
+	e.noAccountNoted = false
 	e.view = NewQueueView(queue)
 	// 预计算源图哈希：结果若与源图字节相同（平台回显原图）则跳过
 	e.srcHashes = map[string]bool{}
@@ -236,6 +238,8 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	logging.Event(logging.Line{Stage: "queue", Msg: fmt.Sprintf("任务开始：共 %d 个", len(queue)), Images: len(queue)})
 	onProgress(Progress{Done: 0, Total: len(queue)})
 	runErr := e.runPlatforms(ctx, nudge, queue, onTask, onProgress, attempt)
+	// 跑完或停下时，还排着的都改成已停止。界面和计数共用这一份状态。
+	e.stopLeftovers()
 	logging.Event(logging.Line{Stage: "queue", Msg: "任务结束"})
 	return runErr
 }
@@ -407,7 +411,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			}
 			continue
 		}
-		if e.holdAgyQuota(&t, err) {
+		if e.holdAgy(&t, err) {
 			return t
 		}
 		if e.maybeRotate(&t, err, time.Now()) {

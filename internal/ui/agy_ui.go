@@ -575,6 +575,9 @@ func (a *App) finishAgyImport(res agy.ImportResult, err error) {
 	a.store.UpdateBrowser(row.ID, false, true)
 	a.store.ResetBrowserHealth(row.ID)
 	a.refreshBrowsers()
+	if a.engine != nil {
+		a.engine.Wake()
+	}
 	who := strings.TrimSpace(res.Email)
 	line := agy.MsgImported
 	if who != "" {
@@ -673,6 +676,9 @@ func (a *App) finishAgyLogin(id int64, name string) {
 		a.store.UpdateBrowser(id, false, true)
 		a.store.ResetBrowserHealth(id)
 		a.refreshBrowsers()
+	}
+	if a != nil && a.engine != nil {
+		a.engine.Wake()
 	}
 	if name == "" {
 		name = "账号"

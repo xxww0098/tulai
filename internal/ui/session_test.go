@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +163,72 @@ func TestNewTaskDisabledWhileRunning(t *testing.T) {
 	}
 	if wash.prompts != DefaultWashPrompt || len(wash.queue) != 0 {
 		t.Fatalf("wash reset = %q queue=%d", wash.prompts, len(wash.queue))
+	}
+}
+
+func TestNewTaskClearsResultGrid(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	row, err := st.AddBrowser("豆包", "豆包主力", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(row.ID, false, true)
+	img := filepath.Join(dir, "session-cat-result.png")
+	writeTinyPNG(t, img)
+	eng := tasks.NewEngine(st, nil, nil, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := eng.RunObserved(ctx, tasks.Options{
+		Platforms:  []string{"豆包"},
+		Prompts:    []string{"一只猫"},
+		OutputPath: dir,
+	}, func(tasks.Task) {}, func(tasks.Progress) {}, func(_ context.Context, task *tasks.Task) error {
+		task.Results = []string{img}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snap := eng.View().Snapshot()
+	if len(snap) != 1 || snap[0].Status != tasks.StatusSuccess || len(snap[0].Results) != 1 {
+		t.Fatalf("run %+v", snap)
+	}
+	// 账号行会盖住历史里的「恢复」。这一步只看结果格和历史，账号可以拿掉。
+	st.DeleteBrowser(row.ID)
+	a := &App{
+		store: st, engine: eng, platformAuto: true,
+		prompts: "一只猫", queue: snap, runPage: pageHome,
+	}
+	tt := ui.NewTester(a.view, 1280, 900)
+	tt.Advance(200 * time.Millisecond)
+	if !tt.HasText("session-cat-result.png") {
+		t.Fatalf("结果格没有上一批的图: %v", tt.Texts())
+	}
+	if err := tt.Click("新建任务"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if tt.HasText("session-cat-result.png") || len(a.queue) != 0 || a.prompts != "" {
+		t.Fatalf("新建任务还留着结果 prompts=%q queue=%+v texts=%v", a.prompts, a.queue, tt.Texts())
+	}
+	if !tt.HasText("出图结果会出现在这里") {
+		t.Fatalf("空结果提示没出来: %v", tt.Texts())
+	}
+	a.historyOpen = true
+	tt.Frame()
+	if err := tt.Click("恢复"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.prompts != "一只猫" || len(a.queue) != 1 || len(a.queue[0].Results) != 1 || a.queue[0].Results[0] != img {
+		t.Fatalf("历史没有把结果带回来: prompts=%q queue=%+v logs=%v", a.prompts, a.queue, logging.Log.Entries())
+	}
+	if !tt.HasText("session-cat-result.png") {
+		t.Fatalf("恢复后结果格是空的: %v", tt.Texts())
 	}
 }
 
