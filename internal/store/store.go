@@ -97,7 +97,7 @@ var defaults = map[string]string{
 	"update_skipped_version":  "",
 	"proxy_mode":              "system",
 	"proxy_server":            "",
-	"daily_cap":               "20",
+	"daily_cap":               "100",
 	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
 }
 

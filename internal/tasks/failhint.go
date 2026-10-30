@@ -10,7 +10,7 @@ import (
 )
 
 // DefaultDailyCap 是每个账号每天最多出图的次数。到了就换号，不需要先打开设置。
-const DefaultDailyCap = 20
+const DefaultDailyCap = 100
 
 const mildPhrase = "画面温和、健康，适合公开展示"
 
