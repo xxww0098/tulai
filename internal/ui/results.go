@@ -101,7 +101,7 @@ func (a *App) resultsHead(c *ui.Context) {
 			ui.Text(c, "出图进度").FontSize(tok.title).Bold()
 			if len(cards) > 0 {
 				done, running, queued, failN, needs := ProgressTally(cards)
-				ui.Text(c, FormatProgressTally(done, running, queued, failN, needs)).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+				ui.Text(c, FormatProgressTally(done, running, queued, failN, needs, a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 			}
 		})
 		if len(failed) > 0 {

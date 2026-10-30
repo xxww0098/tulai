@@ -351,7 +351,8 @@ func RunSummary(images int, prompts bool) string {
 }
 
 // FormatProgressTally 是一个平台的进度。并发上限写在同一行，不再另起一条「同时出图」。
-func FormatProgressTally(done, running, queued, failed, needs int) string {
+// limit 是这一页实际能同时跑的账号数；Antigravity 一次只跑一个。没有可用账号时不写。
+func FormatProgressTally(done, running, queued, failed, needs, limit int) string {
 	parts := []string{
 		fmt.Sprintf("完成 %d", done),
 		fmt.Sprintf("进行中 %d", running),
@@ -361,7 +362,9 @@ func FormatProgressTally(done, running, queued, failed, needs int) string {
 	if needs > 0 {
 		parts = append(parts, fmt.Sprintf("待验证 %d", needs))
 	}
-	parts = append(parts, fmt.Sprintf("%d/%d 并发", running, tasks.PlatformInFlight))
+	if limit > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d 并发", running, limit))
+	}
 	return strings.Join(parts, " · ")
 }
 

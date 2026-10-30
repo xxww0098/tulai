@@ -189,7 +189,7 @@ func TestWorkspaceNeedsUserVisible(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"待验证", verificationHint, "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1 · 0/2 并发", "开始出图", "出图进度", "重试"} {
+				for _, label := range []string{"待验证", verificationHint, FormatProgressTally(0, 0, 0, 0, 1, a.liveParallel()), "开始出图", "出图进度", "重试"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 				if tt.HasText("已结束") || tt.HasText("失败: 验证码需要手动处理") {

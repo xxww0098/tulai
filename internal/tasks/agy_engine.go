@@ -36,10 +36,11 @@ func (e *Engine) attemptAntigravity(ctx context.Context, t *Task) error {
 	}
 	ref := ""
 	prompt := t.Prompt
+	// 生图带了参考图、洗图带了原图，都按参考图交给 agy。
+	if len(t.Images) > 0 {
+		ref = t.Images[0]
+	}
 	if e.opts.Wash {
-		if len(t.Images) > 0 {
-			ref = t.Images[0]
-		}
 		if strings.TrimSpace(prompt) == "" {
 			prompt = "按洗图要求处理参考图，保留主体"
 		}
