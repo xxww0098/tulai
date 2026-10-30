@@ -68,15 +68,16 @@ type WorkbenchPlan struct {
 }
 
 // PlanWorkbench 决定开始按钮该出图、打开向导，还是先不动。
-// 自动平台时，用当前方式下已登录且还能恢复的账号；关掉自动后只保留勾选的平台。
+// 右栏选了平台时只跑这个平台。否则自动平台用已登录且还能恢复的账号；关掉自动后只保留勾选的平台。
 func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 	if in.Running || (!in.HasImages && !in.HasPrompts) {
 		return WorkbenchPlan{Action: StartNone}
 	}
 	only := strings.TrimSpace(in.OnlyPlatform)
 	want := func(platform string) bool {
-		if only != "" && platform != only {
-			return false
+		// 右栏选中的平台就是这次要跑的平台，不再看设置里的勾选。
+		if only != "" {
+			return platform == only
 		}
 		if in.AutoPlatform {
 			return platform == "豆包" || platform == "千问" || platform == agy.Platform

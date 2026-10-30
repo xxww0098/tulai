@@ -528,3 +528,14 @@ func writeColorPNG(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanUsesStageTabEvenWhenUnchecked(t *testing.T) {
+	plan := PlanWorkbench(WorkbenchInput{
+		HasPrompts: true, WantDoubao: true, WantQianwen: true, OnlyPlatform: "Antigravity",
+		Accounts: []AccountSnap{{Platform: "Antigravity", LoggedIn: true, Health: "ready"}},
+		Now:      time.Now(),
+	})
+	if plan.Action != StartGenerate || len(plan.Platforms) != 1 || plan.Platforms[0] != "Antigravity" {
+		t.Fatalf("plan %+v", plan)
+	}
+}
