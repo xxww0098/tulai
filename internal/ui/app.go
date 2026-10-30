@@ -174,7 +174,7 @@ type App struct {
 	genSession    int64
 	washSession   int64
 	historyOpen   bool
-	historyAnchor ui.Element // 这一帧的「历史」按钮，弹出层把它当锚，避免点按钮被当成点外面
+	historyAnchor ui.Handle // 「历史」按钮，弹出层把它当锚，避免点按钮被当成点外面
 	genList       ui.ListState
 	washList      ui.ListState
 	stamps        map[string]int64

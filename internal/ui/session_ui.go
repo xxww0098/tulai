@@ -70,16 +70,19 @@ func (a *App) historyControl(c *ui.Context) {
 	open := a.historyOpen
 	btn := ui.Button(c.Key("history"), "历史").FontSize(a.look.caption).Padding(3, 8).Radius(a.look.radiusS).Shrink(0)
 	btn.OnClick(func() { a.historyOpen = !open })
-	a.historyAnchor = btn
+	btn.Bind(&a.historyAnchor)
 }
 
 // historyPanel 挂在账号表头下面、靠右。表头上的「添加账号」留在外面，左边的运行日志也不会被挡住。
 func (a *App) historyPanel(c *ui.Context, place ui.Element) {
-	if a == nil || !a.historyOpen || a.historyAnchor == (ui.Element{}) {
+	if a == nil || !a.historyOpen {
+		return
+	}
+	anchor := c.Resolve(a.historyAnchor)
+	if !anchor.Valid() {
 		return
 	}
 	tok := a.look
-	anchor := a.historyAnchor
 	ui.PopoverBase(c, anchor, &a.historyOpen, func(panel ui.Element) {
 		panel.Label("历史任务").AttachTo(place, ui.AnchorBottomEnd, ui.AnchorTopEnd).
 			Width(280).MaxHeight(216).Padding(6).Gap(4).
