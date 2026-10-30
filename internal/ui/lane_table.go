@@ -204,10 +204,12 @@ func (a *App) agyQuotaCell(c *ui.Context, id int64) {
 	week := view.Usage.Weekly
 	fiveTip := agy.WindowTip(agy.Window5h, five.Remaining, five.Reset, now)
 	weekTip := agy.WindowTip(agy.WindowWeek, week.Remaining, week.Reset, now)
-	ui.Meter(c.Key("h5"), agy.UsedFraction(five.Remaining), 0, 1, agyMeterLevels).
-		FillWidth().MinWidth(0).Height(4).Label(fiveTip).Tooltip(fiveTip)
-	ui.Meter(c.Key("week"), agy.UsedFraction(week.Remaining), 0, 1, agyMeterLevels).
-		FillWidth().MinWidth(0).Height(4).Label(weekTip).Tooltip(weekTip)
+	ui.Column(c.Key("bars")).FillWidth().Gap(3).Children(func() {
+		ui.Meter(c.Key("h5"), agy.UsedFraction(five.Remaining), 0, 1, agyMeterLevels).
+			FillWidth().MinWidth(0).Height(7).Label(fiveTip).Tooltip(fiveTip)
+		ui.Meter(c.Key("week"), agy.UsedFraction(week.Remaining), 0, 1, agyMeterLevels).
+			FillWidth().MinWidth(0).Height(7).Label(weekTip).Tooltip(weekTip)
+	})
 }
 
 // laneQuotaFill 是今日用量和进度条颜色：快满变橙，满了变灰。
