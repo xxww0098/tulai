@@ -47,6 +47,7 @@ type Task struct {
 	ranOn              int64  // 实际打到的账号。轮换后 BrowserID 会改成下一个
 	rotated            bool   // 失败后已改派，调度器要把任务放回队列
 	altTried           bool   // 发送未确认后已经换过一次账号
+	replyRetried       bool   // 平台回了报错后已经在新对话里重试过一次
 	avoidSend          int64  // 这次未确认的账号，调度不要把它立刻派回去
 	Reassigned         string // 改派到的账号名。卡片写「已改由…」，成功后也留着
 	ReassignWhy        string // 改派前的失败原因

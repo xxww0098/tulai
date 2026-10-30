@@ -321,8 +321,15 @@ type liveShot struct {
 	Replies int      `json:"replies"`
 	Reason  string   `json:"reason"`
 	Here    string   `json:"here"`
+	Fault   string   `json:"fault"`
 	Images  []Result `json:"images"`
 }
+
+// ErrPlatformReply 是平台回了一行报错、没有图卡。等到超时也不会出图，换新对话或换号。
+var ErrPlatformReply = errors.New("平台回复异常")
+
+// replyFaultFor 让报错多停一拍再认，避免回复刚开始渲染时误判。
+const replyFaultFor = 1500 * time.Millisecond
 
 func detectKey(live liveShot) string {
 	return fmt.Sprintf("%d %t %t %d %d %s", len(live.Images), live.Busy, live.Bar, live.Expect, live.Replies, live.Reason)
@@ -356,7 +363,7 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 	var key string
 	var held []Result
 	var lastDetect, lastFail string
-	var offSince time.Time
+	var offSince, faultSince time.Time
 	reopened := false
 	for {
 		if err := s.Ctx().Err(); err != nil {
@@ -391,6 +398,17 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 				}
 			} else {
 				offSince = time.Time{}
+			}
+			if live.Reason == "error-reply" && len(live.Images) == 0 {
+				if faultSince.IsZero() {
+					faultSince = time.Now()
+				}
+				if time.Since(faultSince) >= replyFaultFor {
+					logging.Log.Debugf("%s", detectLine(live, 0))
+					return nil, fmt.Errorf("%w：%s", ErrPlatformReply, live.Fault)
+				}
+			} else {
+				faultSince = time.Time{}
 			}
 			if len(live.Images) > 0 {
 				held = live.Images
@@ -468,7 +486,7 @@ func FreshChat(s *cdp.Session) error {
 	if via != "ready" {
 		originID = strings.Trim(evalString(s, `window.__tulaiConversationKey ? __tulaiConversationKey(location.href) : ""`), `"`)
 	}
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(freshChatWait)
 	stable := 0
 	last := ""
 	seen := chatReady{Why: "missing"}
@@ -504,6 +522,9 @@ func FreshChat(s *cdp.Session) error {
 	}
 	return freshChatFailure(seen)
 }
+
+// freshChatWait 盖住豆包冷启动和慢网络下新对话页的加载。
+const freshChatWait = 20 * time.Second
 
 func freshChatFailure(st chatReady) error {
 	why := st.Why

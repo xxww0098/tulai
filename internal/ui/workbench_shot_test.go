@@ -12,6 +12,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -115,6 +116,9 @@ func TestExportWorkbenchShots(t *testing.T) {
 		},
 	}
 	run.preloadThumbs([]string{land, face, still, out})
+	for i := 1; i <= 30; i++ {
+		logging.Log.Info("#%d 豆包「豆包主力」第 %d 行日志", i, i)
+	}
 	save("after-run", run)
 
 	saveTall := func(name string, a *App) {

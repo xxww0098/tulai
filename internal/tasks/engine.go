@@ -372,6 +372,31 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Error = ""
 			return t
 		}
+		if errors.Is(err, strategy.ErrPlatformReply) {
+			name := e.accountName(t.ranOnOr(t.BrowserID))
+			if !t.replyRetried {
+				t.replyRetried = true
+				t.submitted = false
+				t.sentURL, t.sentWrap = "", ""
+				logging.Log.Warning("#%d %s「%s」回复异常（%s），%d 秒后换新对话重试一次", t.Index, t.Platform, name, err, int(replyBackoff/time.Second))
+				if t.Attempts >= maxAttempts {
+					maxAttempts = t.Attempts + 1
+				}
+				select {
+				case <-time.After(replyBackoff):
+				case <-ctx.Done():
+					return stoppedTask(ctx, t)
+				}
+				continue
+			}
+			logging.Log.Warning("#%d %s「%s」新对话里仍回复异常，账号冷却 %d 分钟", t.Index, t.Platform, name, int(replyCooldown/time.Minute))
+			if e.maybeRotate(&t, err, time.Now()) {
+				return t
+			}
+			t.Status = StatusFailed
+			t.Error = err.Error()
+			return t
+		}
 		if again, done := e.healAttempt(ctx, &t, err, &sliderTried); done || again {
 			if done {
 				return t
@@ -584,6 +609,13 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	// 同一账号只留这一张标签，前面任务漏关的豆包页在这里关掉。
 	if sess != nil && strat != nil {
 		sess.KeepOnePage(strat.HomeURL())
+	}
+	// 重试前重新打开新对话页。上一次可能卡在没加载完的页面上，原地再等也不会好。
+	if sess != nil && strat != nil && t.Attempts > 1 {
+		logging.Log.Info("#%d %s「%s」重试前重新打开新对话页", t.Index, t.Platform, e.accountName(t.BrowserID))
+		if err := sess.Navigate(strat.HomeURL()); err != nil {
+			logging.Log.Debugf("#%d %s「%s」打开新对话页 %s", t.Index, t.Platform, e.accountName(t.BrowserID), err.Error())
+		}
 	}
 	if err := strategy.FreshChat(sess); err != nil {
 		return fmt.Errorf("新对话: %w", err)

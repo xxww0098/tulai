@@ -23,6 +23,7 @@ const (
 	faultCaptcha
 	faultOffline
 	faultUncertain
+	faultReply
 )
 
 // errExtOffline 表示指定的扩展配置文件这会儿没连上。有别的账号就换，没有就按普通错误重试。
@@ -40,6 +41,9 @@ func classifyFault(err error) faultKind {
 	}
 	if errors.Is(err, strategy.ErrSubmissionUncertain) || extbridge.CodeOf(err) == extbridge.ESendUncertain {
 		return faultUncertain
+	}
+	if errors.Is(err, strategy.ErrPlatformReply) {
+		return faultReply
 	}
 	if errors.Is(err, errHumanGaveUp) || errors.Is(err, captcha.ErrVerificationRequired) || errors.Is(err, errNeedsVerify) || extbridge.CodeOf(err) == extbridge.ECaptchaHuman {
 		return faultCaptcha
@@ -72,6 +76,8 @@ func faultLabel(kind faultKind) string {
 		return "需要验证"
 	case faultOffline:
 		return "扩展未连接"
+	case faultReply:
+		return "平台回复异常"
 	default:
 		return "账号不可用"
 	}
@@ -96,6 +102,8 @@ func (e *Engine) noteFault(id int64, kind faultKind, err error, now time.Time) {
 		until = 0
 	case faultOffline:
 		until = now.Add(45 * time.Second).Unix()
+	case faultReply:
+		until = now.Add(replyCooldown).Unix()
 	default:
 		return
 	}
@@ -105,6 +113,12 @@ func (e *Engine) noteFault(id int64, kind faultKind, err error, now time.Time) {
 	}
 	e.store.UpdateBrowserHealth(id, health, until, msg)
 }
+
+// replyCooldown 让连着回报错的账号歇一会儿，活先交给别的号。
+const replyCooldown = 5 * time.Minute
+
+// replyBackoff 是回报错后换新对话重试前的停顿。
+const replyBackoff = 5 * time.Second
 
 func nextLocalMidnight(now time.Time) time.Time {
 	y, m, d := now.Date()

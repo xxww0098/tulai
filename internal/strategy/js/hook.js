@@ -512,13 +512,26 @@
       });
     });
     var done = !busy && cards > 0 && images.length > 0 && (expect === 0 || images.length >= expect);
+    var fault = '';
+    if (!busy && !cards && !images.length) {
+      replies.forEach(function (root) { if (!fault) fault = qwenFault(root); });
+    }
     var reason = 'no-reply';
     if (!replies.length && !images.length) reason = 'no-reply';
     else if (busy) reason = 'generating';
+    else if (fault) reason = 'error-reply';
     else if (!images.length) reason = 'no-new-image';
     else if (!done) reason = 'unfinished';
     else reason = 'images-ready';
-    return { busy: busy, done: done, expect: expect, bar: false, replies: replies.length, reason: reason, here: window.__tulaiConversationKey(location.href), images: images };
+    return { busy: busy, done: done, expect: expect, bar: false, replies: replies.length, reason: reason, fault: fault, here: window.__tulaiConversationKey(location.href), images: images };
+  }
+  // 千问拒绝请求时，回复里只有一行报错和「重新生成」图标，没有图卡。
+  var qwenFaultPattern = /请求异常|网络连接|网络异常|服务异常|服务繁忙|系统繁忙|出错了|生成失败|请稍后重试|请重试/;
+  function qwenFault(root) {
+    var box = root.querySelector('[class*="retry-container"]');
+    var text = String((box || root).textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 80) return '';
+    return box || qwenFaultPattern.test(text) ? text : '';
   }
   function gridOf(img) {
     var card = img.closest && img.closest('[id^="card_card_ai_generate_image_"]');
@@ -660,7 +673,8 @@
     var qwen = qwenPage();
     var why = [];
     if (!comp) why.push('no-composer');
-    if (document.readyState !== 'complete') why.push('loading');
+    // 豆包的长连接让 readyState 一直停在 interactive。输入框已在、对话是空的，就能打字。
+    if (!comp && document.readyState !== 'complete') why.push('loading');
     if (chars) why.push('draft');
     if (qwen) {
       if (cards) why.push('cards');
