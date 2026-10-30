@@ -13,16 +13,14 @@ import (
 	"github.com/xxww0098/tulai/internal/prompts"
 )
 
-// workColumns 左边是这一页的输入和开始，右边是账号、进度和运行日志。
+// workColumns 左边是这一页的输入、开始和运行日志，右边是平台、账号和出图结果。
 func (a *App) workColumns(c *ui.Context, input func()) {
 	w, _ := c.Size()
 	if homeSplit(w) {
 		ui.Column(c).Grow(1).MinHeight(0).Gap(10).Children(func() {
 			a.loginBanner(c)
 			ui.Row(c).Grow(1).MinHeight(0).Gap(homeGap).AlignItems(ui.Stretch).Children(func() {
-				ui.Scroll(c.Key("work-side")).Width(composerW).Shrink(0).MinHeight(0).Children(func() {
-					ui.Column(c).FillWidth().Gap(10).Padding(0, 0, 8, 0).Children(input)
-				})
+				a.workSide(c, input)
 				a.homeStage(c)
 			})
 		})
@@ -31,6 +29,7 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 			ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
 				a.loginBanner(c)
 				input()
+				a.runCard(c)
 				a.platformStage(c)
 				a.runLog(c, false)
 			})
@@ -39,16 +38,26 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 	a.previewModal(c)
 }
 
+// workSide 输入在上，内容多时自己滚动；开始卡片始终露出，运行日志撑满左栏剩下的高度。
+func (a *App) workSide(c *ui.Context, input func()) {
+	_, winH := c.Size()
+	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).Height(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
+		ui.Scroll(c.Key("work-side-input")).FillWidth().Shrink(1).MinHeight(0).Children(func() {
+			ui.Column(c).FillWidth().Gap(10).Children(input)
+		})
+		a.runCard(c)
+		a.runLog(c, true)
+	})
+}
+
 func (a *App) genInput(c *ui.Context) {
 	a.promptFocus(c)
 	a.refImageCard(c)
-	a.runCard(c)
 }
 
 func (a *App) washInput(c *ui.Context) {
 	a.washImageCard(c)
 	a.washPromptCard(c)
-	a.runCard(c)
 }
 
 // promptFocus 是生图的主输入：直接写、粘贴，或从 txt 载入。

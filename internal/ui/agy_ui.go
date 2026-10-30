@@ -79,7 +79,7 @@ func (a *App) persistAgySettings() {
 
 func (a *App) agySettings(c *ui.Context) {
 	ui.Form(c, func() {
-		ui.Text(c, "一次只跑一个账号。在生图或洗图右侧选中 Antigravity 后，任务只走这里的账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "在生图或洗图右侧选中 Antigravity 后，任务只走这里的账号。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "agy 路径", func() {
 			ui.TextInput(c, &a.agyBin).Placeholder(agy.DefaultBin()).Disabled(a.running)
 		})

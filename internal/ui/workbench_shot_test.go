@@ -303,6 +303,8 @@ func TestExportWorkbenchShots(t *testing.T) {
 	washAgy.sources = []sourceImage{{Path: land, Hash: "land"}}
 	washAgy.preloadThumbs([]string{land})
 	saveAt("antigravity-wash", 1024, 700, washAgy)
+	saveAt("antigravity-wash-1280x800", 1280, 800, washAgy)
+	saveAt("wash-1280x800", 1280, 800, washShot)
 	loginAgy := agyBase(false)
 	loginAgy.agyLogin = &agyLoginState{url: "https://accounts.google.com/o/oauth2/auth?client_id=agy", name: "acc1"}
 	saveAt("antigravity-login", 1024, 700, loginAgy)
