@@ -112,7 +112,10 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			ui.Text(c.Key("used"), usedText).FontSize(tok.caption).
 				FontFeatures("tnum").SingleLine().
 				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
-			quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
+			// Antigravity 的今日只显示次数。豆包和千问仍用进度条。
+			if ln.Platform != agy.Platform {
+				quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
+			}
 		})
 		ui.Row(c).Grow(taskGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
 			switch {

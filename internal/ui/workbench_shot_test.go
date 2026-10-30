@@ -12,6 +12,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
@@ -309,6 +310,29 @@ func TestExportWorkbenchShots(t *testing.T) {
 	loginAgy.agyLogin = &agyLoginState{url: "https://accounts.google.com/o/oauth2/auth?client_id=agy", name: "acc1"}
 	saveAt("antigravity-login", 1024, 700, loginAgy)
 	saveAt("antigravity-exhausted", 1024, 700, agyBase(true))
+	chooser := agyBase(false)
+	chooser.agyChooser = &agyChooserState{hint: agy.MsgNotFound}
+	saveAt("antigravity-add-chooser", 1024, 700, chooser)
+	detected := agyBase(false)
+	detected.agyChooser = &agyChooserState{
+		hint: "已检测到 li@gmail.com", email: "li@gmail.com", home: agyHome, canImport: true,
+	}
+	saveAt("antigravity-import-detected", 1024, 700, detected)
+	var washManySrc []sourceImage
+	var washManyPaths []string
+	for i, path := range []string{land, face, still, filepath.Join(pics, "街景.png"), filepath.Join(pics, "夜色.png"), filepath.Join(pics, "花.png")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		}
+		washManySrc = append(washManySrc, sourceImage{Path: path, Hash: fmt.Sprintf("w%d", i)})
+		washManyPaths = append(washManyPaths, path)
+	}
+	washMany := &App{
+		platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash,
+		sources: washManySrc,
+	}
+	washMany.preloadThumbs(washManyPaths)
+	saveAt("wash-many-1024x700", 1024, 700, washMany)
 	tip := ui.NewTester(idle.view, 1280, 800)
 	tip.Advance(450 * time.Millisecond)
 	r, ok := tip.Find("检查更新")

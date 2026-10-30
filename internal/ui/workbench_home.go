@@ -47,13 +47,6 @@ func homeStageW(w float32) float32 {
 	return stage
 }
 
-func composerInner(w float32) float32 {
-	if !homeSplit(w) {
-		return pageInner(w)
-	}
-	return composerW
-}
-
 func fitCols(inner, min float32, max int) int {
 	cols := int(inner / min)
 	if cols < 1 {
@@ -303,7 +296,7 @@ func tasksForPlatform(items []tasks.Task, platform string) []tasks.Task {
 // runLog 在左栏里撑满剩下的高度，日志在卡片里滚动，停在底部时跟着最新一行。
 func (a *App) runLog(c *ui.Context, fill bool) {
 	tok := a.look
-	card := ui.Column(c.Key("run-log")).FillWidth().Gap(4).Padding(8, 10).Radius(tok.radiusM).
+	card := ui.Column(c.Key("run-log")).Label("运行日志区").FillWidth().Gap(4).Padding(8, 10).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border)
 	limit := 6
 	if fill {
@@ -369,53 +362,53 @@ func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 	return card
 }
 
-func (a *App) sourceGrid(c *ui.Context) {
-	tok := a.look
-	width, _ := c.Size()
-	cols := fitCols(composerInner(width)-36, 148, 4)
-	if cols < 2 {
-		cols = 2
+const (
+	washThumbSize    float32 = 68
+	washThumbGap     float32 = 8
+	washThumbCols            = 4
+	washThumbMaxRows         = 2
+)
+
+// washThumbViewport 是原图网格的可视高度：最多两整行，不把一行切在缩略图中间。
+func washThumbViewport(n int) float32 {
+	if n <= 0 {
+		return 0
 	}
-	ui.Grid(c).Columns(cols).Gap(12).Children(func() {
-		for i := range a.sources {
-			a.sourceTile(c, i)
-		}
-		a.addTile(c, tok)
-	})
+	rows := (n + washThumbCols - 1) / washThumbCols
+	if rows > washThumbMaxRows {
+		rows = washThumbMaxRows
+	}
+	return float32(rows)*washThumbSize + float32(rows-1)*washThumbGap
 }
 
-func (a *App) sourceTile(c *ui.Context, i int) {
-	tok := a.look
-	si := a.sources[i]
-	ui.Column(c.Key(si.Path)).Gap(6).Transition(motionItem()).Children(func() {
-		frame := ui.Box(c).FillWidth().AspectRatio(1).Radius(tok.radiusM).Background(tok.sunken)
-		frame.Children(func() {
-			if bmp := a.cachedThumb(si.Path); bmp != nil {
-				ui.Image(c, bmp).FillWidth().AspectRatio(1).Fit(ui.Cover).Radius(tok.radiusM).
-					ContentTransition(ui.ContentTransition{Animation: &motionEaseOut})
+func (a *App) washSourceGrid(c *ui.Context) {
+	n := len(a.sources)
+	if n == 0 {
+		return
+	}
+	tracks := make([]ui.Track, washThumbCols)
+	for i := range tracks {
+		tracks[i] = ui.Fixed(washThumbSize)
+	}
+	ui.Scroll(c.Key("wash-thumbs")).FillWidth().Height(washThumbViewport(n)).Children(func() {
+		ui.Grid(c).ColumnTracks(tracks...).Gap(washThumbGap).JustifyItems(ui.Start).AlignItems(ui.Start).Children(func() {
+			for i := range a.sources {
+				a.washThumb(c, i)
 			}
-			a.thumbRemove(c, frame, i)
 		})
-		ui.Text(c, filepath.Base(si.Path)).FontSize(tok.caption).SingleLine().Tooltip(si.Path)
 	})
 }
 
-func (a *App) addTile(c *ui.Context, tok tokens) {
-	ui.Column(c.Key("add-tile")).Gap(6).Transition(motionItem()).Children(func() {
-		tile := ui.Column(c).FillWidth().AspectRatio(1).Radius(tok.radiusM).Center().Gap(4).
-			Border(1.5, tok.accent.Alpha(0.45)).BorderStyle(ui.BorderDashed).
-			Background(tok.sunken).Cursor(ui.CursorPointer)
-		if tile.Hovered() && !a.running {
-			tile.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
+func (a *App) washThumb(c *ui.Context, i int) {
+	si := a.sources[i]
+	name := filepath.Base(si.Path)
+	frame := ui.Box(c.Key(si.Path)).Size(washThumbSize, washThumbSize).Radius(a.look.radiusS).
+		Background(a.look.sunken).Label(name).Tooltip(si.Path)
+	frame.Children(func() {
+		if bmp := a.cachedThumb(si.Path); bmp != nil {
+			ui.Image(c, bmp).Size(washThumbSize, washThumbSize).Fit(ui.Cover).Radius(a.look.radiusS)
 		}
-		hoverPressPose(tile)
-		if tile.Clicked() && !a.running {
-			a.addImages()
-		}
-		tile.Children(func() {
-			ui.Text(c, "拖入或点击添加图片").FontSize(tok.caption).Bold().TextColor(tok.accent)
-		})
-		ui.Text(c, "PNG · JPG · WEBP").FontSize(tok.caption).TextColor(tok.muted)
+		a.thumbRemove(c, frame, i)
 	})
 }
 

@@ -14,6 +14,59 @@ import (
 	"github.com/xxww0098/tulai/internal/store"
 )
 
+func TestAntigravityAddChooser(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "database", "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{
+		store:        st,
+		platformAuto: true,
+		stageTab:     2,
+		stagePicked:  true,
+		agyBin:       filepath.Join(dir, "missing-agy"),
+	}
+	tt := ui.NewTester(a.view, 1024, 700)
+	tt.Advance(200 * time.Millisecond)
+	if err := tt.Click("+ 添加账号"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	for _, text := range []string{"Google 登录（OAuth）", "导入本地 Antigravity CLI 账号", "登录", "导入", "选择文件夹…"} {
+		if !tt.HasText(text) {
+			t.Fatalf("missing %q", text)
+		}
+	}
+	panel, ok := tt.Find("agy-add-chooser")
+	if !ok {
+		t.Fatal("chooser missing")
+	}
+	for _, label := range []string{"agy-oauth-go", "agy-import-go", "agy-pick-folder"} {
+		btn, found := tt.Find(label)
+		if !found {
+			t.Fatalf("%s missing", label)
+		}
+		if btn.W >= panel.W-24 {
+			t.Fatalf("%s is full width: button %v panel %v", label, btn, panel)
+		}
+		if btn.X < panel.X+panel.W*0.45 {
+			t.Fatalf("%s is not on the right: button %v panel %v", label, btn, panel)
+		}
+	}
+	if err := tt.Click("登录"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("授权码") || !tt.HasText("找不到 agy") {
+		t.Fatal("登录没有打开授权面板")
+	}
+	if tt.HasText("导入本地 Antigravity CLI 账号") {
+		t.Fatal("授权面板打开后选择方式还在")
+	}
+}
+
 func TestAntigravityTabShowsAccountAndLogin(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "acc1")
 	writeAgyHome(t, home, "li@gmail.com")
