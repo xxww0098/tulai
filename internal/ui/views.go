@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/extbridge"
@@ -90,6 +91,9 @@ func (a *App) browserInstances(c *ui.Context) {
 			if active[rows[i].ID] {
 				rows[i].IsRunning = true
 			}
+			if rows[i].Platform == agy.Platform {
+				continue
+			}
 			if rows[i].ExtAccount != "" && !rows[i].IsLoggedIn {
 				continue
 			}
@@ -128,7 +132,7 @@ func (a *App) browserInstances(c *ui.Context) {
 
 // followStagePlatform 让添加账号的平台下拉跟着右侧当前 Tab，直到用户自己改下拉。
 func (a *App) followStagePlatform() {
-	if a == nil {
+	if a == nil || a.stagePlatform() == agy.Platform {
 		return
 	}
 	if a.platSynced && a.platSyncedTab == a.stageTab && a.newBrowserPlat != "" {
@@ -531,6 +535,10 @@ func (a *App) addBrowser() {
 // addAccountHere 给右侧当前 Tab 的平台直接加一个账号。
 func (a *App) addAccountHere() {
 	if a == nil || a.running {
+		return
+	}
+	if a.stagePlatform() == agy.Platform {
+		a.addAgyAccount()
 		return
 	}
 	platform := a.stagePlatform()

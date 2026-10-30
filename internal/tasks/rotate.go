@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -48,7 +49,9 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 			return now.Add(heal.RecheckAfter), false
 		}
 		if task.Error == "" {
-			if cappedOut(rows, now, limit) {
+			if needsAgyLogin(rows) {
+				task.Error = agy.ErrNeedLogin.Error()
+			} else if cappedOut(rows, now, limit) {
 				task.Error = "今日已达上限"
 			} else {
 				task.Error = "同平台账号都不可用"

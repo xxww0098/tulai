@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
@@ -74,6 +75,7 @@ type Engine struct {
 	wake        chan struct{}
 	wakes       []chan struct{}
 	gap         func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
+	agyNoted    bool
 
 	liveMu sync.Mutex
 	clock  laneClock
@@ -149,7 +151,7 @@ func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask 
 		seen[task.Platform] = true
 		if len(browsersOf[task.Platform]) == 0 {
 			e.mu.Unlock()
-			return fmt.Errorf("平台[%s]没有配置浏览器，请先在浏览器管理中添加", task.Platform)
+			return missingPlatform(task.Platform)
 		}
 	}
 	opts.UseSuffix = false
@@ -171,7 +173,7 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 	for _, p := range opts.Platforms {
 		if len(browsersOf[p]) == 0 {
 			e.mu.Unlock()
-			return fmt.Errorf("平台[%s]没有配置浏览器，请先在浏览器管理中添加", p)
+			return missingPlatform(p)
 		}
 	}
 	queue := BuildQueue(opts, browsersOf)
@@ -200,6 +202,7 @@ func (e *Engine) claimRun() error {
 // driveLocked 执行已经建好的队列。调用时持有 e.mu。
 func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	e.opts = opts
+	e.agyNoted = false
 	e.view = NewQueueView(queue)
 	// 预计算源图哈希：结果若与源图字节相同（平台回显原图）则跳过
 	e.srcHashes = map[string]bool{}
@@ -404,6 +407,9 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			}
 			continue
 		}
+		if e.holdAgyQuota(&t, err) {
+			return t
+		}
 		if e.maybeRotate(&t, err, time.Now()) {
 			return t
 		}
@@ -480,6 +486,9 @@ func stoppedTask(ctx context.Context, t Task) Task {
 
 // attempt 单次尝试：会话准备 → 上传 → 发送 → 等结果 → 保存。
 func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
+	if t != nil && t.Platform == agy.Platform {
+		return e.attemptAntigravity(ctx, t)
+	}
 	if e.useExtension(t.Platform) {
 		if t.Platform == "豆包" {
 			return e.attemptDoubaoExtension(ctx, t)
@@ -780,6 +789,12 @@ func (e *Engine) browsersOfPlatforms() map[string][]int64 {
 		browsersOf := map[string][]int64{}
 		if e.store != nil {
 			for _, b := range e.store.Browsers() {
+				if b.Platform == agy.Platform {
+					if b.ExtAccount == "" {
+						browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
+					}
+					continue
+				}
 				if b.ExtAccount == "" {
 					continue
 				}

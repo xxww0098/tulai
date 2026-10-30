@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	extbundle "github.com/xxww0098/tulai/extension"
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
@@ -75,6 +76,13 @@ type App struct {
 	// 任务设置（与 settings 表一一对应）
 	platDoubao      bool
 	platQianwen     bool
+	platAntigravity bool
+	agyBin          string
+	agyHomeRoot     string
+	agyModel        string
+	agyTimeoutMin   float64
+	agySaved        string
+	agyLogin        *agyLoginState
 	sendStrategy    string
 	concurrencyAuto bool
 	concurrency     float64 // 手动上限。自动时仍记住这个数，关掉自动后接着用
@@ -330,6 +338,31 @@ func (a *App) loadSettings() {
 	a.extPort = extbridge.NormalizeExtPort(s.Get(extbridge.SettingExtPort))
 	a.platDoubao = containsStr(s.Platforms(), "豆包")
 	a.platQianwen = containsStr(s.Platforms(), "千问")
+	a.platAntigravity = containsStr(s.Platforms(), agy.Platform)
+	a.agyBin = strings.TrimSpace(s.Get("agy_bin"))
+	if a.agyBin == "" {
+		a.agyBin = agy.DefaultBin()
+	}
+	a.agyHomeRoot = strings.TrimSpace(s.Get("agy_home_root"))
+	if a.agyHomeRoot == "" {
+		a.agyHomeRoot = agy.HomeRoot("", s.File())
+	}
+	a.agyModel = strings.TrimSpace(s.Get("agy_model"))
+	if a.agyModel == "" {
+		a.agyModel = agy.DefaultModel
+	}
+	sec := s.GetInt("agy_timeout_seconds")
+	if sec <= 0 {
+		sec = int(agy.DefaultTimeout / time.Second)
+	}
+	if sec < 60 {
+		sec = 60
+	}
+	if sec > 3600 {
+		sec = 3600
+	}
+	a.agyTimeoutMin = float64(sec) / 60
+	a.agySaved = a.agySignature()
 	if raw := s.Get("platform_auto"); raw == "" {
 		a.platformAuto = true
 	} else {
@@ -434,7 +467,11 @@ func (a *App) saveSettings() {
 	if a.platQianwen {
 		plats = append(plats, "千问")
 	}
+	if a.platAntigravity {
+		plats = append(plats, agy.Platform)
+	}
 	s.SetPlatforms(plats)
+	a.persistAgySettings()
 	s.SetInt("platform_auto", boolInt(a.platformAuto))
 	s.Set("send_strategy", a.sendStrategy)
 	if a.concurrencyAuto {
@@ -633,6 +670,10 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		RemoveWatermark:    a.removeWatermark,
 		DailyCap:           a.shownDailyCap(),
 		RiskyWords:         tasks.ParseWords(a.riskyWords),
+		AgyBin:             a.agyBin,
+		AgyModel:           a.agyModel,
+		AgyHomeRoot:        a.agyHomeRoot,
+		AgyTimeoutSec:      a.agyTimeoutSec(),
 	}
 }
 

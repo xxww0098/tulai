@@ -9,13 +9,18 @@ import (
 //go:embed assets/platforms/qianwen.svg
 var qianwenSVG []byte
 
+//go:embed assets/platforms/antigravity.svg
+var antigravitySVG []byte
+
 //go:embed assets/platforms/doubao-192.png
 var doubaoPNG []byte
 
 // 千问用官方矢量，颜色留在稿里。豆包没有官方 SVG，用官网 192 的圆形头像。
+// Antigravity 用同一套强调色画的简单标记。
 var (
-	iconQianwen = ui.MustParseSVG(qianwenSVG)
-	iconDoubao  = mustPlatformBitmap(doubaoPNG)
+	iconQianwen     = ui.MustParseSVG(qianwenSVG)
+	iconAntigravity = ui.MustParseSVG(antigravitySVG)
+	iconDoubao      = mustPlatformBitmap(doubaoPNG)
 )
 
 func mustPlatformBitmap(data []byte) *ui.Bitmap {
@@ -38,6 +43,8 @@ func platformIcon(c *ui.Context, platform string, size float32, tok tokens) {
 		})
 	case "千问":
 		ui.Image(c.Key("plat-qianwen"), iconQianwen).Size(size, size).Fit(ui.Contain).Shrink(0)
+	case "Antigravity":
+		ui.Image(c.Key("plat-agy"), iconAntigravity).Size(size, size).Fit(ui.Contain).Shrink(0)
 	default:
 		ui.Box(c.Key("plat-none")).Size(size, size).Radius(size/2).Shrink(0).
 			Background(tok.sunken).Border(1, tok.border)

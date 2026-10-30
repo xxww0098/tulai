@@ -26,10 +26,20 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	ui.Column(c.Key("lane-table")).FillWidth().Gap(6).Padding(8, 10).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border).Transition(motionReveal()).Children(func() {
 		a.laneHeader(c)
+		mail := a.stagePlatform() == "Antigravity"
 		ui.Row(c.Key("lane-head")).FillWidth().Gap(8).Padding(2, 6, 4, 6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 			head := func(label string) ui.Element {
 				return ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).SingleLine()
+			}
+			if mail {
+				head("账号").Grow(1).Basis(0).MinWidth(0)
+				head("邮箱").Width(128).Shrink(0)
+				head("状态").Width(88).Shrink(0)
+				head("今日").Width(64).Shrink(0)
+				head("当前任务").Grow(1).Basis(0).MinWidth(0)
+				ui.Row(c).Width(88).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
+				return
 			}
 			head("账号").Grow(2).Basis(0).MinWidth(0)
 			head("状态").Width(laneColState).Shrink(0)
@@ -65,8 +75,16 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			p.Fill(ui.Rect{X: r.X, Y: r.Y + 6, W: 2, H: r.H - 12}, tok.accent.Alpha(0.35+0.5*wave), 1)
 		})
 	}
+	mail := ln.Platform == "Antigravity"
+	stateW, quotaW, opsW := float32(laneColState), float32(laneColQuota), float32(laneColOps)
+	accountGrow := float32(2)
+	taskGrow := float32(3)
+	if mail {
+		stateW, quotaW, opsW = 88, 64, 88
+		accountGrow, taskGrow = 1, 1
+	}
 	row.Children(func() {
-		ui.Row(c).Grow(2).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Grow(accountGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
 			platformMark(c, ln.Platform, tok)
 			if a.renameID == ln.ID {
 				a.accountNameField(c, store.Browser{ID: ln.ID, Name: ln.Name})
@@ -74,17 +92,24 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			}
 			ui.Text(c, ln.Name).FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(ln.Name)
 		})
-		ui.Row(c).Width(laneColState).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
+		if mail {
+			email := ln.Email
+			if email == "" {
+				email = "—"
+			}
+			ui.Text(c.Key("mail"), email).Width(128).Shrink(0).FontSize(tok.caption).SingleLine().MinWidth(0).Tooltip(email)
+		}
+		ui.Row(c).Width(stateW).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
 			a.laneChip(c, ln)
 		})
-		ui.Column(c).Width(laneColQuota).Shrink(0).Gap(2).Justify(ui.Center).Children(func() {
+		ui.Column(c).Width(quotaW).Shrink(0).Gap(2).Justify(ui.Center).Children(func() {
 			used, capN, frac, fill := laneQuotaFill(tok, ln)
 			ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).
 				FontFeatures("tnum").SingleLine().
 				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 			quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
 		})
-		ui.Row(c).Grow(3).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Grow(taskGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
 			switch {
 			case ln.Job != nil:
 				line := laneCaption(ln.Job.Prompt, ln.Job.Image)
@@ -98,7 +123,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 				ui.Text(c, "—").FontSize(tok.caption).TextColor(tok.muted)
 			}
 		})
-		ui.Row(c).Width(laneColOps).Shrink(0).Gap(6).Justify(ui.End).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Width(opsW).Shrink(0).Gap(6).Justify(ui.End).AlignItems(ui.Center).Children(func() {
 			if ln.State == tasks.LaneGap {
 				gapRing(c, ln, tok)
 			}

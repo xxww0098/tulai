@@ -9,6 +9,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
@@ -77,6 +78,8 @@ func blockReason(state tasks.LaneState) string {
 		return "需要重新登录"
 	case tasks.LaneFull:
 		return "今日已满"
+	case tasks.LaneQuota:
+		return "额度不足"
 	case tasks.LaneCooling:
 		return "冷却中"
 	case tasks.LaneCaptcha:
@@ -105,10 +108,13 @@ func (a *App) accountBoard(now time.Time) tasks.Board {
 	if a != nil {
 		capN = a.shownDailyCap()
 	}
+	var board tasks.Board
 	if a != nil && a.engine != nil {
-		return a.engine.AccountBoard(now, capN)
+		board = a.engine.AccountBoard(now, capN)
+	} else {
+		board = tasks.BoardFrom(a.laneBrowsers(), a.queueItems(), capN, now)
 	}
-	return tasks.BoardFrom(a.laneBrowsers(), a.queueItems(), capN, now)
+	return a.attachAgyLanes(board)
 }
 
 func (a *App) laneBrowsers() []store.Browser {
@@ -118,6 +124,10 @@ func (a *App) laneBrowsers() []store.Browser {
 	ext := a.extensionTasks()
 	var out []store.Browser
 	for _, b := range a.configuredBrowsers() {
+		if b.Platform == agy.Platform {
+			out = append(out, b)
+			continue
+		}
 		if b.Platform != "豆包" && b.Platform != "千问" {
 			continue
 		}
@@ -130,6 +140,9 @@ func (a *App) laneBrowsers() []store.Browser {
 }
 
 func (a *App) accountPanel(c *ui.Context) {
+	if a.stagePlatform() == agy.Platform {
+		a.agyLoginPanel(c)
+	}
 	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 	if len(board.Lanes) == 0 {
 		ui.Row(c.Key("lane-empty")).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -205,6 +218,8 @@ func (a *App) laneHeader(c *ui.Context) {
 	}
 	var line string
 	switch {
+	case a.agyPauseLine(c.Now()) != "":
+		line = a.agyPauseLine(c.Now())
 	case running > 0:
 		line = fmt.Sprintf("%d 个账号出图中", running)
 	case idle == 0:
@@ -280,7 +295,7 @@ func laneInk(tok tokens, state tasks.LaneState) (fg, bg ui.Color) {
 		base, wash = tok.accent, 0.14
 	case tasks.LaneGap, tasks.LaneCooling, tasks.LaneCaptcha:
 		base, wash = tok.warning, 0.16
-	case tasks.LaneFull, tasks.LaneLogin:
+	case tasks.LaneFull, tasks.LaneLogin, tasks.LaneQuota:
 		base, wash = tok.danger, 0.14
 	default:
 		return tok.muted, tok.text.Alpha(0.08)
@@ -369,6 +384,12 @@ func shotBadge(platform, name string) string {
 }
 
 func (a *App) openLane(id int64) {
+	for _, row := range a.configuredBrowsers() {
+		if row.ID == id && row.Platform == agy.Platform {
+			a.openAgyLane(row)
+			return
+		}
+	}
 	row := a.showBrowserAccount(id)
 	logging.Log.Info("请在「%s」的网页里处理", accountLabel(row))
 	go func(b store.Browser) {

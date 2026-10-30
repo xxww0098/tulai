@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/store"
@@ -38,6 +39,13 @@ var (
 func classifyFault(err error) faultKind {
 	if err == nil {
 		return faultNone
+	}
+	var quota *agy.QuotaError
+	if errors.As(err, &quota) {
+		return faultQuota
+	}
+	if errors.Is(err, agy.ErrNeedLogin) {
+		return faultAuth
 	}
 	if errors.Is(err, strategy.ErrSubmissionUncertain) || extbridge.CodeOf(err) == extbridge.ESendUncertain {
 		return faultUncertain
@@ -93,6 +101,10 @@ func (e *Engine) noteFault(id int64, kind faultKind, err error, now time.Time) {
 	case faultQuota:
 		health = store.HealthExhausted
 		until = nextLocalMidnight(now).Unix()
+		var quota *agy.QuotaError
+		if errors.As(err, &quota) && !quota.Until.IsZero() {
+			until = quota.Until.Unix()
+		}
 	case faultRate:
 		until = now.Add(15 * time.Minute).Unix()
 	case faultCaptcha:

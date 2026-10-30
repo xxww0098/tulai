@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/wizard"
 )
@@ -46,16 +47,17 @@ type AccountSnap struct {
 
 // WorkbenchInput 是主页默认值和开始按钮需要的输入。
 type WorkbenchInput struct {
-	Running       bool
-	HasImages     bool
-	HasPrompts    bool
-	AutoPlatform  bool
-	WantDoubao    bool
-	WantQianwen   bool
-	OnlyPlatform  string
-	ExtensionMode bool
-	Accounts      []AccountSnap
-	Now           time.Time
+	Running         bool
+	HasImages       bool
+	HasPrompts      bool
+	AutoPlatform    bool
+	WantDoubao      bool
+	WantQianwen     bool
+	WantAntigravity bool
+	OnlyPlatform    string
+	ExtensionMode   bool
+	Accounts        []AccountSnap
+	Now             time.Time
 }
 
 // WorkbenchPlan 是这一次开始按钮的决定。
@@ -76,13 +78,15 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 			return false
 		}
 		if in.AutoPlatform {
-			return platform == "豆包" || platform == "千问"
+			return platform == "豆包" || platform == "千问" || platform == agy.Platform
 		}
 		switch platform {
 		case "豆包":
 			return in.WantDoubao
 		case "千问":
 			return in.WantQianwen
+		case agy.Platform:
+			return in.WantAntigravity
 		default:
 			return false
 		}
@@ -90,7 +94,8 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 	platforms := platformsFromAccounts(in.Accounts, in.ExtensionMode, in.Now, want)
 	if len(platforms) == 0 {
 		// 这一页已经有账号，只是登录或额度不行。按钮关掉，不要改去开向导。
-		if only != "" && hasPlatformAccount(in.Accounts, only) {
+		// Antigravity 没有账号时留在这一页，用「+ 添加账号」，不打开浏览器向导。
+		if only == agy.Platform || (only != "" && hasPlatformAccount(in.Accounts, only)) {
 			return WorkbenchPlan{Action: StartNone}
 		}
 		return WorkbenchPlan{Action: StartWizard}
@@ -120,7 +125,7 @@ func ConcurrencyCaption(auto bool, slots int) string {
 }
 
 func (a AccountSnap) carries(extensionMode bool, now time.Time) bool {
-	if a.Extension != extensionMode {
+	if a.Platform != agy.Platform && a.Extension != extensionMode {
 		return false
 	}
 	return wizard.KeepsClosed(wizard.Account{
@@ -145,6 +150,9 @@ func platformsFromAccounts(accounts []AccountSnap, extensionMode bool, now time.
 	}
 	if has["千问"] {
 		out = append(out, "千问")
+	}
+	if has[agy.Platform] {
+		out = append(out, agy.Platform)
 	}
 	return out
 }
