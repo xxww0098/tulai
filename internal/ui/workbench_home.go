@@ -197,11 +197,7 @@ func (a *App) homePage(c *ui.Context) {
 				a.stepPrompt(c, flow.Prompt)
 				a.stepRun(c, flow.Run)
 				a.platformTabs(c)
-				if flow.Run.State == stepCurrent {
-					a.accountPanel(c, false)
-				} else {
-					a.accountPanel(c, true)
-				}
+				a.accountPanel(c)
 				a.progressPane(c)
 				a.runLog(c, false)
 				ui.Collapsible(c, "更多设置", &a.advancedOpen, func() {
@@ -242,11 +238,7 @@ func (a *App) homeStage(c *ui.Context, flow flowLayout) {
 
 func (a *App) platformStage(c *ui.Context, flow flowLayout) {
 	a.platformTabs(c)
-	if flow.Run.State == stepCurrent {
-		a.accountPanel(c, false)
-	} else {
-		a.accountPanel(c, true)
-	}
+	a.accountPanel(c)
 	if len(a.platformCards()) == 0 {
 		a.stageEmpty(c)
 	} else {
@@ -535,8 +527,11 @@ func (a *App) imageStepCompact(c *ui.Context) {
 		if n := len(a.sources); n > 0 {
 			title = fmt.Sprintf("已选 %d 张", n)
 		}
-		head := ui.Text(c, "① 选图片").FontSize(tok.caption).TextColor(tok.muted)
-		ui.Text(c, title).FontSize(tok.body).Bold().MinWidth(0).SingleLine()
+		head := ui.Text(c, "① 选图片").FontSize(tok.caption).TextColor(tok.muted).SingleLine().Shrink(0)
+		// 洗图多一个选文件夹按钮，摘要省掉，下面的缩略图已经说明选了什么。
+		if !a.washing() || len(a.sources) == 0 {
+			ui.Text(c, title).FontSize(tok.body).Bold().MinWidth(0).SingleLine()
+		}
 		if head.Clicked() {
 			a.flowPin = 1
 		}

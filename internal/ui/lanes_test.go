@@ -163,8 +163,8 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	if !okLogin || !okBtn {
 		t.Fatal("chips or button missing")
 	}
-	if relogin.Y < loginChip.Y+loginChip.H {
-		t.Fatalf("relogin sits in the title row: button %v chip %v", relogin.Y, loginChip.Y)
+	if relogin.X < loginChip.X+loginChip.W || relogin.Y > loginChip.Y+loginChip.H || relogin.Y+relogin.H < loginChip.Y {
+		t.Fatalf("relogin is not in the 操作 column of the same row: button %+v chip %+v", relogin, loginChip)
 	}
 	if err := tt.Click("千问"); err != nil {
 		t.Fatal(err)
@@ -309,18 +309,34 @@ func generatingFits(cards []ProgressCard, board tasks.Board) error {
 	return nil
 }
 
-func TestLaneStripWhenStepIsNotCurrent(t *testing.T) {
-	a := &App{platformAuto: true, concurrencyAuto: true, browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")}}
-	tt := ui.NewTester(a.view, 1280, 800)
-	tt.Advance(400 * time.Millisecond)
-	if !tt.HasText("空闲") || !tt.HasText("豆包主力") {
-		t.Fatal("compact strip missing")
+func TestAccountTableScalesToTwelveAccounts(t *testing.T) {
+	var rows []store.Browser
+	for i := 1; i <= 12; i++ {
+		rows = append(rows, loggedLane(int64(i), fmt.Sprintf("豆包%02d", i), "豆包"))
 	}
-	if tt.HasText("今日") {
-		t.Fatal("compact strip showed the quota bar")
-	}
-	if tt.FramePending() {
-		t.Fatal("compact strip kept asking for frames")
+	for _, tab := range []int{pageHome, pageWash} {
+		a := &App{platformAuto: true, concurrencyAuto: true, browserRows: rows, tab: tab}
+		tt := ui.NewTester(a.view, 1280, 800)
+		tt.Advance(400 * time.Millisecond)
+		for _, label := range []string{"账号", "状态", "今日", "当前任务", "操作", "豆包01", "运行日志"} {
+			if !tt.HasText(label) {
+				t.Fatalf("tab %d missing %q", tab, label)
+			}
+		}
+		first, _ := tt.Find("车道豆包01")
+		if first.H > laneRowH+1 {
+			t.Fatalf("row too tall: %+v", first)
+		}
+		log, _ := tt.Find("运行日志")
+		if log.Y+log.H > 800-140 {
+			t.Fatalf("tab %d: 运行日志 pushed down to %+v", tab, log)
+		}
+		if last, ok := tt.Find("车道豆包12"); ok && last.Y < log.Y && last.Y+last.H <= first.Y+laneTableMaxH {
+			t.Fatalf("tab %d: twelve rows fit without the cap, table not capped", tab)
+		}
+		if tt.FramePending() {
+			t.Fatal("idle table kept asking for frames")
+		}
 	}
 }
 
