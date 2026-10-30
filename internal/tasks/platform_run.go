@@ -221,11 +221,14 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 						msg = "#" + itoa(t.Index) + " 发送未确认，等待空闲账号"
 					}
 				}
-				var logErr error
-				if t.Status != StatusSuccess && t.Error != "" {
-					logErr = fmt.Errorf("%s", t.Error)
+				// 换号那行已在 maybeRotate 写过，这里 msg 为空就不要再记一条空日志。
+				if msg != "" || stage != "retry" {
+					var logErr error
+					if t.Status != StatusSuccess && t.Error != "" {
+						logErr = fmt.Errorf("%s", t.Error)
+					}
+					e.traceTask(&t, stage, msg, len(t.Results), 0, logErr)
 				}
-				e.traceTask(&t, stage, msg, len(t.Results), 0, logErr)
 				stopLog()
 				if t.slot > 0 {
 					e.setActive(t.slot, false)
