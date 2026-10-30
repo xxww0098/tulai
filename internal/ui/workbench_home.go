@@ -197,11 +197,7 @@ func (a *App) homePage(c *ui.Context) {
 				a.stepPrompt(c, flow.Prompt)
 				a.stepRun(c, flow.Run)
 				a.platformTabs(c)
-				if flow.Run.State == stepCurrent {
-					a.accountPanel(c, false)
-				} else {
-					a.accountPanel(c, true)
-				}
+				a.accountPanel(c)
 				a.progressPane(c)
 				a.runLog(c, false)
 				ui.Collapsible(c, "更多设置", &a.advancedOpen, func() {
@@ -242,11 +238,7 @@ func (a *App) homeStage(c *ui.Context, flow flowLayout) {
 
 func (a *App) platformStage(c *ui.Context, flow flowLayout) {
 	a.platformTabs(c)
-	if flow.Run.State == stepCurrent {
-		a.accountPanel(c, false)
-	} else {
-		a.accountPanel(c, true)
-	}
+	a.accountPanel(c)
 	if len(a.platformCards()) == 0 {
 		a.stageEmpty(c)
 	} else {
@@ -535,8 +527,11 @@ func (a *App) imageStepCompact(c *ui.Context) {
 		if n := len(a.sources); n > 0 {
 			title = fmt.Sprintf("已选 %d 张", n)
 		}
-		head := ui.Text(c, "① 选图片").FontSize(tok.caption).TextColor(tok.muted)
-		ui.Text(c, title).FontSize(tok.body).Bold().MinWidth(0).SingleLine()
+		head := ui.Text(c, "① 选图片").FontSize(tok.caption).TextColor(tok.muted).SingleLine().Shrink(0)
+		// 洗图多一个选文件夹按钮，摘要省掉，下面的缩略图已经说明选了什么。
+		if !a.washing() || len(a.sources) == 0 {
+			ui.Text(c, title).FontSize(tok.body).Bold().MinWidth(0).SingleLine()
+		}
 		if head.Clicked() {
 			a.flowPin = 1
 		}
@@ -1265,11 +1260,20 @@ func (a *App) sourceButtons(c *ui.Context) {
 	if len(a.sources) == 0 && !a.washing() {
 		return
 	}
-	ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
+	a.sideButton(c, "添加图片").OnClick(func() { a.addImages() })
 	if a.washing() {
-		ui.Button(c, "选文件夹").Disabled(a.running).OnClick(func() { a.addFolder() })
+		a.sideButton(c, "选文件夹").OnClick(func() { a.addFolder() })
 	}
 	if len(a.sources) > 0 {
-		ui.Button(c, "清空").Disabled(a.running).OnClick(func() { a.clearSources() })
+		a.sideButton(c, "清空").OnClick(func() { a.clearSources() })
 	}
+}
+
+// sideButton 是选图卡标题行右侧的小按钮。洗图有三个，收成 12px，避免顶满标题。
+func (a *App) sideButton(c *ui.Context, label string) ui.Element {
+	b := ui.Button(c, label).Disabled(a.running).Shrink(0)
+	if a.washing() {
+		b.FontSize(a.look.caption).Padding(3, 8).Radius(a.look.radiusS)
+	}
+	return b
 }

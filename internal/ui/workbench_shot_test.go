@@ -81,6 +81,24 @@ func TestExportWorkbenchShots(t *testing.T) {
 
 	const shotOut = "图片/输出结果"
 	save("after-empty", &App{platformAuto: true, outputPath: shotOut})
+	var twelve []store.Browser
+	today := time.Now().Format("2006-01-02")
+	for i := 1; i <= 12; i++ {
+		b := store.Browser{ID: int64(i), Name: fmt.Sprintf("豆包%02d", i), Platform: "豆包", IsLoggedIn: true,
+			Health: store.HealthReady, DayKey: today, DayCount: (i * 7) % 21}
+		if i == 5 {
+			b.IsLoggedIn, b.Health, b.LastError = false, store.HealthExhausted, "未登录"
+		}
+		twelve = append(twelve, b)
+	}
+	busy := []tasks.Task{
+		{Index: 1, Platform: "豆包", BrowserID: 1, Prompt: "提取图中的商品主体，去掉所有文字、水印和背景装饰", Images: []string{land}, Status: tasks.StatusRunning},
+		{Index: 2, Platform: "豆包", BrowserID: 2, Prompt: "提取图中的商品主体", Images: []string{face}, Status: tasks.StatusRunning},
+		{Index: 3, Platform: "豆包", Images: []string{still}, Status: tasks.StatusPending},
+	}
+	save("accounts-12-gen", &App{platformAuto: true, concurrencyAuto: true, outputPath: shotOut, browserRows: twelve, prompts: "一只猫", queue: busy, running: true})
+	save("accounts-12-wash", &App{platformAuto: true, concurrencyAuto: true, outputPath: shotOut, browserRows: twelve, tab: pageWash, statePage: pageWash, runPage: pageWash,
+		sources: []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}}, queue: busy, running: true})
 	save("wash-empty", &App{platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash})
 	save("wash", &App{
 		platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash, flowPin: 1, srcSel: -1,
@@ -139,7 +157,7 @@ func TestExportWorkbenchShots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	today := time.Now().Format("2006-01-02")
+	today = time.Now().Format("2006-01-02")
 	idle := &App{
 		platformAuto:    true,
 		concurrencyAuto: true,

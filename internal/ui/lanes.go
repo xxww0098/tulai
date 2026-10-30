@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -130,7 +129,7 @@ func (a *App) laneBrowsers() []store.Browser {
 	return out
 }
 
-func (a *App) accountPanel(c *ui.Context, compact bool) {
+func (a *App) accountPanel(c *ui.Context) {
 	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 	if len(board.Lanes) == 0 {
 		ui.Row(c.Key("lane-empty")).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -139,11 +138,7 @@ func (a *App) accountPanel(c *ui.Context, compact bool) {
 		return
 	}
 	a.laneClock(c, board)
-	if compact {
-		a.laneStrip(c, board)
-		return
-	}
-	a.laneCards(c, board)
+	a.laneTable(c, board)
 }
 
 // laneClock 让倒计时和已用时间每秒走一格。空闲时不预约下一帧。
@@ -230,35 +225,6 @@ func (a *App) addAccountButton(c *ui.Context) {
 	})
 }
 
-func (a *App) laneStrip(c *ui.Context, board tasks.Board) {
-	tok := a.look
-	ui.Column(c.Key("lane-strip")).FillWidth().Gap(8).Padding(8, 10).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border).Transition(motionReveal()).Children(func() {
-		a.laneHeader(c)
-		ui.Row(c).Wrap().Gap(8).Children(func() {
-			for i, ln := range board.Lanes {
-				a.laneChipRow(c, ln, i, true)
-			}
-		})
-	})
-}
-
-func (a *App) laneCards(c *ui.Context, board tasks.Board) {
-	tok := a.look
-	ui.Column(c.Key("lane-board")).FillWidth().Gap(8).Padding(10, 12).Radius(tok.radiusL).
-		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
-		Transition(motionReveal()).Children(func() {
-		a.laneHeader(c)
-		width, _ := c.Size()
-		cols := gridCols(width, 168, len(board.Lanes), 4)
-		ui.Grid(c).Columns(cols).Gap(8).AlignItems(ui.Stretch).Children(func() {
-			for i, ln := range board.Lanes {
-				a.laneCard(c, ln, i)
-			}
-		})
-	})
-}
-
 func laneEnter(i int) ui.ElementTransition {
 	a := motionEaseOut
 	a.Delay = time.Duration(i) * 35 * time.Millisecond
@@ -270,72 +236,10 @@ func laneEnter(i int) ui.ElementTransition {
 	}
 }
 
-func (a *App) laneCard(c *ui.Context, ln tasks.AccountLane, i int) {
-	tok := a.look
-	card := ui.Column(c.Key(ln.ID)).Gap(6).Padding(8, 10).Radius(tok.radiusM).
-		Background(tok.paper).Border(1, tok.border).AlignSelf(ui.Stretch).
-		Label("车道" + ln.Name).Transition(laneEnter(i))
-	if ln.State == tasks.LaneLogin {
-		card.Opacity(0.72)
-	}
-	if ln.State == tasks.LaneRunning && !c.Preferences().ReduceMotion {
-		card.DrawOver(func(p *ui.Painter, r ui.Rect) {
-			p.AnimationFrame()
-			phase := float32(p.Now().UnixMilli()%1400) / 1400
-			wave := float32(0.5 + 0.5*math.Sin(float64(phase)*2*math.Pi))
-			p.Stroke(ui.Rect{X: r.X + 0.5, Y: r.Y + 0.5, W: r.W - 1, H: r.H - 1}, tok.accent.Alpha(0.2+0.45*wave), tok.radiusM, 1.5)
-		})
-	}
-	card.Children(func() {
-		a.laneChipRow(c, ln, i, false)
-		switch {
-		case ln.Job != nil:
-			a.laneJob(c, ln)
-		case ln.State == tasks.LaneRunning:
-			ui.Text(c, "同一窗口正在出图").FontSize(tok.caption).TextColor(tok.muted)
-		}
-		a.laneQuota(c, ln)
-		if ln.Action != "" {
-			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
-				a.laneAction(c, ln)
-			})
-		}
-	})
-}
-
-func (a *App) laneChipRow(c *ui.Context, ln tasks.AccountLane, i int, compact bool) {
-	tok := a.look
-	var row ui.Element
-	if compact {
-		row = ui.Row(c.Key(ln.ID)).Gap(8).AlignItems(ui.Center).
-			Padding(4, 8).Radius(tok.radiusS).Background(tok.paper).Border(1, tok.border).Transition(laneEnter(i))
-	} else {
-		row = ui.Row(c).Gap(8).AlignItems(ui.Center).FillWidth()
-	}
-	row.Children(func() {
-		platformMark(c, ln.Platform, tok)
-		name := ui.Text(c, ln.Name).FontSize(tok.body).SingleLine()
-		if !compact {
-			name.Bold().Grow(1).MinWidth(0)
-		}
-		if compact {
-			ui.Text(c, fmt.Sprintf("%d/%d", ln.UsedToday, ln.Cap)).FontSize(tok.caption).TextColor(tok.muted).
-				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseFast})
-		}
-		a.laneChip(c, ln)
-		if ln.State == tasks.LaneGap {
-			gapRing(c, ln, tok)
-		}
-		if compact && ln.Action != "" {
-			a.laneAction(c, ln)
-		}
-	})
-}
-
 func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
 	label := ln.Action
 	id := ln.ID
-	ui.Button(c.Key("act"), label).OnClick(func() { a.openLane(id) })
+	ui.Button(c.Key("act"), label).FontSize(12).Height(24).Padding(0, 8).Radius(8).Shrink(0).OnClick(func() { a.openLane(id) })
 }
 
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
@@ -345,7 +249,7 @@ func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
 	if ln.State == tasks.LaneGap {
 		text = fmt.Sprintf("等待间隔 %d", gapSeconds(ln.NextReadyAt, c.Now()))
 	}
-	pill := ui.Row(c.Key("chip")).Padding(1, tok.body/2+2).Radius(999).Shrink(0).AlignItems(ui.Center)
+	pill := ui.Row(c.Key("chip")).Padding(1, 7).Radius(999).Shrink(0).AlignItems(ui.Center)
 	pill.Background(pill.AnimateColor("bg", bg, motionEaseFast))
 	pill.Children(func() {
 		ui.Text(c.Key("chip-label"), text).FontSize(tok.caption).TextColor(fg).SingleLine().
@@ -369,16 +273,24 @@ func laneLabel(state tasks.LaneState) string {
 }
 
 func laneInk(tok tokens, state tasks.LaneState) (fg, bg ui.Color) {
+	var base ui.Color
+	var wash float32
 	switch state {
 	case tasks.LaneRunning:
-		return tok.accent, tok.accent.Alpha(0.14)
+		base, wash = tok.accent, 0.14
 	case tasks.LaneGap, tasks.LaneCooling, tasks.LaneCaptcha:
-		return tok.warning, tok.warning.Alpha(0.16)
+		base, wash = tok.warning, 0.16
 	case tasks.LaneFull, tasks.LaneLogin:
-		return tok.danger, tok.danger.Alpha(0.14)
+		base, wash = tok.danger, 0.14
 	default:
 		return tok.muted, tok.text.Alpha(0.08)
 	}
+	fg = base
+	// 浅色里状态色直接写在浅底上，12px 不到 4.5:1。往正文色收一点，色相还在。
+	if !tok.dark {
+		fg = base.Mix(tok.text, 0.35)
+	}
+	return fg, base.Alpha(wash)
 }
 
 func gapSeconds(until, now time.Time) int {
@@ -420,33 +332,6 @@ func gapRing(c *ui.Context, ln tasks.AccountLane, tok tokens) {
 	})
 }
 
-func (a *App) laneJob(c *ui.Context, ln tasks.AccountLane) {
-	tok := a.look
-	job := ln.Job
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		frame := ui.Box(c.Key("job")).Size(40, 40).Radius(6).Background(tok.sunken).Shrink(0)
-		if job.Index > 0 {
-			frame.Transition(ui.ElementTransition{Animation: &motionEaseOut, Position: true, Size: true, Match: jobFly{job.Index}})
-		}
-		frame.Children(func() {
-			if job.Image == "" {
-				promptMarkBox(c, tok, 40)
-				return
-			}
-			if bmp := a.cachedThumb(job.Image); bmp != nil {
-				shot := ui.Image(c, bmp).Size(40, 40).Fit(ui.Cover).Radius(6)
-				shot.DrawOver(func(p *ui.Painter, r ui.Rect) { paintShimmer(c, p, r) })
-			}
-		})
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			line := laneCaption(job.Prompt, job.Image)
-			ui.Text(c, line).FontSize(tok.caption).SingleLine().Tooltip(line)
-			ui.Text(c.Key("elapsed"), elapsedLabel(c.Now().Sub(job.Started))).FontSize(tok.caption).TextColor(tok.muted).MinWidth(72).
-				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseFast})
-		})
-	})
-}
-
 // laneCaption 车道上正在出的那一行：有提示词就用提示词，否则用文件名。
 func laneCaption(prompt, image string) string {
 	if line := shortLine(prompt, 22); line != "" {
@@ -469,38 +354,6 @@ func elapsedLabel(d time.Duration) string {
 		return fmt.Sprintf("已用 %d 秒", s)
 	}
 	return fmt.Sprintf("已用 %d 分 %d 秒", s/60, s%60)
-}
-
-func (a *App) laneQuota(c *ui.Context, ln tasks.AccountLane) {
-	tok := a.look
-	capN := ln.Cap
-	if capN < 1 {
-		capN = 1
-	}
-	used := ln.UsedToday
-	if used < 0 {
-		used = 0
-	}
-	frac := float64(used) / float64(capN)
-	if frac > 1 {
-		frac = 1
-	}
-	fill := tok.accent
-	switch {
-	case used >= capN:
-		fill = ui.Hex("#CBD5E1")
-		if tok.dark {
-			fill = ui.Hex("#64748B")
-		}
-	case used*5 >= capN*4:
-		fill = tok.warning
-	}
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "今日").FontSize(tok.caption).TextColor(tok.muted)
-		ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).TextColor(tok.text).
-			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
-	})
-	quotaBar(c, "quota", frac, fill, tok.border)
 }
 
 func platformMark(c *ui.Context, platform string, tok tokens) {
