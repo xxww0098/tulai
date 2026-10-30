@@ -175,13 +175,12 @@ func (a *App) homePage(c *ui.Context) {
 func (a *App) homeStage(c *ui.Context) {
 	_, winH := c.Size()
 	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).Height(columnHeight(winH)).Gap(10).Padding(0, 0, 8, 0).Children(func() {
-		a.platformTabs(c)
-		a.accountPanel(c)
-		a.resultsPane(c)
+		a.platformStage(c)
 	})
 }
 
 func (a *App) platformStage(c *ui.Context) {
+	a.historyPanel(c)
 	a.platformTabs(c)
 	a.accountPanel(c)
 	a.resultsPane(c)

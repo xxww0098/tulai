@@ -49,9 +49,14 @@ func TestAntigravityAddChooser(t *testing.T) {
 		if !strings.HasSuffix(filepath.ToSlash(a.agyChooser.home), "/.gemini/antigravity-cli") {
 			t.Fatalf("home %q", a.agyChooser.home)
 		}
-		if !tt.HasText(a.agyChooser.hint) {
-			t.Fatal("chooser did not show the checked folder")
+		lead, checked := splitCheckedHint(a.agyChooser.hint)
+		if lead == "" || checked == "" || !strings.Contains(checked, "~/.gemini/antigravity-cli") {
+			t.Fatalf("hint %q", a.agyChooser.hint)
 		}
+		if !tt.HasText(lead) || !tt.HasText(checked) {
+			t.Fatal("chooser did not show the checked folder on its own line")
+		}
+		assertCheckedPathOneLine(t, tt, checked)
 	}
 	panel, ok := tt.Find("agy-add-chooser")
 	if !ok {
@@ -78,6 +83,65 @@ func TestAntigravityAddChooser(t *testing.T) {
 	}
 	if tt.HasText("导入本地 Antigravity CLI 账号") {
 		t.Fatal("授权面板打开后选择方式还在")
+	}
+}
+
+func TestAntigravityCheckedPathDoesNotWrap(t *testing.T) {
+	const path = "~/.gemini/antigravity-cli"
+	long := "~/" + strings.Repeat("very-long-directory/", 12) + ".gemini/antigravity-cli"
+	for _, checkedPath := range []string{path, long} {
+		hint := agy.MsgNotFound + "（已检查 " + checkedPath + "）"
+		a := &App{
+			platformAuto: true, stageTab: 2, stagePicked: true,
+			agyChooser: &agyChooserState{hint: hint, home: checkedPath},
+			browserRows: []store.Browser{{
+				ID: 1, Name: "acc1", Platform: agy.Platform, IsLoggedIn: true, Health: store.HealthReady,
+			}},
+		}
+		tt := ui.NewTester(a.view, 1024, 700)
+		tt.Advance(120 * time.Millisecond)
+		lead, checked := splitCheckedHint(hint)
+		if lead != agy.MsgNotFound || checked != "已检查 "+checkedPath {
+			t.Fatalf("split %q -> %q %q", hint, lead, checked)
+		}
+		if !tt.HasText(lead) {
+			t.Fatal("lead missing")
+		}
+		assertCheckedPathOneLine(t, tt, checked)
+	}
+}
+
+func assertCheckedPathOneLine(t *testing.T, tt *ui.Tester, checked string) {
+	t.Helper()
+	path, ok := tt.Find(checked)
+	if !ok {
+		t.Fatalf("checked path missing: %q", checked)
+	}
+	title, ok := tt.Find("导入本地 Antigravity CLI 账号")
+	if !ok {
+		t.Fatal("chooser title missing")
+	}
+	lead, ok := tt.Find(agy.MsgNotFound)
+	if !ok {
+		t.Fatal("not-found line missing")
+	}
+	panel, ok := tt.Find("agy-add-chooser")
+	if !ok {
+		t.Fatal("chooser missing")
+	}
+	if path.H > title.H+1 {
+		t.Fatalf("checked path wrapped: path %v title %v", path, title)
+	}
+	if path.Y+1 < lead.Y+lead.H || rectsOverlap(path, lead) {
+		t.Fatalf("checked path is not its own line under the message: path %v lead %v", path, lead)
+	}
+	if path.X < panel.X-1 || path.X+path.W > panel.X+panel.W+1 {
+		t.Fatalf("checked path leaves the chooser: path %v panel %v", path, panel)
+	}
+	for _, text := range tt.Texts() {
+		if strings.Contains(text, "antigravity-cli") && text != checked {
+			t.Fatalf("path split into %q", text)
+		}
 	}
 }
 

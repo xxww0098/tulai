@@ -150,7 +150,6 @@ func (a *App) accountPanel(c *ui.Context) {
 		row.Children(func() {
 			a.addAccountButton(c)
 		})
-		a.historyPanel(c, row)
 		return
 	}
 	a.laneClock(c, board)
@@ -236,7 +235,6 @@ func (a *App) laneHeader(c *ui.Context) {
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 		a.addAccountButton(c)
 	})
-	a.historyPanel(c, row)
 }
 
 func (a *App) addAccountButton(c *ui.Context) {
