@@ -17,9 +17,17 @@ const (
 	laneColQuota = 92
 	laneColOps   = 104
 	laneRowH     = 30
-	// laneTableMaxH 大约放 8 行，账号再多就在表里滚动，不把进度和日志挤出窗口。
+	// laneTableMaxH 是高窗口大约 8 行的上限。矮窗口用 laneRowCap，给结果区留高度。
 	laneTableMaxH = laneRowH*8 + 8
 )
+
+// laneRowCap 矮窗口少露几行，账号在表里滚，出图结果才有高度。
+func laneRowCap(winH float32) int {
+	if winH < 760 {
+		return 5
+	}
+	return 8
+}
 
 // laneTable 一个账号一行：账号、状态、今日、当前任务、操作。
 func (a *App) laneTable(c *ui.Context, board tasks.Board) {
@@ -48,11 +56,13 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 			head("当前任务").Grow(3).Basis(0).MinWidth(0)
 			ui.Row(c).Width(laneColOps).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
 		})
+		_, winH := c.Size()
+		capN := laneRowCap(winH)
 		rowsH := float32(len(board.Lanes)) * laneRowH
-		if len(board.Lanes) > 8 {
-			rowsH = laneRowH * 8
+		if len(board.Lanes) > capN {
+			rowsH = laneRowH * float32(capN)
 		}
-		ui.Scroll(c.Key("lane-rows")).FillWidth().Height(rowsH).MaxHeight(laneTableMaxH).Children(func() {
+		ui.Scroll(c.Key("lane-rows")).Label("账号列表").FillWidth().Height(rowsH).MaxHeight(laneRowH*float32(capN) + 8).Children(func() {
 			ui.Column(c).FillWidth().Children(func() {
 				for i, ln := range board.Lanes {
 					a.laneRow(c, ln, i)

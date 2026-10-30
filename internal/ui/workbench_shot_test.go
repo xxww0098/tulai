@@ -311,7 +311,11 @@ func TestExportWorkbenchShots(t *testing.T) {
 	saveAt("antigravity-login", 1024, 700, loginAgy)
 	saveAt("antigravity-exhausted", 1024, 700, agyBase(true))
 	chooser := agyBase(false)
-	chooser.agyChooser = &agyChooserState{hint: agy.MsgNotFound}
+	found := agy.DetectLocal()
+	chooser.agyChooser = &agyChooserState{
+		hint: found.Hint, home: found.Home, email: found.Email,
+		canImport: found.CanImport(), keychain: found.Keychain,
+	}
 	saveAt("antigravity-add-chooser", 1024, 700, chooser)
 	detected := agyBase(false)
 	detected.agyChooser = &agyChooserState{

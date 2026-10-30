@@ -164,19 +164,20 @@ type App struct {
 	extTokenNote   string
 
 	// 队列与日志
-	queue       []tasks.Task
-	queueTbl    ui.ListState
-	logs        []logging.Entry
-	progress    float64
-	progText    string
-	running     bool
-	useRunView  bool
-	genSession  int64
-	washSession int64
-	historyOpen bool
-	genList     ui.ListState
-	washList    ui.ListState
-	stamps      map[string]int64
+	queue         []tasks.Task
+	queueTbl      ui.ListState
+	logs          []logging.Entry
+	progress      float64
+	progText      string
+	running       bool
+	useRunView    bool
+	genSession    int64
+	washSession   int64
+	historyOpen   bool
+	historyAnchor ui.Element // 这一帧的「历史」按钮，弹出层把它当锚，避免点按钮被当成点外面
+	genList       ui.ListState
+	washList      ui.ListState
+	stamps        map[string]int64
 
 	tab          int
 	tabSeen      int

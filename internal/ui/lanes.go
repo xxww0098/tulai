@@ -146,9 +146,11 @@ func (a *App) accountPanel(c *ui.Context) {
 	}
 	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 	if len(board.Lanes) == 0 {
-		ui.Row(c.Key("lane-empty")).Gap(8).AlignItems(ui.Center).Children(func() {
+		row := ui.Row(c.Key("lane-empty")).FillWidth().Gap(8).AlignItems(ui.Center)
+		row.Children(func() {
 			a.addAccountButton(c)
 		})
+		a.historyPanel(c, row)
 		return
 	}
 	a.laneClock(c, board)
@@ -228,11 +230,13 @@ func (a *App) laneHeader(c *ui.Context) {
 	default:
 		line = fmt.Sprintf("%d 个账号空闲", idle)
 	}
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+	row := ui.Row(c.Key("lane-title")).FillWidth().AlignItems(ui.Center).Gap(8)
+	row.Children(func() {
 		ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).Grow(1).MinWidth(0).
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 		a.addAccountButton(c)
 	})
+	a.historyPanel(c, row)
 }
 
 func (a *App) addAccountButton(c *ui.Context) {
