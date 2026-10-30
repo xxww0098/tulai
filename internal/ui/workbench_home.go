@@ -112,7 +112,8 @@ func (a *App) pageTabs(c *ui.Context) {
 		icon  *ui.SVG
 	}
 	items := []item{
-		{"出图", iconImages},
+		{"生图", iconImages},
+		{"洗图", iconWash},
 		{"浏览器", iconGlobe},
 		{"提示词", iconPen},
 		{"设置", iconSettings},
@@ -415,15 +416,18 @@ func (a *App) stepImages(c *ui.Context, step flowStep) {
 func (a *App) imageStepOpen(c *ui.Context) {
 	tok := a.look
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "① 选图片").FontSize(tok.title).Bold().Grow(1)
-		if n := len(a.sources); n > 0 {
+		ui.Text(c, "① 选图片").FontSize(tok.title).Bold().Grow(1).SingleLine()
+		// 洗图多一个选文件夹，张数留给下面的开始按钮那一行。
+		if n := len(a.sources); n > 0 && !a.washing() {
 			ui.Text(c, fmt.Sprintf("已选 %d 张", n)).FontSize(tok.body).TextColor(tok.muted)
-			ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
-			ui.Button(c, "清空").Disabled(a.running).OnClick(func() { a.clearSources() })
 		}
+		a.sourceButtons(c)
 	})
 	if len(a.sources) == 0 {
 		a.emptyDrop(c)
+		if a.washing() {
+			return
+		}
 		link := ui.Text(c, "不使用图片，只用提示词").FontSize(tok.body).TextColor(tok.accent)
 		if link.Clicked() && !a.running {
 			a.skipImages = true
@@ -448,7 +452,11 @@ func (a *App) emptyDrop(c *ui.Context) {
 	}
 	zone.Children(func() {
 		ui.Text(c, "拖入或点击添加图片").FontSize(tok.title).Bold()
-		ui.Text(c, "可以一次选多张。不放图片也可以只写提示词").FontSize(tok.caption).TextColor(tok.muted)
+		hint := "可以一次选多张。不放图片也可以只写提示词"
+		if a.washing() {
+			hint = "可以一次选多张，或选整个文件夹"
+		}
+		ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted)
 	})
 }
 
@@ -533,9 +541,8 @@ func (a *App) imageStepCompact(c *ui.Context) {
 			a.flowPin = 1
 		}
 		ui.Row(c).Grow(1).MinWidth(0)
-		if len(a.sources) > 0 {
-			ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
-			ui.Button(c, "清空").Disabled(a.running).OnClick(func() { a.clearSources() })
+		if len(a.sources) > 0 || a.washing() {
+			a.sourceButtons(c)
 			return
 		}
 		ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
@@ -640,7 +647,11 @@ func (a *App) stepRun(c *ui.Context, step flowStep) {
 	plan := a.workbenchPlan()
 	card := a.stepCard(c, "step-run", step.State)
 	card.Children(func() {
-		ui.Text(c, "③ 出图").FontSize(tok.title).Bold()
+		title := "③ 出图"
+		if a.washing() {
+			title = "③ 洗图"
+		}
+		ui.Text(c, title).FontSize(tok.title).Bold()
 		if !a.running && (plan.Action == StartWizard || a.loggedOutCallout()) {
 			a.accountCallout(c)
 		}
@@ -683,13 +694,18 @@ func paintFolder(c *ui.Context, ink ui.Color) {
 func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	tok := a.look
 	th := c.Theme()
-	running := a.running
+	running := a.running && a.ownsRun()
 	// 一个账号都没有时，按钮仍打开设置向导。有账号但今天都不能用，则关掉。
-	disabled := !running && plan.Action == StartNone
+	// 另一页在跑时引擎占着，这一页只能等。
+	disabled := (!running && plan.Action == StartNone) || (a.running && !running) ||
+		(!running && a.washing() && len(a.sources) == 0)
 	if !running && plan.Action == StartGenerate && a.liveParallel() == 0 {
 		disabled = true
 	}
 	label := "开始出图"
+	if a.washing() {
+		label = "开始洗图"
+	}
 	if running {
 		label = "停止"
 	}
@@ -794,7 +810,16 @@ func (a *App) accountCallout(c *ui.Context) {
 // stepLead 是出图步骤左侧的一行。跑起来写进度，没有能用的账号就写原因，避免和面板标题重复。
 func (a *App) stepLead(board tasks.Board) string {
 	if a != nil && a.running {
+		if !a.ownsRun() {
+			return pageLabel(a.runPage) + "正在运行，结束后再开始"
+		}
+		if a.washing() {
+			return "正在洗图"
+		}
 		return "正在出图"
+	}
+	if a != nil && a.washing() && len(a.sources) == 0 {
+		return "先添加要洗的图片"
 	}
 	if a.liveParallel() == 0 {
 		if len(board.Lanes) > 0 {
@@ -1232,5 +1257,19 @@ func (a *App) openResult(path string) {
 	if err := mygo.Shell.OpenPath(path); err != nil {
 		a.outputNote = "无法打开文件"
 		logging.Log.Errorf("打开文件失败: %v", err)
+	}
+}
+
+// sourceButtons 是选图卡右上角的按钮。洗图多一个选文件夹；生图没图时只靠拖放区。
+func (a *App) sourceButtons(c *ui.Context) {
+	if len(a.sources) == 0 && !a.washing() {
+		return
+	}
+	ui.Button(c, "添加图片").Disabled(a.running).OnClick(func() { a.addImages() })
+	if a.washing() {
+		ui.Button(c, "选文件夹").Disabled(a.running).OnClick(func() { a.addFolder() })
+	}
+	if len(a.sources) > 0 {
+		ui.Button(c, "清空").Disabled(a.running).OnClick(func() { a.clearSources() })
 	}
 }

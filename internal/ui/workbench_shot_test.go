@@ -81,6 +81,11 @@ func TestExportWorkbenchShots(t *testing.T) {
 
 	const shotOut = "图片/输出结果"
 	save("after-empty", &App{platformAuto: true, outputPath: shotOut})
+	save("wash-empty", &App{platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash})
+	save("wash", &App{
+		platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash, flowPin: 1, srcSel: -1,
+		sources: []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}},
+	})
 
 	picked := &App{
 		platformAuto: true,

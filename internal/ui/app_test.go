@@ -20,7 +20,7 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"tulai", "出图", "浏览器", "提示词", "设置", "开始出图", "更多设置", "拖入或点击添加图片", "检查更新", "设置向导"} {
+	for _, label := range []string{"tulai", "生图", "洗图", "浏览器", "提示词", "设置", "开始出图", "更多设置", "拖入或点击添加图片", "检查更新", "设置向导"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
 	drop := assertVisible(t, tt, "拖入或点击添加图片", 1280, 840)
@@ -39,7 +39,8 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 		{"浏览器", "浏览器实例"},
 		{"提示词", "保存提示词"},
 		{"设置", "自动求解验证码"},
-		{"出图", "开始出图"},
+		{"洗图", "开始洗图"},
+		{"生图", "开始出图"},
 	} {
 		if err := tt.Click(tab.label); err != nil {
 			t.Fatal(err)
@@ -322,7 +323,7 @@ func TestLoadSettingsRefreshesBrowserRunningState(t *testing.T) {
 func TestBrowserSelectionAndBusyActions(t *testing.T) {
 	a := &App{
 		engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
-		tab: 1, browserSel: -1, newBrowserPlat: "豆包", browserBackend: "Chrome",
+		tab: pageBrowser, browserSel: -1, newBrowserPlat: "豆包", browserBackend: "Chrome",
 		browserRows: []store.Browser{{ID: 1, Name: "工作账号", Platform: "豆包", Port: 9333}},
 	}
 	tt := ui.NewTester(a.view, 1000, 720)
@@ -358,7 +359,7 @@ func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
 	}
 	defer st.Close()
 	st.Set("browser_backend", "ego lite")
-	a := &App{store: st, manager: browser.NewManager(), engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210, tab: 1}
+	a := &App{store: st, manager: browser.NewManager(), engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210, tab: pageBrowser}
 	a.loadSettings()
 	want := browser.DefaultBackend(runtime.GOOS)
 	if a.browserBackend != want || st.Get("browser_backend") != want {
@@ -505,7 +506,7 @@ func TestOpenSelectedPagesSwitchesBrowserTab(t *testing.T) {
 	for _, backend := range []string{"Chrome", "Edge"} {
 		a := &App{browserBackend: backend, platDoubao: true}
 		a.openSelectedPages()
-		if a.tab != 1 {
+		if a.tab != pageBrowser {
 			t.Fatalf("%s open: tab=%d", backend, a.tab)
 		}
 	}
@@ -521,7 +522,7 @@ func TestExtensionTokenVisibleCopyAndRegenerate(t *testing.T) {
 	st.Set(extbridge.SettingExtPort, "18766")
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
-		splitSz: 380, sourceHeight: 210, tab: 1,
+		splitSz: 380, sourceHeight: 210, tab: pageBrowser,
 	}
 	a.loadSettings()
 	if extbridge.WeakToken(a.extToken) || a.extToken != st.Get(extbridge.SettingExtToken) || len(a.extToken) != 32 || a.extPort != "18766" {

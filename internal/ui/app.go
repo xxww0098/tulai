@@ -121,6 +121,9 @@ type App struct {
 	previewOn       bool
 	previewPath     string
 	previewBmp      *ui.Bitmap
+	statePage       int       // App 字段里装的是哪一页：pageHome 或 pageWash
+	parked          pageState // 另一页的图片、提示词和进度
+	runPage         int       // 引擎这一批属于哪一页
 
 	// 验证码设置
 	captchaEnabled bool
@@ -402,6 +405,18 @@ func (a *App) loadSettings() {
 		}
 		a.sources = append(a.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
 	}
+	wash := pageState{srcSel: -1, prompts: s.Get("wash_prompt")}
+	if strings.TrimSpace(wash.prompts) == "" {
+		wash.prompts = DefaultWashPrompt
+	}
+	for _, p := range splitLines(s.Get("wash_images")) {
+		data, err := os.ReadFile(p)
+		if err != nil || !images.IsValidImageBytes(data) {
+			continue
+		}
+		wash.sources = append(wash.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
+	}
+	a.parked = wash
 	a.autoCheck = update.AutoOn(s.Get(update.KeyAutoCheck))
 	a.updateMirror = strings.TrimSpace(s.Get(update.KeyMirror))
 	switch s.Get("batch_mode") {
@@ -463,7 +478,10 @@ func (a *App) saveSettings() {
 	s.SetInt("file_suffix_enabled", boolInt(a.suffixOn))
 	s.Set("output_path", a.outputPath)
 	s.SetInt("remove_watermark", boolInt(a.removeWatermark))
-	s.Set("prompts", a.prompts)
+	gen, wash := a.stateOf(pageHome), a.stateOf(pageWash)
+	s.Set("prompts", gen.prompts)
+	s.Set("wash_prompt", strings.TrimSpace(wash.prompts))
+	s.Set("wash_images", joinPaths(sourcePaths(wash.sources)))
 	s.Set("prompts_freeform", a.freeformPrompts)
 	s.Set("user_prompts", prompts.FormatUser(a.userPrompts))
 	s.Set("prompt_pick", a.promptPick)
@@ -482,11 +500,7 @@ func (a *App) saveSettings() {
 	s.Set("captcha_ikunocr_key", a.ikunocrKey)
 	a.persistProxy()
 	// 源图列表持久化
-	var paths []string
-	for _, si := range a.sources {
-		paths = append(paths, si.Path)
-	}
-	s.Set("source_images", joinPaths(paths))
+	s.Set("source_images", joinPaths(sourcePaths(gen.sources)))
 	a.persistUpdatePrefs()
 }
 
@@ -537,6 +551,7 @@ func (a *App) view(c *ui.Context) {
 		return
 	}
 	a.noteTab()
+	a.syncPage()
 	a.look = applyWorkbenchTheme(c)
 	ui.Column(c.Key("screen-main")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
 		slot := ui.Column(c.Key("update-slot"))
@@ -548,6 +563,8 @@ func (a *App) view(c *ui.Context) {
 			a.navRail(c)
 			ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinWidth(0).MinHeight(0).Padding(12, pagePadX, 12, pagePadX).Transition(a.pageMotion()).Children(func() {
 				switch a.tab {
+				case pageWash:
+					a.washPage(c)
 				case pageBrowser:
 					a.browserPane(c)
 				case pagePrompts:
@@ -670,6 +687,7 @@ func (a *App) stopTasks() {
 // addImages 文件对话框选图。
 func (a *App) addImages() {
 	window := a.window
+	page := a.statePage
 	go func() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
 			Parent:   window,
@@ -685,9 +703,7 @@ func (a *App) addImages() {
 			return
 		}
 		loaded := loadSourceFiles(paths)
-		window.Update(func() {
-			logging.Log.Info("添加 %d 张源图", a.appendSources(loaded))
-		})
+		window.Update(func() { a.addLoaded(page, loaded) })
 	}()
 }
 
@@ -741,4 +757,12 @@ func readAppIcon() ([]byte, error) {
 		}
 	}
 	return os.ReadFile(filepath.Join("resources", "icon.png"))
+}
+
+func sourcePaths(list []sourceImage) []string {
+	paths := make([]string, 0, len(list))
+	for _, si := range list {
+		paths = append(paths, si.Path)
+	}
+	return paths
 }

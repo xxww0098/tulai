@@ -80,6 +80,8 @@ type Options struct {
 	RemoveWatermark    bool // 另存计算去水印版本，始终保留原图
 	DailyCap           int
 	RiskyWords         []string
+	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
+	Wash bool
 }
 
 // queueUnit 是队列的一行原料。图生图带一张源图并循环提示词；文生图固定一条提示词且没有源图。
@@ -233,6 +235,9 @@ func promptBatchBase(prompt string, seq int) string {
 
 // resultBase 有提示词时用「提示词_01」。没有提示词时沿用源文件名和前后缀。
 func (o Options) resultBase(prompt, source string, seq, total int) string {
+	if o.Wash {
+		return fmt.Sprintf("%s_%02d", strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)), max(seq, 1))
+	}
 	if strings.TrimSpace(prompt) != "" {
 		return promptBatchBase(prompt, seq)
 	}

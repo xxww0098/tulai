@@ -211,7 +211,7 @@ func (a *App) openSelectedPages() {
 	if a.running {
 		return
 	}
-	a.tab = 1
+	a.tab = pageBrowser
 }
 
 func (a *App) refreshBrowsers() {

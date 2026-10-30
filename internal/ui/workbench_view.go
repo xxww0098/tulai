@@ -483,7 +483,8 @@ func (a *App) openOutputFolder() {
 }
 
 func (a *App) queueItems() []tasks.Task {
-	if a.engine != nil {
+	// 引擎只有一份队列。另一页跑过的批次不显示在这一页，这一页看自己收好的那份。
+	if a.engine != nil && a.ownsRun() {
 		if view := a.engine.View(); view != nil {
 			return view.Snapshot()
 		}
@@ -562,6 +563,18 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	a.saveSettings()
 	opts := a.taskOptions(platforms, promptList, paths)
 	opts.OutputPath = dir
+	page := a.statePage
+	if page == pageWash {
+		opts.Wash = true
+		opts.UseSuffix = false
+		opts.SaveMode = "单文件夹汇总"
+	}
+	// 上一批属于别的页时，把它的进度收回那一页再接手引擎。
+	if a.runPage != page && a.engine.View() != nil {
+		snap := a.engine.View().Snapshot()
+		a.onPage(a.runPage, func() { a.queue = snap })
+	}
+	a.runPage = page
 	a.running = true
 	a.progress = 0
 	a.progText = ""
@@ -570,10 +583,12 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		onTask := func(tasks.Task) { a.syncUI(func() {}) }
 		onProgress := func(p tasks.Progress) {
 			a.syncUI(func() {
-				if p.Total > 0 {
-					a.progress = float64(p.Done) / float64(p.Total)
-				}
-				a.progText = fmt.Sprintf("%d / %d", p.Done, p.Total)
+				a.onPage(page, func() {
+					if p.Total > 0 {
+						a.progress = float64(p.Done) / float64(p.Total)
+					}
+					a.progText = fmt.Sprintf("%d / %d", p.Done, p.Total)
+				})
 			})
 		}
 		var runErr error
@@ -584,12 +599,17 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		}
 		a.syncUI(func() {
 			a.running = false
-			if runErr != nil {
-				a.progText = HumanReason(runErr.Error())
-				logging.Log.Errorf("任务终止: %v", runErr)
-			} else if view := a.engine.View(); view != nil {
-				a.progText = taskResultSummary(view.Snapshot())
-			}
+			a.onPage(page, func() {
+				if view := a.engine.View(); view != nil {
+					a.queue = view.Snapshot()
+				}
+				if runErr != nil {
+					a.progText = HumanReason(runErr.Error())
+					logging.Log.Errorf("%s任务终止: %v", pageLabel(page), runErr)
+				} else {
+					a.progText = taskResultSummary(a.queue)
+				}
+			})
 			a.maybeInstallPending()
 		})
 	}()
