@@ -3,11 +3,13 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -162,6 +164,138 @@ func TestHistoryReopenAndDeleteKeepsFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(kept); err != nil {
 		t.Fatalf("reopen removed the image: %v", err)
+	}
+}
+
+func TestHistoryClickStaysOpen(t *testing.T) {
+	a := &App{
+		platformAuto: true, prompts: "当前提示词",
+		browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")},
+	}
+	tt := ui.NewTester(a.view, 1024, 700)
+	tt.Advance(80 * time.Millisecond)
+	if _, ok := tt.Find("历史任务"); ok {
+		t.Fatal("panel is open before the click")
+	}
+	if err := tt.Click("历史"); err != nil {
+		t.Fatal(err)
+	}
+	panel, ok := tt.Find("历史任务")
+	if !ok || !a.historyOpen {
+		t.Fatal("opening click closed the history panel")
+	}
+	add, ok := tt.Find("+ 添加账号")
+	if !ok {
+		t.Fatal("add account missing")
+	}
+	if rectsOverlap(panel, add) {
+		t.Fatalf("panel covers add: panel %v add %v", panel, add)
+	}
+}
+
+func TestHistoryPopupClearsHeaderAndLog(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id, err := st.SaveActive(store.Session{Page: store.PageGen, Prompts: "傍晚窗边的一只猫"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ArchiveSession(id); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40; i++ {
+		logging.Log.Info("日志对齐行 %02d", i)
+	}
+	a := &App{
+		store: st, platformAuto: true, historyOpen: true, prompts: "当前提示词",
+		browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")},
+	}
+	for _, sz := range [][2]int{{1024, 700}, {1280, 800}} {
+		tt := ui.NewTester(a.view, sz[0], sz[1])
+		tt.Advance(120 * time.Millisecond)
+		panel, ok := tt.Find("历史任务")
+		if !ok {
+			t.Fatalf("%v: history panel missing", sz)
+		}
+		add, ok := tt.Find("+ 添加账号")
+		if !ok {
+			t.Fatal("添加账号 missing")
+		}
+		logCard, ok := tt.Find("运行日志区")
+		if !ok {
+			t.Fatal("运行日志 missing")
+		}
+		if rectsOverlap(panel, add) {
+			t.Fatalf("%v: popup covers 添加账号 panel %v add %v", sz, panel, add)
+		}
+		if rectsOverlap(panel, logCard) {
+			t.Fatalf("%v: popup covers 运行日志 panel %v log %v", sz, panel, logCard)
+		}
+		if panel.Y < add.Y+add.H-1 {
+			t.Fatalf("%v: popup is not below the account header panel %v add %v", sz, panel, add)
+		}
+		scroll, ok := tt.Find("运行日志内容")
+		if !ok {
+			t.Fatal("log scroll missing")
+		}
+		var saw bool
+		for _, text := range tt.Texts() {
+			if !strings.HasPrefix(text, "日志对齐行") {
+				continue
+			}
+			line, found := tt.Find(text)
+			if !found {
+				continue
+			}
+			if line.Y < scroll.Y-0.5 && line.Y+line.H > scroll.Y+1 {
+				t.Fatalf("%v: log line %q sliced line %v scroll %v", sz, text, line, scroll)
+			}
+			if line.Y >= scroll.Y-0.5 && line.Y+line.H <= scroll.Y+scroll.H+0.5 {
+				saw = true
+			}
+		}
+		if !saw {
+			t.Fatalf("%v: no full log line inside %v", sz, scroll)
+		}
+	}
+}
+
+func TestResultFolderButtonSitsBesideTheName(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "猫.png")
+	writeTinyPNG(t, out)
+	a := &App{platformAuto: true, queue: []tasks.Task{{
+		Index: 1, Platform: "豆包", Status: tasks.StatusSuccess, Prompt: "一只猫",
+		Results: []string{out},
+	}}}
+	tt := ui.NewTester(a.view, 1280, 800)
+	tt.Advance(80 * time.Millisecond)
+	btn, ok := tt.Find("在文件夹中显示")
+	if !ok {
+		t.Fatal("folder button missing")
+	}
+	name, ok := tt.Find("猫.png")
+	if !ok {
+		t.Fatal("filename missing")
+	}
+	tile, ok := tt.Find("结果图")
+	if !ok {
+		t.Fatal("tile missing")
+	}
+	if btn.W > 36 || btn.H > 36 || btn.W > tile.W*0.5 {
+		t.Fatalf("folder button is not compact: btn %v tile %v", btn, tile)
+	}
+	if btn.X <= name.X || btn.Y+btn.H < name.Y-2 || name.Y+name.H < btn.Y-2 {
+		t.Fatalf("folder button is not beside the name: btn %v name %v", btn, name)
+	}
+	for _, text := range tt.Texts() {
+		if text == "文件夹" {
+			t.Fatal("tile-width 文件夹 label is still shown")
+		}
 	}
 }
 

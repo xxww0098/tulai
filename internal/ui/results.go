@@ -242,7 +242,12 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 	title := tileTitle(tile)
 	ui.Column(c.Key(tile.key)).Width(tileW).Shrink(0).Gap(4).Label("结果卡" + title).Children(func() {
 		a.resultFrame(c, tile, tileW)
-		ui.Text(c, title).FontSize(tok.caption).SingleLine().MinWidth(0).Tooltip(title)
+		ui.Row(c.Key("name")).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, title).FontSize(tok.caption).SingleLine().MinWidth(0).Grow(1).Tooltip(title)
+			if tile.path != "" && filePresent(tile.path) {
+				a.revealButton(c, tile.path)
+			}
+		})
 		if task.Rewritten {
 			line := "已改写：" + shortLine(task.Prompt, 36)
 			ui.Text(c.Key("rewrite"), line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
@@ -260,11 +265,29 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 					Disabled(a.running).OnClick(func() { a.failAction(card) })
 			}
 		}
-		if tile.path != "" && filePresent(tile.path) {
-			path := tile.path
-			ui.Button(c.Key("folder"), "文件夹").FontSize(tok.caption).Padding(2, 6).Radius(tok.radiusS).Shrink(0).
-				Tooltip("在文件夹中显示").OnClick(func() { a.revealResult(path) })
-		}
+	})
+}
+
+// revealButton 是文件名旁边的文件夹图标，按内容收缩，不拉成缩略图那么宽。
+func (a *App) revealButton(c *ui.Context, path string) {
+	tok := a.look
+	b := ui.ButtonBase(c.Key("folder")).Size(24, 24).Radius(6).Shrink(0).Center().
+		Label("在文件夹中显示").Tooltip("在文件夹中显示").Cursor(ui.CursorPointer)
+	ink := tok.muted
+	switch {
+	case b.Pressed():
+		b.Background(tok.text.Alpha(0.12))
+		ink = tok.text
+	case b.Hovered() || b.FocusVisible():
+		b.Background(tok.sunkenHi)
+		ink = tok.text
+	}
+	if b.FocusVisible() {
+		b.Border(1, tok.accent)
+	}
+	b.OnClick(func() { a.revealResult(path) })
+	b.Children(func() {
+		ui.Icon(c, iconFolder).FontSize(14).TextColor(ink)
 	})
 }
 
@@ -297,11 +320,11 @@ func (a *App) resultFrame(c *ui.Context, tile resultTile, tileW float32) {
 	}
 	status := tileStatus(tile.task)
 	if status == "进行中" {
+		// 底部一条细进度。整张扫光会在右缘留下一条竖的半透明带。
 		reduce := c.Preferences().ReduceMotion
 		accent := tok.accent
 		frame.DrawOver(func(p *ui.Painter, r ui.Rect) {
 			paintGenBar(p, ui.Rect{X: r.X + 8, Y: r.Y + r.H - 10, W: r.W - 16, H: 4}, accent, reduce)
-			paintShimmer(c, p, r)
 		})
 	}
 	frame.Children(func() {

@@ -39,6 +39,20 @@ func TestAntigravityAddChooser(t *testing.T) {
 			t.Fatalf("missing %q", text)
 		}
 	}
+	if a.agyChooser == nil {
+		t.Fatal("chooser state missing")
+	}
+	if !a.agyChooser.canImport {
+		if !strings.Contains(a.agyChooser.hint, "已检查") || !strings.Contains(a.agyChooser.hint, "~/.gemini/antigravity-cli") {
+			t.Fatalf("hint %q", a.agyChooser.hint)
+		}
+		if !strings.HasSuffix(filepath.ToSlash(a.agyChooser.home), "/.gemini/antigravity-cli") {
+			t.Fatalf("home %q", a.agyChooser.home)
+		}
+		if !tt.HasText(a.agyChooser.hint) {
+			t.Fatal("chooser did not show the checked folder")
+		}
+	}
 	panel, ok := tt.Find("agy-add-chooser")
 	if !ok {
 		t.Fatal("chooser missing")

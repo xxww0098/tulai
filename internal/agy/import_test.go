@@ -13,8 +13,17 @@ import (
 func TestDetectAtLoggedInAndMissing(t *testing.T) {
 	home := t.TempDir()
 	miss := DetectAt(home)
-	if miss.CanImport() || miss.HasToken || miss.Hint != MsgNotFound {
+	if miss.CanImport() || miss.HasToken {
 		t.Fatalf("missing %+v", miss)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(miss.Home), "/.gemini/antigravity-cli") {
+		t.Fatalf("checked dir %q", miss.Home)
+	}
+	if miss.Hint != MsgNotFound+"（已检查 ~/.gemini/antigravity-cli）" {
+		t.Fatalf("hint %q", miss.Hint)
+	}
+	if _, err := os.Stat(miss.Home); err == nil {
+		t.Fatal("checked dir should be recorded even when it does not exist")
 	}
 	writeImportSource(t, home, []byte("token-bytes"))
 	got := DetectAt(home)
@@ -23,6 +32,22 @@ func TestDetectAtLoggedInAndMissing(t *testing.T) {
 	}
 	if got.Keychain {
 		t.Fatal("有凭证文件时不应走钥匙串")
+	}
+}
+
+func TestDetectLocalMissingKeepsCheckedDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	got := DetectLocal()
+	if got.CanImport() || got.HasToken || got.Keychain {
+		t.Fatalf("%+v", got)
+	}
+	if got.Hint != MsgNotFound+"（已检查 ~/.gemini/antigravity-cli）" {
+		t.Fatalf("hint %q", got.Hint)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(got.Home), "/.gemini/antigravity-cli") {
+		t.Fatalf("home %q", got.Home)
 	}
 }
 

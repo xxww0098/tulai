@@ -70,15 +70,24 @@ func (a *App) historyControl(c *ui.Context) {
 	open := a.historyOpen
 	btn := ui.Button(c.Key("history"), "历史").FontSize(a.look.caption).Padding(3, 8).Radius(a.look.radiusS).Shrink(0)
 	btn.OnClick(func() { a.historyOpen = !open })
-	if !a.historyOpen {
+	btn.Bind(&a.historyAnchor)
+}
+
+// historyPanel 挂在账号表头下面、靠右。表头上的「添加账号」留在外面，左边的运行日志也不会被挡住。
+func (a *App) historyPanel(c *ui.Context, place ui.Element) {
+	if a == nil || !a.historyOpen {
+		return
+	}
+	anchor := c.Resolve(a.historyAnchor)
+	if !anchor.Valid() {
 		return
 	}
 	tok := a.look
-	ui.PopoverBase(c, btn, &a.historyOpen, func(panel ui.Element) {
-		panel.AttachTo(btn, ui.AnchorBottomRight, ui.AnchorTopRight).
-			Width(320).MaxHeight(360).Padding(8).Gap(6).
+	ui.PopoverBase(c, anchor, &a.historyOpen, func(panel ui.Element) {
+		panel.Label("历史任务").AttachTo(place, ui.AnchorBottomEnd, ui.AnchorTopEnd).
+			Width(280).MaxHeight(216).Padding(6).Gap(4).
 			Radius(tok.radiusM).Background(tok.card).Border(1, tok.border).
-			Shadow(0, 8, 24, 0, tok.shadow).Margin(6, 0, 0, 0)
+			Shadow(0, 8, 24, 0, tok.shadow).Margin(4, 0, 0, 0)
 		a.historyBody(c)
 	})
 }
@@ -98,7 +107,7 @@ func (a *App) historyBody(c *ui.Context) {
 		ui.Text(c, "还没有历史任务").FontSize(tok.caption).TextColor(tok.muted)
 		return
 	}
-	ui.Scroll(c.Key("history-scroll")).FillWidth().MaxHeight(280).Children(func() {
+	ui.Scroll(c.Key("history-scroll")).FillWidth().MaxHeight(168).Children(func() {
 		ui.Column(c).FillWidth().Gap(6).Children(func() {
 			for _, row := range rows {
 				a.historyRow(c, row)
@@ -111,7 +120,7 @@ func (a *App) historyRow(c *ui.Context, sess store.Session) {
 	tok := a.look
 	shown, full := sessionPreview(sess)
 	id := sess.ID
-	ui.Column(c.Key(id)).FillWidth().Gap(4).Padding(6, 8).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
+	ui.Column(c.Key(id)).FillWidth().Gap(4).Padding(4, 6).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			if when := sessionWhen(sess.Updated); when != "" {
 				ui.Text(c, when).FontSize(tok.caption).TextColor(tok.muted).Shrink(0).SingleLine()

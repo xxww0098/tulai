@@ -368,6 +368,41 @@ func TestAccountTableScalesToTwelveAccounts(t *testing.T) {
 	}
 }
 
+func TestAccountTableCapsRowsOnShortWindow(t *testing.T) {
+	var rows []store.Browser
+	for i := 1; i <= 12; i++ {
+		rows = append(rows, loggedLane(int64(i), fmt.Sprintf("豆包%02d", i), "豆包"))
+	}
+	a := &App{platformAuto: true, concurrencyAuto: true, browserRows: rows, prompts: "一只猫"}
+	short := ui.NewTester(a.view, 1024, 700)
+	short.Advance(200 * time.Millisecond)
+	list, ok := short.Find("账号列表")
+	if !ok {
+		t.Fatal("账号列表 missing")
+	}
+	if list.H > laneRowH*5+1 || list.H < laneRowH*4 {
+		t.Fatalf("short window list height %v", list.H)
+	}
+	fifth, ok := short.Find("车道豆包05")
+	if !ok || fifth.Y < list.Y-1 || fifth.Y+fifth.H > list.Y+list.H+1 {
+		t.Fatalf("fifth row not fully in the list: row %v list %v", fifth, list)
+	}
+	seventh, ok := short.Find("车道豆包07")
+	if ok && seventh.Y >= list.Y-1 && seventh.Y+seventh.H <= list.Y+list.H+1 {
+		t.Fatalf("seventh row still fully visible: %v list %v", seventh, list)
+	}
+	prog, ok := short.Find("出图进度")
+	if !ok || 700-prog.Y < 160 {
+		t.Fatalf("results too short: %+v", prog)
+	}
+	tall := ui.NewTester(a.view, 1280, 800)
+	tall.Advance(200 * time.Millisecond)
+	tallList, ok := tall.Find("账号列表")
+	if !ok || tallList.H <= laneRowH*5+1 {
+		t.Fatalf("tall window list %v", tallList)
+	}
+}
+
 func TestRunningLaneShowsTheJobAndFliesToTheResult(t *testing.T) {
 	today := time.Now().Format("2006-01-02")
 	a := &App{

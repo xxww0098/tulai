@@ -37,6 +37,8 @@ const (
 var ErrAlreadyImported = errors.New(MsgAlready)
 
 // Detection 是本机 HOME 上的 Antigravity CLI。
+// 已经登录时 Home 是用户 HOME。没找到时 Home 仍是查过的目录：
+// HOME/.gemini/antigravity-cli，Hint 里把这个 HOME 写成 ~。
 type Detection struct {
 	Home     string
 	Email    string
@@ -76,7 +78,37 @@ func DetectAt(home string) Detection {
 	if keychainHasToken() {
 		return Detection{Home: home, Email: Email(home), Keychain: true, Hint: MsgKeychain}
 	}
-	return Detection{Hint: MsgNotFound}
+	return missingDetection(home)
+}
+
+// missingDetection 没找到登录时仍记下查过的 CLI 目录。
+func missingDetection(home string) Detection {
+	root := strings.TrimSpace(home)
+	if abs, err := absClean(root); err == nil {
+		root = abs
+	}
+	checked := cliDir(root)
+	if abs, err := filepath.Abs(filepath.Clean(checked)); err == nil {
+		checked = abs
+	}
+	return Detection{
+		Home: checked,
+		Hint: MsgNotFound + "（已检查 " + tildeWithin(checked, root) + "）",
+	}
+}
+
+// tildeWithin 把 path 里的 home 前缀写成 ~，分隔符用 /。
+func tildeWithin(path, home string) string {
+	path = filepath.Clean(path)
+	home = filepath.Clean(home)
+	rel := path
+	switch {
+	case home != "" && home != "." && path == home:
+		rel = "~"
+	case home != "" && home != "." && strings.HasPrefix(path, home+string(filepath.Separator)):
+		rel = "~" + path[len(home):]
+	}
+	return filepath.ToSlash(rel)
 }
 
 // keychainProbeArgs 只按服务名查找，不能带出会泄漏口令的参数。

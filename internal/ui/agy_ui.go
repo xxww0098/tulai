@@ -204,7 +204,7 @@ func (a *App) agyChooserPanel(c *ui.Context) {
 				if hint == "" {
 					hint = agy.MsgNotFound
 				}
-				ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(hint)
+				ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).Tooltip(hint)
 			})
 			ui.Row(c).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Button(c, "选择文件夹…").Label("agy-pick-folder").Shrink(0).Height(36).AlignSelf(ui.Center).

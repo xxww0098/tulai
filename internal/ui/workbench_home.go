@@ -277,6 +277,21 @@ func tasksForPlatform(items []tasks.Task, platform string) []tasks.Task {
 	return out
 }
 
+// logLineH 是运行日志一行的高度。跟视口对齐后，贴底滚动不会把第一行切掉半个字。
+const logLineH float32 = 20
+
+// logTailPad 让内容高度减去视口之后正好是整行。贴底时视口顶部落在行边界上。
+func logTailPad(viewport float32) float32 {
+	if viewport <= 1 {
+		return 0
+	}
+	rem := math.Mod(float64(viewport), float64(logLineH))
+	if rem < 0.01 {
+		return 0
+	}
+	return float32(rem)
+}
+
 // runLog 在左栏里撑满剩下的高度，日志在卡片里滚动，停在底部时跟着最新一行。
 func (a *App) runLog(c *ui.Context, fill bool) {
 	tok := a.look
@@ -300,7 +315,7 @@ func (a *App) runLog(c *ui.Context, fill bool) {
 		lines := func() {
 			for _, line := range notes {
 				text := line.Text
-				ui.Text(c, text).FontSize(tok.caption).SingleLine().Tooltip(text)
+				ui.Text(c, text).FontSize(tok.caption).Height(logLineH).SingleLine().Tooltip(text)
 			}
 		}
 		if !fill {
@@ -310,8 +325,18 @@ func (a *App) runLog(c *ui.Context, fill bool) {
 		if a.logScroll.Y >= a.logScroll.MaxY {
 			a.logScroll.Y = math.MaxFloat32
 		}
-		ui.Scroll(c.Key("run-log-lines")).FillWidth().Grow(1).MinHeight(0).TrackScroll(&a.logScroll).Children(func() {
-			ui.Column(c).FillWidth().Gap(2).Children(lines)
+		scroll := ui.Scroll(c.Key("run-log-lines")).Label("运行日志内容").FillWidth().Grow(1).MinHeight(0)
+		pad := float32(0)
+		if a.logScroll.MaxY > 0 {
+			pad = logTailPad(scroll.Bounds().H)
+		}
+		scroll.TrackScroll(&a.logScroll).Children(func() {
+			ui.Column(c).FillWidth().Gap(0).Children(func() {
+				lines()
+				if pad > 0.5 {
+					ui.Box(c.Key("log-pad")).Height(pad)
+				}
+			})
 		})
 	})
 }
@@ -751,20 +776,6 @@ func promptMarkBox(c *ui.Context, tok tokens, size float32) {
 			}
 			p.Fill(ui.Rect{X: r.X + r.W*0.22, Y: r.Y + r.H*0.28 + float32(i)*r.H*0.16, W: w, H: 2}, ink, 1)
 		}
-	})
-}
-
-// paintShimmer 在生成中的缩略图上扫一条高光。只重绘，不重建视图。
-func paintShimmer(c *ui.Context, p *ui.Painter, r ui.Rect) {
-	if c.Preferences().ReduceMotion {
-		return
-	}
-	p.AnimationFrame()
-	phase := float32(p.Now().UnixMilli()%1200) / 1200
-	w := r.W * 0.45
-	x := r.X - w + (r.W+w)*phase
-	p.Clip(r, 8, func() {
-		p.Fill(ui.Rect{X: x, Y: r.Y, W: w, H: r.H}, ui.RGBA(255, 255, 255, 0.28), 0)
 	})
 }
 
