@@ -474,8 +474,9 @@ func (a *App) openResultFolder(dir string) {
 }
 
 func (a *App) queueItems() []tasks.Task {
-	// 引擎只有一份队列。另一页跑过的批次不显示在这一页，这一页看自己收好的那份。
-	if a.engine != nil && a.ownsRun() {
+	// 引擎只有一份队列。正在跑的这一页看引擎；停下来以后看这一页自己收好的那份。
+	// 新建任务清掉的是这一页的队列，不能再把上一批的引擎快照画出来。
+	if a.running && a.engine != nil && a.ownsRun() {
 		if view := a.engine.View(); view != nil {
 			return view.Snapshot()
 		}

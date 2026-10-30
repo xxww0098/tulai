@@ -222,6 +222,10 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 	if e == nil || e.store == nil || b.ID <= 0 {
 		return
 	}
+	// Antigravity 没有浏览器页面。登录探测会把正在出图的号误记成退出登录。
+	if b.Platform == agy.Platform {
+		return
+	}
 	if state == heal.StateOut && e.accountBusy(b.ID) {
 		logging.Event(logging.Line{
 			Stage: "probe", Platform: b.Platform, Account: accountLabel(b), Port: b.Port,

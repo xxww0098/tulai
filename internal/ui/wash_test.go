@@ -83,12 +83,12 @@ func TestWashPromptAndImagesPersist(t *testing.T) {
 
 	b := &App{store: st, engine: tasks.NewEngine(st, nil, nil, "")}
 	b.loadSettings()
-	if b.prompts != "生图提示词" || len(b.sources) != 0 {
-		t.Fatalf("生图 reloaded wrong: %q %v", b.prompts, b.sources)
+	if b.tab != pageWash || b.prompts != "去掉文字，白底" || len(b.sources) != 1 || b.sources[0].Path != img {
+		t.Fatalf("洗图没有回到上次页面: tab=%d prompts=%q sources=%v", b.tab, b.prompts, b.sources)
 	}
-	w := b.stateOf(pageWash)
-	if w.prompts != "去掉文字，白底" || len(w.sources) != 1 || w.sources[0].Path != img {
-		t.Fatalf("wash reloaded = %+v", w)
+	gen := b.stateOf(pageHome)
+	if gen.prompts != "生图提示词" || len(gen.sources) != 0 {
+		t.Fatalf("生图 reloaded wrong: %q %v", gen.prompts, gen.sources)
 	}
 }
 

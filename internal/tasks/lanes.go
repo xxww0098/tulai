@@ -47,6 +47,51 @@ type LaneLive struct {
 	Verify  map[int64]bool
 }
 
+// BlockedNotice 是账号都不能出图时，页头和日志用的同一句话。
+func BlockedNotice(lanes []AccountLane) string {
+	var parts []string
+	seen := map[string]bool{}
+	for _, ln := range lanes {
+		reason := laneBlockReason(ln.State)
+		if reason == "" {
+			continue
+		}
+		name := ln.Platform
+		if name == "" {
+			name = ln.Name
+		}
+		piece := name + reason
+		if seen[piece] {
+			continue
+		}
+		seen[piece] = true
+		parts = append(parts, piece)
+	}
+	if len(parts) == 0 {
+		return "还没有可用账号"
+	}
+	return "没有可用账号：" + strings.Join(parts, "，")
+}
+
+func laneBlockReason(state LaneState) string {
+	switch state {
+	case LaneLogin:
+		return "需要重新登录"
+	case LaneFull:
+		return "今日已满"
+	case LaneQuota:
+		return "额度不足"
+	case LaneCooling:
+		return "冷却中"
+	case LaneCaptcha:
+		return "需要验证"
+	case LaneOffline:
+		return "离线"
+	default:
+		return ""
+	}
+}
+
 // AccountLane 是界面上一张账号卡。
 type AccountLane struct {
 	ID          int64

@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -43,6 +44,14 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 			task.Error = "需要在网页里完成验证"
 		}
 		return time.Time{}, true
+	}
+	if task.Platform == agy.Platform && agyAccountsBlocked(rows, now, limit) && !cappedOut(rows, now, limit) {
+		e.noteAgyNoAccount(now)
+		if until.IsZero() {
+			task.Error = ""
+			return now.Add(heal.RecheckAfter), false
+		}
+		return until, false
 	}
 	if until.IsZero() {
 		if e.accountWaitingOnUser(rows, now) {
@@ -91,11 +100,17 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	e.noteFault(current, kind, err, now)
 	e.announceAccount(current, kind)
 	name := browserName(e.store, next)
-	logging.Log.Warning("#%d 账号 %s，改用「%s」", task.Index, faultLabel(kind), name)
+	old := browserName(e.store, current)
+	label := faultLabel(kind)
+	if errors.Is(err, agy.ErrNeedLogin) {
+		label = agy.ErrNeedLogin.Error()
+	}
+	logging.Log.Warning("#%d「%s」%s，改用「%s」", task.Index, old, label, name)
 	task.BrowserID = next
 	task.submitted = false
 	task.sentURL, task.sentWrap = "", ""
 	task.rotated = true
+	task.pauseNote = ""
 	if task.Attempts > 0 {
 		task.Attempts--
 	}
@@ -163,6 +178,19 @@ func (t *Task) ranOnOr(fallback int64) int64 {
 		return t.ranOn
 	}
 	return fallback
+}
+
+// agyAccountsBlocked 是这个平台一个能用的号都没有。每日上限另走失败，不在这里。
+func agyAccountsBlocked(rows []store.Browser, now time.Time, cap int) bool {
+	if len(rows) == 0 {
+		return false
+	}
+	for _, b := range rows {
+		if b.Platform != agy.Platform || openAccount(b, now, cap) {
+			return false
+		}
+	}
+	return true
 }
 
 func openAccount(b store.Browser, now time.Time, cap int) bool {

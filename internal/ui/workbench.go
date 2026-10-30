@@ -182,7 +182,7 @@ func EnsureOutputDir(path string) (string, error) {
 
 // DisplayStatus 把一批任务收成出图页上的四个状态。待验证单独保留。
 func DisplayStatus(statuses []tasks.Status) string {
-	var running, pending, needs, failed, success, awaiting bool
+	var running, pending, needs, failed, success, awaiting, skipped bool
 	for _, status := range statuses {
 		switch status {
 		case tasks.StatusRunning, tasks.StatusRetry:
@@ -193,8 +193,10 @@ func DisplayStatus(statuses []tasks.Status) string {
 			awaiting = true
 		case tasks.StatusNeedsUser:
 			needs = true
-		case tasks.StatusFailed, tasks.StatusSkipped:
+		case tasks.StatusFailed:
 			failed = true
+		case tasks.StatusSkipped:
+			skipped = true
 		case tasks.StatusSuccess:
 			success = true
 		}
@@ -210,6 +212,8 @@ func DisplayStatus(statuses []tasks.Status) string {
 		return "待验证"
 	case failed:
 		return "失败"
+	case skipped:
+		return "已停止"
 	case success:
 		return "完成"
 	default:
@@ -317,7 +321,7 @@ func LayoutFlow(hasImages, hasPrompts, skipImages, hasQueue bool, pin int) flowL
 	return f
 }
 
-// ProgressTally 按卡片数完成、生成中、排队、失败和待验证。
+// ProgressTally 按卡片数完成、生成中、排队、失败和待验证。已停止不算失败。
 func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs int) {
 	for _, card := range cards {
 		switch card.Status {
@@ -338,6 +342,40 @@ func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs i
 	return done, running, queued, failed, needs
 }
 
+// TaskTally 是左栏进度和右栏「出图进度」共用的计数。已停止算未完成，不算失败。
+type TaskTally struct {
+	Done, Running, Queued, Failed, Needs, Stopped int
+}
+
+// TallyTasks 统计一批任务。调用方不要再各写一套成败判断。
+func TallyTasks(items []tasks.Task) TaskTally {
+	var tally TaskTally
+	for _, task := range items {
+		switch task.Status {
+		case tasks.StatusSuccess:
+			tally.Done++
+		case tasks.StatusRunning, tasks.StatusRetry, tasks.StatusAwaitUser:
+			tally.Running++
+		case tasks.StatusPending:
+			tally.Queued++
+		case tasks.StatusFailed:
+			tally.Failed++
+		case tasks.StatusNeedsUser:
+			tally.Needs++
+		case tasks.StatusSkipped:
+			tally.Stopped++
+		default:
+			tally.Queued++
+		}
+	}
+	return tally
+}
+
+// Incomplete 是还没成功、也没失败、也不是待验证的任务，含已停止。
+func (t TaskTally) Incomplete() int {
+	return t.Running + t.Queued + t.Stopped
+}
+
 // RunSummary 是出图步骤左侧的一行。账号数写在面板上，这里只说这一批有几张图。
 func RunSummary(images int, prompts bool) string {
 	switch {
@@ -352,7 +390,7 @@ func RunSummary(images int, prompts bool) string {
 
 // FormatProgressTally 是一个平台的进度。并发上限写在同一行，不再另起一条「同时出图」。
 // limit 是这一页实际能同时跑的账号数；Antigravity 一次只跑一个。没有可用账号时不写。
-func FormatProgressTally(done, running, queued, failed, needs, limit int) string {
+func FormatProgressTally(done, running, queued, failed, needs, stopped, limit int) string {
 	parts := []string{
 		fmt.Sprintf("完成 %d", done),
 		fmt.Sprintf("进行中 %d", running),
@@ -361,6 +399,9 @@ func FormatProgressTally(done, running, queued, failed, needs, limit int) string
 	}
 	if needs > 0 {
 		parts = append(parts, fmt.Sprintf("待验证 %d", needs))
+	}
+	if stopped > 0 {
+		parts = append(parts, fmt.Sprintf("未完成 %d", stopped))
 	}
 	if limit > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d 并发", running, limit))

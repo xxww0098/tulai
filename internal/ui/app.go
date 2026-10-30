@@ -164,19 +164,20 @@ type App struct {
 	extTokenNote   string
 
 	// 队列与日志
-	queue       []tasks.Task
-	queueTbl    ui.ListState
-	logs        []logging.Entry
-	progress    float64
-	progText    string
-	running     bool
-	useRunView  bool
-	genSession  int64
-	washSession int64
-	historyOpen bool
-	genList     ui.ListState
-	washList    ui.ListState
-	stamps      map[string]int64
+	queue         []tasks.Task
+	queueTbl      ui.ListState
+	logs          []logging.Entry
+	progress      float64
+	progText      string
+	running       bool
+	useRunView    bool
+	genSession    int64
+	washSession   int64
+	workspacePage string // 上次停留的生图或洗图，gen / wash
+	historyOpen   bool
+	genList       ui.ListState
+	washList      ui.ListState
+	stamps        map[string]int64
 
 	tab          int
 	tabSeen      int
@@ -465,6 +466,20 @@ func (a *App) loadSettings() {
 	}
 	a.restoreWorkspace(pageHome)
 	a.restoreWorkspace(pageWash)
+	a.onPage(pageHome, func() {
+		a.stageTab = s.GetInt("gen_stage")
+		a.stagePicked = s.Get("gen_stage_picked") == "1"
+	})
+	a.onPage(pageWash, func() {
+		a.stageTab = s.GetInt("wash_stage")
+		a.stagePicked = s.Get("wash_stage_picked") == "1"
+	})
+	a.workspacePage = store.PageGen
+	if s.Get("workspace_page") == store.PageWash {
+		a.tab = pageWash
+		a.workspacePage = store.PageWash
+	}
+	a.syncPage()
 }
 
 // saveSettings 写回配置库。
@@ -510,7 +525,15 @@ func (a *App) saveSettings() {
 	s.SetInt("start_browser_index", int(a.startBrowserIdx))
 	s.Set("output_path", a.outputPath)
 	s.SetInt("remove_watermark", boolInt(a.removeWatermark))
+	a.noteWorkspacePage()
+	if a.workspacePage == store.PageGen || a.workspacePage == store.PageWash {
+		s.Set("workspace_page", a.workspacePage)
+	}
 	gen, wash := a.stateOf(pageHome), a.stateOf(pageWash)
+	s.SetInt("gen_stage", gen.stageTab)
+	s.SetInt("gen_stage_picked", boolInt(gen.stagePicked))
+	s.SetInt("wash_stage", wash.stageTab)
+	s.SetInt("wash_stage_picked", boolInt(wash.stagePicked))
 	s.Set("prompts", gen.prompts)
 	s.Set("wash_prompt", strings.TrimSpace(wash.prompts))
 	s.Set("wash_images", joinPaths(sourcePaths(wash.sources)))
@@ -700,18 +723,8 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 const verificationHint = "在浏览器中完成验证后重新开始任务"
 
 func taskResultSummary(queue []tasks.Task) string {
-	success, failed, needsUser := 0, 0, 0
-	for _, task := range queue {
-		switch task.Status {
-		case tasks.StatusSuccess:
-			success++
-		case tasks.StatusFailed:
-			failed++
-		case tasks.StatusNeedsUser:
-			needsUser++
-		}
-	}
-	return fmt.Sprintf("成功 %d · 失败 %d · 待验证 %d · 未完成 %d", success, failed, needsUser, len(queue)-success-failed-needsUser)
+	tally := TallyTasks(queue)
+	return fmt.Sprintf("成功 %d · 失败 %d · 待验证 %d · 未完成 %d", tally.Done, tally.Failed, tally.Needs, tally.Incomplete())
 }
 
 // stopTasks 停止。

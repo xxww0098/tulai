@@ -598,6 +598,9 @@ func (a *App) stepLead(board tasks.Board) string {
 		if !a.ownsRun() {
 			return pageLabel(a.runPage) + "正在运行，结束后再开始"
 		}
+		if notice := a.pausedAccountNotice(board); notice != "" {
+			return notice
+		}
 		if a.washing() {
 			return "正在洗图"
 		}
@@ -616,6 +619,33 @@ func (a *App) stepLead(board tasks.Board) string {
 		return "还没有可用账号"
 	}
 	return RunSummary(len(a.sources), len(a.taskPromptList()) > 0)
+}
+
+// pausedAccountNotice 是这一页已经开跑，但一个号都出不了图。用和停跑时同一句「没有可用账号」。
+// 还有任务在生成，或额度那句已经写在账号标题上时，这里不重复。
+func (a *App) pausedAccountNotice(board tasks.Board) string {
+	if a == nil || len(board.Lanes) == 0 {
+		return ""
+	}
+	for _, ln := range board.Lanes {
+		if ln.State == tasks.LaneRunning || ln.State == tasks.LaneIdle || ln.State == tasks.LaneGap {
+			return ""
+		}
+	}
+	for _, task := range a.queueItems() {
+		switch task.Status {
+		case tasks.StatusRunning, tasks.StatusRetry, tasks.StatusAwaitUser:
+			return ""
+		}
+	}
+	if a.agyPauseLine(time.Now()) != "" {
+		return ""
+	}
+	notice := BlockedAccounts(board.Lanes)
+	if !strings.HasPrefix(notice, "没有可用账号") {
+		return ""
+	}
+	return notice
 }
 
 // runNote 是出图步骤上的一行进度。待验证已经写在卡片上，这里不再重复成一条失败。

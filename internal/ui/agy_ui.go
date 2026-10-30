@@ -575,19 +575,17 @@ func (a *App) finishAgyImport(res agy.ImportResult, err error) {
 	a.store.UpdateBrowser(row.ID, false, true)
 	a.store.ResetBrowserHealth(row.ID)
 	a.refreshBrowsers()
+	if a.engine != nil {
+		a.engine.Wake()
+	}
 	who := strings.TrimSpace(res.Email)
 	line := agy.MsgImported
 	if who != "" {
 		line = who + " " + agy.MsgImported
 	}
 	logging.Log.Success("%s", line)
-	if a.agyChooser != nil {
-		a.agyChooser.busy = false
-		a.agyChooser.retry = false
-		a.agyChooser.err = ""
-		a.agyChooser.canImport = false
-		a.agyChooser.status = line
-	}
+	// 账号已经在表里，选择方式可以收起来。失败时留着面板给重试。
+	a.agyChooser = nil
 }
 
 func (a *App) beginAgyLogin(row store.Browser) {
@@ -678,6 +676,9 @@ func (a *App) finishAgyLogin(id int64, name string) {
 		a.store.UpdateBrowser(id, false, true)
 		a.store.ResetBrowserHealth(id)
 		a.refreshBrowsers()
+	}
+	if a != nil && a.engine != nil {
+		a.engine.Wake()
 	}
 	if name == "" {
 		name = "账号"

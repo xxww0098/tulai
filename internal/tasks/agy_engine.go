@@ -104,9 +104,14 @@ func (e *Engine) agyBudget() time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-// holdAgyQuota 把额度用尽的任务留在队列里。还有账号就换；都用尽了就等到恢复，不标失败。
-func (e *Engine) holdAgyQuota(task *Task, err error) bool {
-	if task == nil || task.Platform != agy.Platform || classifyFault(err) != faultQuota {
+// holdAgy 把额度用尽或需登录的任务留在队列里。还有账号就换；都不可用就停住等，不标失败。
+func (e *Engine) holdAgy(task *Task, err error) bool {
+	if task == nil || task.Platform != agy.Platform {
+		return false
+	}
+	kind := classifyFault(err)
+	login := errors.Is(err, agy.ErrNeedLogin)
+	if kind != faultQuota && !login {
 		return false
 	}
 	if e.maybeRotate(task, err, time.Now()) {
@@ -118,8 +123,40 @@ func (e *Engine) holdAgyQuota(task *Task, err error) bool {
 	if task.Attempts > 0 {
 		task.Attempts--
 	}
-	e.noteAgyPause(time.Now())
+	if login {
+		task.pauseNote = "login"
+		e.noteAgyNoAccount(time.Now())
+	} else {
+		task.pauseNote = "quota"
+		e.noteAgyPause(time.Now())
+	}
 	return true
+}
+
+// noteAgyNoAccount 在一个能用的号都没有时写一次「没有可用账号」。
+// 全部是额度不足时仍用原来的恢复时间那一句。
+func (e *Engine) noteAgyNoAccount(now time.Time) {
+	if e == nil {
+		return
+	}
+	rows := e.accountsFor(agy.Platform)
+	capN := e.capNow()
+	if _, ok := agyFullyPaused(rows, now, capN); ok {
+		e.noteAgyPause(now)
+		return
+	}
+	notice := BlockedNotice(Assemble(rows, LaneLive{}, capN, now).Lanes)
+	if !strings.HasPrefix(notice, "没有可用账号") {
+		return
+	}
+	e.mu.Lock()
+	if e.noAccountNoted {
+		e.mu.Unlock()
+		return
+	}
+	e.noAccountNoted = true
+	e.mu.Unlock()
+	logging.Log.Warning("%s", notice)
 }
 
 func (e *Engine) noteAgyPause(now time.Time) {
