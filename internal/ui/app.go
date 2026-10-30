@@ -161,12 +161,19 @@ type App struct {
 	extTokenNote   string
 
 	// 队列与日志
-	queue    []tasks.Task
-	queueTbl ui.ListState
-	logs     []logging.Entry
-	progress float64
-	progText string
-	running  bool
+	queue       []tasks.Task
+	queueTbl    ui.ListState
+	logs        []logging.Entry
+	progress    float64
+	progText    string
+	running     bool
+	useRunView  bool
+	genSession  int64
+	washSession int64
+	historyOpen bool
+	genList     ui.ListState
+	washList    ui.ListState
+	stamps      map[string]int64
 
 	tab          int
 	tabSeen      int
@@ -451,6 +458,8 @@ func (a *App) loadSettings() {
 			a.batchMode = batchText
 		}
 	}
+	a.restoreWorkspace(pageHome)
+	a.restoreWorkspace(pageWash)
 }
 
 // saveSettings 写回配置库。
@@ -520,6 +529,8 @@ func (a *App) saveSettings() {
 	// 源图列表持久化
 	s.Set("source_images", joinPaths(sourcePaths(gen.sources)))
 	a.persistUpdatePrefs()
+	a.persistWorkspace(pageHome)
+	a.persistWorkspace(pageWash)
 }
 
 func (a *App) pushProxy() {

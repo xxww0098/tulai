@@ -17,8 +17,9 @@ import (
 func (a *App) workColumns(c *ui.Context, input func()) {
 	w, _ := c.Size()
 	if homeSplit(w) {
-		ui.Column(c).Grow(1).MinHeight(0).Gap(10).Children(func() {
+		ui.Column(c).Grow(1).MinHeight(0).Gap(8).Children(func() {
 			a.loginBanner(c)
+			a.workspaceBar(c)
 			ui.Row(c).Grow(1).MinHeight(0).Gap(homeGap).AlignItems(ui.Stretch).Children(func() {
 				a.workSide(c, input)
 				a.homeStage(c)
@@ -28,6 +29,7 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 		ui.Scroll(c.Key("work-narrow")).Grow(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
 				a.loginBanner(c)
+				a.workspaceBar(c)
 				input()
 				a.runCard(c)
 				a.platformStage(c)
@@ -41,7 +43,7 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 // workSide 输入在上，内容多时自己滚动；开始卡片始终露出，运行日志撑满左栏剩下的高度。
 func (a *App) workSide(c *ui.Context, input func()) {
 	_, winH := c.Size()
-	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).Height(winH-48).Gap(10).Padding(0, 0, 8, 0).Children(func() {
+	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).Height(columnHeight(winH)).Gap(10).Padding(0, 0, 8, 0).Children(func() {
 		// 洗图的原图在卡片里自己滚动，指令、开始和日志留在外面，避免缩略图把它们顶出窗口。
 		if a != nil && a.washing() {
 			ui.Column(c.Key("work-side-input")).FillWidth().Shrink(0).Gap(10).Children(input)

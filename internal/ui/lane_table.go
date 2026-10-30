@@ -24,7 +24,7 @@ const (
 // laneTable 一个账号一行：账号、状态、今日、当前任务、操作。
 func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	tok := a.look
-	ui.Column(c.Key("lane-table")).FillWidth().Gap(6).Padding(8, 10).Radius(tok.radiusM).
+	ui.Column(c.Key("lane-table")).FillWidth().Gap(4).Padding(6, 8).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border).Transition(motionReveal()).Children(func() {
 		a.laneHeader(c)
 		mail := a.stagePlatform() == "Antigravity"
@@ -48,7 +48,11 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 			head("当前任务").Grow(3).Basis(0).MinWidth(0)
 			ui.Row(c).Width(laneColOps).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
 		})
-		ui.Scroll(c.Key("lane-rows")).FillWidth().MaxHeight(laneTableMaxH).Children(func() {
+		rowsH := float32(len(board.Lanes)) * laneRowH
+		if len(board.Lanes) > 8 {
+			rowsH = laneRowH * 8
+		}
+		ui.Scroll(c.Key("lane-rows")).FillWidth().Height(rowsH).MaxHeight(laneTableMaxH).Children(func() {
 			ui.Column(c).FillWidth().Children(func() {
 				for i, ln := range board.Lanes {
 					a.laneRow(c, ln, i)

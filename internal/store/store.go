@@ -1,5 +1,5 @@
-// Package store 管理 SQLite 配置库（database/config.db），表结构与原软件完全兼容：
-// browsers / settings / prompts。可直接读写原软件生成的 config.db。
+// Package store 管理 SQLite 配置库（database/config.db）：
+// browsers / settings / prompts，以及生图、洗图各自的任务会话。
 package store
 
 import (
@@ -121,7 +121,34 @@ CREATE TABLE IF NOT EXISTS prompts (
 	use_suffix INTEGER DEFAULT 0,
 	send_strategy TEXT DEFAULT '顺序循环',
 	created_at TEXT DEFAULT (datetime('now','localtime'))
-);`
+);
+CREATE TABLE IF NOT EXISTS sessions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	page TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL,
+	prompts TEXT NOT NULL DEFAULT '',
+	images TEXT NOT NULL DEFAULT '',
+	progress REAL NOT NULL DEFAULT 0,
+	prog_text TEXT NOT NULL DEFAULT '',
+	active INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_page ON sessions(page, active, updated_at);
+CREATE TABLE IF NOT EXISTS session_tasks (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id INTEGER NOT NULL,
+	ord INTEGER NOT NULL,
+	prompt TEXT NOT NULL DEFAULT '',
+	source TEXT NOT NULL DEFAULT '',
+	platform TEXT NOT NULL DEFAULT '',
+	account_id INTEGER NOT NULL DEFAULT 0,
+	account_name TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT '',
+	outputs TEXT NOT NULL DEFAULT '',
+	error TEXT NOT NULL DEFAULT '',
+	at_unix INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_session_tasks_session ON session_tasks(session_id, ord);`
 
 // Open 打开（或创建）配置库。
 func Open(path string) (*Store, error) {

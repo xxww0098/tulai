@@ -566,19 +566,41 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	}
 	a.runPage = page
 	a.running = true
-	a.progress = 0
-	a.progText = ""
+	a.useRunView = false
+	if retry != nil {
+		pending := tasks.RebuildRetry(retry)
+		a.onPage(page, func() {
+			a.queue = pending
+			a.progress = 0
+			if len(pending) > 0 {
+				a.progText = fmt.Sprintf("0 / %d", len(pending))
+			} else {
+				a.progText = ""
+			}
+		})
+	} else {
+		a.progress = 0
+		a.progText = ""
+	}
+	a.persistWorkspace(page)
 	a.engine.SetSolver(captcha.Build(a.captchaConfig()))
 	go func() {
-		onTask := func(tasks.Task) { a.syncUI(func() {}) }
+		onTask := func(tasks.Task) {
+			a.syncUI(func() {
+				a.useRunView = true
+				a.persistWorkspace(page)
+			})
+		}
 		onProgress := func(p tasks.Progress) {
 			a.syncUI(func() {
+				a.useRunView = true
 				a.onPage(page, func() {
 					if p.Total > 0 {
 						a.progress = float64(p.Done) / float64(p.Total)
 					}
 					a.progText = fmt.Sprintf("%d / %d", p.Done, p.Total)
 				})
+				a.persistWorkspace(page)
 			})
 		}
 		var runErr error
@@ -589,6 +611,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		}
 		a.syncUI(func() {
 			a.running = false
+			a.useRunView = false
 			a.onPage(page, func() {
 				if view := a.engine.View(); view != nil {
 					a.queue = view.Snapshot()
@@ -600,6 +623,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 					a.progText = taskResultSummary(a.queue)
 				}
 			})
+			a.persistWorkspace(page)
 			a.maybeInstallPending()
 		})
 	}()

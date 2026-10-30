@@ -333,6 +333,134 @@ func TestExportWorkbenchShots(t *testing.T) {
 	}
 	washMany.preloadThumbs(washManyPaths)
 	saveAt("wash-many-1024x700", 1024, 700, washMany)
+	shotStore, err := store.Open(filepath.Join(t.TempDir(), "shots.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shotStore.Close()
+	if row, err := shotStore.AddBrowser("豆包", "豆包主力", ""); err != nil {
+		t.Fatal(err)
+	} else {
+		shotStore.UpdateBrowser(row.ID, false, true)
+	}
+	seedHistory := func(page, prompts, images string) {
+		t.Helper()
+		id, err := shotStore.SaveActive(store.Session{
+			Page: page, Prompts: prompts, Images: images,
+		}, []store.SessionTask{{
+			Ord: 1, Prompt: prompts, Source: images, Platform: "豆包",
+			Status: "成功", Outputs: out, At: time.Now().Unix(),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := shotStore.ArchiveSession(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedHistory(store.PageGen, "傍晚窗边的一只猫", land)
+	seedHistory(store.PageWash, "去掉水印", land)
+	twoRows := []store.Browser{loggedLane(1, "豆包主力", "豆包"), loggedLane(2, "豆包小号", "豆包")}
+	oneAcc := func() *App {
+		return &App{
+			platformAuto: true, concurrencyAuto: true, outputPath: shotOut,
+			browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")},
+		}
+	}
+	twoAcc := func() *App {
+		a := &App{
+			platformAuto: true, concurrencyAuto: true, outputPath: shotOut,
+			prompts:     "水彩，保留构图\n人像改成胶片色",
+			browserRows: append([]store.Browser{}, twoRows...),
+			sources:     []sourceImage{{Path: land}, {Path: face}},
+			queue: []tasks.Task{
+				{Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusRunning, Prompt: "水彩，保留构图", Images: []string{land}},
+				{Index: 2, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess, Prompt: "水彩，保留构图", Results: []string{out}},
+				{Index: 3, Platform: "豆包", BrowserID: 2, Status: tasks.StatusFailed, Prompt: "人像改成胶片色", Images: []string{face}, Error: "出图失败"},
+			},
+		}
+		a.preloadThumbs([]string{land, face, out})
+		return a
+	}
+	dozenAcc := func() *App {
+		a := &App{
+			platformAuto: true, concurrencyAuto: true, outputPath: shotOut, prompts: "一只猫",
+			browserRows: append([]store.Browser{}, twelve...),
+			queue: []tasks.Task{
+				{Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess, Prompt: "一只猫", Results: []string{out}},
+				{Index: 2, Platform: "豆包", BrowserID: 2, Status: tasks.StatusRunning, Prompt: "街边的傍晚", Images: []string{land}},
+				{Index: 3, Platform: "豆包", BrowserID: 3, Status: tasks.StatusPending, Prompt: "一束白花", Images: []string{still}},
+			},
+		}
+		a.preloadThumbs([]string{out, land, still})
+		return a
+	}
+	missingAcc := func() *App {
+		a := &App{
+			platformAuto: true, concurrencyAuto: true, outputPath: shotOut, prompts: "一只猫",
+			browserRows: []store.Browser{loggedLane(1, "豆包主力", "豆包")},
+			queue: []tasks.Task{{
+				Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess,
+				Prompt: "一只猫", Results: []string{filepath.Join(pics, "不存在.png"), out},
+			}},
+		}
+		a.preloadThumbs([]string{out})
+		return a
+	}
+	asWash := func(a *App) *App {
+		a.tab, a.statePage = pageWash, pageWash
+		if a.prompts == "" {
+			a.prompts = DefaultWashPrompt
+		}
+		return a
+	}
+	historyAcc := func(wash bool) *App {
+		a := oneAcc()
+		a.store = shotStore
+		a.historyOpen = true
+		a.prompts = "当前提示词"
+		if wash {
+			a.tab, a.statePage = pageWash, pageWash
+			a.prompts = "白底"
+			a.sources = []sourceImage{{Path: land}}
+			a.preloadThumbs([]string{land})
+		}
+		return a
+	}
+	for _, sz := range [][2]int{{1280, 800}, {1024, 700}} {
+		tag := fmt.Sprintf("%dx%d", sz[0], sz[1])
+		saveAt("right-1acc-empty-"+tag, sz[0], sz[1], oneAcc())
+		saveAt("right-2acc-results-"+tag, sz[0], sz[1], twoAcc())
+		saveAt("right-12acc-results-"+tag, sz[0], sz[1], dozenAcc())
+		saveAt("history-open-"+tag, sz[0], sz[1], historyAcc(false))
+		saveAt("missing-file-"+tag, sz[0], sz[1], missingAcc())
+		w2 := twoAcc()
+		w2.prompts = "白底，去掉水印"
+		w2.sources = []sourceImage{{Path: land}, {Path: face}, {Path: still}}
+		w2.queue = []tasks.Task{
+			{Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusRunning, Prompt: "白底，去掉水印", Images: []string{land}},
+			{Index: 2, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess, Prompt: "白底，去掉水印", Images: []string{face}, Results: []string{out}},
+			{Index: 3, Platform: "豆包", BrowserID: 2, Status: tasks.StatusFailed, Prompt: "白底，去掉水印", Images: []string{still}, Error: "出图失败"},
+		}
+		w2.preloadThumbs([]string{land, face, still, out})
+		w12 := dozenAcc()
+		w12.prompts = "白底，去掉水印"
+		w12.sources = []sourceImage{{Path: land}, {Path: still}}
+		w12.queue = []tasks.Task{
+			{Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess, Prompt: "白底，去掉水印", Images: []string{land}, Results: []string{out}},
+			{Index: 2, Platform: "豆包", BrowserID: 2, Status: tasks.StatusRunning, Prompt: "白底，去掉水印", Images: []string{still}},
+		}
+		w12.preloadThumbs([]string{land, still, out})
+		wm := missingAcc()
+		wm.prompts = "白底，去掉水印"
+		wm.sources = []sourceImage{{Path: land}}
+		saveAt("wash-right-1acc-empty-"+tag, sz[0], sz[1], asWash(oneAcc()))
+		saveAt("wash-right-2acc-results-"+tag, sz[0], sz[1], asWash(w2))
+		saveAt("wash-right-12acc-results-"+tag, sz[0], sz[1], asWash(w12))
+		saveAt("wash-history-open-"+tag, sz[0], sz[1], historyAcc(true))
+		saveAt("wash-missing-file-"+tag, sz[0], sz[1], asWash(wm))
+	}
+
 	tip := ui.NewTester(idle.view, 1280, 800)
 	tip.Advance(450 * time.Millisecond)
 	r, ok := tip.Find("检查更新")

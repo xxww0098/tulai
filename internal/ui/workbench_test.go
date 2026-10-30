@@ -102,8 +102,9 @@ func TestPlatformCardsDoNotMixAccounts(t *testing.T) {
 	if len(cards) != 1 || len(cards[0].Sites) != 1 || cards[0].Sites[0].Platform != "千问" || cards[0].Sites[0].BrowserID != 4 {
 		t.Fatalf("%+v", cards)
 	}
-	if line := a.siteLine(cards[0]); line != "千问 · 浏览器4" {
-		t.Fatalf("site line = %q", line)
+	site := cards[0].Sites[0]
+	if got := shotBadge(site.Platform, a.accountName(site.BrowserID)); got != "浏览器4" {
+		t.Fatalf("account badge = %q", got)
 	}
 }
 
@@ -398,8 +399,17 @@ func TestResultCardShowsEveryShot(t *testing.T) {
 		Results: []string{"1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png"},
 	}}}
 	more := ui.NewTester(many.view, 1280, 900)
-	if !more.HasText("+2") {
-		t.Fatalf("超过 6 张应显示 +N，文本 %v", more.Texts())
+	n = 0
+	for _, text := range more.Texts() {
+		if text == "结果图" {
+			n++
+		}
+	}
+	if n != 7 {
+		t.Fatalf("7 张结果应都出现，看到 %d 个，文本 %v", n, more.Texts())
+	}
+	if more.HasText("+2") {
+		t.Fatal("结果不再收成 +N")
 	}
 }
 
