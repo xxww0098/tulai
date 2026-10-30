@@ -118,10 +118,16 @@ func Run(ctx context.Context, req Request) (string, error) {
 		if err == nil {
 			return path, nil
 		}
+		if quota, until := TranscriptQuota(home, started, time.Now()); quota {
+			return "", &QuotaError{Until: until}
+		}
 		if state.Denied {
 			return "", errDenied
 		}
 		return "", err
+	}
+	if !state.Quota {
+		state.Quota, state.Until = TranscriptQuota(home, started, time.Now())
 	}
 	if state.Quota {
 		return "", &QuotaError{Until: state.Until}
