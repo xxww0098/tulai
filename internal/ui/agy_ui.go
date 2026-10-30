@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/agy"
@@ -12,6 +15,19 @@ import (
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
+
+// agyChooserState 是「添加账号」的两种方式。授权码和凭证内容都不进这里。
+type agyChooserState struct {
+	hint      string
+	home      string
+	email     string
+	canImport bool
+	keychain  bool
+	busy      bool
+	retry     bool
+	err       string
+	status    string
+}
 
 // agyLoginState 是添加账号时的授权面板。授权码只留在输入框，提交后清掉，不进日志。
 type agyLoginState struct {
@@ -172,6 +188,60 @@ func pausedAgy(rows []store.Browser, now time.Time, cap int) (time.Time, bool) {
 	return until, saw
 }
 
+func (a *App) agyChooserPanel(c *ui.Context) {
+	if a == nil || a.agyChooser == nil || a.agyLogin != nil || a.stagePlatform() != agy.Platform {
+		return
+	}
+	s := a.agyChooser
+	tok := a.look
+	ui.Column(c.Key("agy-add")).Label("agy-add-chooser").FillWidth().Gap(8).Padding(10, 12).Radius(tok.radiusM).
+		Background(tok.card).Border(1, tok.border).Children(func() {
+		a.agyMethodRow(c, "Google 登录（OAuth）", "在这个窗口里粘贴授权码，不会写入日志", "登录", "agy-oauth-go", s.busy, a.startAgyOAuth)
+		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, "导入本地 Antigravity CLI 账号").FontSize(tok.body).Bold().SingleLine().MinWidth(0)
+				hint := s.hint
+				if hint == "" {
+					hint = agy.MsgNotFound
+				}
+				ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(hint)
+			})
+			ui.Row(c).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Button(c, "选择文件夹…").Label("agy-pick-folder").Shrink(0).Height(36).AlignSelf(ui.Center).
+					Disabled(s.busy || a.running).OnClick(func() { a.pickAgyFolder() })
+				ui.Button(c, "导入").Label("agy-import-go").Shrink(0).Height(36).AlignSelf(ui.Center).
+					Disabled(s.busy || a.running || !s.canImport).OnClick(func() { a.startAgyImport() })
+			})
+		})
+		if s.busy {
+			ui.Text(c, agy.MsgVerifying).FontSize(tok.caption).TextColor(tok.muted)
+		}
+		if s.status != "" && !s.busy {
+			ui.Text(c, s.status).FontSize(tok.caption).TextColor(tok.success)
+		}
+		if s.err != "" {
+			ui.Text(c, s.err).FontSize(tok.caption).TextColor(tok.danger)
+		}
+		if s.retry && !s.busy {
+			ui.Row(c).Children(func() {
+				ui.Button(c, "重试").Shrink(0).Height(36).AlignSelf(ui.Center).Disabled(a.running).OnClick(func() { a.startAgyImport() })
+			})
+		}
+	})
+}
+
+func (a *App) agyMethodRow(c *ui.Context, title, hint, button, label string, busy bool, click func()) {
+	tok := a.look
+	ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, title).FontSize(tok.body).Bold().SingleLine().MinWidth(0)
+			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(hint)
+		})
+		ui.Button(c, button).Label(label).Shrink(0).Height(36).AlignSelf(ui.Center).
+			Disabled(busy || a.running).OnClick(click)
+	})
+}
+
 func (a *App) agyLoginPanel(c *ui.Context) {
 	if a == nil || a.agyLogin == nil || a.stagePlatform() != agy.Platform {
 		return
@@ -255,18 +325,39 @@ func (a *App) addAgyAccount() {
 	if a == nil || a.running {
 		return
 	}
-	if a.store == nil {
-		logging.Log.Errorf("还没有配置库，无法添加 Antigravity 账号")
-		return
-	}
 	if a.agyLogin != nil && a.agyLogin.sess != nil && !a.agyLogin.retry {
 		logging.Log.Info("Antigravity 正在登录，请先完成或点重试")
 		return
 	}
-	root := strings.TrimSpace(a.agyHomeRoot)
-	if root == "" {
-		root = agy.HomeRoot("", a.store.File())
+	if a.agyChooser != nil && a.agyChooser.busy {
+		return
 	}
+	if a.agyChooser != nil {
+		a.agyChooser = nil
+		return
+	}
+	found := agy.DetectLocal()
+	a.agyChooser = &agyChooserState{
+		hint:      found.Hint,
+		home:      found.Home,
+		email:     found.Email,
+		canImport: found.CanImport(),
+		keychain:  found.Keychain,
+	}
+}
+
+func (a *App) startAgyOAuth() {
+	if a == nil || a.running {
+		return
+	}
+	if a.agyChooser != nil && a.agyChooser.busy {
+		return
+	}
+	if a.store == nil {
+		logging.Log.Errorf("还没有配置库，无法添加 Antigravity 账号")
+		return
+	}
+	root := a.agyAccountRoot()
 	dir, name, err := agy.NextAccountDir(root)
 	if err != nil {
 		logging.Log.Errorf("创建 Antigravity 账号目录失败: %v", err)
@@ -275,10 +366,197 @@ func (a *App) addAgyAccount() {
 	row, err := a.store.AddBrowser(agy.Platform, name, dir)
 	if err != nil {
 		logging.Log.Errorf("添加 Antigravity 账号失败: %v", err)
+		_ = os.RemoveAll(dir)
 		return
 	}
+	a.agyChooser = nil
 	a.refreshBrowsers()
 	a.beginAgyLogin(row)
+}
+
+func (a *App) agyAccountRoot() string {
+	root := ""
+	if a != nil {
+		root = strings.TrimSpace(a.agyHomeRoot)
+	}
+	if root == "" && a != nil && a.store != nil {
+		root = agy.HomeRoot("", a.store.File())
+	}
+	if root == "" {
+		root = "agy-homes"
+	}
+	return root
+}
+
+func (a *App) agyEmails() []string {
+	if a == nil {
+		return nil
+	}
+	var out []string
+	for _, b := range a.configuredBrowsers() {
+		if b.Platform != agy.Platform || strings.TrimSpace(b.UserDataDir) == "" {
+			continue
+		}
+		if email := agy.Email(b.UserDataDir); email != "" {
+			out = append(out, email)
+		}
+	}
+	return out
+}
+
+func (a *App) agySourceBlocked(home string) bool {
+	if agy.WithinAccountRoot(home, a.agyAccountRoot()) {
+		return true
+	}
+	return agy.EmailUsed(agy.Email(home), a.agyEmails())
+}
+
+func (a *App) pickAgyFolder() {
+	if a == nil || a.running || a.agyChooser == nil || a.agyChooser.busy {
+		return
+	}
+	window := a.window
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent: window, Title: "选择 Antigravity 目录", Directory: true,
+		})
+		if err != nil {
+			logging.Log.Errorf("选择文件夹失败: %v", err)
+			return
+		}
+		if len(paths) == 0 {
+			return
+		}
+		home, nerr := agy.NormalizeHome(paths[0])
+		apply := func() {
+			if a.agyChooser == nil || a.agyChooser.busy {
+				return
+			}
+			if nerr != nil {
+				a.agyChooser.err = nerr.Error()
+				return
+			}
+			if a.agySourceBlocked(home) {
+				a.agyChooser.err = agy.ErrAlreadyImported.Error()
+				return
+			}
+			email := agy.Email(home)
+			a.agyChooser.home = home
+			a.agyChooser.email = email
+			a.agyChooser.canImport = true
+			a.agyChooser.keychain = false
+			a.agyChooser.err = ""
+			a.agyChooser.retry = false
+			if email != "" {
+				a.agyChooser.hint = "已检测到 " + email
+			} else {
+				a.agyChooser.hint = "已检测到本机登录"
+			}
+		}
+		if window != nil {
+			window.Update(apply)
+			return
+		}
+		apply()
+	}()
+}
+
+func (a *App) startAgyImport() {
+	if a == nil || a.running || a.agyChooser == nil || a.agyChooser.busy {
+		return
+	}
+	s := a.agyChooser
+	if !s.canImport || strings.TrimSpace(s.home) == "" {
+		s.err = agy.MsgNotFound
+		s.status = ""
+		return
+	}
+	if a.store == nil {
+		logging.Log.Errorf("还没有配置库，无法添加 Antigravity 账号")
+		return
+	}
+	if a.agySourceBlocked(s.home) {
+		s.err = agy.ErrAlreadyImported.Error()
+		s.retry = false
+		return
+	}
+	s.busy = true
+	s.err = ""
+	s.status = ""
+	s.retry = false
+	req := agy.ImportRequest{
+		SourceHome:        s.home,
+		AccountRoot:       a.agyAccountRoot(),
+		ExistingEmails:    a.agyEmails(),
+		Bin:               strings.TrimSpace(a.agyBin),
+		Model:             strings.TrimSpace(a.agyModel),
+		Timeout:           agy.VerifyTimeout,
+		AllowMissingToken: s.keychain && !agy.LoggedIn(s.home),
+	}
+	window := a.window
+	go func() {
+		res, err := agy.Import(context.Background(), req)
+		apply := func() { a.finishAgyImport(res, err) }
+		if window != nil {
+			window.Update(apply)
+			return
+		}
+		apply()
+	}()
+}
+
+func (a *App) finishAgyImport(res agy.ImportResult, err error) {
+	if a == nil {
+		if err == nil && res.Home != "" {
+			_ = os.RemoveAll(res.Home)
+		}
+		return
+	}
+	if err != nil {
+		if a.agyChooser != nil {
+			a.agyChooser.busy = false
+			a.agyChooser.retry = true
+			a.agyChooser.status = ""
+			a.agyChooser.err = err.Error()
+		}
+		return
+	}
+	if a.store == nil {
+		_ = os.RemoveAll(res.Home)
+		if a.agyChooser != nil {
+			a.agyChooser.busy = false
+			a.agyChooser.retry = true
+			a.agyChooser.err = "还没有配置库，无法添加 Antigravity 账号"
+		}
+		return
+	}
+	row, addErr := a.store.AddBrowser(agy.Platform, res.Name, res.Home)
+	if addErr != nil {
+		_ = os.RemoveAll(res.Home)
+		logging.Log.Errorf("添加 Antigravity 账号失败: %v", addErr)
+		if a.agyChooser != nil {
+			a.agyChooser.busy = false
+			a.agyChooser.retry = true
+			a.agyChooser.err = "添加 Antigravity 账号失败"
+		}
+		return
+	}
+	a.store.UpdateBrowser(row.ID, false, true)
+	a.store.ResetBrowserHealth(row.ID)
+	a.refreshBrowsers()
+	who := strings.TrimSpace(res.Email)
+	line := agy.MsgImported
+	if who != "" {
+		line = who + " " + agy.MsgImported
+	}
+	logging.Log.Success("%s", line)
+	if a.agyChooser != nil {
+		a.agyChooser.busy = false
+		a.agyChooser.retry = false
+		a.agyChooser.err = ""
+		a.agyChooser.canImport = false
+		a.agyChooser.status = line
+	}
 }
 
 func (a *App) beginAgyLogin(row store.Browser) {

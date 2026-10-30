@@ -83,6 +83,7 @@ type App struct {
 	agyTimeoutMin   float64
 	agySaved        string
 	agyLogin        *agyLoginState
+	agyChooser      *agyChooserState
 	sendStrategy    string
 	concurrencyAuto bool
 	concurrency     float64 // 手动上限。自动时仍记住这个数，关掉自动后接着用

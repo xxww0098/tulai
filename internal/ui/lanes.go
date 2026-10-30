@@ -142,6 +142,7 @@ func (a *App) laneBrowsers() []store.Browser {
 func (a *App) accountPanel(c *ui.Context) {
 	if a.stagePlatform() == agy.Platform {
 		a.agyLoginPanel(c)
+		a.agyChooserPanel(c)
 	}
 	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 	if len(board.Lanes) == 0 {

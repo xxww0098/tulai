@@ -5,6 +5,10 @@ mode="ok"
 if [ -f "$HOME/fixture.txt" ]; then
   mode=$(tr -d '[:space:]' < "$HOME/fixture.txt")
 fi
+# 导入验证时 HOME 是新建的账号目录，模式从环境变量传入，不写进凭证。
+if [ -n "${AGY_FIXTURE:-}" ]; then
+  mode=$AGY_FIXTURE
+fi
 # 记下 cwd 和提示词，测试用来确认参考图路径落在工作目录里。
 printf '%s\n' "$PWD" > "$HOME/last-cwd.txt"
 prompt=""
@@ -76,6 +80,10 @@ case "$mode" in
     printf '%s\n' '{"event":"init","conversation_id":"conv-deny"}'
     printf '%s\n' 'user denied permission for read_file(/workspace/agy-test/poster.png)'
     printf '%s\n' '{"event":"result","result":{"status":"SUCCESS","response":""}}'
+    exit 0
+    ;;
+  fail)
+    printf '%s\n' '{"event":"result","result":{"status":"ERROR","response":""}}'
     exit 0
     ;;
   *)
