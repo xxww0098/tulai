@@ -220,7 +220,7 @@ func (a *App) fetchAgyAccount(ctx context.Context, row store.Browser, bin string
 		return
 	}
 	if errors.Is(err, agy.ErrNeedLogin) {
-		agy.ForgetToken(row.UserDataDir)
+		// 读额度失败不要删凭证：可能是网络抖动。真正出图遇到需登录时再 ForgetToken。
 		if a.store != nil {
 			a.store.UpdateBrowser(row.ID, false, false)
 			a.store.UpdateBrowserHealth(row.ID, store.HealthExhausted, 0, agy.ErrNeedLogin.Error())
