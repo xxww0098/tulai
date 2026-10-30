@@ -1149,6 +1149,14 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 		if format == "jpeg" {
 			ext = ".jpg"
 		}
+		// 洗图结果统一存 PNG，白底主体图后面还要再加工。
+		if e.opts.Wash && format != "png" {
+			png, encErr := images.EncodePNG(decoded)
+			if encErr != nil {
+				return saved, fmt.Errorf("洗图结果 #%d 转 PNG 失败: %w", i+1, encErr)
+			}
+			data, ext = png, ".png"
+		}
 		seq++
 		src := resultSource(t)
 		base := e.opts.resultBase(t.Prompt, src, seq, len(results))

@@ -1531,3 +1531,13 @@ func TestQueueViewUpdate(t *testing.T) {
 		t.Errorf("更新失败: %v", snap)
 	}
 }
+
+func TestWashNamesResultsAfterTheSourceFile(t *testing.T) {
+	o := Options{Wash: true}
+	if got := o.resultBase("提取商品主体", "/in/海报 A.jpg", 1, 3); got != "海报 A_01" {
+		t.Fatalf("first = %q", got)
+	}
+	if got := o.resultBase("提取商品主体", "/in/海报 A.jpg", 2, 3); got != "海报 A_02" {
+		t.Fatalf("second = %q", got)
+	}
+}

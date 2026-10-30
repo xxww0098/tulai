@@ -18,6 +18,10 @@ var (
 		<path d="M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2"/>
 		<circle cx="13" cy="7" r="1" fill="currentColor"/>
 		<rect x="8" y="2" width="14" height="14" rx="2"/>`)
+	iconWash = mustIcon(`
+		<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/>
+		<path d="M22 21H7"/>
+		<path d="m5 11 9 9"/>`)
 	iconGlobe = mustIcon(`
 		<circle cx="12" cy="12" r="10"/>
 		<path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/>

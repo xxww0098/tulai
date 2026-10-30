@@ -7,6 +7,9 @@ import (
 )
 
 func (a *App) taskPromptList() []string {
+	if a.washing() {
+		return []string{a.washPrompt()}
+	}
 	return prompts.TaskPrompts(a.promptPick, a.prompts)
 }
 

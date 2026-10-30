@@ -6,7 +6,6 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/images"
-	"github.com/xxww0098/tulai/internal/logging"
 )
 
 const thumbPx = 256
@@ -114,26 +113,19 @@ func (a *App) ingestSources(paths []string) {
 		return
 	}
 	if a.window == nil {
-		n := a.appendSources(loadSourceFiles(paths))
-		if n > 0 {
-			logging.Log.Info("添加 %d 张源图", n)
-		}
+		a.addLoaded(a.statePage, loadSourceFiles(paths))
 		return
 	}
+	page := a.statePage
 	go func() {
 		loaded := loadSourceFiles(paths)
-		a.window.Update(func() {
-			n := a.appendSources(loaded)
-			if n > 0 {
-				logging.Log.Info("添加 %d 张源图", n)
-			}
-		})
+		a.window.Update(func() { a.addLoaded(page, loaded) })
 	}()
 }
 
 func loadSourceFiles(paths []string) []sourceImage {
 	var loaded []sourceImage
-	for _, p := range paths {
+	for _, p := range expandImagePaths(paths) {
 		data, err := os.ReadFile(p)
 		if err != nil || !images.IsValidImageBytes(data) {
 			continue
