@@ -77,6 +77,7 @@ type Engine struct {
 	gap            func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
 	agyNoted       bool
 	noAccountNoted bool
+	onAgyDone      func(int64)
 
 	liveMu sync.Mutex
 	clock  laneClock
@@ -93,6 +94,22 @@ func NewEngine(st *store.Store, bm *browser.Manager, solver captcha.Solver, data
 		seenHash: map[string]bool{},
 		dataRoot: dataRoot,
 	}
+}
+
+// SetAgyUsageKick 在某个 Antigravity 账号的一单结束时通知界面去读额度。
+// 回调不能阻塞，也不能再进引擎锁。
+func (e *Engine) SetAgyUsageKick(fn func(int64)) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.onAgyDone = fn
+	e.mu.Unlock()
+}
+
+// AccountBusy 报告这个账号是否正在出图。读额度要避开这段时间。
+func (e *Engine) AccountBusy(id int64) bool {
+	return e.accountBusy(id)
 }
 
 // SetSolver 设置验证码求解后端（UI 启动任务前按配置注入）。
@@ -938,6 +955,18 @@ func closeFailedSession(ctx context.Context, sess failedSession, err error) erro
 		return ctxErr
 	}
 	return err
+}
+
+func (e *Engine) kickAgyUsage(id int64) {
+	if e == nil || id <= 0 {
+		return
+	}
+	e.mu.Lock()
+	fn := e.onAgyDone
+	e.mu.Unlock()
+	if fn != nil {
+		fn(id)
+	}
 }
 
 func (e *Engine) accountBusy(id int64) bool {

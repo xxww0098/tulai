@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,30 @@ func TestAgySuccessHarvest(t *testing.T) {
 	got := items[0].Results[0]
 	if !strings.Contains(got, filepath.Join("生图", time.Now().Format("2006-01-02"))) || !strings.HasSuffix(got, ".jpg") {
 		t.Fatalf("result %s", got)
+	}
+}
+
+func TestAgyTaskFinishKicksUsage(t *testing.T) {
+	eng, st, root := newAgyEngine(t)
+	home := filepath.Join(root, "acc1")
+	row := addAgyAccount(t, st, "acc1", home, "ok")
+	writeAgyJPEG(t, filepath.Join(home, "sample.jpg"))
+	var mu sync.Mutex
+	var ids []int64
+	eng.SetAgyUsageKick(func(id int64) {
+		mu.Lock()
+		ids = append(ids, id)
+		mu.Unlock()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := eng.Run(ctx, agyOpts(filepath.Join(root, "out"), "一只猫", false, nil), nil, nopProgress); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ids) != 1 || ids[0] != row.ID {
+		t.Fatalf("kicks %v want %d", ids, row.ID)
 	}
 }
 
