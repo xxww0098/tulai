@@ -391,9 +391,9 @@ func (a *App) parallelSlots() int {
 	if a != nil {
 		stage = a.stagePlatform()
 	}
-	wantDoubao := a.platformAuto || a.platDoubao
-	wantQianwen := a.platformAuto || a.platQianwen
-	wantAgy := a.platformAuto || a.platAntigravity
+	wantDoubao := a.platformAuto || a.platDoubao || stage == "豆包"
+	wantQianwen := a.platformAuto || a.platQianwen || stage == "千问"
+	wantAgy := a.platformAuto || a.platAntigravity || stage == agy.Platform
 	var rows []store.Browser
 	for _, b := range a.configuredBrowsers() {
 		if stage != "" && b.Platform != stage {

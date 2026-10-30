@@ -276,3 +276,27 @@ func pauseCount() int {
 	}
 	return n
 }
+
+func TestAgyGenPassesReferenceImage(t *testing.T) {
+	eng, st, root := newAgyEngine(t)
+	home := filepath.Join(root, "acc1")
+	addAgyAccount(t, st, "acc1", home, "ok")
+	writeAgyJPEG(t, filepath.Join(home, "sample.jpg"))
+	src := filepath.Join(root, "ref.jpg")
+	writeAgyJPEG(t, src)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := eng.Run(ctx, agyOpts(filepath.Join(root, "out"), "改成赛博朋克", false, []string{src}), nil, nopProgress); err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := os.ReadFile(filepath.Join(home, "last-prompt.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(prompt), "edit the reference image") {
+		t.Fatalf("生图带参考图时没有交给 agy: %s", prompt)
+	}
+	if _, err := os.Stat(filepath.Join(home, "staged-ref")); err != nil {
+		t.Fatal("参考图没有放进工作目录")
+	}
+}

@@ -287,7 +287,7 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if got := LaneHeader(3, done, len(running)); got != "3 个账号同时出图 · 完成 0 / 共 3" {
 		t.Fatal(got)
 	}
-	if got := FormatProgressTally(done, gen, queued, failedN, needs); got != "完成 0 · 进行中 3 · 排队 0 · 失败 0 · 3/2 并发" {
+	if got := FormatProgressTally(done, gen, queued, failedN, needs, 3); got != "完成 0 · 进行中 3 · 排队 0 · 失败 0 · 3/3 并发" {
 		t.Fatal(got)
 	}
 	finished := ProgressCards([]tasks.Task{
@@ -461,10 +461,10 @@ func TestLayoutFlow(t *testing.T) {
 	if skip.Images.Open || skip.Images.State != stepDone || !skip.Prompt.Open || skip.Prompt.State != stepCurrent {
 		t.Fatalf("skip %+v", skip)
 	}
-	if got := FormatProgressTally(1, 1, 1, 1, 0); got != "完成 1 · 进行中 1 · 排队 1 · 失败 1 · 1/2 并发" {
+	if got := FormatProgressTally(1, 1, 1, 1, 0, 1); got != "完成 1 · 进行中 1 · 排队 1 · 失败 1 · 1/1 并发" {
 		t.Fatalf("tally %q", got)
 	}
-	if got := FormatProgressTally(0, 0, 0, 0, 1); got != "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1 · 0/2 并发" {
+	if got := FormatProgressTally(0, 0, 0, 0, 1, 0); got != "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1" {
 		t.Fatalf("needs tally %q", got)
 	}
 }
@@ -526,5 +526,16 @@ func writeColorPNG(t *testing.T, path string) {
 	defer f.Close()
 	if err := png.Encode(f, img); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPlanUsesStageTabEvenWhenUnchecked(t *testing.T) {
+	plan := PlanWorkbench(WorkbenchInput{
+		HasPrompts: true, WantDoubao: true, WantQianwen: true, OnlyPlatform: "Antigravity",
+		Accounts: []AccountSnap{{Platform: "Antigravity", LoggedIn: true, Health: "ready"}},
+		Now:      time.Now(),
+	})
+	if plan.Action != StartGenerate || len(plan.Platforms) != 1 || plan.Platforms[0] != "Antigravity" {
+		t.Fatalf("plan %+v", plan)
 	}
 }
