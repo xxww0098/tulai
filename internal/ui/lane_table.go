@@ -2,21 +2,22 @@ package ui
 
 import (
 	"fmt"
-	"github.com/xxww0098/tulai/internal/agy"
 	"math"
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 // 账号表每列的宽度。账号和当前任务分剩下的宽度。
 const (
-	laneColState = 96
-	laneColQuota = 92
-	laneColOps   = 104
-	laneRowH     = 30
+	laneColState    = 96
+	laneColQuota    = 92
+	laneColAgyQuota = 96
+	laneColOps      = 104
+	laneRowH        = 30
 	// laneTableMaxH 是高窗口大约 8 行的上限。矮窗口用 laneRowCap，给结果区留高度。
 	laneTableMaxH = laneRowH*8 + 8
 )
@@ -29,7 +30,7 @@ func laneRowCap(winH float32) int {
 	return 8
 }
 
-// laneTable 一个账号一行：账号、状态、今日、当前任务、操作。
+// laneTable 一个账号一行：账号、状态、今日或额度、当前任务、操作。
 func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	tok := a.look
 	ui.Column(c.Key("lane-table")).FillWidth().Gap(4).Padding(6, 8).Radius(tok.radiusM).
@@ -45,7 +46,7 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 				head("账号").Grow(1).Basis(0).MinWidth(0)
 				head("邮箱").Width(128).Shrink(0)
 				head("状态").Width(88).Shrink(0)
-				head("今日").Width(64).Shrink(0)
+				head("额度").Width(laneColAgyQuota).Shrink(0)
 				head("当前任务").Grow(1).Basis(0).MinWidth(0)
 				ui.Row(c).Width(88).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
 				return
@@ -95,7 +96,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 	accountGrow := float32(2)
 	taskGrow := float32(3)
 	if mail {
-		stateW, quotaW, opsW = 88, 64, 88
+		stateW, quotaW, opsW = 88, laneColAgyQuota, 88
 		accountGrow, taskGrow = 1, 1
 	}
 	row.Children(func() {
@@ -117,19 +118,20 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 		ui.Row(c).Width(stateW).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
 			a.laneChip(c, ln)
 		})
-		ui.Column(c).Width(quotaW).Shrink(0).Gap(2).Justify(ui.Center).Children(func() {
-			used, capN, frac, fill := laneQuotaFill(tok, ln)
-			usedText := fmt.Sprintf("%d/%d", used, capN)
+		gap := float32(2)
+		if ln.Platform == agy.Platform {
+			gap = 4
+		}
+		ui.Column(c).Width(quotaW).Shrink(0).Gap(gap).Justify(ui.Center).Children(func() {
 			if ln.Platform == agy.Platform {
-				usedText = fmt.Sprintf("%d", used)
+				a.agyQuotaCell(c, ln.ID)
+				return
 			}
-			ui.Text(c.Key("used"), usedText).FontSize(tok.caption).
+			used, capN, frac, fill := laneQuotaFill(tok, ln)
+			ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).
 				FontFeatures("tnum").SingleLine().
 				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
-			// Antigravity 的今日只显示次数。豆包和千问仍用进度条。
-			if ln.Platform != agy.Platform {
-				quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
-			}
+			quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
 		})
 		ui.Row(c).Grow(taskGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
 			switch {
@@ -181,6 +183,31 @@ func (a *App) laneRenameButton(c *ui.Context, ln tasks.AccountLane) {
 	pen.Children(func() {
 		ui.Icon(c, iconPen).FontSize(12).TextColor(ink)
 	})
+}
+
+// agyMeterLevels 把已用比例画成绿、橙、红。80% 起变橙，用尽变红。
+// 颜色只是辅助：读屏读不到悬停，进度条的名字就是同一句用量。
+var agyMeterLevels = &ui.MeterLevels{Warning: 0.8, Critical: 1}
+
+// agyQuotaCell 只放两根额度条，或一条说明原因的破折号。不放今日次数。
+func (a *App) agyQuotaCell(c *ui.Context, id int64) {
+	tok := a.look
+	view := a.agyUsageView(id)
+	if view.State != agy.UsageOK {
+		reason := view.Reason
+		ui.Text(c.Key("dash"), "—").Role(ui.RoleStatus).FontSize(tok.caption).TextColor(tok.muted).
+			SingleLine().Label(reason).Tooltip(reason)
+		return
+	}
+	now := c.Now()
+	five := view.Usage.FiveHour
+	week := view.Usage.Weekly
+	fiveTip := agy.WindowTip(agy.Window5h, five.Remaining, five.Reset, now)
+	weekTip := agy.WindowTip(agy.WindowWeek, week.Remaining, week.Reset, now)
+	ui.Meter(c.Key("h5"), agy.UsedFraction(five.Remaining), 0, 1, agyMeterLevels).
+		FillWidth().MinWidth(0).Height(4).Label(fiveTip).Tooltip(fiveTip)
+	ui.Meter(c.Key("week"), agy.UsedFraction(week.Remaining), 0, 1, agyMeterLevels).
+		FillWidth().MinWidth(0).Height(4).Label(weekTip).Tooltip(weekTip)
 }
 
 // laneQuotaFill 是今日用量和进度条颜色：快满变橙，满了变灰。

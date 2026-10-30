@@ -230,6 +230,13 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				if t.slot > 0 {
 					e.setActive(t.slot, false)
 				}
+				if platform == agy.Platform {
+					id := t.ranOn
+					if id <= 0 {
+						id = t.slot
+					}
+					e.kickAgyUsage(id)
+				}
 				completed <- t
 			}
 		}()

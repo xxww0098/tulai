@@ -84,6 +84,14 @@ type App struct {
 	agySaved        string
 	agyLogin        *agyLoginState
 	agyChooser      *agyChooserState
+	agyUsageMu      sync.Mutex
+	agyUsage        map[int64]agyUsageSlot
+	agyUsageForce   map[int64]bool
+	agyUsageStop    context.CancelFunc
+	agyUsageWake    chan struct{}
+	agyUsageSync    bool
+	agyUsageFetch   func(context.Context, string, string) (agy.GeminiUsage, error)
+	agyUsageBusy    func(int64) bool
 	sendStrategy    string
 	concurrencyAuto bool
 	concurrency     float64 // 手动上限。自动时仍记住这个数，关掉自动后接着用
@@ -275,6 +283,8 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		}
 	}
 	a.wireHealing()
+	a.startAgyUsage()
+	defer a.stopAgyUsage()
 	loginCtx, loginStop := context.WithCancel(context.Background())
 	defer loginStop()
 	if a.engine != nil {
