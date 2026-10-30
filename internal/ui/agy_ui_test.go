@@ -95,9 +95,7 @@ func TestAgyImportSuccessClosesChooser(t *testing.T) {
 	}
 	defer st.Close()
 	home := filepath.Join(dir, "acc1")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeAgyHome(t, home, "a@b.c")
 	a := &App{
 		store: st, platformAuto: true, stageTab: 2, stagePicked: true,
 		agyChooser: &agyChooserState{busy: true, canImport: true, home: home, email: "a@b.c"},
@@ -120,8 +118,11 @@ func TestAgyImportSuccessClosesChooser(t *testing.T) {
 	if tt.HasText("导入本地 Antigravity CLI 账号") {
 		t.Fatal("选择器还在界面上")
 	}
-	if !tt.HasText("acc1") {
-		t.Fatalf("新账号没出现: %v", tt.Texts())
+	if !tt.HasText("a@b.c") {
+		t.Fatalf("新账号应以邮箱显示: %v", tt.Texts())
+	}
+	if tt.HasText("邮箱") {
+		t.Fatal("Antigravity 不应再单独显示邮箱列")
 	}
 }
 

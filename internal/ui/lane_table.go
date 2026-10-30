@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 
@@ -43,8 +44,8 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 				return ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).SingleLine()
 			}
 			if mail {
-				head("账号").Grow(1).Basis(0).MinWidth(0)
-				head("邮箱").Width(128).Shrink(0)
+				// Antigravity 账号列直接显示邮箱，不再单独开邮箱列。
+				head("账号").Grow(2).Basis(0).MinWidth(0)
 				head("状态").Width(88).Shrink(0)
 				head("额度").Width(laneColAgyQuota).Shrink(0)
 				head("当前任务").Grow(1).Basis(0).MinWidth(0)
@@ -97,7 +98,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 	taskGrow := float32(3)
 	if mail {
 		stateW, quotaW, opsW = 88, laneColAgyQuota, 88
-		accountGrow, taskGrow = 1, 1
+		taskGrow = 1
 	}
 	row.Children(func() {
 		ui.Row(c).Grow(accountGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -106,15 +107,9 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 				a.accountNameField(c, store.Browser{ID: ln.ID, Name: ln.Name})
 				return
 			}
-			ui.Text(c, ln.Name).FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(ln.Name)
+			title := laneAccountTitle(ln)
+			ui.Text(c, title).FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(title)
 		})
-		if mail {
-			email := ln.Email
-			if email == "" {
-				email = "—"
-			}
-			ui.Text(c.Key("mail"), email).Width(128).Shrink(0).FontSize(tok.caption).SingleLine().MinWidth(0).Tooltip(email)
-		}
 		ui.Row(c).Width(stateW).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
 			a.laneChip(c, ln)
 		})
@@ -210,6 +205,16 @@ func (a *App) agyQuotaCell(c *ui.Context, id int64) {
 		ui.Meter(c.Key("week"), agy.UsedFraction(week.Remaining), 0, 1, agyMeterLevels).
 			FillWidth().MinWidth(0).Height(7).Label(weekTip).Tooltip(weekTip)
 	})
+}
+
+// laneAccountTitle Antigravity 优先显示 Google 邮箱；没有邮箱才用文件夹名。
+func laneAccountTitle(ln tasks.AccountLane) string {
+	if ln.Platform == agy.Platform {
+		if email := strings.TrimSpace(ln.Email); email != "" {
+			return email
+		}
+	}
+	return ln.Name
 }
 
 // laneQuotaFill 是今日用量和进度条颜色：快满变橙，满了变灰。
