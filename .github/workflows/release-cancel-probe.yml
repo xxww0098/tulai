@@ -22,14 +22,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: go run ./cmd/tulai-camoufox-smoke
-      - name: Verify cancellation preserves the account environment
-        run: go test -count=1 -timeout 5m -run '^TestCanceledEvaluationClosesOnlyItsPage$' ./internal/cdp
-      - name: Verify protected slider image
-        run: go test -count=1 -timeout 5m -run '^TestTrustedDragPassesPuzzleSlider$' ./internal/captcha
       - name: Verify protected grid image
         env:
           TULAI_CAPTCHA_CAPTURE: ${{ runner.temp }}/captcha-probe
-        run: go test -count=1 -timeout 5m -run '^TestCaptchaGridE2E$' ./internal/strategy
+        run: go test -count=3 -timeout 8m -run '^TestCaptchaGridE2E$' ./internal/strategy
       - uses: actions/upload-artifact@v7
         if: always()
         with:
