@@ -8,6 +8,7 @@ package strategy
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -1178,6 +1179,28 @@ body{font-family:sans-serif;margin:30px}
 })();
 </script></body></html>`
 
+type releaseProbeSolver struct{ inner captcha.Solver }
+
+func (s releaseProbeSolver) Name() string { return s.inner.Name() }
+func (s releaseProbeSolver) Solve(ctx context.Context, req captcha.Request) captcha.Answer {
+	if dir := os.Getenv("TULAI_CAPTCHA_CAPTURE"); dir != "" {
+		_ = os.MkdirAll(dir, 0700)
+		for name, text := range map[string]string{"grid": req.GridBase64, "target": req.TargetBase6} {
+			file := filepath.Join(dir, name+".png")
+			if _, err := os.Stat(file); err == nil {
+				continue
+			}
+			if comma := strings.Index(text, ","); comma >= 0 && strings.HasPrefix(text, "data:") {
+				text = text[comma+1:]
+			}
+			if data, err := base64.StdEncoding.DecodeString(text); err == nil {
+				_ = os.WriteFile(file, data, 0600)
+			}
+		}
+	}
+	return s.inner.Solve(ctx, req)
+}
+
 func TestCaptchaGridE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
@@ -1202,7 +1225,7 @@ func TestCaptchaGridE2E(t *testing.T) {
 	defer sess.Close()
 
 	// 挂真实求解链：free 后端 + 注入脚本
-	captcha.Attach(sess, captcha.NewFreeSolver(captcha.Config{Backend: "free"}), true, nil)
+	captcha.Attach(sess, releaseProbeSolver{captcha.NewFreeSolver(captcha.Config{Backend: "free"})}, true, nil)
 	if visible, err := sess.Evaluate(`Object.getOwnPropertyNames(document.defaultView).some(k=>/^(?:__tulai|tulai)/i.test(k))`); err != nil || visible != "false" {
 		t.Fatalf("验证码脚本暴露在网页全局对象: %s, %v", visible, err)
 	}
