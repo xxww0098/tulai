@@ -1,13 +1,17 @@
-name: Release cancellation probe
+name: Release browser probe
 on:
   push:
     branches: [codex/release-cancel-probe]
 permissions:
   contents: read
 jobs:
-  windows-cancellation:
-    runs-on: windows-latest
-    timeout-minutes: 20
+  browser-probe:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -17,4 +21,8 @@ jobs:
       - name: Install and smoke-test Camoufox
         run: go run ./cmd/tulai-camoufox-smoke
       - name: Verify cancellation preserves the account environment
-        run: go test -count=1 -timeout 5m -v -run '^TestCanceledEvaluationClosesOnlyItsPage$' ./internal/cdp
+        run: go test -count=1 -timeout 5m -run '^TestCanceledEvaluationClosesOnlyItsPage$' ./internal/cdp
+      - name: Verify protected slider image
+        run: go test -count=1 -timeout 5m -run '^TestTrustedDragPassesPuzzleSlider$' ./internal/captcha
+      - name: Verify protected grid image
+        run: go test -count=1 -timeout 5m -run '^TestCaptchaGridE2E$' ./internal/strategy
