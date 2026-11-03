@@ -19,6 +19,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install and smoke-test Camoufox
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: go run ./cmd/tulai-camoufox-smoke
       - name: Verify cancellation preserves the account environment
         run: go test -count=1 -timeout 5m -run '^TestCanceledEvaluationClosesOnlyItsPage$' ./internal/cdp
