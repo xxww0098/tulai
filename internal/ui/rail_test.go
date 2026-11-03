@@ -84,6 +84,9 @@ func TestRailIconsHaveTooltipsAndActions(t *testing.T) {
 				if a.updateChecks != 1 {
 					t.Fatalf("检查更新没有执行: %d", a.updateChecks)
 				}
+				if a.updateBusy {
+					t.Fatal("没有窗口时不应启动后台更新检查")
+				}
 			},
 		},
 	}

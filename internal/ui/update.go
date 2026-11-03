@@ -98,8 +98,11 @@ func (a *App) checkForUpdates() {
 	if a.updateBusy {
 		return
 	}
-	a.updateBusy = true
 	a.updateChecks++
+	if a.window == nil {
+		return
+	}
+	a.updateBusy = true
 	go func() {
 		defer a.onUI(func() { a.updateBusy = false })
 		a.runUpdateCheck(true)
