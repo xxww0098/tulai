@@ -73,7 +73,6 @@ func PreparePage(s egoPagePreparer) error {
 //   - 桥命令：captchaSolve（求解）、captchaShot（区域截图）、
 //     captchaBlocking（阻塞上报）、captchaLog（日志）、loginDetected（登录掉线）
 func Attach(s *cdp.Session, solver Solver, enabled bool, onLoginLost func()) {
-	s.AppendNavigateScript(configuredInjectJS(enabled))
 	s.Handle("captchaSolve", func(data string) string {
 		if !enabled {
 			return mustJSON(Answer{Success: false, Error: "验证码自动求解未开启"})
@@ -115,6 +114,7 @@ func Attach(s *cdp.Session, solver Solver, enabled bool, onLoginLost func()) {
 		}
 		return "ok"
 	})
+	s.AppendNavigateScript(configuredInjectJS(enabled))
 }
 
 func blockingHandler() func(string) string {

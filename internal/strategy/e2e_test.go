@@ -1211,6 +1211,9 @@ func TestCaptchaGridE2E(t *testing.T) {
 	var lastDiag string
 	for time.Now().Before(deadline) {
 		if sess.EvaluateBool("window.__mockPassed === true") {
+			if got, err := sess.Evaluate(`window.__mockEvents.find(e => e.t === 'down')?.from`); err != nil || got != "4" {
+				t.Fatalf("首次求解没有选中目标图: %s, %v", got, err)
+			}
 			t.Log("E2E 验证码链路通过：检测→截图→CV 求解→拟人拖拽→验证放行")
 			return
 		}
