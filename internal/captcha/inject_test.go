@@ -120,7 +120,7 @@ async function check(kind,enabled,disableAt){
  window.__tulaiCaptcha.stop();
  assert.ok(calls.includes('captchaBlocking'),kind+' must report blocking');
  if(enabled===true){
-  assert.ok(calls.includes(kind==='slider'?'captchaShot':'captchaSolve'),kind+' enabled enters solver');
+  assert.ok(calls.includes(kind==='slider'||disableAt==='captchaShot'?'captchaShot':'captchaSolve'),kind+' enabled enters solver');
   if(disableAt)assert.equal(actions.length,actionsAtDisable,kind+' disabling during bridge call stops subsequent actions');
   const listener=window.__tulaiCaptcha,revision=window.__tulaiCaptchaRevision;
   vm.runInNewContext(disabledSource,context);
@@ -143,6 +143,7 @@ async function check(kind,enabled,disableAt){
  for(const kind of ['slider','grid']){
   for(const enabled of [undefined,false,true])await check(kind,enabled);
   await check(kind,true,kind==='slider'?'captchaShot':'captchaSolve');
+  if(kind==='grid')await check(kind,true,'captchaShot');
  }
 })().catch(err=>{console.error(err);process.exitCode=1});
 `

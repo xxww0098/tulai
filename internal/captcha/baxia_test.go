@@ -33,6 +33,14 @@ func TestTrustedDragPassesPuzzleSlider(t *testing.T) {
 	if testing.Short() {
 		t.Skip("需要本机 Chrome")
 	}
+	for _, protected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("protected=%t", protected), func(t *testing.T) {
+			testTrustedDragPassesPuzzleSlider(t, protected)
+		})
+	}
+}
+
+func testTrustedDragPassesPuzzleSlider(t *testing.T, protected bool) {
 	bg, piece := puzzleFixtures()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bg.png", func(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +53,16 @@ func TestTrustedDragPassesPuzzleSlider(t *testing.T) {
 	})
 	mux.HandleFunc("/frame.html", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(puzzleFrameHTML(160)))
+		frame := puzzleFrameHTML(160)
+		if protected {
+			frame += `<script>
+const readPixels = CanvasRenderingContext2D.prototype.getImageData;
+CanvasRenderingContext2D.prototype.getImageData = function(...args) {
+  const result = readPixels.apply(this, args); result.data[0] = 0; return result;
+};
+</script>`
+		}
+		_, _ = w.Write([]byte(frame))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

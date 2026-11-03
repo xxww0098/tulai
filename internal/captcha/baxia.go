@@ -94,6 +94,11 @@ func SolveQianwenSliderAt(ctx context.Context, endpoint string) error {
 			return err
 		}
 	}
+	for _, img := range []*cdp.SliderImage{hit.Bg, hit.Piece} {
+		if err := conn.CaptureImage(ctx, hit.TargetID, img); err != nil {
+			return fmt.Errorf("读取验证码图片: %w", err)
+		}
+	}
 	events, kind, dx, err := planSliderDrag(ctx, hit, time.Now().UnixNano())
 	if err != nil {
 		return err
