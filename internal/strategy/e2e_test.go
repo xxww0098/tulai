@@ -1139,14 +1139,18 @@ body{font-family:sans-serif;margin:30px}
       container.appendChild(cv);
     }
     // 目标图 = 答案格样式（同渐变 + 同条纹）
-    var tcv = document.createElement('canvas'); tcv.width = 40; tcv.height = 40;
-    var tctx = tcv.getContext('2d');
-    cellFill(tctx, answer, 40, 40);
-    tctx.fillStyle = 'rgba(255,255,255,0.5)';
-    for (var y2 = 0; y2 < 40; y2 += 8) tctx.fillRect(0, y2, 40, 2);
-    document.getElementById('target').src = tcv.toDataURL('image/png');
+    var start = 'rgb(' + (20 + answer * 22) + ',' + (40 + answer * 17) + ',' + (60 + answer * 13) + ')';
+    var end = 'rgb(' + (230 - answer * 15) + ',' + (200 - answer * 20) + ',' + (180 - answer * 12) + ')';
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><defs><linearGradient id="g"><stop stop-color="' + start + '"/><stop offset="1" stop-color="' + end + '"/></linearGradient></defs><rect width="40" height="40" fill="url(#g)"/>';
+    for (var y2 = 0; y2 < 40; y2 += 8) svg += '<rect y="' + y2 + '" width="40" height="2" fill="white" fill-opacity="0.5"/>';
+    document.getElementById('target').src = 'data:image/svg+xml,' + encodeURIComponent(svg + '</svg>');
   }
   draw();
+  // Simulate canvas readback protection while leaving rendered pixels intact.
+  var protectedCanvas = document.createElement('canvas');
+  protectedCanvas.width = protectedCanvas.height = 2;
+  var protectedData = protectedCanvas.toDataURL('image/png');
+  HTMLCanvasElement.prototype.toDataURL = function () { return protectedData; };
   window.__mockPassed = false;
   window.__mockEvents = [];
   var dragFrom = -1;

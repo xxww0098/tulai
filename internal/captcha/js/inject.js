@@ -322,6 +322,24 @@
     return '';
   }
 
+  async function captureRendered(el, contentOnly) {
+    try {
+      var r = el.getBoundingClientRect();
+      var x = r.left, y = r.top, w = r.width, h = r.height;
+      if (contentOnly) {
+        var style = getComputedStyle(el);
+        var left = (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0);
+        var top = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.paddingTop) || 0);
+        x += left; y += top;
+        w -= left + (parseFloat(style.borderRightWidth) || 0) + (parseFloat(style.paddingRight) || 0);
+        h -= top + (parseFloat(style.borderBottomWidth) || 0) + (parseFloat(style.paddingBottom) || 0);
+      }
+      if (w <= 0 || h <= 0) return '';
+      var shot = await window.tulaiCall('captchaShot', JSON.stringify({x: x, y: y, w: w, h: h}));
+      return shot && shot.success ? shot.base64 || '' : '';
+    } catch (e) { return ''; }
+  }
+
   function findSubmitBtn() {
     var btns = document.querySelectorAll('button,[role=button],[class*="submit"],[class*="confirm"]');
     for (var i = 0; i < btns.length; i++) {
@@ -343,11 +361,18 @@
 
     var targetB64 = '';
     var tImg = container.querySelector('img');
-    if (tImg) targetB64 = captureEl(tImg);
+    if (tImg) {
+      targetB64 = await captureRendered(tImg, true);
+      if (!autoSolveEnabled()) return false;
+      if (!targetB64) targetB64 = captureEl(tImg);
+    }
+    var gridB64 = await captureRendered(grid.box);
+    if (!autoSolveEnabled()) return false;
+    if (!gridB64) gridB64 = compositeGrid(grid.box);
 
     var answer = await window.tulaiCall('captchaSolve', JSON.stringify({
       type: 'grid',
-      gridBase64: compositeGrid(grid.box),
+      gridBase64: gridB64,
       targetBase64: targetB64,
       promptText: promptText,
     }));

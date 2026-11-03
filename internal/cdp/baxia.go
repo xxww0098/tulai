@@ -1,16 +1,20 @@
 package cdp
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"image/png"
+	"math"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xxww0098/tulai/internal/camoufox"
 )
 
 //go:embed slider_probe.js
@@ -24,7 +28,7 @@ type SliderRect struct {
 	H float64 `json:"h"`
 }
 
-// SliderImage 是拼图背景或拼图块。PNG 来自页面 canvas，跨域画布失败时只留 Src。
+// SliderImage 是拼图背景或拼图块。画布受保护时使用屏幕截图。
 type SliderImage struct {
 	X        float64 `json:"x"`
 	Y        float64 `json:"y"`
@@ -34,6 +38,7 @@ type SliderImage struct {
 	NaturalH int     `json:"naturalH"`
 	PNG      []byte  `json:"-"`
 	Src      string  `json:"src"`
+	Blocked  bool    `json:"-"`
 }
 
 // SliderHit 是当前页面上的一块阿里云滑块。TargetID 只用于在同一次连接里发鼠标事件。
@@ -101,6 +106,7 @@ type sliderImage struct {
 	NaturalH int     `json:"naturalH"`
 	B64      string  `json:"b64"`
 	Src      string  `json:"src"`
+	Blocked  bool    `json:"blocked"`
 }
 
 type sliderFrame struct {
@@ -141,6 +147,40 @@ func (c *SliderConn) Close() {
 	default:
 		close(c.closed)
 	}
+}
+
+// CaptureImage reads the rendered pixels when canvas extraction is protected.
+func (c *SliderConn) CaptureImage(ctx context.Context, targetID string, img *SliderImage) error {
+	if img == nil || !img.Blocked {
+		return nil
+	}
+	if values := img.X + img.Y + img.W + img.H; math.IsNaN(values) || math.IsInf(values, 0) || img.X < 0 || img.Y < 0 || img.W < 1 || img.H < 1 || img.W > 4096 || img.H > 4096 {
+		return fmt.Errorf("验证码图片位置无效")
+	}
+	session, err := c.session(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Data string `json:"data"`
+	}
+	params := map[string]any{"format": "png", "clip": map[string]float64{"x": img.X, "y": img.Y, "width": img.W, "height": img.H, "scale": 1}}
+	if err := c.call(ctx, session, "Page.captureScreenshot", params, &result); err != nil {
+		return err
+	}
+	if len(result.Data) > 16<<20 {
+		return fmt.Errorf("验证码图片过大")
+	}
+	data, err := base64.StdEncoding.DecodeString(result.Data)
+	if err != nil {
+		return err
+	}
+	config, err := png.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	img.PNG, img.NaturalW, img.NaturalH = data, config.Width, config.Height
+	return nil
 }
 
 // Look 在已打开的页面和子 frame 里找滑块。坐标换算到接收事件的目标视口。
@@ -345,7 +385,7 @@ func imageFromProbe(in *sliderImage) *SliderImage {
 	}
 	out := &SliderImage{
 		X: in.X, Y: in.Y, W: in.W, H: in.H,
-		NaturalW: in.NaturalW, NaturalH: in.NaturalH, Src: in.Src,
+		NaturalW: in.NaturalW, NaturalH: in.NaturalH, Src: in.Src, Blocked: in.Blocked,
 	}
 	if in.B64 != "" {
 		if raw, err := base64.StdEncoding.DecodeString(in.B64); err == nil {

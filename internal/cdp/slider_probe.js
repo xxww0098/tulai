@@ -45,19 +45,33 @@ function tulaiProbeSlider() {
     return !!(el.complete && el.naturalWidth > 1 && el.naturalHeight > 1)
   }
 
+  function canvasProtected(doc) {
+    try {
+      const c = doc.createElement('canvas')
+      c.width = c.height = 1
+      const ctx = c.getContext('2d')
+      ctx.fillStyle = '#ff0000'
+      ctx.fillRect(0, 0, 1, 1)
+      const p = ctx.getImageData(0, 0, 1, 1).data
+      return p[0] !== 255 || p[1] !== 0 || p[2] !== 0 || p[3] !== 255
+    } catch (e) { return true }
+  }
+
   function grab(el) {
     if (!el) return null
     const r = el.getBoundingClientRect()
     const naturalW = el.naturalWidth || el.width || r.width
     const naturalH = el.naturalHeight || el.height || r.height
     let b64 = ''
+    const protectedCanvas = canvasProtected(el.ownerDocument)
     // 没解码完的 img 画到 canvas 上是空白，会把缺口置信度打成 0。等加载完再截，否则只留 src。
     try {
-      if (String(el.tagName).toUpperCase() === 'CANVAS' && el.toDataURL) {
+      // A protected canvas returns random pixels; capture the rendered element instead.
+      if (!protectedCanvas && String(el.tagName).toUpperCase() === 'CANVAS' && el.toDataURL) {
         const url = el.toDataURL('image/png')
         const cut = url.indexOf(',')
         if (cut > 0 && url.length < 1500000) b64 = url.slice(cut + 1)
-      } else if (loaded(el) && naturalW > 1 && naturalH > 1) {
+      } else if (!protectedCanvas && loaded(el) && naturalW > 1 && naturalH > 1) {
         const c = el.ownerDocument.createElement('canvas')
         c.width = naturalW
         c.height = naturalH
@@ -72,7 +86,7 @@ function tulaiProbeSlider() {
     if (src.length > 500) src = src.slice(0, 500)
     return {
       x: r.left, y: r.top, w: r.width, h: r.height,
-      naturalW: naturalW, naturalH: naturalH, b64: b64, src: src,
+      naturalW: naturalW, naturalH: naturalH, b64: b64, src: src, blocked: protectedCanvas,
     }
   }
 
@@ -157,6 +171,7 @@ function tulaiProbeSlider() {
       '.scratch-captcha-question-img',
       'img.scratch-captcha-question-img',
     ], 0, 0)
+    if (bg && piece && (!loaded(bg) || !loaded(piece))) return null
     const hb = box(handle)
     const tb = box(track)
     const bgGrab = grab(bg)
