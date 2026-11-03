@@ -100,34 +100,7 @@ func TestCamoufoxPreflightAllowsReadyAndOtherBackends(t *testing.T) {
 	}
 
 	t.Run("installed", func(t *testing.T) {
-		dir := filepath.Join(browser.ConfigDir(), "runtime", "camoufox", camoufox.Version)
-		node := filepath.Join(dir, "node", "bin", "node")
-		if runtime.GOOS == "windows" {
-			node = filepath.Join(dir, "node", "node.exe")
-		}
-		exe := filepath.Join(dir, "browser")
-		for _, path := range []string{node, exe, filepath.Join(dir, "node_modules", "camoufox", "package.json")} {
-			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		lock, err := os.ReadFile("../camoufox/driver/package-lock.json")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), lock, 0600); err != nil {
-			t.Fatal(err)
-		}
-		marker, err := json.Marshal(map[string]string{"executable": exe, "version": camoufox.Version, "platform": runtime.GOOS + "/" + runtime.GOARCH})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "ready.json"), marker, 0600); err != nil {
-			t.Fatal(err)
-		}
+		fakeInstalledCamoufox(t)
 		st.Set(extbridge.SettingBrowserBackend, "")
 		a := &App{store: st, engine: tasks.NewEngine(st, nil, nil, ""), outputPath: badOutput}
 		a.runQueue([]string{"千问"}, []string{"画一只猫"}, nil, nil)
@@ -135,4 +108,40 @@ func TestCamoufoxPreflightAllowsReadyAndOtherBackends(t *testing.T) {
 			t.Fatalf("installed runtime was blocked: tab=%d note=%q", a.tab, a.progText)
 		}
 	})
+}
+
+func fakeInstalledCamoufox(t *testing.T) {
+	t.Helper()
+	config := t.TempDir()
+	t.Setenv("HOME", config)
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("APPDATA", config)
+	dir := filepath.Join(browser.ConfigDir(), "runtime", "camoufox", camoufox.Version)
+	node := filepath.Join(dir, "node", "bin", "node")
+	if runtime.GOOS == "windows" {
+		node = filepath.Join(dir, "node", "node.exe")
+	}
+	exe := filepath.Join(dir, "browser")
+	for _, path := range []string{node, exe, filepath.Join(dir, "node_modules", "camoufox", "package.json")} {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock, err := os.ReadFile("../camoufox/driver/package-lock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), lock, 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := json.Marshal(map[string]string{"executable": exe, "version": camoufox.Version, "platform": runtime.GOOS + "/" + runtime.GOARCH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ready.json"), marker, 0600); err != nil {
+		t.Fatal(err)
+	}
 }

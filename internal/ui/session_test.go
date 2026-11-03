@@ -488,6 +488,7 @@ func TestMissingResultFilePlaceholder(t *testing.T) {
 }
 
 func TestFailedRetryRequeues(t *testing.T) {
+	fakeInstalledCamoufox(t)
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)

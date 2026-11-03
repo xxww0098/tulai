@@ -140,7 +140,7 @@ func TestDownloadGuideSearchAndReturn(t *testing.T) {
 }
 
 func TestDownloadGuideEntryFitsComposer(t *testing.T) {
-	for _, size := range [][2]int{{1280, 800}, {1024, 700}, {760, 600}} {
+	for _, size := range [][2]int{{1280, 800}, {1024, 700}, {760, 600}, {480, 500}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			a, _ := newDownloadApp(t)
 			a.dlComposerOn = true
@@ -148,8 +148,25 @@ func TestDownloadGuideEntryFitsComposer(t *testing.T) {
 			for _, label := range []string{"支持哪些页面？", "链接", "取消", "立即下载"} {
 				assertVisible(t, tt, label, float32(size[0]), float32(size[1]))
 			}
+			scroll := assertVisible(t, tt, "下载任务选项", float32(size[0]), float32(size[1]))
+			tt.Scroll(scroll.X+scroll.W/2, scroll.Y+scroll.H/2, 0, 1000)
+			assertVisible(t, tt, "下载设置", float32(size[0]), float32(size[1]))
+			assertVisible(t, tt, "立即下载", float32(size[0]), float32(size[1]))
 		})
 	}
+}
+
+func TestDownloadComposerBrowserModeFitsSmallWindow(t *testing.T) {
+	a, _ := newDownloadApp(t)
+	a.dlComposerOn, a.dlBrowserMode = true, true
+	tt := ui.NewTester(a.view, 480, 500)
+	for _, label := range []string{"支持哪些页面？", "链接", "取消", "立即下载"} {
+		assertVisible(t, tt, label, 480, 500)
+	}
+	scroll := assertVisible(t, tt, "下载任务选项", 480, 500)
+	tt.Scroll(scroll.X+scroll.W/2, scroll.Y+scroll.H/2, 0, 1500)
+	assertVisible(t, tt, "下载设置", 480, 500)
+	assertVisible(t, tt, "立即下载", 480, 500)
 }
 
 func TestDownloadGuideLayout(t *testing.T) {

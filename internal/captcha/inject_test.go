@@ -75,7 +75,9 @@ check(editor(),false,'normal editor clears prior captcha blocking');
 window.__tulaiCaptcha.stop();
 assert.equal(events.some(([name])=>name==='captchaSolve'),false,'classification fixture must never solve a challenge');
 `
-	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+	cmd := exec.Command(node)
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("隔离验证码分类 fixture: %v\n%s", err, out)
 	}
 }
@@ -144,7 +146,9 @@ async function check(kind,enabled,disableAt){
  }
 })().catch(err=>{console.error(err);process.exitCode=1});
 `
-	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+	cmd := exec.Command(node)
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("隔离验证码开关 fixture: %v\n%s", err, out)
 	}
 }

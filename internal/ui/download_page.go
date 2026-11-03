@@ -648,12 +648,15 @@ func (a *App) downloadComposer(c *ui.Context) {
 	tok := a.look
 	valid, invalid := parseDownloadURLsSplit(a.dlURLs)
 	sites := dlComposerSites(valid)
+	w, h := c.Size()
+	width := min(float32(560), max(float32(240), w-80))
+	bodyHeight := max(float32(120), h-195)
 	ui.Modal(c, &a.dlComposerOn, func() {
 		if a.dlGuideOn {
 			a.downloadGuide(c, tok)
 			return
 		}
-		ui.Column(c.Key("dl-composer")).Width(560).Gap(14).Padding(4, 4, 4, 4).Children(func() {
+		ui.Column(c.Key("dl-composer")).Width(width).Gap(14).Padding(4, 4, 4, 4).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "新建任务").FontSize(18).FontWeight(500).TextColor(tok.text)
@@ -666,31 +669,35 @@ func (a *App) downloadComposer(c *ui.Context) {
 				})
 				ui.Text(c, "粘贴网页或图片链接，每行一个。").FontSize(13).TextColor(tok.muted)
 			})
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "链接").FontSize(13).FontWeight(500).TextColor(tok.text)
-				ui.Spacer(c)
-				ui.Button(c, "导入 CSV / XLSX").FontSize(12).OnClick(a.pickDownloadSpreadsheet)
-				ui.Text(c, "Ctrl + Enter 提交").FontSize(12).TextColor(dlFaint(tok))
+			ui.Scroll(c.Key("dl-composer-options")).FillWidth().MaxHeight(bodyHeight).Label("下载任务选项").Children(func() {
+				ui.Column(c).FillWidth().Gap(14).Children(func() {
+					ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "链接").FontSize(13).FontWeight(500).TextColor(tok.text)
+						ui.Spacer(c)
+						ui.Button(c, "导入 CSV / XLSX").FontSize(12).OnClick(a.pickDownloadSpreadsheet)
+						ui.Text(c, "Ctrl + Enter 提交").FontSize(12).TextColor(dlFaint(tok))
+					})
+					ui.TextArea(c.Key("dl-composer-urls"), &a.dlURLs).Height(130).FillWidth().Label("链接").
+						Placeholder("https://example.com/gallery\nhttps://example.com/photo.jpg")
+					a.dlComposerMeta(c, tok, valid, invalid, sites)
+					ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "扫描深度").FontSize(13).FontWeight(500).TextColor(tok.text)
+						ui.NumberInput(c.Key("dl-depth"), &a.dlDepth, 1, 32767, 1).Label("扫描深度").Disabled(a.dlBrowserMode)
+						if a.dlBrowserMode {
+							ui.Text(c, "浏览器模式采集当前页面").FontSize(12).TextColor(tok.muted)
+						} else {
+							ui.Text(c, "1 为当前页，2 可跟进详情页").FontSize(12).TextColor(tok.muted)
+						}
+					})
+					ui.Checkbox(c.Key("dl-browser-mode"), &a.dlBrowserMode, "使用浏览器登录并抓取动态页面")
+					if a.dlBrowserMode {
+						a.downloadBrowserControls(c, tok)
+					}
+					ui.Text(c, "下载到").FontSize(13).FontWeight(500).TextColor(tok.text)
+					a.dlComposerDest(c, tok)
+					a.dlComposerSettingsRow(c, tok)
+				})
 			})
-			ui.TextArea(c.Key("dl-composer-urls"), &a.dlURLs).Height(130).FillWidth().Label("链接").
-				Placeholder("https://example.com/gallery\nhttps://example.com/photo.jpg")
-			a.dlComposerMeta(c, tok, valid, invalid, sites)
-			ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "扫描深度").FontSize(13).FontWeight(500).TextColor(tok.text)
-				ui.NumberInput(c.Key("dl-depth"), &a.dlDepth, 1, 32767, 1).Label("扫描深度").Disabled(a.dlBrowserMode)
-				if a.dlBrowserMode {
-					ui.Text(c, "浏览器模式采集当前页面").FontSize(12).TextColor(tok.muted)
-				} else {
-					ui.Text(c, "1 为当前页，2 可跟进详情页").FontSize(12).TextColor(tok.muted)
-				}
-			})
-			ui.Checkbox(c.Key("dl-browser-mode"), &a.dlBrowserMode, "使用浏览器登录并抓取动态页面")
-			if a.dlBrowserMode {
-				a.downloadBrowserControls(c, tok)
-			}
-			ui.Text(c, "下载到").FontSize(13).FontWeight(500).TextColor(tok.text)
-			a.dlComposerDest(c, tok)
-			a.dlComposerSettingsRow(c, tok)
 			ui.Row(c).FillWidth().Margin(4, 0, 0, 0).Justify(ui.End).Gap(8).Children(func() {
 				cancel := ui.Button(c, "取消").FontSize(13).Padding(8, 16).Radius(tok.radiusS).
 					Background(dlQuiet(tok)).TextColor(tok.text)

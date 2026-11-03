@@ -635,7 +635,8 @@ const roleUser=message('user','role-user','role prompt'),roleAssistant=message('
 nestedQuestion.parentElement=roleUser;nestedAnswer.parentElement=roleAssistant;roleUser.childNodes=[nestedQuestion];roleAssistant.childNodes=[nestedAnswer];messages=[roleUser,nestedQuestion,roleAssistant,nestedAnswer];images=[];
 assert.ok(run('mark').diagnostic[0].includes('assistant=1;user=1'),'role-backed pages must not also count nested Qwen fallback cards');
 `
-	cmd := exec.Command(node, "-e", script)
+	cmd := exec.Command(node)
+	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("isolated DOM fixture: %v\n%s", err, out)
 	}

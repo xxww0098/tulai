@@ -33,7 +33,7 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 `go.mod` 把 MyGo 工具固定在 **v0.7.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.8**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.8` 上发布，页面扩展 zip 是 **0.3.10**。步骤见下文「发布 0.1.8」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.9**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.9` 上发布，页面桥扩展是 **0.3.12**。步骤见下文「发布 0.1.9」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。正在进行的任务结束后才安装。也可以用菜单 **帮助 → 检查更新…**、左侧导航、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。检查使用公开的 GitHub Releases，不附带 token，连接失败时尝试可配置的镜像。新发布的 macOS 应用、Windows 安装版和 Linux 用户目录版使用 MyGo 验证更新签名；免安装程序、系统包及旧版继续使用原有的 SHA256SUMS 流程。macOS 没有公证，Windows 没有代码签名。页面桥扩展单独更新。签名发布及安装方式见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
@@ -259,19 +259,19 @@ go run ./cmd/tulai-camoufox-smoke   # Camoufox 安装与页面控制冒烟
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
-## 发布 0.1.8
+## 发布 0.1.9
 
-桌面端产品版本是 **0.1.8**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。当前源码里的页面桥扩展是 **0.3.11**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+桌面端产品版本是 **0.1.9**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.12**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
 
-0.1.8 相对 0.1.7：出图页按账号显示车道，左侧图标导航和左右分栏，设置页改成分组卡片。扩展版本仍是 0.3.10。完整说明见 [`docs/RELEASING.md`](docs/RELEASING.md)。
+0.1.9 改用 Camoufox 账号环境，增加图片下载和批量工具，并接入 MyGo 签名更新。旧浏览器资料会保留，账号需要重新登录。完整说明见 [`CHANGELOG.md`](CHANGELOG.md) 和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 `.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet`，并上传 macOS、Windows、Linux 的安装包。合并进 `main` 之后，推送和 `mygo.json` 一致的标签，用 `GITHUB_TOKEN` 创建 GitHub Release。没有配置 Apple 公证或 Windows 代码签名。
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.8
-git push origin v0.1.8
+git tag v0.1.9
+git push origin v0.1.9
 ```
 
 附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。
