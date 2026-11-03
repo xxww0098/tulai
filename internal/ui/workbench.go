@@ -19,6 +19,9 @@ const (
 	pageDedup
 	pageBrowser
 	pagePrompts
+	pageDownload
+	pageRename
+	pageImageEdit
 	pageSettings
 )
 
@@ -42,6 +45,7 @@ type AccountSnap struct {
 	Platform  string
 	LoggedIn  bool
 	Extension bool
+	Disabled  bool
 	Health    string
 	CoolUntil int64
 }
@@ -127,7 +131,7 @@ func ConcurrencyCaption(auto bool, slots int) string {
 }
 
 func (a AccountSnap) carries(extensionMode bool, now time.Time) bool {
-	if a.Platform != agy.Platform && a.Extension != extensionMode {
+	if a.Disabled || (a.Platform != agy.Platform && a.Extension != extensionMode) {
 		return false
 	}
 	return wizard.KeepsClosed(wizard.Account{

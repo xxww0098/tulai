@@ -22,15 +22,6 @@ func TestRailIconsHaveTooltipsAndActions(t *testing.T) {
 		done func()
 	}{
 		{
-			tip:  "回到生图",
-			prep: func() { a.tab = pageSettings; tt.Frame() },
-			done: func() {
-				if a.tab != pageHome {
-					t.Fatalf("logo tab=%d", a.tab)
-				}
-			},
-		},
-		{
 			tip:  "生图",
 			prep: func() { a.tab = pageSettings; tt.Frame() },
 			done: func() {

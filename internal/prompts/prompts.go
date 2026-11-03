@@ -1,4 +1,4 @@
-// Package prompts 是桌面端的提示词库：三条内置模板，加上用户另存的副本。
+// Package prompts 是桌面端的提示词库：内置模板和用户另存的副本。
 // 内置正文只去掉开头的 BOM 和空白，其余原样保留，方便恢复。
 package prompts
 
@@ -15,10 +15,14 @@ var builtinFS embed.FS
 
 const (
 	// LabelCustom 是不套模板、按行拆分的那一项。
-	LabelCustom = "每行一条"
-	IDOil       = "oil"
-	IDArt       = "art"
-	IDCircle    = "circle"
+	LabelCustom       = "每行一条"
+	IDOil             = "oil"
+	IDArt             = "art"
+	IDCircle          = "circle"
+	IDWash            = "wash"
+	KindGen           = "gen"
+	KindWash          = "wash"
+	DefaultWashPrompt = "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变"
 )
 
 // Template 是一条可选提示词。Builtin 为真时正文不可改写，编辑后应另存。
@@ -26,6 +30,7 @@ type Template struct {
 	ID      string
 	Label   string
 	Body    string
+	Kind    string
 	Builtin bool
 	From    string
 }
@@ -35,6 +40,7 @@ type UserPrompt struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Body  string `json:"body"`
+	Kind  string `json:"kind,omitempty"`
 	From  string `json:"from,omitempty"`
 }
 
@@ -50,12 +56,13 @@ var builtinOrder = []builtinSpec{
 
 // Builtins 按界面顺序返回内置模板。
 func Builtins() []Template {
-	out := make([]Template, 0, len(builtinOrder))
+	out := make([]Template, 0, len(builtinOrder)+1)
 	for _, spec := range builtinOrder {
 		out = append(out, Template{
 			ID: spec.id, Label: spec.label, Body: mustBuiltin(spec.file), Builtin: true,
 		})
 	}
+	out = append(out, Template{ID: IDWash, Label: "默认洗图", Body: DefaultWashPrompt, Kind: KindWash, Builtin: true})
 	return out
 }
 
@@ -151,7 +158,7 @@ func Catalog(users []UserPrompt) []Template {
 			label = item.Label + "（" + item.ID + "）"
 		}
 		used[label] = true
-		out = append(out, Template{ID: item.ID, Label: label, Body: item.Body, From: item.From})
+		out = append(out, Template{ID: item.ID, Label: label, Body: item.Body, Kind: item.Kind, From: item.From})
 	}
 	return out
 }

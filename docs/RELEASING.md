@@ -1,6 +1,6 @@
 # 发布 tulai 0.1.8
 
-当前桌面端版本是 **0.1.8**，标签 **`v0.1.8`**。页面桥扩展是 **0.3.10**。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6，0.1.3 发布时是 0.3.7；0.3.8 只改技术 id；0.3.9 可以按桌面端的要求重新加载。0.3.10 加上豆包和千问的审核话术，随 0.1.7 一起发布。0.1.8 不再改扩展版本。0.1.5 和 0.1.6 发布时扩展还是 0.3.9。
+当前桌面端版本是 **0.1.8**，标签 **`v0.1.8`**。当前源码中的页面桥扩展是 **0.3.12**，增加发送响应观察；已发布的 0.1.8 扩展是 0.3.10。扩展编号单独走，不要为了桌面端发布去改它。0.1.2 发布时扩展是 0.3.6，0.1.3 发布时是 0.3.7；0.3.8 只改技术 id；0.3.9 可以按桌面端的要求重新加载。0.3.10 加上豆包和千问的审核话术，随 0.1.7 一起发布。0.1.5 和 0.1.6 发布时扩展还是 0.3.9。
 
 ## 0.1.8
 
@@ -58,50 +58,50 @@
 |---|---|---|---|
 | 桌面端 | `0.1.8` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
 | Go 模块 | `v0.1.8` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.8` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.10` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 页面桥扩展 | `0.3.12` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载，当前是 0.3.10。桌面端版本和扩展版本各自走。同一份 Release 里会同时放上桌面安装包和 `tulai-extension-0.3.10.zip`。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载；当前源码是 0.3.12。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
 
 ## 流水线
 
 `.github/workflows/ci.yml`：
 
 - pull request 和 `main`：跑 `go test ./... -short`、`go tool mygo vet`、扩展的 node 测试，并打出三个系统的安装包。产物在 Actions 的 artifacts 里，保留 14 天：`tulai-linux`、`tulai-windows`、`tulai-macos`、`tulai-extension`。
-- 标签 `v*`：同一套构建。标签必须等于 `v` 加上 `mygo.json` 的版本，否则一开始就失败，不会发布。通过之后用 `GITHUB_TOKEN` 创建 GitHub Release，并上传安装包、扩展 zip 和 `SHA256SUMS`。
+- 标签 `v*`：标签必须等于 `v` 加上 `mygo.json` 的版本。使用仓库 Actions secret `MYGO_UPDATER_PRIVATE_KEY` 构建签名更新包，并用 `GITHUB_TOKEN` 上传安装包、各平台更新清单、扩展 zip 和 `SHA256SUMS`。缺少签名密钥或任一平台的清单、压缩包时发布失败。
 
-没有自动更新密钥，也没有 Apple / Windows 签名证书。不要在仓库里造这些 secret。`-upload` 也不用：它要配 `updates` 和签名私钥，装好的程序只接受用那把私钥签过的清单。本仓库的桌面端不走这条签名更新，改由程序自己读公开的 GitHub Releases API。Release 仍由 `gh release create` 上传。
+`mygo.json` 的 `updates.github` 指向 `xxww0098/tulai`，`updates.publicKey` 是更新验签公钥。私钥只放在安全备份和 GitHub Actions secret `MYGO_UPDATER_PRIVATE_KEY`，不能提交到仓库或写入日志。更换或丢失私钥会使已安装版本无法验证新更新，应先安全备份。签名更新不等于 Apple 公证或 Windows 代码签名。Release 仍由现有的 `gh release create` 上传，以兼容旧版附件名。
 
 macOS 包在 `macos-latest` 上构建，才能做出磁盘映像并做 ad-hoc 签名。Windows 安装器在 Ubuntu 上用 NSIS 交叉制作。Linux 同时打 amd64 和 arm64。这些都是 `CGO_ENABLED=0` 的 `go tool mygo build`，和本机的 `./build.sh` 同一条命令。
 
-## 切 0.1.8
+## 发布新版本
 
-等这套流水线在 `main` 上是绿的，并且 `mygo.json` 与 `ProductVersion` 都是 `0.1.8`：
+等这套流水线在 `main` 上是绿的，并且 `mygo.json` 与 `ProductVersion` 都改为相同的新版本，再推送对应标签：
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.8
-git push origin v0.1.8
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-推送标签会跑 CI。完成后 Release 页面出现 **tulai 0.1.8**。安装包文件名以 `tulai` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。
+推送标签会跑 CI。完成后 Release 页面出现对应版本。安装包文件名以 `tulai` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。已发布的 0.1.8 没有 MyGo 签名更新清单，新流程从包含本次修改的新版本开始。
 
 再跑一次同一个标签的 workflow 会覆盖同名附件，不会另开一个 Release。
 
 ## 附件
 
-桌面版本记为 `0.1.8` 时，文件名是：
+以桌面版本 `0.1.8` 为例，附件命名如下（已发布的 0.1.8 没有签名清单）：
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
 | macOS | `tulai 0.1.8.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `tulai.app` 拖进「应用程序」。 |
 | Windows | `tulai Setup 0.1.8 amd64.exe`、`tulai Setup 0.1.8 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.8-windows-amd64.exe` 和 `tulai-0.1.8-windows-arm64.exe`。 |
 | Linux | `tulai_0.1.8_amd64.deb`、`tulai_0.1.8_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
-| Linux | `tulai-0.1.8-linux-amd64.tar.gz`、`tulai-0.1.8-linux-arm64.tar.gz`、`install.sh` | 把脚本和本机架构的压缩包放在同一目录，执行 `sh install.sh`。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
+| Linux | `tulai-0.1.8-linux-amd64.tar.gz`、`tulai-0.1.8-linux-arm64.tar.gz`、`install.sh` | 执行 `sh install.sh`，脚本从 GitHub 下载并校验签名。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
 | 扩展 | `tulai-extension-0.3.10.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
-`SHA256SUMS` 覆盖上面这些文件，文件名是 `SHA256SUMS`（没有 `.txt`）。格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 里另有一份只覆盖该系统文件的 `SHA256SUMS.txt`，汇总进 Release 时会丢掉，避免和总校验文件撞名。标签任务在上传前检查这份 `SHA256SUMS` 非空，并且下面「从 GitHub 更新」里更新器会选的每个附件都有一行。缺了就不发布。
+新版本还包含 `update-<系统>-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 另有本系统的 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。
 
 `dpkg` 把程序装到 `/opt/tulai`，并在 `/usr/bin/tulai` 放命令。配置库位置见 README 的「运行」和「Windows 支持」。
 
@@ -109,11 +109,11 @@ git push origin v0.1.8
 
 - **macOS**：ad-hoc 签名，没有公证。本机打出来的包可以在那台 Mac 上跑；拷到别的 Mac，Gatekeeper 会拦。右键打开，或 `xattr -dr com.apple.quarantine /Applications/tulai.app`。要去掉这个限制，需要 Apple Developer ID 和公证配置，这次没有。
 - **Windows**：没有证书。SmartScreen 会提示未知发布者。安装器仍然是当前用户安装。
-- **Linux**：deb 和压缩包都没有签名。
+- **Linux**：deb 没有系统包签名；新发布的更新压缩包由 MyGo 清单提供验签。
 
 ## 从 GitHub 更新
 
-桌面端自己检查更新，不使用 MyGo 的签名更新（`mygo.Updater` / `updates.publicKey`）。公开仓库的正式版不需要 token，程序也不会读取 `GITHUB_TOKEN` 或 `GH_TOKEN`。
+桌面端通过 GitHub Releases 检查正式版。使用本次修改构建的安装版通过 `mygo.Updater` 检查清单、下载更新并验证 `updates.publicKey` 对应的签名。公开仓库不需要 token，程序也不会读取 `GITHUB_TOKEN` 或 `GH_TOKEN`。
 
 检查地址是：
 
@@ -135,29 +135,31 @@ GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 | `tulai update --check` | 只打印当前版本和最新版本。 |
 | `tulai version` | 打印桌面端版本（`ProductVersion`，打包后与 `mygo.App.Version()` 相同）。 |
 
-下载先请求 GitHub。失败、或下完后 SHA256 对不上时，再试镜像。镜像是 ghproxy 那种前缀：`前缀 + 原来的 https 地址`。设置里的「更新镜像」留空时用内置的两个前缀；填 `off` 则只用 GitHub；填自己的前缀时先用它，再试内置的。没下完的文件会接着传，失败则删掉临时文件。
+下载先请求 GitHub。请求失败或可用的 SHA256 摘要对不上时，再试镜像；MyGo 签名不符会终止安装。镜像是 ghproxy 那种前缀：`前缀 + 原来的 https 地址`。设置里的「更新镜像」留空时用内置的两个前缀；填 `off` 则只用 GitHub；填自己的前缀时先用它，再试内置的。没下完的文件会接着传，失败则删掉临时文件。
 
-装好之后会先跑一次 `version`。跑不起来就放回上一版。Windows 免安装 exe 由退出后的 PowerShell 替换，新进程几秒内退出就从 `.previous` 拷回来。安装器加 `/S` 静默运行，失败再打开窗口。macOS 换掉 `.app` 并去掉隔离属性。Linux 用户目录安装和 AppImage / 单个二进制在原处替换；deb 不申请管理员权限，改为打开下载好的包，并印出 `sudo dpkg -i`。新进程写了一个启动标记之后，上一版备份才会删掉。
+MyGo 在安装时验证 Ed25519 签名；验证失败或缺少签名清单会报错，不会退回未签名安装。macOS `.app`、Windows 安装版和 `~/.local/tulai.app` 使用这条流程。MyGo 在安装失败时尝试恢复已替换文件，但不提供新程序启动失败后的自动回滚。
 
-发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。没有这份校验文件就拒绝安装。
+旧版、Windows 免安装 exe、Linux AppImage / 单个二进制、deb 和开发运行仍走原有的 SHA256SUMS 流程。Windows 免安装 exe 通过退出后的 PowerShell 替换；deb 打开下载好的包并显示 `sudo dpkg -i`。这些路径没有 MyGo 开发者签名验证。
+
+发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。旧更新器没有这份校验文件会拒绝安装；MyGo 更新验证清单里的开发者签名。
 
 版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.10.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
-按当前系统选择附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
+以下是旧更新器选择的附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 
 | 系统 | 怎么判断 | 下载 | 装到哪里 |
 |---|---|---|---|
 | Linux，普通或 `~/.local` | 不是下面的 deb 或 AppImage | `tulai-<版本>-linux-<架构>.tar.gz` | `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。和 `install.sh` 同一位置。 |
 | Linux，AppImage | 正在跑的文件名以 `.AppImage` 结尾 | 先找 `tulai-<版本>-linux-<架构>.AppImage`，没有就用上一行的 tar.gz | 这份发布不附带 AppImage，所以走 tar.gz，装到 `~/.local`。 |
 | Linux，deb | 正在跑 `/usr/bin/tulai` 或 `/opt/tulai/` | `tulai_<版本>_<架构>.deb` | 不申请管理员权限。校验后把 `sudo dpkg -i …` 印出来，并打开已下载的包。 |
-| Windows，安装器或开发运行 | 路径里有 `\Programs\`、`Program Files` 或 `go-build` | `tulai.Setup.<版本>.<架构>.exe`（构建时的名字是 `tulai Setup <版本> <架构>.exe`） | 退出后打开 NSIS 安装器。 |
+| Windows，安装器或开发运行 | 路径里有 `\Programs\`、`Program Files` 或 `go-build` | `tulai.Setup.<版本>.<架构>.exe`（收集发布附件时转换为带空格的旧名称） | 退出后打开 NSIS 安装器。 |
 | Windows，免安装 exe | 其他路径 | `tulai-<版本>-windows-<架构>.exe` | 退出后用 PowerShell 替换当前 exe 再打开。 |
-| macOS，正在跑 `.app` | `….app/Contents/MacOS/tulai` | `tulai.<版本>.dmg`（通用二进制；构建时的名字是 `tulai <版本>.dmg`） | 换掉当前的 `tulai.app`，并去掉隔离属性。 |
+| macOS，正在跑 `.app` | `….app/Contents/MacOS/tulai` | `tulai.<版本>.dmg`（通用二进制；收集发布附件时转换为带空格的旧名称） | 换掉当前的 `tulai.app`，并去掉隔离属性。 |
 | macOS，其他 | 开发运行 | 同一个 dmg | 复制到 `~/Applications/tulai.app`。 |
 
 应用内更新和 `tulai update` 装到 `~/.local` 时，桌面项文件名是 `tulai.desktop`，启动命令是 `tulai`。`install.sh`、deb、NSIS 和 macOS 包名跟 `mygo.json` 的 `name` 走，也是 tulai。
 
-下载后核对两处摘要，对不上就删除文件、不安装：
+旧更新器下载后核对两处摘要，对不上就删除文件、不安装：
 
 1. 附件 API 里的 `digest`（`sha256:…`），有的话必须和 `SHA256SUMS` 同一行一致。
 2. 文件本身的 SHA256 必须等于 `SHA256SUMS` 里的记录。`SHA256SUMS` 自己的 `digest` 也会先核对。
@@ -166,11 +168,11 @@ GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 
 ### 未签名
 
-校验和只能证明文件和这次 Release 相同，不能代替开发者签名。
+旧更新器的校验和只能证明文件和这次 Release 相同，不能代替开发者签名。
 
-- **macOS**：ad-hoc 签名，没有公证。更新会执行 `xattr -dr com.apple.quarantine`。别的 Mac 上 Gatekeeper 仍可能拦截，需要在访达里右键打开。
+- **macOS**：ad-hoc 签名，没有公证。旧更新器会执行 `xattr -dr com.apple.quarantine`。别的 Mac 上 Gatekeeper 仍可能拦截，需要在访达里右键打开。
 - **Windows**：没有证书。安装器和替换后的 exe 都可能被 SmartScreen 拦住，需要选择仍要运行。
-- **Linux**：deb 和 tar.gz 都没有签名。用户目录安装不需要 root；deb 必须自己执行印出来的 `sudo dpkg -i`。
+- **Linux**：deb 没有系统包签名。用户目录安装不需要 root；deb 必须自己执行印出来的 `sudo dpkg -i`。
 
 Release 说明里的「检查更新」一段由 `.github/workflows/ci.yml` 写上。从 0.1.1 起安装包里有这个入口。还在用 0.1.0 的人要先手动装这一版。
 

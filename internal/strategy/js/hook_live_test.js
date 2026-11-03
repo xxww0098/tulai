@@ -179,6 +179,7 @@ const context = vm.createContext({
 })
 context.window = context
 context.globalThis = context
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', '..', 'extension', 'doubao', 'raw.js'), 'utf8'), context)
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'hook.js'), 'utf8'), context)
 
 const live = () => context.__tulaiLiveImages()
@@ -326,6 +327,23 @@ for (const url of urls(state)) {
   assert.ok(url.includes('rc_gen_image') && url.includes('cgen_lwm') && !url.includes('cthumb'), url)
 }
 
+const raw0 = 'https://p6-flow-imagex-sign.byteimg.com/tos/rc_gen_image/p0.jpeg~tplv-a9rns2rl98-image_raw.png?signature=raw0'
+const raw1 = 'https://p6-flow-imagex-sign.byteimg.com/tos/rc_gen_image/p1.jpeg~tplv-a9rns2rl98-image_raw.png?signature=raw1'
+context.rawPayload = JSON.stringify({ creations: [
+  { image: { image_ori: { url: urls(state)[1] }, image_ori_raw: { url: raw1 } } },
+  { image: { image_ori: { url: urls(state)[0] }, image_ori_raw: { url: raw0 } } },
+] })
+vm.runInContext('JSON.parse(rawPayload)', context)
+state = live()
+assert.strictEqual(state.images[0].rawUrl, raw0, '必须按图片关联原图，而不是按响应顺序')
+assert.strictEqual(state.images[1].rawUrl, raw1)
+assert.strictEqual(state.images[2].rawUrl, '', '没有对应原图时不能套用其他图片')
+context.__tulaiMarkTask()
+const sameImage = reply([{ src: urls(state)[0] }])
+sameImage.attrs['data-finished'] = 'true'
+body.appendChild(sameImage)
+assert.strictEqual(live().images[0].rawUrl, '', '新任务不能沿用上次的原图映射')
+
 const button = el('button')
 button.innerText = '新对话'
 body.appendChild(button)
@@ -434,5 +452,20 @@ assert.deepStrictEqual(urls(shot), ['https://workspace-zb-cdn.qianwen.com/o/cabi
 context.__tulaiQwenChat = 'cabin-wrap'
 shot = context.__tulaiLiveImages()
 assert.deepStrictEqual(urls(shot), ['https://workspace-zb-cdn.qianwen.com/o/cabin.png'])
+
+// 指纹时钟可把相邻任务压到同一毫秒；任务边界也必须承受时钟回退。
+body.childNodes = []
+vm.runInContext('Date.now = () => 1000', context)
+context.__tulaiMarkTask()
+const repeatedURL = 'https://cdn.example/repeated-result.png'
+context.__tulaiAddResult(repeatedURL, 'net')
+context.__tulaiMarkTask()
+assert.strictEqual(context.__tulaiResultsSince().length, 0, '相同时间戳不能把上一轮结果带进新任务')
+context.__tulaiAddResult(repeatedURL, 'net')
+context.__tulaiAddResult(repeatedURL, 'net')
+assert.strictEqual(context.__tulaiResultsSince().length, 1, '同一 URL 应按任务去重')
+vm.runInContext('Date.now = () => 900', context)
+context.__tulaiAddResult('https://cdn.example/after-clock-change.png', 'net')
+assert.strictEqual(context.__tulaiResultsSince().length, 2, '时钟回退不能丢掉本轮结果')
 
 console.log('hook live images ok')

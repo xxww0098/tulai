@@ -30,8 +30,10 @@ type Browser struct {
 	Name        string
 	Port        int
 	UserDataDir string
+	Proxy       string // 空值继承全局代理；非空时只用于这个 Camoufox 账号。
 	IsRunning   bool
 	IsLoggedIn  bool
+	Disabled    bool
 	Health      string
 	CoolUntil   int64 // Unix 秒。0 表示不会自动恢复。
 	LastUsed    int64
@@ -39,6 +41,8 @@ type Browser struct {
 	ExtAccount  string // 扩展 hello 里的 profile id。空字符串表示本机启动的浏览器。
 	DayKey      string // 本地日期 2006-01-02。换日之后 UsedToday 归零。
 	DayCount    int
+	DaySuccess  int
+	DayFailed   int
 }
 
 // Store 线程安全的配置库。
@@ -83,7 +87,8 @@ var defaults = map[string]string{
 	"captcha_ikunocr_track":   "dom2",
 	"minimize_browser":        "0",
 	"sent_count_total":        "0",
-	"browserBackend":          "ego",
+	"browserBackend":          "camoufox",
+	"browser_backend":         "Camoufox",
 	"extBridgePort":           "18765",
 	"extBridgeToken":          "dev-token",
 	"auto_check_updates":      "1",
@@ -332,7 +337,7 @@ func (s *Store) Browsers() []Browser {
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT id, platform, name, port, COALESCE(user_data_dir,''), is_running, is_logged_in,
 		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''), COALESCE(ext_account,''),
-		COALESCE(day_key,''), COALESCE(day_count,0)
+		COALESCE(day_key,''), COALESCE(day_count,0), COALESCE(day_success,0), COALESCE(day_failed,0), COALESCE(proxy,''), COALESCE(disabled,0)
 		FROM browsers ORDER BY id`)
 	if err != nil {
 		return nil
@@ -341,17 +346,34 @@ func (s *Store) Browsers() []Browser {
 	var out []Browser
 	for rows.Next() {
 		var b Browser
-		var run, login int
-		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount); err == nil {
+		var run, login, disabled int
+		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled); err == nil {
 			b.IsRunning = run != 0
 			b.IsLoggedIn = login != 0
+			b.Disabled = disabled != 0
 			out = append(out, b)
 		}
 	}
 	return out
 }
 
-// Usable 报告这个账号现在能不能接任务。冷却或额度到期后自动恢复。
+// SetBrowserDisabled 只更改账号是否参与任务，不改登录或健康状态。
+func (s *Store) SetBrowserDisabled(id int64, disabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, err := s.db.Exec(`UPDATE browsers SET disabled=? WHERE id=?`, disabled, id)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("账号不存在: %d", id)
+	}
+	return nil
+}
+
+// Usable 只判断账号健康状态；冷却或额度到期后自动恢复。
 func (b Browser) Usable(now time.Time) bool {
 	switch b.Health {
 	case "", HealthReady:
@@ -555,15 +577,41 @@ func (b Browser) UsedToday(now time.Time) int {
 	return b.DayCount
 }
 
+// ResultsToday 返回账号当天已完成任务的成功和失败数。
+func (b Browser) ResultsToday(now time.Time) (int, int) {
+	if b.DayKey != now.Format("2006-01-02") {
+		return 0, 0
+	}
+	return max(b.DaySuccess, 0), max(b.DayFailed, 0)
+}
+
 // AddUse 给这个账号的当天次数加一。日期不同就从 1 重新计。
 func (s *Store) AddUse(id int64, now time.Time) {
 	if s == nil || id <= 0 {
 		return
 	}
+	_ = s.RecordUse(id, now, 1, 0, 0)
+}
+
+// RecordUse 同时保存用量和已完成任务结果，换日时一起归零。
+func (s *Store) RecordUse(id int64, now time.Time, used, success, failed int) error {
 	key := now.Format("2006-01-02")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.db.Exec(`UPDATE browsers SET day_count = CASE WHEN day_key = ? THEN COALESCE(day_count,0) + 1 ELSE 1 END, day_key = ? WHERE id = ?`, key, key, id)
+	result, err := s.db.Exec(`UPDATE browsers SET
+		day_count = CASE WHEN day_key = ? THEN COALESCE(day_count,0) ELSE 0 END + ?,
+		day_success = CASE WHEN day_key = ? THEN COALESCE(day_success,0) ELSE 0 END + ?,
+		day_failed = CASE WHEN day_key = ? THEN COALESCE(day_failed,0) ELSE 0 END + ?,
+		day_key = ? WHERE id = ?`, key, used, key, success, key, failed, key, id)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("账号不存在: %d", id)
+	}
+	return nil
 }
 
 // TouchBrowser 记下最近一次接任务的时间，供最少最近使用的轮换。
@@ -609,6 +657,22 @@ func (s *Store) DropExtensionAccount(platform, account string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.db.Exec(`DELETE FROM browsers WHERE platform=? AND ext_account=?`, platform, account)
+}
+
+// DeleteExtensionAccounts 删掉全部扩展账号行，返回删掉的行数。
+// 本机浏览器账号的 ext_account 是空字符串，不受影响。
+func (s *Store) DeleteExtensionAccounts() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.Exec(`DELETE FROM browsers WHERE COALESCE(ext_account,'') <> ''`)
+	if err != nil {
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return n
 }
 
 // UpsertExtensionAccount 按扩展 profile id 登记或取回账号。
@@ -665,6 +729,11 @@ func migrateBrowsers(db *sql.DB) error {
 		`ALTER TABLE browsers ADD COLUMN ext_account TEXT DEFAULT ''`,
 		`ALTER TABLE browsers ADD COLUMN day_key TEXT DEFAULT ''`,
 		`ALTER TABLE browsers ADD COLUMN day_count INTEGER DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN day_success INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN day_failed INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN proxy TEXT DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN legacy_user_data_dir TEXT DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range alters {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

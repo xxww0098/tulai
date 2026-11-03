@@ -6,6 +6,11 @@
   "out": "build",
   "main": "./cmd/tulai",
   "icon": "resources/icon.png",
+  "updates": {
+    "publicKey": "Q/RL6PyWdc+IvIbB0aqWr4yL1mY29gtTmIJgLqvJOrg=",
+    "github": "xxww0098/tulai",
+    "deltas": 0
+  },
   "macos": { "minimumSystemVersion": "13.0" },
   "linux": {
     "comment": "批量生图（豆包 / 千问）",

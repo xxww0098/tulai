@@ -22,17 +22,7 @@ var humanVerifyLimit = 5 * time.Minute
 var (
 	captchaVisible = captcha.Visible
 	captchaManual  = stopSolving
-	captchaShow    = func(s *cdp.Session) {
-		if s != nil {
-			s.PresentForCaptcha()
-		}
-	}
-	captchaHide = func(s *cdp.Session) {
-		if s != nil {
-			s.KeepOffscreen()
-		}
-	}
-	captchaAlert = notify.Send
+	captchaAlert   = notify.Send
 )
 
 func stopSolving(s *cdp.Session) {
@@ -58,8 +48,7 @@ func (e *Engine) holdIfCaptcha(ctx context.Context, sess *cdp.Session, t *Task) 
 	return true, nil
 }
 
-// holdForHuman 把窗口拿到前台，暂停出图计时，最多等 humanVerifyLimit。
-// 验证通过后放开前台占用。超时留下窗口，方便人接着点。
+// holdForHuman 暂停出图计时，等待用户在应用内的账号查看器完成验证。
 func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -76,7 +65,6 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 	// 单次出图和外层任务时限都从这里停表，验证结束再接着走。
 	e.pauseBudget(budgetIDs(t)...)
 	defer e.resumeBudget(budgetIDs(t)...)
-	captchaShow(sess)
 	name := ""
 	if t != nil {
 		name = e.accountName(t.ranOnOr(t.BrowserID))
@@ -87,15 +75,9 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 	if name == "" {
 		name = "账号"
 	}
-	logging.Log.Warning("#%d %s 需要人工验证，请在弹出的浏览器窗口里完成", taskIndex(t), name)
-	captchaAlert("需要人工验证", fmt.Sprintf("%s 出图遇到验证码，请在浏览器窗口里完成", name))
-	passed := false
-	defer func() {
-		e.setAwaiting(t, false)
-		if passed || (ctx.Err() != nil && !endedByTimeout(ctx, nil)) {
-			captchaHide(sess)
-		}
-	}()
+	logging.Log.Warning("#%d %s 需要人工验证，请打开账号的查看浏览器并接管操作", taskIndex(t), name)
+	captchaAlert("需要人工验证", fmt.Sprintf("%s 出图遇到验证码，请在应用内查看浏览器并接管操作", name))
+	defer e.setAwaiting(t, false)
 
 	waitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), humanVerifyLimit)
 	defer cancel()
@@ -110,8 +92,7 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 			return sess.Ctx().Err()
 		}
 		blocked, readErr = captchaVisible(sess)
-		if readErr == nil && !blocked {
-			passed = true
+		if readErr == nil && !blocked && (t == nil || !e.AccountManual(t.ranOnOr(t.BrowserID))) {
 			logging.Log.Info("#%d %s 验证已通过，继续出图", taskIndex(t), name)
 			return nil
 		}

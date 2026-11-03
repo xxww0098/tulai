@@ -73,19 +73,6 @@ func (a *App) navRail(c *ui.Context) {
 	ui.Column(c.Key("nav-rail")).Width(railWidth).FillHeight().Padding(12, 0, 10, 0).Gap(4).
 		AlignItems(ui.Center).Background(tok.card).
 		BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
-		logo := ui.Column(c.Key("logo")).Size(36, 36).Radius(10).Center().
-			Label("回到生图").Cursor(ui.CursorPointer)
-		if logo.Hovered() {
-			logo.Background(tok.sunken)
-		}
-		if logo.Clicked() && !a.running {
-			a.tab = pageHome
-		}
-		logo.Children(func() {
-			ui.Icon(c, iconLogo).FontSize(22).TextColor(tok.text)
-		})
-		railTip(c, logo, "回到生图")
-		ui.Box(c).Height(8)
 		a.pageTabs(c)
 		ui.Spacer(c)
 		ui.Box(c).Width(18).Height(1).Margin(6, 0).Background(tok.border)
@@ -105,6 +92,9 @@ func (a *App) pageTabs(c *ui.Context) {
 		{"去重", iconDedup},
 		{"浏览器", iconGlobe},
 		{"提示词", iconPen},
+		{"下载", iconDownload},
+		{"批量重命名", iconRename},
+		{"图片编辑", iconCrop},
 		{"设置", iconSettings},
 	}
 	tabs := ui.TabsBase(c.Key("main-tabs"), &a.tab, len(items))
@@ -181,9 +171,19 @@ func (a *App) homeStage(c *ui.Context) {
 
 func (a *App) platformStage(c *ui.Context) {
 	a.historyPanel(c)
-	a.platformTabs(c)
 	a.accountPanel(c)
 	a.resultsPane(c)
+}
+
+func (a *App) platformPicker(c *ui.Context) {
+	w, _ := c.Size()
+	ui.Row(c.Key("platform-picker")).Label("服务商选择").Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "服务商").FontSize(a.look.body).Bold().Shrink(0)
+		a.platformTabs(c)
+		if w >= 1100 {
+			ui.Text(c, "每次只向选中的服务商发送任务").FontSize(a.look.caption).TextColor(a.look.muted).SingleLine()
+		}
+	})
 }
 
 func (a *App) platformTabs(c *ui.Context) {
@@ -313,8 +313,24 @@ func (a *App) runLog(c *ui.Context, fill bool) {
 		}
 		lines := func() {
 			for _, line := range notes {
-				text := line.Text
-				ui.Text(c, text).FontSize(tok.caption).Height(logLineH).SingleLine().Tooltip(text)
+				bg := tok.sunken
+				switch line.Level {
+				case logging.Success:
+					bg = tok.success.Alpha(0.14)
+				case logging.Warning:
+					bg = tok.warning.Alpha(0.14)
+				case logging.Error:
+					bg = tok.danger.Alpha(0.14)
+				}
+				ui.Row(c).FillWidth().Height(logLineH).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, line.Time.Local().Format("15:04:05")).Width(68).Shrink(0).
+						FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
+					ui.Row(c).Size(34, 18).Shrink(0).Radius(5).Background(bg).Center().Children(func() {
+						ui.Text(c, line.Level.String()).FontSize(tok.caption).TextColor(tok.text).SingleLine()
+					})
+					ui.Text(c, line.Text).Grow(1).MinWidth(0).FontSize(tok.caption).TextColor(tok.text).
+						SingleLine().Tooltip(line.Text)
+				})
 			}
 		}
 		if !fill {
@@ -467,8 +483,8 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	running := a.running && a.ownsRun()
 	// 一个账号都没有时，按钮仍打开设置向导。有账号但今天都不能用，则关掉。
 	// 另一页在跑时引擎占着，这一页只能等。
-	disabled := (!running && plan.Action == StartNone) || (a.running && !running) ||
-		(!running && a.washing() && len(a.sources) == 0)
+	disabled := (!running && (plan.Action == StartNone || a.renameUpdateActive())) || (a.running && !running) ||
+		(!running && a.washing() && len(a.sources) == 0) || len(a.browserPending) > 0
 	if !running && plan.Action == StartGenerate && a.liveParallel() == 0 {
 		disabled = true
 	}
@@ -568,6 +584,19 @@ func (a *App) loggedOutCallout() bool {
 		any = true
 	}
 	return any
+}
+
+// noAccountCallout 是这一页所选平台一个账号都没有，开始按钮也不会改去开浏览器向导。
+// Antigravity 只在右栏用「+ 添加账号」登录，没有账号时也要提示一句。
+func (a *App) noAccountCallout() bool {
+	if a == nil || a.stagePlatform() != agy.Platform {
+		return false
+	}
+	in := a.workbenchInput()
+	if !in.HasImages && !in.HasPrompts {
+		return false
+	}
+	return !hasPlatformAccount(in.Accounts, agy.Platform)
 }
 
 func (a *App) accountCallout(c *ui.Context) {

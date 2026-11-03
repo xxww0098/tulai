@@ -31,8 +31,8 @@ function load(page) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'refuse.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8'), context)
   assert.strictEqual(listeners.length, 1)
-  function command(payload) {
-    const env = { v: 1, id: 't-' + payload.name, type: 'command', payload }
+  function command(payload, options = {}) {
+    const env = { v: 1, id: 't-' + payload.name, type: 'command', taskId: options.taskId || 'task-1', idempotencyKey: options.idempotencyKey || '', payload }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('hung ' + payload.name)), 8000)
       listeners[0]({ type: 'COMMAND_FROM_HOST', envelope: env }, {}, (resp) => {
@@ -107,7 +107,7 @@ async function main() {
     resultImages() {
       return [
         { url: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1536"/>' },
-        { url: 'https://cdn.example/full.png' },
+        { url: 'https://cdn.example/full.png', rawUrl: 'https://p3.byteimg.com/raw.png?signature=123' },
       ]
     },
     resultsBusy() { return false },
@@ -117,6 +117,7 @@ async function main() {
   const doubaoResult = await sendThenWait(doubao)
   assert.strictEqual(doubaoResult.waited.payload.ok, true, JSON.stringify(doubaoResult.waited.payload))
   assert.deepStrictEqual(doubaoResult.waited.payload.images.map((item) => item.url), ['https://cdn.example/full.png'])
+  assert.strictEqual(doubaoResult.waited.payload.images[0].rawUrl, 'https://p3.byteimg.com/raw.png?signature=123')
   assert.ok(doubaoResult.elapsed >= 350, '豆包仍要两次稳定取样，用时 ' + doubaoResult.elapsed)
 
   const blocked = composerPage({
@@ -144,6 +145,43 @@ async function main() {
   assert.strictEqual(refusedWait.payload.code, 'E_MODERATION')
   assert.match(refusedWait.payload.message, /审核不通过/)
   assert.ok(Date.now() - started < 1000, '审核失败应马上返回，用时 ' + (Date.now() - started))
+
+  const networkPage = composerPage({
+    setComposer(box, value) { box.value = value; return true },
+    resultImages() { return [{ url: 'https://cdn.example/result.png' }] },
+    resultsBusy() { return false },
+  })
+  const networkCall = load(networkPage)
+  assert.strictEqual((await networkCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  await networkCall.ask({ type: 'NETWORK_FAULT', taskId: 'other-task', kind: 'quota' })
+  assert.strictEqual((await networkCall({ name: 'waitResult', timeoutMs: 3000 })).payload.ok, true, '其他任务的响应不能影响本次任务')
+  await networkCall.ask({ type: 'NETWORK_FAULT', taskId: 'task-1', kind: 'quota' })
+  const afterAcceptance = await networkCall({ name: 'waitResult', timeoutMs: 3000 })
+  assert.strictEqual(afterAcceptance.payload.code, 'E_SEND_UNCERTAIN', '已确认发送后不能以额度错误触发换号重发')
+  assert.strictEqual((await networkCall({ name: 'setPrompt', prompt: '水彩风格' })).payload.ok, true, '后续批次复用任务编号时不能沿用上次的网络错误')
+
+  let earlyCall
+  let clicks = 0
+  const earlyPage = composerPage({ activate() {
+    clicks++
+    earlyCall.ask({ type: 'NETWORK_FAULT', taskId: 'task-1', kind: 'quota' })
+    return true
+  } })
+  earlyCall = load(earlyPage)
+  const sendOptions = { idempotencyKey: 'early' }
+  assert.strictEqual((await earlyCall({ name: 'send', prompt: '水彩风格' }, sendOptions)).payload.code, 'E_QUOTA')
+  assert.strictEqual((await earlyCall({ name: 'send', prompt: '水彩风格' }, sendOptions)).payload.code, 'E_SEND_UNCERTAIN')
+  assert.strictEqual(clicks, 1, '同一发送键不能点击两次')
+
+  let simultaneousCall
+  const simultaneousPage = composerPage({ activate(el) {
+    el.click()
+    simultaneousCall.ask({ type: 'NETWORK_FAULT', taskId: 'task-1', kind: 'quota' })
+    return true
+  } })
+  simultaneousCall = load(simultaneousPage)
+  assert.strictEqual((await simultaneousCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true, '页面已接受时先确认发送')
+  assert.strictEqual((await simultaneousCall({ name: 'waitResult' })).payload.code, 'E_SEND_UNCERTAIN')
 
   const signed = load(composerPage())
   assert.strictEqual((await signed.ask({ type: 'LOGIN_STATE' })).loggedIn, true)

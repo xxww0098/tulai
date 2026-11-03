@@ -1,4 +1,4 @@
-// Package cdp 封装 chromedp，对上层提供与原软件 CdpClient 等价的能力：
+// Package cdp retains tulai's page API, implemented by Camoufox and Playwright:
 // 标签页管理、DOM 查询、JS 执行、文件上传、截图、状态探测与 Go↔页面桥。
 package cdp
 
@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math/rand/v2"
 	"net/url"
 	"path/filepath"
@@ -16,48 +15,43 @@ import (
 	"sync/atomic"
 	"time"
 
-	cdpbrowser "github.com/chromedp/cdproto/browser"
 	cdprotoCDP "github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
-	cdt "github.com/chromedp/cdproto/target"
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/camoufox"
 
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
-// Client 对应一个已启动的浏览器实例（远程分配器）。
+// Client 对应一个已启动的 Camoufox 私有进程。
 type Client struct {
+	proc     *camoufox.Process
 	alloc    context.Context
 	allocCan context.CancelFunc
 	wsURL    string
 }
 
-// NewClient 连接到浏览器级 WS 地址。
-func NewClient(wsURL string) (*Client, error) {
-	alloc, cancel := chromedp.NewRemoteAllocator(context.Background(), wsURL)
-	c := &Client{alloc: alloc, allocCan: cancel, wsURL: wsURL}
-	return c, nil
-}
-
-// quietCDP 丢掉 cdproto 尚未识别的 IPAddressSpace=Loopback。其余错误仍打到标准日志。
-func quietCDP(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	if strings.Contains(msg, "IPAddressSpace") || strings.Contains(msg, "Loopback") {
-		return
+// NewClient 按账号标识连接应用管理的 Camoufox。
+func NewClient(endpoint string) (*Client, error) {
+	proc, err := camoufox.Find(endpoint)
+	if err != nil {
+		return nil, err
 	}
-	log.Printf("%s", msg)
+	ctx, cancel := context.WithCancel(proc.Context())
+	return &Client{proc: proc, alloc: ctx, allocCan: cancel, wsURL: endpoint}, nil
 }
 
 // Close 释放分配器。
 func (c *Client) Close() { c.allocCan() }
 
-// WSURL 返回浏览器 WS 地址。
+// WSURL 保留调用接口，返回 camoufox:// 账号标识，不是监听地址。
 func (c *Client) WSURL() string { return c.wsURL }
 
 // Session 一个页面标签页会话，含注入脚本与桥接处理。
 type Session struct {
+	target       string
+	unsubscribe  func()
 	client       *Client
 	ego          *egoTransport
 	ctx          context.Context
@@ -110,9 +104,9 @@ func (c *Client) NewBackgroundSession(rawURL string, onLog func(string)) (*Sessi
 			return nil, err
 		}
 	}
-	// 启动参数已经把窗口放在屏幕外。这里再 setWindowBounds 会把窗口激活到 tulai 前面。
-	tab, tabCancel := chromedp.NewContext(c.alloc, chromedp.WithTargetID(targetID(id)), chromedp.WithErrorf(quietCDP))
-	return c.finishSession(tab, tabCancel, "", onLog)
+	// 复用账号已有页面，保持任务会话不主动抢焦点。
+	tab, tabCancel := context.WithCancel(c.alloc)
+	return c.finishSession(tab, tabCancel, id, onLog)
 }
 
 func hostOf(raw string) string {
@@ -123,11 +117,16 @@ func hostOf(raw string) string {
 	return u.Hostname()
 }
 
-func targetID(id string) cdt.ID { return cdt.ID(id) }
-
 func (c *Client) NewSession(rawURL string, onLog func(string)) (*Session, error) {
-	ctx, cancel := chromedp.NewContext(c.alloc, chromedp.WithErrorf(quietCDP))
-	return c.finishSession(ctx, cancel, rawURL, onLog)
+	ctx, cancel := context.WithCancel(c.alloc)
+	var page struct {
+		TargetID string `json:"targetId"`
+	}
+	if err := c.proc.Call(ctx, "", "Target.createTarget", map[string]any{"url": rawURL}, &page); err != nil {
+		cancel()
+		return nil, err
+	}
+	return c.finishSession(ctx, cancel, page.TargetID, onLog)
 }
 
 // consoleMessage 把控制台参数收成一行。没有值的对象，以及 null / undefined，不再记成「null」。
@@ -162,51 +161,33 @@ func consoleArgText(arg *runtime.RemoteObject) string {
 	return text
 }
 
-func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, rawURL string, onLog func(string)) (*Session, error) {
-	s := &Session{client: c, ctx: ctx, cancel: cancel, hooks: map[string]func(data string) string{}, onLog: onLog}
-	// 桥事件监听：页面 → Go
-	chromedp.ListenTarget(ctx, func(ev any) {
-		switch e := ev.(type) {
-		case *runtime.EventBindingCalled:
-			if e.Name == "tulaiBridge" {
-				payload := e.Payload
-				go func() {
-					stop := s.bindLog()
-					defer stop()
-					s.dispatchBridge(payload)
-				}()
+func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, target string, onLog func(string)) (*Session, error) {
+	s := &Session{client: c, ctx: ctx, cancel: cancel, target: target, hooks: map[string]func(string) string{}, onLog: onLog}
+	s.unsubscribe = c.proc.Subscribe(func(event camoufox.Event) {
+		if event.Target != target {
+			return
+		}
+		var payload string
+		_ = json.Unmarshal(event.Data, &payload)
+		switch event.Event {
+		case "binding":
+			go func() { stop := s.bindLog(); defer stop(); s.dispatchBridge(payload) }()
+		case "console":
+			if onLog != nil && payload != "" {
+				onLog(payload)
 			}
-		case *runtime.EventConsoleAPICalled:
-			if onLog != nil {
-				if line := consoleMessage(e.Args); line != "" {
-					stop := s.bindLog()
-					onLog(line)
-					stop()
-				}
-			}
+		case "closed":
+			cancel()
 		}
 	})
-	if err := chromedp.Run(ctx); err != nil {
-		cancel()
-		return nil, fmt.Errorf("建立标签页会话: %w", err)
-	}
-	// 注册桥绑定（对当前与后续文档生效需两者都做）
-	if err := s.exec(func(ec context.Context) error {
-		return runtime.AddBinding("tulaiBridge").Do(ec)
-	}); err != nil {
+	context.AfterFunc(ctx, s.unsubscribe)
+	if err := s.exec(func(ec context.Context) error { return runtime.AddBinding("tulaiBridge").Do(ec) }); err != nil {
 		cancel()
 		return nil, err
 	}
-	_ = s.InjectBase() // 基础运行时（幂等）
-	if rawURL == "" {
-		s.quietBackground()
-	}
-	if rawURL != "" {
-		if err := chromedp.Run(ctx, chromedp.Navigate(rawURL), chromedp.WaitReady("body", chromedp.ByQuery)); err != nil {
-			// 页面可能加载慢，导航错误不致命
-			_ = err
-		}
-		s.EnsureBase() // 导航后新文档需重注入
+	if err := s.InjectBase(); err != nil {
+		cancel()
+		return nil, err
 	}
 	return s, nil
 }
@@ -306,9 +287,14 @@ func (s *Session) Close() {
 		s.ego.close()
 		return
 	}
-	chromedp.Run(s.ctx, chromedp.ActionFunc(func(ec context.Context) error {
-		return page.Close().Do(ec)
-	}))
+	if s.client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = s.client.proc.Call(ctx, s.target, "Page.close", nil, nil)
+		cancel()
+	}
+	if s.unsubscribe != nil {
+		s.unsubscribe()
+	}
 	s.cancel()
 }
 
@@ -322,9 +308,7 @@ func (s *Session) exec(fn func(ec context.Context) error) error {
 	if s.ego != nil {
 		return fn(cdprotoCDP.WithExecutor(ctx, s.ego))
 	}
-	return chromedp.Run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
-		return fn(ec)
-	}))
+	return fn(cdprotoCDP.WithExecutor(ctx, camoufoxExecutor{proc: s.client.proc, target: s.target}))
 }
 
 // Handle 注册桥命令处理函数（页面 JS: tulaiBridge({cmd, id, data})）。
@@ -444,7 +428,7 @@ func (s *Session) Navigate(url string) error {
 	if s.ego != nil {
 		return s.ego.request(ctx, "goto", map[string]any{"url": url}, nil)
 	}
-	err := chromedp.Run(ctx, chromedp.Navigate(url))
+	err := s.client.proc.Call(ctx, s.target, "Page.navigate", map[string]any{"url": url}, nil)
 	s.StayBack()
 	return err
 }
@@ -490,7 +474,7 @@ func (s *Session) WaitForSelector(sel string, timeout time.Duration) error {
 	if s.ego != nil {
 		return s.ego.request(ctx, "wait", map[string]any{"selector": sel, "timeout": timeout.Milliseconds()}, nil)
 	}
-	return chromedp.Run(ctx, chromedp.WaitVisible(sel, chromedp.ByQuery))
+	return s.client.proc.Call(ctx, s.target, "wait", map[string]any{"selector": sel, "timeout": timeout.Milliseconds()}, nil)
 }
 
 // Click 通过浏览器鼠标协议单击元素。
@@ -511,17 +495,6 @@ func (s *Session) emulateFocus() {}
 
 // quietBackground 出图页不抢前台：模拟焦点，拒绝下载栏，并把窗口送出屏幕。
 func (s *Session) quietBackground() {
-	s.emulateFocus()
-	if s == nil || s.ego != nil {
-		return
-	}
-	_ = s.exec(func(ctx context.Context) error {
-		c := chromedp.FromContext(ctx)
-		if c == nil || c.Browser == nil {
-			return nil
-		}
-		return cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorDeny).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
-	})
 	s.armPark()
 }
 
@@ -587,42 +560,42 @@ func (s *Session) bindLog() func() {
 // KeepOnePage 关掉同一站点多出来的标签，只留当前这一张。
 // 每单新开一页又不关，窗口里会堆上好几张豆包。关的是别的标签，不激活窗口。
 func (s *Session) KeepOnePage(rawURL string) {
-	if s == nil || s.ego != nil {
+	if s == nil || s.ego != nil || s.client == nil {
 		return
 	}
-	host := strings.ToLower(hostOf(rawURL))
-	if host == "" {
+	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	conn, err := DialSlider(ctx, s.client.wsURL)
+	if err != nil {
 		return
 	}
-	_ = s.exec(func(ctx context.Context) error {
-		c := chromedp.FromContext(ctx)
-		if c == nil || c.Browser == nil || c.Target == nil {
-			return nil
+	defer conn.Close()
+	targets, err := conn.targets(ctx)
+	if err != nil {
+		return
+	}
+	var pages []pageRef
+	for _, item := range targets {
+		if item.Type == "page" {
+			pages = append(pages, pageRef{ID: item.ID, URL: item.URL})
 		}
-		infos, err := cdt.GetTargets().Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
-		if err != nil {
-			return err
-		}
-		var pages []pageRef
-		for _, info := range infos {
-			if info.Type != "page" || info.TargetID == "" {
-				continue
-			}
-			pages = append(pages, pageRef{ID: string(info.TargetID), URL: info.URL})
-		}
-		for _, id := range extraPages(pages, rawURL, string(c.Target.TargetID)) {
-			_ = cdt.CloseTarget(cdt.ID(id)).Do(cdprotoCDP.WithExecutor(ctx, c.Browser))
-		}
-		return nil
-	})
+	}
+	for _, id := range extraPages(pages, rawURL, s.target) {
+		_ = conn.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": id}, nil)
+	}
 }
 
 // InsertText 选中编辑器全文后用浏览器真实输入替换，触发框架可信输入事件。
 func (s *Session) InsertText(sel, text string) error {
+	return s.InsertTextElement(fmt.Sprintf("document.querySelector(%q)", sel), text)
+}
+
+// InsertTextElement uses a trusted page expression to select the editor without modifying the DOM.
+func (s *Session) InsertTextElement(expression, text string) error {
 	s.emulateFocus()
 	_, err := s.Evaluate(fmt.Sprintf(`(()=>{
-const e=document.querySelector(%q);
-if(!e)throw new Error('找不到输入框');
+const e=(%s);
+if(!e||!e.isConnected)throw new Error('找不到输入框');
 if(e.matches(':disabled')||e.readOnly||e.closest('[aria-disabled="true"],[aria-readonly="true"]'))throw new Error('输入框已禁用或只读');
 if(e instanceof HTMLInputElement&&!['text','search','email','tel','url','password','number'].includes(e.type))throw new Error('元素不可编辑');
 if(e instanceof HTMLInputElement||e instanceof HTMLTextAreaElement){
@@ -632,7 +605,7 @@ if(e instanceof HTMLInputElement||e instanceof HTMLTextAreaElement){
 }else throw new Error('元素不可编辑');
 if(document.activeElement!==e&&!e.contains(document.activeElement))throw new Error('无法聚焦输入框');
 return true;
-})()`, sel))
+})()`, expression))
 	if err != nil {
 		return err
 	}
@@ -693,26 +666,26 @@ func pauseHuman(ctx context.Context, base, span time.Duration) error {
 }
 
 // SetUploadFilesNth 给第 n 个 input[type=file] 设置文件，由浏览器发送输入事件。
-// 实现：JS 先给目标 input 打标记，浏览器上传后只清除标记，避免重复 change。
 func (s *Session) SetUploadFilesNth(n int, files []string) error {
+	if s.ego == nil {
+		ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
+		defer cancel()
+		return s.client.proc.Call(ctx, s.target, "upload", map[string]any{"index": n, "files": files}, nil)
+	}
 	if _, err := s.Evaluate(fmt.Sprintf(`tulaiMarkFileInput(%d)`, n)); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	defer cancel()
 	var err error
-	if s.ego != nil {
-		paths := make([]string, len(files))
-		for i, file := range files {
-			paths[i], err = filepath.Abs(file)
-			if err != nil {
-				return err
-			}
+	paths := make([]string, len(files))
+	for i, file := range files {
+		paths[i], err = filepath.Abs(file)
+		if err != nil {
+			return err
 		}
-		err = s.ego.request(ctx, "upload", map[string]any{"selector": `input[type=file][data-tulai-upload="1"]`, "files": paths}, nil)
-	} else {
-		err = chromedp.Run(ctx, chromedp.SetUploadFiles(`input[type=file][data-tulai-upload="1"]`, files))
 	}
+	err = s.ego.request(ctx, "upload", map[string]any{"selector": `input[type=file][data-tulai-upload="1"]`, "files": paths}, nil)
 	if err == nil {
 		_, _ = s.Evaluate(`tulaiUnmarkFileInput()`)
 	}
@@ -740,22 +713,15 @@ func (s *Session) CaptureScreenshotRect(x, y, w, h float64) ([]byte, error) {
 
 // CaptureElementScreenshot 截取选择器元素区域。
 func (s *Session) CaptureElementScreenshot(sel string) ([]byte, error) {
-	if s.ego != nil {
-		out, err := s.Evaluate(fmt.Sprintf(`(()=>{const e=document.querySelector(%q);if(!e)throw new Error('元素不存在');e.scrollIntoView();const r=e.getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,w:r.width,h:r.height}})()`, sel))
-		if err != nil {
-			return nil, err
-		}
-		var rect struct{ X, Y, W, H float64 }
-		if err := ParseJSValue(out, &rect); err != nil {
-			return nil, err
-		}
-		return s.CaptureScreenshotRect(rect.X, rect.Y, rect.W, rect.H)
+	out, err := s.Evaluate(fmt.Sprintf(`(()=>{const e=document.querySelector(%q);if(!e)throw new Error('元素不存在');e.scrollIntoView();const r=e.getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,w:r.width,h:r.height}})()`, sel))
+	if err != nil {
+		return nil, err
 	}
-	var buf []byte
-	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
-	defer cancel()
-	err := chromedp.Run(ctx, chromedp.Screenshot(sel, &buf, chromedp.NodeVisible, chromedp.ByQuery))
-	return buf, err
+	var rect struct{ X, Y, W, H float64 }
+	if err := ParseJSValue(out, &rect); err != nil {
+		return nil, err
+	}
+	return s.CaptureScreenshotRect(rect.X, rect.Y, rect.W, rect.H)
 }
 
 // HasText 判断页面文本是否匹配正则。
@@ -783,4 +749,14 @@ func (s *Session) KeepAlive(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}()
+}
+
+// camoufoxExecutor translates the existing typed page commands into the private launcher pipe.
+type camoufoxExecutor struct {
+	proc   *camoufox.Process
+	target string
+}
+
+func (e camoufoxExecutor) Execute(ctx context.Context, method string, params, result any) error {
+	return e.proc.Call(ctx, e.target, method, params, result)
 }

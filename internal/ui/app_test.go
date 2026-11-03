@@ -6,7 +6,6 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -21,13 +20,13 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"回到生图", "生图", "洗图", "浏览器", "提示词", "设置", "开始出图", "提示词内容", "从文件载入", "拖入或点击添加图片", "检查更新", "设置向导"} {
+	for _, label := range []string{"生图", "洗图", "浏览器", "提示词", "设置", "开始出图", "提示词内容", "拖入或点击添加图片", "检查更新", "设置向导"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
 	if tt.HasText("更多设置") || tt.HasText("输出目录") || tt.HasText("每日上限") {
 		t.Fatal("生图页还留着配置")
 	}
-	prompt := assertVisible(t, tt, "每行一条，空行隔开的段落收成一条", 1280, 840)
+	prompt := assertVisible(t, tt, "每行一条；导入段落会合并", 1280, 840)
 	drop := assertVisible(t, tt, "拖入或点击添加图片", 1280, 840)
 	start := assertVisible(t, tt, "开始出图", 1280, 840)
 	if prompt.Y > drop.Y {
@@ -57,8 +56,20 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	if err := tt.Click("设置"); err != nil {
 		t.Fatal(err)
 	}
-	for _, label := range []string{"输出目录", "生图和洗图按日期放进各自的文件夹。", "每日上限", "审核改写词", "去水印（实验）", "自动求解验证码", "跟随系统"} {
-		scrollIntoView(t, tt, label, 1280, 840)
+	for _, section := range []struct {
+		tab    string
+		labels []string
+	}{
+		{"输出", []string{"输出目录", "生图和洗图按日期放进各自的文件夹。"}},
+		{"生成规则", []string{"审核改写词", "去水印（实验）"}},
+		{"验证码 / 高级", []string{"自动求解验证码", "跟随系统"}},
+	} {
+		if err := tt.Click(section.tab); err != nil {
+			t.Fatal(err)
+		}
+		for _, label := range section.labels {
+			scrollIntoView(t, tt, label, 1280, 840)
+		}
 	}
 	if tt.HasText("更多设置") || tt.HasText("保存方式") || tt.HasText("命名规则") {
 		t.Fatal("设置页还留着已经去掉的保存选项")
@@ -77,6 +88,122 @@ func TestSettingsShowsBothDayFolders(t *testing.T) {
 	}
 }
 
+func TestSettingsTabsSwitchAndKeepValues(t *testing.T) {
+	a := &App{tab: pageSettings, outputPath: "/tmp/original", platformAuto: true, downloadConc: 2}
+	tt := ui.NewTester(a.view, 760, 900)
+	for _, label := range []string{"输出", "账号与并发", "输出目录"} {
+		assertVisible(t, tt, label, 760, 900)
+	}
+	if tt.HasText("每个站点同时下载") || tt.HasText("每日上限") {
+		t.Fatal("未选中的设置不应显示")
+	}
+	if err := tt.Click("输出目录"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("/tmp/changed")
+	if err := tt.Click("输出"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyRight)
+	if a.settingsTab != settingsDownload || !tt.HasText("每个站点同时下载") || tt.HasText("输出目录") || tt.HasText("每日上限") {
+		t.Fatalf("下载标签内容不正确: tab=%d", a.settingsTab)
+	}
+	tt.Key(0, ui.KeyRight)
+	if a.settingsTab != settingsAccount || !tt.HasText("每日上限") || tt.HasText("每个站点同时下载") {
+		t.Fatalf("账号标签内容不正确: tab=%d", a.settingsTab)
+	}
+	if err := tt.Click("自动使用已登录的平台"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("账号与并发"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyLeft)
+	if err := tt.Click("每个站点同时下载"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("5")
+	if err := tt.Click("输出"); err != nil {
+		t.Fatal(err)
+	}
+	if a.settingsTab != settingsOutput || a.outputPath != "/tmp/changed" || a.platformAuto || a.downloadConc != 5 || !tt.HasText("输出目录") {
+		t.Fatalf("切换后设置丢失: tab=%d path=%q auto=%v downloads=%v", a.settingsTab, a.outputPath, a.platformAuto, a.downloadConc)
+	}
+}
+
+func TestEverySettingsSectionHasATab(t *testing.T) {
+	sections := []struct{ tab, content string }{
+		{"输出", "输出目录"},
+		{"下载", "每个站点同时下载"},
+		{"账号与并发", "每日上限"},
+		{"Antigravity", "agy 路径"},
+		{"生成规则", "审核改写词"},
+		{"验证码 / 高级", "自动求解验证码"},
+		{"更新", "自动检查更新"},
+	}
+	for _, width := range []int{480, 760} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			a := &App{tab: pageSettings, platformAuto: true}
+			tt := ui.NewTester(a.view, width, 900)
+			for _, section := range sections {
+				assertVisible(t, tt, section.tab, float32(width), 900)
+			}
+			if err := tt.Click("输出"); err != nil {
+				t.Fatal(err)
+			}
+			for i, section := range sections {
+				if i > 0 {
+					tt.Key(0, ui.KeyRight)
+				}
+				if a.settingsTab != i {
+					t.Fatalf("%s: tab=%d, want %d", section.tab, a.settingsTab, i)
+				}
+				for j, other := range sections {
+					if tt.HasText(other.content) != (i == j) {
+						t.Fatalf("%s: 内容 %q 的显示状态不正确", section.tab, other.content)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsTabsKeepAgyAndProxySaved(t *testing.T) {
+	a, st := newDownloadApp(t)
+	a.tab = pageSettings
+	tt := ui.NewTester(a.view, 1280, 900)
+	if err := tt.Click("Antigravity"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("模型"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("test-model")
+	if err := tt.Click("输出"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Get("agy_model"); got != "test-model" {
+		t.Fatalf("切换后模型未保存: %q", got)
+	}
+	if err := tt.Click("验证码 / 高级"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("自定义代理"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyTab)
+	tt.Type("http://127.0.0.1:7890")
+	if err := tt.Click("输出"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Get("proxy_server"); got != "http://127.0.0.1:7890" {
+		t.Fatalf("切换后代理未保存: %q", got)
+	}
+}
+
 func TestTextOnlyStartWithoutSources(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
@@ -85,11 +212,11 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 	defer st.Close()
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
-		browserBackend: "Chrome", platformAuto: true,
+		browserBackend: browser.KindCamoufox, platformAuto: true,
 		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"开始出图", "拖入或点击添加图片", "不放图片也可以只写提示词", "从文件载入", "检查更新"} {
+	for _, label := range []string{"开始出图", "拖入或点击添加图片", "不放图片也可以只写提示词", "检查更新"} {
 		if !tt.HasText(label) {
 			t.Fatalf("缺少文生图说明 %q", label)
 		}
@@ -170,7 +297,7 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"回到生图", "检查更新", "开始出图", "出图进度", "排队中", "添加图片", "运行日志"} {
+				for _, label := range []string{"检查更新", "服务商选择", "本次发送至：豆包", "当前服务商：豆包", "开始出图", "出图进度", "排队中", "添加图片", "运行日志"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 			})
@@ -211,7 +338,7 @@ func TestSaveSettingsIncludesLatestBoundInput(t *testing.T) {
 	st.Set("captcha_custom_url", "https://example.test")
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(nil, nil, nil, ""),
-		tab: pageSettings,
+		tab: pageSettings, settingsTab: settingsAdvanced,
 	}
 	a.loadSettings()
 	tt := ui.NewTester(a.view, 1280, 1800)
@@ -262,10 +389,11 @@ func TestWatermarkOptionDefaultsPersistsAndReachesTask(t *testing.T) {
 		t.Fatal("watermark repair must be disabled until explicitly enabled")
 	}
 	a.tab = pageSettings
+	a.settingsTab = settingsRules
 	tt := ui.NewTester(a.view, 760, 900)
 	scrollIntoView(t, tt, "去水印（实验）", 760, 900)
 	assertVisible(t, tt, "去水印（实验）", 760, 900)
-	if !tt.HasText("已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。") {
+	if !tt.HasText("豆包自动去水印后保存；勾选后千问方图另存修复 PNG。未匹配时保留原图，复杂背景可能有痕迹。") {
 		t.Fatal("watermark repair does not explain output preservation and limitations")
 	}
 	if err := tt.Click("去水印（实验）"); err != nil {
@@ -352,16 +480,26 @@ func TestLoadSettingsRefreshesBrowserRunningState(t *testing.T) {
 }
 
 func TestBrowserSelectionAndBusyActions(t *testing.T) {
-	a := &App{
-		engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
-		tab: pageBrowser, browserSel: -1, newBrowserPlat: "豆包", browserBackend: "Chrome",
-		browserRows: []store.Browser{{ID: 1, Name: "工作账号", Platform: "豆包", Port: 9333}},
-	}
-	tt := ui.NewTester(a.view, 1000, 720)
-	if err := tt.Click("删除选中"); err != nil {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if tt.Focused("删除选中") {
+	defer st.Close()
+	row, err := st.AddBrowser("豆包", "工作账号", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(row.ID, false, true)
+	a := &App{
+		store:  st,
+		engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210,
+		tab: pageBrowser, browserSel: -1, newBrowserPlat: "豆包", browserBackend: "Chrome",
+	}
+	tt := ui.NewTester(a.view, 1000, 720)
+	if err := tt.Click("删除当前"); err != nil {
+		t.Fatal(err)
+	}
+	if tt.Focused("删除当前") {
 		t.Fatal("delete is enabled without a selected browser")
 	}
 	if err := tt.Click("工作账号"); err != nil {
@@ -371,92 +509,51 @@ func TestBrowserSelectionAndBusyActions(t *testing.T) {
 		t.Fatal("clicking a browser did not select it")
 	}
 	a.running = true
-	a.browserRows[0].IsRunning = true
+	st.SetRunning(row.ID, true)
 	tt.Frame()
-	for _, label := range []string{"停止选中", "删除选中"} {
+	for _, label := range []string{"停止 工作账号", "删除当前"} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}
-		if tt.Focused(label) {
-			t.Fatalf("%s is enabled during a task", label)
+		rows := st.Browsers()
+		if len(rows) != 1 || !rows[0].IsRunning {
+			t.Fatalf("%s changed an account during a task: %+v", label, rows)
 		}
 	}
 }
 
-func TestBrowserBackendDefaultsSwitchesAndPersists(t *testing.T) {
+func TestBrowserBackendMigratesToCamoufoxAndPersists(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	st.Set("browser_backend", "ego lite")
+	st.Set("browser_backend", "Edge")
 	a := &App{store: st, manager: browser.NewManager(), engine: tasks.NewEngine(nil, nil, nil, ""), splitSz: 380, sourceHeight: 210, tab: pageBrowser}
 	a.loadSettings()
-	want := browser.DefaultBackend(runtime.GOOS)
-	if a.browserBackend != want || st.Get("browser_backend") != want {
-		t.Fatalf("ego lite should migrate to %s, got %q", want, a.browserBackend)
+	if a.browserBackend != browser.KindCamoufox || st.Get("browser_backend") != browser.KindCamoufox {
+		t.Fatal("legacy browser was not migrated")
 	}
 	tt := ui.NewTester(a.view, 1000, 720)
-	for _, label := range []string{"网页方式", "浏览器实例", "启动选中"} {
-		assertVisible(t, tt, label, 1000, 720)
+	if !tt.HasText("Camoufox 账号环境") {
+		t.Fatalf("missing Camoufox: %v", tt.Texts())
 	}
-	if !tt.HasText("豆包还没有浏览器，请先在浏览器管理中添加") {
-		t.Fatal("empty browser list has no add hint")
-	}
-	if tt.HasText("打开豆包网页") || tt.HasText("已启用 ego lite") {
-		t.Fatal("ego lite controls are still on the browser page")
-	}
-	if !tt.HasText("已检测到") && !tt.HasText("未检测到") {
-		t.Fatalf("detected browsers are not shown: %v", tt.Texts())
-	}
-	if !tt.HasText("下载内置浏览器") {
-		t.Fatal("builtin download button is missing")
-	}
-	pick := func(label string) {
-		t.Helper()
-		if a.browserChoice == label {
-			return
-		}
-		if err := tt.Click(a.browserChoice); err != nil {
-			t.Fatal(err)
-		}
-		if err := tt.Click(label); err != nil {
-			t.Fatal(err)
+	for _, old := range []string{"Chrome", "Edge", "下载内置浏览器"} {
+		if tt.HasText(old) {
+			t.Fatalf("old browser choice: %s", old)
 		}
 	}
-	pick("Edge")
-	if a.browserBackend != "Edge" || st.Get("browser_backend") != "Edge" || !tt.HasText("启动选中") {
-		t.Fatal("selecting Edge did not update the UI and saved backend")
-	}
-	a.running = true
-	tt.Frame()
-	if err := tt.Click("Edge"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Key(0, ui.KeyHome)
-	tt.Key(0, ui.KeyEnter)
-	if a.browserBackend != "Edge" || st.Get("browser_backend") != "Edge" {
-		t.Fatal("browser backend changed during a task")
-	}
-	a.running = false
-	tt.Frame()
-	pick("内置浏览器")
-	if a.browserBackend != browser.KindBuiltin || st.Get("browser_backend") != browser.KindBuiltin {
-		t.Fatalf("builtin choice = %q", a.browserBackend)
-	}
-	pick("Chrome")
 	a.saveSettings()
 	restored := &App{store: st, manager: browser.NewManager()}
 	restored.loadSettings()
-	if restored.browserBackend != "Chrome" || !tt.HasText("启动选中") {
-		t.Fatal("Chrome backend was not restored")
+	if restored.browserBackend != browser.KindCamoufox {
+		t.Fatal("Camoufox not persisted")
 	}
-	a.cftBusy = true
-	a.cftPercent = 0.4
-	a.cftStatus = "正在下载内置浏览器 40%"
+	a.camoufoxBusy = true
+	a.camoufoxStatus = "正在下载 Camoufox 内核…"
 	tt.Frame()
-	if !tt.HasText("正在下载内置浏览器 40%") {
-		t.Fatal("download progress is not shown")
+	if !tt.HasText(a.camoufoxStatus) {
+		t.Fatal("install status missing")
 	}
 }
 
@@ -559,8 +656,8 @@ func TestExtensionTokenVisibleCopyAndRegenerate(t *testing.T) {
 	if extbridge.WeakToken(a.extToken) || a.extToken != st.Get(extbridge.SettingExtToken) || len(a.extToken) != 32 || a.extPort != "18766" {
 		t.Fatalf("blank token should be replaced with a strong token, port=%q token=%q", a.extPort, a.extToken)
 	}
-	tt := ui.NewTester(a.view, 1000, 720)
-	for _, label := range []string{"页面桥", "令牌", "复制令牌", "重新生成", "启动选中"} {
+	tt := ui.NewTester(func(c *ui.Context) { a.extensionBridgeSection(c) }, 1000, 720)
+	for _, label := range []string{"页面桥", "令牌", "复制令牌", "重新生成"} {
 		assertVisible(t, tt, label, 1000, 720)
 	}
 	if !tt.HasText("自动对接未启动，可复制令牌手动填写") {
@@ -618,7 +715,7 @@ func TestExtensionTokenVisibleCopyAndRegenerate(t *testing.T) {
 	}
 }
 
-func TestChromeQianwenWithoutBrowserCannotStart(t *testing.T) {
+func TestCamoufoxQianwenWithoutAccountCannotStart(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -626,7 +723,7 @@ func TestChromeQianwenWithoutBrowserCannotStart(t *testing.T) {
 	defer st.Close()
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
-		browserBackend: "Chrome", platformAuto: true,
+		browserBackend: browser.KindCamoufox, platformAuto: true,
 		platQianwen: true, prompts: "画一只猫", outputPath: t.TempDir(),
 	}
 	tt := ui.NewTester(a.view, 1280, 840)

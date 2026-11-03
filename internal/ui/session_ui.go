@@ -71,8 +71,14 @@ func (a *App) workspaceHasContent(page int) bool {
 // workspaceBar 是这一页右上角的历史和新建任务。按钮按内容收缩。
 func (a *App) workspaceBar(c *ui.Context) {
 	tok := a.look
+	w, _ := c.Size()
 	ui.Row(c.Key("workspace-bar")).FillWidth().Height(workspaceBarH).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, pageLabel(a.statePage)).FontSize(tok.title).Bold().Grow(1)
+		ui.Text(c, pageLabel(a.statePage)).FontSize(tok.title).Bold().Shrink(0)
+		if homeSplit(w) {
+			ui.Row(c).Grow(1).MinWidth(0).Margin(0, 0, 0, 8).AlignItems(ui.Center).Children(func() { a.platformPicker(c) })
+		} else {
+			ui.Spacer(c)
+		}
 		a.historyControl(c)
 		ui.Button(c.Key("new-task"), "新建任务").FontSize(tok.caption).Padding(3, 8).Radius(tok.radiusS).Shrink(0).
 			Disabled(a.running).OnClick(func() { a.newWorkspace() })

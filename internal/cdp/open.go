@@ -456,7 +456,7 @@ func (c *SliderConn) createPage(ctx context.Context, rawURL string) (string, err
 	var out struct {
 		TargetID string `json:"targetId"`
 	}
-	// background=true 时 Chrome 不激活新标签。newWindow 会另开一扇到前台的窗口，出图不用。
+	// 复用 Camoufox 的标签页，不为任务另建浏览器窗口。
 	if err := c.call(ctx, "", "Target.createTarget", pageTarget(rawURL, stayBack(ctx)), &out); err != nil {
 		return "", err
 	}
@@ -530,42 +530,10 @@ func keepParked(endpoint string, show bool) bool {
 }
 
 func (c *SliderConn) placeWindow(ctx context.Context, targetID string, show bool) (bool, error) {
-	if c == nil || targetID == "" {
+	if !show {
 		return false, nil
 	}
-	var win windowBounds
-	if err := c.call(ctx, "", "Browser.getWindowForTarget", map[string]any{"targetId": targetID}, &win); err != nil {
-		return false, err
-	}
-	// 已经最小化就别先恢复。parkSteps 对非 normal 会先写 windowState=normal，那一下又把窗口拉回屏幕。
-	if !show && win.Bounds.WindowState == "minimized" {
-		return false, nil
-	}
-	if show {
-		bounds := map[string]any{"windowState": "normal", "left": 80, "top": 48, "width": 1280, "height": 900}
-		return true, c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil)
-	}
-	steps := parkSteps(win.Bounds.WindowState, win.Bounds.Left, win.Bounds.Top)
-	for _, bounds := range steps {
-		if err := c.call(ctx, "", "Browser.setWindowBounds", map[string]any{"windowId": win.WindowID, "bounds": bounds}, nil); err != nil {
-			return true, err
-		}
-	}
-	if err := c.call(ctx, "", "Browser.getWindowForTarget", map[string]any{"targetId": targetID}, &win); err != nil {
-		return len(steps) > 0, nil
-	}
-	minimized := false
-	if needsMinimize(win.Bounds.WindowState, win.Bounds.Left, win.Bounds.Top) {
-		minimized = true
-		if err := c.call(ctx, "", "Browser.setWindowBounds", map[string]any{
-			"windowId": win.WindowID,
-			"bounds":   map[string]any{"windowState": "minimized"},
-		}, nil); err != nil {
-			return true, err
-		}
-		_ = c.pinLayout(ctx, targetID)
-	}
-	return len(steps) > 0 || minimized, nil
+	return true, c.Activate(ctx, targetID)
 }
 
 type windowBounds struct {

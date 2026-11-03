@@ -181,6 +181,9 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 	if e == nil || e.store == nil || id <= 0 {
 		return
 	}
+	if e.AccountManual(id) {
+		return
+	}
 	e.mu.Lock()
 	probe := e.loginProbe
 	last := e.loginLast[id]
@@ -200,7 +203,7 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 			break
 		}
 	}
-	if !found || row.ExtAccount != "" || row.Platform == agy.Platform {
+	if !found || row.Disabled || row.ExtAccount != "" || row.Platform == agy.Platform {
 		return
 	}
 	if e.accountBusy(id) {

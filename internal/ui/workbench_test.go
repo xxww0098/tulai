@@ -647,7 +647,7 @@ func TestDropTxtLoadsLineAndParagraphPrompts(t *testing.T) {
 	}
 	a := &App{platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	r := assertVisible(t, tt, "每行一条，空行隔开的段落收成一条", 1280, 840)
+	r := assertVisible(t, tt, "每行一条；导入段落会合并", 1280, 840)
 	if !tt.DropFiles(r.X+8, r.Y+4, path, filepath.Join(dir, "skip.png")) {
 		t.Fatal("提示词卡片没有接住文件")
 	}

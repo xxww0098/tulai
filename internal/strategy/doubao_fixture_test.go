@@ -13,7 +13,7 @@ import (
 )
 
 func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
-	ws, shutdown := launchChromeArgs(t, []string{"--blink-settings=imagesEnabled=false"})
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	client, err := cdp.NewClient(ws)
 	if err != nil {
@@ -34,6 +34,7 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", fixtureCSP)
 		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()
@@ -86,7 +87,7 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 		}
 		fresh := openFixture(t, client, srv.URL+"/9337-1", hook, composer)
 		defer fresh.Close()
-		if !fresh.EvaluateBool(`window.tulaiMarkComposer() && document.querySelector('[data-tulai-composer="1"]').tagName==='TEXTAREA' && document.querySelector('[data-tulai-composer="1"]').getAttribute('data-testid')==='chat_input_input' && !document.querySelector('[data-tulai-composer="1"]').closest('.invisible')`) {
+		if !fresh.EvaluateBool(`window.tulaiMarkComposer() && window.__tulaiComposer.tagName==='TEXTAREA' && window.__tulaiComposer.getAttribute('data-testid')==='chat_input_input' && !window.__tulaiComposer.closest('.invisible')`) {
 			t.Fatal("应写到可见的 chat_input_input textarea，而不是旁边那份 invisible 克隆")
 		}
 		if !fresh.EvaluateBool(`window.tulaiSendAccepted(location.href, ` + quote(prompt) + `, 0) === false`) {
@@ -189,6 +190,9 @@ var (
 	scriptTag = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
 	linkTag   = regexp.MustCompile(`(?is)<link\b[^>]*>`)
 )
+
+// Recorded pages must not load live provider assets during local tests.
+const fixtureCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:"
 
 func staticFixture(html string) string {
 	html = scriptTag.ReplaceAllString(html, "")

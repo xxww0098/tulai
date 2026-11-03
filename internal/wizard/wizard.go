@@ -1,11 +1,12 @@
 // Package wizard 决定首次设置向导该不该出现、用哪一个浏览器、账号叫什么。
-// 不启动浏览器，也不访问豆包或千问。
+// 不启动浏览器和 agy，也不访问豆包、千问或 Antigravity。
 package wizard
 
 import (
 	"strings"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 )
 
@@ -23,37 +24,78 @@ const (
 	ProbeRegion  = "region"
 )
 
-// Step 是向导的四步。
+// Step 是向导的步骤。第一步总是选平台，之后按平台走不同的路，见 Flow。
 type Step int
 
 const (
-	StepBrowser Step = iota
-	StepPlatform
+	StepPlatform Step = iota
+	StepBrowser
+	StepInstall
 	StepAccount
-	StepPlugin
 	StepDone
 )
-
-// Count 是步骤数。
-func Count() int { return 4 }
-
-// Index 从 1 开始。
-func (s Step) Index() int { return int(s) + 1 }
 
 // Title 是这一步的大标题。
 func (s Step) Title() string {
 	switch s {
-	case StepPlatform:
-		return "选择平台"
+	case StepBrowser:
+		return "准备浏览器"
+	case StepInstall:
+		return "安装 Antigravity"
 	case StepAccount:
 		return "登录账号"
-	case StepPlugin:
-		return "安装浏览器插件"
 	case StepDone:
 		return "可以开始了"
 	default:
-		return "准备浏览器"
+		return "选择平台"
 	}
+}
+
+// Label 是左侧步骤栏里的短名。
+func (s Step) Label() string {
+	switch s {
+	case StepBrowser:
+		return "浏览器"
+	case StepInstall:
+		return "安装"
+	case StepAccount:
+		return "登录"
+	case StepDone:
+		return "完成"
+	default:
+		return "平台"
+	}
+}
+
+// Flow 是选定平台之后要走的全部步骤，按先后排列。
+// 豆包和千问在网页里登录，要先备好浏览器。Antigravity 走命令行，要先装好 agy，不需要浏览器。
+func Flow(platform string) []Step {
+	if platform == agy.Platform {
+		return []Step{StepPlatform, StepInstall, StepAccount, StepDone}
+	}
+	return []Step{StepPlatform, StepBrowser, StepAccount, StepDone}
+}
+
+// Next 是 s 在这个平台的流程里的下一步。s 是最后一步或不在流程里时 ok 为假。
+func Next(platform string, s Step) (Step, bool) {
+	flow := Flow(platform)
+	for i, step := range flow {
+		if step == s && i+1 < len(flow) {
+			return flow[i+1], true
+		}
+	}
+	return s, false
+}
+
+// Prev 是 s 在这个平台的流程里的上一步。s 是第一步或不在流程里时 ok 为假。
+func Prev(platform string, s Step) (Step, bool) {
+	flow := Flow(platform)
+	for i, step := range flow {
+		if step == s && i > 0 {
+			return flow[i-1], true
+		}
+	}
+	return s, false
 }
 
 // Account 是判断「还有没有能用的账号」时用的快照。
@@ -95,7 +137,7 @@ func ShouldShow(complete string, accounts []Account, now time.Time) bool {
 	return true
 }
 
-// Found 是本机已经能启动的浏览器，不含还没下载的内置浏览器。
+// Found 是已经安装的 Camoufox 运行环境。
 type Found struct {
 	Kind string
 	Path string
@@ -112,44 +154,15 @@ type BrowserPlan struct {
 	Blocked       string
 }
 
-// PlanBrowser 按系统挑一个推荐项。
-// Windows 优先系统 Edge；其它情况依次是已安装的 Chrome、Edge、Chromium。
-// 都没有就准备下载内置浏览器。当前架构没有安装包时，只能请用户自己装浏览器。
-func PlanBrowser(goos, goarch string, found []Found, builtinReady, builtinSupported bool) BrowserPlan {
-	if goos == "windows" {
-		if path, ok := findKind(found, browser.KindEdge); ok {
-			return readyPlan(browser.KindEdge, browser.KindEdge, "将使用系统 Edge", path)
-		}
+// PlanBrowser only offers Camoufox. The official browser and launcher are installed together.
+func PlanBrowser(goos, goarch string, found []Found, ready, supported bool) BrowserPlan {
+	if ready {
+		return readyPlan(browser.KindCamoufox, browser.KindCamoufox, "Camoufox 已就绪", "每个账号使用独立的登录资料和固定指纹")
 	}
-	if path, ok := findKind(found, browser.KindChrome); ok {
-		return readyPlan(browser.KindChrome, browser.KindChrome, "将使用本机 Chrome", path)
+	if supported {
+		return BrowserPlan{Backend: browser.KindCamoufox, Kind: browser.KindCamoufox, Title: "安装 Camoufox", Detail: "首次使用需要下载浏览器和运行环境。安装完成后即可登录服务商账号。", NeedsDownload: true}
 	}
-	if path, ok := findKind(found, browser.KindEdge); ok {
-		title := "将使用本机 Edge"
-		if goos == "windows" {
-			title = "将使用系统 Edge"
-		}
-		return readyPlan(browser.KindEdge, browser.KindEdge, title, path)
-	}
-	if path, ok := findKind(found, browser.KindChromium); ok {
-		return readyPlan(browser.KindChrome, browser.KindChromium, "将使用本机 Chromium", path)
-	}
-	if builtinReady {
-		return readyPlan(browser.KindBuiltin, browser.KindBuiltin, "将使用已下载的内置浏览器", "Chrome for Testing 已在本机，不用再安装")
-	}
-	if builtinSupported {
-		return BrowserPlan{
-			Backend:       browser.KindBuiltin,
-			Kind:          browser.KindBuiltin,
-			Title:         "需要下载内置浏览器",
-			Detail:        "没有检测到 Chrome、Edge 或 Chromium。下载内置浏览器后即可继续，不用自己安装。",
-			NeedsDownload: true,
-		}
-	}
-	return BrowserPlan{
-		Title:   "没有可用的浏览器",
-		Blocked: "当前系统没有可下载的内置浏览器。请先安装 Microsoft Edge 或 Google Chrome，然后点重新检测。",
-	}
+	return BrowserPlan{Title: "当前架构不支持 Camoufox", Blocked: "Windows 请使用 x64 版本；macOS 支持 Intel 和 Apple Silicon。"}
 }
 
 func readyPlan(backend, kind, title, detail string) BrowserPlan {
@@ -171,21 +184,50 @@ func findKind(found []Found, kind string) (string, bool) {
 	return "", false
 }
 
-// SelectedPlatforms 按豆包、千问的顺序返回勾选的平台。
-func SelectedPlatforms(doubao, qianwen bool) []string {
-	var out []string
-	if doubao {
-		out = append(out, "豆包")
+// Platforms 是第一步能选的三个平台，按显示顺序排列。三选一。
+func Platforms() []string {
+	return []string{"豆包", "千问", agy.Platform}
+}
+
+// Valid 报告 name 是不是第一步能选的平台。
+func Valid(name string) bool {
+	for _, p := range Platforms() {
+		if p == name {
+			return true
+		}
 	}
-	if qianwen {
-		out = append(out, "千问")
+	return false
+}
+
+// DefaultChoice 是第一步一开始选中的平台：已勾选的平台里排最前的，一个都没有就是豆包。
+func DefaultChoice(selected []string) string {
+	for _, p := range Platforms() {
+		if hasName(selected, p) {
+			return p
+		}
+	}
+	return Platforms()[0]
+}
+
+// MergeSelection 是选定平台后写回配置库的勾选列表。
+// 第一次设置只留下选的这一个。以后重开向导只是再加一个平台，已有的勾选不动。
+func MergeSelection(selected []string, chosen string, firstRun bool) []string {
+	var out []string
+	for _, p := range Platforms() {
+		if p == chosen || (!firstRun && hasName(selected, p)) {
+			out = append(out, p)
+		}
 	}
 	return out
 }
 
-// CanChoosePlatform 至少要选一个平台。
-func CanChoosePlatform(doubao, qianwen bool) bool {
-	return doubao || qianwen
+func hasName(list []string, name string) bool {
+	for _, item := range list {
+		if item == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Queue 是这一轮还要登录的平台。

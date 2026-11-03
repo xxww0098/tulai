@@ -27,6 +27,12 @@ func TestInstallIsIdempotentAndCleansOldVersions(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "extension", ver, "background.js")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(filepath.Join(first, "doubao", "raw.js")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(first, "network.js")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatalf("old version still present: %v", err)
 	}

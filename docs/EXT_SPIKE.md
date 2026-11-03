@@ -36,10 +36,10 @@ internal/extbridge               extension/
 第一条消息必须是 hello：
 
 ```json
-{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.10","account":"可选的配置文件 id"}}
+{"v":1,"id":"...","type":"hello","ts":1,"platform":"qianwen","payload":{"token":"...","version":"0.3.12","account":"可选的配置文件 id"}}
 ```
 
-`payload.version` 是扩展清单的版本（现在是 0.3.10），不是桌面端的 0.1.8。信封字段 `v` 仍是协议版本 1。
+`payload.version` 是扩展清单的版本（当前源码为 0.3.12），不是桌面端的 0.1.8。信封字段 `v` 仍是协议版本 1。
 
 令牌正确时主机回 `type=ack`，`payload.name` 为 `helloAck`，并带上 `sessionId`。令牌错误、或 hello 之前发送了别的消息，主机回 `E_AUTH` 并关闭连接。令牌放在 payload 里，不放在 URL 上。
 
@@ -70,6 +70,7 @@ node extension/qianwen/page_test.js
 node extension/doubao/page_test.js
 node extension/bridge_test.js
 node extension/content_test.js
+node extension/network_test.js
 go run ./cmd/tulai-ext-smoke
 ```
 
@@ -88,6 +89,8 @@ TULAI_EXT_PLATFORM=doubao TULAI_EXT_LIVE=1 TULAI_EXT_IMAGE=/绝对路径/源图.
 ## browserBackend
 
 新库的 `settings.browserBackend` 默认是 `ego`。写成 `extension` 之后，千问和豆包任务不再打开 Chrome / Edge，改为等对应平台的扩展 hello，再按上传、填词、发送、等待、下载调用 `Session.Call`。浏览器页的下拉框只切换 `browser_backend`（Chrome 或 Edge），不要用它来切换扩展。
+
+默认的 `ego` 方式下，tulai 启动的浏览器仍会带上扩展并对接，但扩展上报的登录不会登记成账号（`applyExtensionLogin` 只在 `extension` 方式下写库）。应用启动时，`DropInactiveExtensionAccounts` 会在向导判断之前清掉库里遗留的扩展账号行，本机账号不受影响。否则同一个登录会在浏览器页出现两条，并且只剩扩展行时向导不会再出现。
 
 发送的幂等键是「这一批 + 任务序号 + send」。成功和 `E_SEND_UNCERTAIN` 会被桥缓存，同一批里不会再发第二次 send。调用超时不进缓存；内容脚本自己记住已经点过的键，超时重试只复查输入框是否清空，不再点击。`E_SEND_UNCERTAIN` 会停掉整批，和 ego 路径的「发送状态未确认」一样。
 

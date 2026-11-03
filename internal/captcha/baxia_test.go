@@ -6,53 +6,32 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/camoufoxtest"
 )
 
 func TestSolveDisabled(t *testing.T) {
 	t.Setenv("TULAI_BAXIA_SOLVE", "0")
-	t.Setenv("TULAI_CDP_URL", "http://127.0.0.1:1")
 	if err := SolveQianwenSlider(context.Background()); err != errBaxiaDisabled {
 		t.Fatalf("err=%v", err)
 	}
 }
 
-func TestSliderEndpointsPreferExplicitURL(t *testing.T) {
-	t.Setenv("TULAI_CDP_URL", "http://127.0.0.1:9")
-	t.Setenv("TULAI_CDP_PORT", "9222")
+func TestSliderEndpointUsesExplicitAccount(t *testing.T) {
+	t.Setenv("TULAI_CAMOUFOX_ACCOUNT", "9333")
 	got := sliderEndpoints()
-	if len(got) != 1 || got[0] != "http://127.0.0.1:9" {
-		t.Fatalf("endpoints=%v", got)
-	}
-}
-
-func TestDevtoolsActivePortEndpoint(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "DevToolsActivePort"), []byte("9333\n/devtools/browser/abc\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := devtoolsEndpoint(dir); got != "ws://127.0.0.1:9333/devtools/browser/abc" {
-		t.Fatalf("endpoint %q", got)
+	if len(got) != 1 || got[0] != "camoufox://9333" {
+		t.Fatal(got)
 	}
 }
 
 func TestTrustedDragPassesPuzzleSlider(t *testing.T) {
 	if testing.Short() {
 		t.Skip("需要本机 Chrome")
-	}
-	chrome, err := browser.FindChromePath()
-	if err != nil {
-		t.Skip(err)
 	}
 	bg, piece := puzzleFixtures()
 	mux := http.NewServeMux()
@@ -80,7 +59,7 @@ func TestTrustedDragPassesPuzzleSlider(t *testing.T) {
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	endpoint := startDebugChrome(t, chrome, server.URL)
+	endpoint := startDebugCamoufox(t, server.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	if err := SolveQianwenSliderAt(ctx, endpoint); err != nil {
@@ -139,49 +118,8 @@ window.addEventListener('mouseup', (e) => {
 </body></html>`, gap)
 }
 
-func startDebugChrome(t *testing.T, chrome, pageURL string) string {
+func startDebugCamoufox(t *testing.T, pageURL string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-	cmd := exec.Command(chrome,
-		"--headless=new",
-		"--disable-gpu",
-		"--no-sandbox",
-		"--disable-dev-shm-usage",
-		"--force-device-scale-factor=1",
-		"--window-size=1280,800",
-		"--remote-allow-origins=*",
-		"--no-first-run",
-		"--no-default-browser-check",
-		"--user-data-dir="+t.TempDir(),
-		"--remote-debugging-port="+strconv.Itoa(port),
-		pageURL,
-	)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	endpoint := "http://127.0.0.1:" + strconv.Itoa(port)
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(endpoint + "/json/version")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return endpoint
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatal("Chrome 调试端口没有起来")
-	return ""
+	_, endpoint := camoufoxtest.Start(t, pageURL)
+	return endpoint
 }

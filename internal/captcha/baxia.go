@@ -13,8 +13,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,13 +25,13 @@ import (
 var (
 	errGapSize       = errors.New("拼图尺寸不够")
 	errBaxiaDisabled = errors.New("已关闭自动滑块")
-	errBaxiaNoCDP    = errors.New("没有连上 Chrome 远程调试端口")
+	errBaxiaNoCDP    = errors.New("没有打开 Camoufox 账号窗口")
 	errBaxiaNoSlider = errors.New("页面上没有识别到阿里云滑块")
 	errBaxiaRemain   = errors.New("拖动后滑块仍在")
 	errBaxiaLow      = errors.New("缺口置信度不够")
 )
 
-// SolveQianwenSlider 附着到已经打开远程调试的 Chrome，用信任的鼠标事件拖过阿里云滑块。
+// SolveQianwenSlider 附着到应用内已打开的 Camoufox 账号，用信任的鼠标事件拖过阿里云滑块。
 // 拼图用本地缺口匹配；没有拼图图时把滑块拖到轨道尽头。页面脚本合成的点击是 isTrusted=false，这里不用那条路。
 func SolveQianwenSlider(ctx context.Context) error {
 	if strings.TrimSpace(os.Getenv("TULAI_BAXIA_SOLVE")) == "0" {
@@ -67,7 +65,7 @@ func SolveQianwenSlider(ctx context.Context) error {
 	return fmt.Errorf("%w: %v", errBaxiaNoCDP, last)
 }
 
-// SolveQianwenSliderAt 只连一个调试地址。测试和显式 TULAI_CDP_URL 走这里。
+// SolveQianwenSliderAt 只连接指定的 Camoufox 账号。
 func SolveQianwenSliderAt(ctx context.Context, endpoint string) error {
 	conn, err := cdp.DialSlider(ctx, endpoint)
 	if err != nil {
@@ -104,7 +102,7 @@ func SolveQianwenSliderAt(ctx context.Context, endpoint string) error {
 	if x11DragEnabled() {
 		logging.Log.Info("千问滑块改用 X11/xdotool 拖动")
 		if err := playSliderX11(ctx, conn, hit, events); err != nil {
-			logging.Log.Warning("X11 拖动失败，回退 CDP: %v", err)
+			logging.Log.Warning("X11 拖动失败，回退浏览器输入: %v", err)
 			if err := conn.Play(ctx, hit.TargetID, events); err != nil {
 				return err
 			}
@@ -224,56 +222,11 @@ func decodeData(s string) ([]byte, error) {
 }
 
 func sliderEndpoints() []string {
-	if raw := strings.TrimSpace(os.Getenv("TULAI_CDP_URL")); raw != "" {
-		return []string{raw}
+	raw := strings.TrimSpace(os.Getenv("TULAI_CAMOUFOX_ACCOUNT"))
+	if raw != "" {
+		return []string{"camoufox://" + raw}
 	}
-	var out []string
-	add := func(v string) {
-		v = strings.TrimSpace(v)
-		if v == "" {
-			return
-		}
-		for _, item := range out {
-			if item == v {
-				return
-			}
-		}
-		out = append(out, v)
-	}
-	if port := strings.TrimSpace(os.Getenv("TULAI_CDP_PORT")); port != "" {
-		add("http://127.0.0.1:" + port)
-	}
-	if ws := devtoolsEndpoint(os.Getenv("TULAI_CHROME_PROFILE")); ws != "" {
-		add(ws)
-	}
-	if ws := devtoolsEndpoint("/tmp/tulai-chrome-profile"); ws != "" {
-		add(ws)
-	}
-	add("http://127.0.0.1:9222")
-	return out
-}
-
-func devtoolsEndpoint(profile string) string {
-	profile = strings.TrimSpace(profile)
-	if profile == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) == 0 {
-		return ""
-	}
-	port := strings.TrimSpace(lines[0])
-	if _, err := strconv.Atoi(port); err != nil {
-		return ""
-	}
-	if len(lines) >= 2 && strings.HasPrefix(strings.TrimSpace(lines[1]), "/") {
-		return "ws://127.0.0.1:" + port + strings.TrimSpace(lines[1])
-	}
-	return "http://127.0.0.1:" + port
+	return nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

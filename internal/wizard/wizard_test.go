@@ -5,57 +5,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
-func TestPlanBrowserPrefersWindowsEdgeThenInstalledBrowsers(t *testing.T) {
-	chrome := Found{Kind: browser.KindChrome, Path: `C:\chrome.exe`}
-	edge := Found{Kind: browser.KindEdge, Path: `C:\msedge.exe`}
-	chromium := Found{Kind: browser.KindChromium, Path: "/usr/bin/chromium"}
-
-	win := PlanBrowser("windows", "amd64", []Found{chrome, edge}, false, true)
-	if win.Backend != browser.KindEdge || win.Kind != browser.KindEdge || !win.CanNext || win.NeedsDownload || win.Title != "将使用系统 Edge" {
-		t.Fatalf("windows with edge and chrome: %+v", win)
-	}
-
-	winChrome := PlanBrowser("windows", "amd64", []Found{chrome}, false, true)
-	if winChrome.Backend != browser.KindChrome || winChrome.Title != "将使用本机 Chrome" || !winChrome.CanNext {
-		t.Fatalf("windows chrome only: %+v", winChrome)
-	}
-
-	mac := PlanBrowser("darwin", "arm64", []Found{edge, chrome}, true, true)
-	if mac.Backend != browser.KindChrome || mac.Kind != browser.KindChrome || mac.NeedsDownload {
-		t.Fatalf("mac should prefer chrome over edge and builtin: %+v", mac)
-	}
-
-	macEdge := PlanBrowser("darwin", "arm64", []Found{edge}, false, true)
-	if macEdge.Backend != browser.KindEdge || macEdge.Title != "将使用本机 Edge" {
-		t.Fatalf("mac edge only: %+v", macEdge)
-	}
-
-	linux := PlanBrowser("linux", "amd64", []Found{chromium}, false, true)
-	if linux.Backend != browser.KindChrome || linux.Kind != browser.KindChromium || linux.Title != "将使用本机 Chromium" || !linux.CanNext {
-		t.Fatalf("chromium should be stored as chrome: %+v", linux)
-	}
-}
-
-func TestPlanBrowserDownloadOrBlocked(t *testing.T) {
-	need := PlanBrowser("linux", "amd64", nil, false, true)
-	if need.CanNext || !need.NeedsDownload || need.Backend != browser.KindBuiltin {
-		t.Fatalf("missing browsers should offer download: %+v", need)
-	}
-	ready := PlanBrowser("linux", "amd64", nil, true, true)
-	if !ready.CanNext || ready.NeedsDownload || ready.Backend != browser.KindBuiltin || ready.Title != "将使用已下载的内置浏览器" {
-		t.Fatalf("installed builtin should continue: %+v", ready)
+func TestPlanBrowserUsesCamoufoxOnly(t *testing.T) {
+	for _, platform := range []string{"windows", "darwin", "linux"} {
+		need := PlanBrowser(platform, "amd64", []Found{{Kind: "Chrome", Path: "old"}}, false, true)
+		if need.CanNext || !need.NeedsDownload || need.Backend != browser.KindCamoufox {
+			t.Fatalf("missing: %+v", need)
+		}
+		ready := PlanBrowser(platform, "amd64", nil, true, true)
+		if !ready.CanNext || ready.NeedsDownload || ready.Backend != browser.KindCamoufox {
+			t.Fatalf("ready: %+v", ready)
+		}
 	}
 	blocked := PlanBrowser("windows", "arm64", nil, false, false)
 	if blocked.CanNext || blocked.NeedsDownload || blocked.Blocked == "" {
-		t.Fatalf("windows arm64 without a browser: %+v", blocked)
-	}
-	installedWins := PlanBrowser("linux", "amd64", []Found{{Kind: browser.KindChrome, Path: "/opt/google/chrome/chrome"}}, false, true)
-	if installedWins.NeedsDownload || installedWins.Backend != browser.KindChrome {
-		t.Fatalf("installed chrome beats download: %+v", installedWins)
+		t.Fatalf("blocked: %+v", blocked)
 	}
 }
 
@@ -151,14 +119,7 @@ func TestAccountNamesAndLoginAdvance(t *testing.T) {
 	if got := NextInstanceName("豆包", nil); got != "豆包1" {
 		t.Fatalf("first name = %q", got)
 	}
-	if !CanChoosePlatform(true, false) || !CanChoosePlatform(false, true) || CanChoosePlatform(false, false) {
-		t.Fatal("platform step should require one choice")
-	}
-	got := SelectedPlatforms(true, true)
-	if len(got) != 2 || got[0] != "豆包" || got[1] != "千问" {
-		t.Fatalf("order = %v", got)
-	}
-	q := NewQueue(got)
+	q := NewQueue([]string{"豆包", "千问"})
 	if q.Current() != "豆包" || q.Done() {
 		t.Fatalf("queue start: %+v", q)
 	}
@@ -179,5 +140,106 @@ func TestAccountNamesAndLoginAdvance(t *testing.T) {
 	q, poll = AfterLogin(q, true)
 	if poll != PollDone || !q.Done() {
 		t.Fatalf("after both: %+v %v", q, poll)
+	}
+}
+
+func TestFlowIsPlatformFirstThenBrowserOrInstall(t *testing.T) {
+	want := map[string][]Step{
+		"豆包":         {StepPlatform, StepBrowser, StepAccount, StepDone},
+		"千问":         {StepPlatform, StepBrowser, StepAccount, StepDone},
+		agy.Platform: {StepPlatform, StepInstall, StepAccount, StepDone},
+	}
+	for platform, steps := range want {
+		got := Flow(platform)
+		if len(got) != len(steps) {
+			t.Fatalf("%s flow = %v", platform, got)
+		}
+		for i := range steps {
+			if got[i] != steps[i] {
+				t.Fatalf("%s flow = %v want %v", platform, got, steps)
+			}
+		}
+	}
+	for _, p := range []string{"豆包", "千问"} {
+		for _, s := range Flow(p) {
+			if s == StepInstall {
+				t.Fatalf("%s should not ask to install agy", p)
+			}
+		}
+	}
+	for _, s := range Flow(agy.Platform) {
+		if s == StepBrowser {
+			t.Fatal("Antigravity does not use a browser")
+		}
+	}
+}
+
+func TestNextAndPrevWalkTheChosenPlatformsFlow(t *testing.T) {
+	step := StepPlatform
+	var seen []Step
+	for {
+		next, ok := Next(agy.Platform, step)
+		if !ok {
+			break
+		}
+		seen = append(seen, next)
+		step = next
+	}
+	if len(seen) != 3 || seen[0] != StepInstall || seen[1] != StepAccount || seen[2] != StepDone {
+		t.Fatalf("forward = %v", seen)
+	}
+	if _, ok := Next(agy.Platform, StepDone); ok {
+		t.Fatal("done has no next step")
+	}
+	back, ok := Prev(agy.Platform, StepAccount)
+	if !ok || back != StepInstall {
+		t.Fatalf("back from login = %v %v", back, ok)
+	}
+	back, ok = Prev("豆包", StepAccount)
+	if !ok || back != StepBrowser {
+		t.Fatalf("back from login (doubao) = %v %v", back, ok)
+	}
+	if _, ok := Prev("豆包", StepPlatform); ok {
+		t.Fatal("the first step has no previous step")
+	}
+	if _, ok := Next("豆包", StepInstall); ok {
+		t.Fatal("install is not part of the doubao flow")
+	}
+}
+
+func TestPlatformChoiceIsOneOfThree(t *testing.T) {
+	got := Platforms()
+	if len(got) != 3 || got[0] != "豆包" || got[1] != "千问" || got[2] != agy.Platform {
+		t.Fatalf("platforms = %v", got)
+	}
+	if !Valid("千问") || !Valid(agy.Platform) || Valid("") || Valid("Antigravity2") {
+		t.Fatal("valid platform names")
+	}
+	if DefaultChoice(nil) != "豆包" {
+		t.Fatal("new config starts on doubao")
+	}
+	if DefaultChoice([]string{"千问", agy.Platform}) != "千问" {
+		t.Fatal("first saved platform in display order")
+	}
+	if DefaultChoice([]string{agy.Platform}) != agy.Platform {
+		t.Fatal("saved antigravity")
+	}
+	if DefaultChoice([]string{"未知"}) != "豆包" {
+		t.Fatal("unknown names fall back")
+	}
+}
+
+func TestMergeSelectionKeepsOneOnFirstRunAndAddsLater(t *testing.T) {
+	first := MergeSelection([]string{"豆包", "千问"}, agy.Platform, true)
+	if len(first) != 1 || first[0] != agy.Platform {
+		t.Fatalf("first run keeps only the choice: %v", first)
+	}
+	later := MergeSelection([]string{agy.Platform}, "豆包", false)
+	if len(later) != 2 || later[0] != "豆包" || later[1] != agy.Platform {
+		t.Fatalf("reopen adds without dropping, in display order: %v", later)
+	}
+	same := MergeSelection([]string{"千问"}, "千问", false)
+	if len(same) != 1 || same[0] != "千问" {
+		t.Fatalf("same platform twice: %v", same)
 	}
 }

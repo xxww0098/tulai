@@ -15,11 +15,10 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	extbundle "github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
-	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/download"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -59,19 +58,28 @@ const (
 type App struct {
 	mu sync.Mutex
 
-	store          *store.Store
-	manager        *browser.Manager
-	engine         *tasks.Engine
-	window         *mygo.Window
-	dataRoot       string
-	browserBackend string
-	browserChoice  string
-	detectedNote   string
-	detectedDetail string
-	cftStatus      string
-	cftBusy        bool
-	cftPercent     float64
-	cftReady       bool
+	store            *store.Store
+	manager          *browser.Manager
+	engine           *tasks.Engine
+	window           *mygo.Window
+	dataRoot         string
+	browserBackend   string
+	browserChoice    string
+	accountProxyID   int64
+	accountProxy     string
+	accountProxyNote string
+	detectedNote     string
+	detectedDetail   string
+	camoufoxStatus   string
+	camoufoxBusy     bool
+	camoufoxPercent  float64 // 小于 0 表示这一步给不出百分比
+	camoufoxDone     int64
+	camoufoxTotal    int64
+	camoufoxSpeed    int64
+	camoufoxLast     int64
+	camoufoxStage    string
+	camoufoxAt       time.Time
+	camoufoxReady    bool
 
 	// 任务设置（与 settings 表一一对应）
 	platDoubao      bool
@@ -108,31 +116,80 @@ type App struct {
 	startBrowserIdx float64
 	outputPath      string
 	removeWatermark bool
-	prompts         string
-	userPrompts     []prompts.UserPrompt
-	promptPick      string
-	promptChoice    string
-	freeformPrompts string
-	promptNote      string
-	promptSuffix    string
-	useSuffix       bool
-	batchMode       int // batchText 文生图 / batchImage 图生图
-	platformAuto    bool
-	logScroll       ui.ScrollState
-	stageTab        int
-	stagePicked     bool
-	outputNote      string
-	thumbs          map[string]*ui.Bitmap
-	thumbWait       map[string]bool
-	look            tokens
-	flowPin         int
-	skipImages      bool
-	previewOn       bool
-	previewPath     string
-	previewBmp      *ui.Bitmap
-	statePage       int       // App 字段里装的是哪一页：pageHome 或 pageWash
-	parked          pageState // 另一页的图片、提示词和进度
-	runPage         int       // 引擎这一批属于哪一页
+	downloadConc    float64
+	downloadRetries float64
+	downloadRateKB  float64
+
+	// 下载页
+	dlURLs           string
+	dlDir            string
+	dlDepth          float64
+	dlMinKB          float64
+	dlMaxKB          float64
+	dlMinWidth       float64
+	dlMaxWidth       float64
+	dlMinHeight      float64
+	dlMaxHeight      float64
+	dlBrowserMode    bool
+	dlBrowser        downloadBrowser
+	dlBrowserURL     string
+	dlBrowserBusy    bool
+	dlBrowserErr     string
+	dlBrowserCancel  context.CancelFunc
+	dlHost           *download.HostLimiter
+	dlPathLock       *download.PathLocker
+	dlTasks          []*downloadTask
+	dlNextID         int
+	dlFilter         int
+	dlSearch         string
+	dlSearchOn       bool
+	dlComposerOn     bool
+	dlComposerErr    string
+	dlGuideOn        bool
+	dlGuideSearch    string
+	dlGuideScroll    ui.ScrollState
+	dlImport         *downloadImportState
+	dlImportNotice   string
+	dlGroupBySite    bool
+	dlSelectedID     int
+	dlAllChecked     bool
+	prompts          string
+	userPrompts      []prompts.UserPrompt
+	promptPick       string
+	promptChoice     string
+	freeformPrompts  string
+	promptNote       string
+	genPromptChoice  string
+	promptEditPick   string
+	promptEditChoice string
+	promptEditText   string
+	promptEditName   string
+	promptEditKind   string
+	promptEditDraft  string
+	promptDraftName  string
+	promptDraftKind  string
+	promptFilter     string
+	promptEditNote   string
+	washPromptChoice string
+	promptSuffix     string
+	useSuffix        bool
+	batchMode        int // batchText 文生图 / batchImage 图生图
+	platformAuto     bool
+	logScroll        ui.ScrollState
+	stageTab         int
+	stagePicked      bool
+	outputNote       string
+	thumbs           map[string]*ui.Bitmap
+	thumbWait        map[string]bool
+	look             tokens
+	flowPin          int
+	skipImages       bool
+	previewOn        bool
+	previewPath      string
+	previewBmp       *ui.Bitmap
+	statePage        int       // App 字段里装的是哪一页：pageHome 或 pageWash
+	parked           pageState // 另一页的图片、提示词和进度
+	runPage          int       // 引擎这一批属于哪一页
 
 	// 验证码设置
 	captchaEnabled bool
@@ -152,24 +209,33 @@ type App struct {
 	srcSel  int
 
 	// 去重页
-	dedup dedupState
+	dedup      dedupState
+	fileRename renameState
+	edit       imageEditState
+	uiUpdates  []func() // 无窗口时由 mu 保护，UI 帧统一应用后台结果。
 
 	// 浏览器
-	browserRows    []store.Browser
-	browserSel     int
-	newBrowserPlat string
-	newBrowserName string
-	platSynced     bool
-	platSyncedTab  int
-	renameID       int64
-	renameDraft    string
-	renameFocus    bool
-	loginLaunch    func(store.Browser) error
-	loginClosed    []int64
-	afterClose     func()
-	extToken       string
-	extPort        string
-	extTokenNote   string
+	browserRows      []store.Browser
+	browserList      ui.ListState
+	browserChecked   ui.Selection[int64]
+	browserPending   map[int64]browserOperation
+	browserBatch     *browserBatchRun
+	browserDrawer    *browserDrawerState
+	browserViewingID int64 // 由 mu 保护，供登录探测协程检查。
+	browserSel       int
+	newBrowserPlat   string
+	newBrowserName   string
+	platSynced       bool
+	platSyncedTab    int
+	renameID         int64
+	renameDraft      string
+	renameFocus      bool
+	loginLaunch      func(store.Browser) error
+	loginClosed      []int64
+	afterClose       func()
+	extToken         string
+	extPort          string
+	extTokenNote     string
 
 	// 队列与日志
 	queue         []tasks.Task
@@ -188,6 +254,7 @@ type App struct {
 	stamps        map[string]int64
 
 	tab          int
+	settingsTab  int
 	tabSeen      int
 	tabTracked   bool
 	tabDir       int
@@ -209,38 +276,42 @@ type App struct {
 	updateAsset        string
 	updateStop         chan struct{}
 	updateRel          update.Release
+	updateSigned       *mygo.Update
+	updateSignedClient *update.Client
+	downloadsRunning   int
 
-	wizardOn           bool
-	wizardStep         wizard.Step
-	wizardDir          int
-	wizardPlan         wizard.BrowserPlan
-	wizardQueue        wizard.Queue
-	wizardAccount      store.Browser
-	wizardExtra        bool
-	wizardPickExtra    bool
-	wizardPhase        string
-	wizardNote         string
-	wizardErr          string
-	wizardGen          int
-	wizardStop         chan struct{}
-	wizardLaunch       func(store.Browser) (string, error)
-	wizardOpen         func(ws, rawURL string) error
-	wizardProbe        func(ctx context.Context, endpoint string) (string, error)
-	wizardNavFailed    bool
-	wizardName         string
-	wizardNameFor      int64
-	loginShots         map[int64]loginShot
-	loginWatchGen      map[int64]int
-	loginHold          map[int64]struct{}
-	loginFresh         map[int64]struct{} // 这一轮新建、还没登录成功，离开时可以删
-	loginProbed        map[int64]string   // 本进程已经探过的结果，避免每次刷新再堵一次
-	accountProbe       func(store.Browser) (string, error)
-	loginPoll          time.Duration
-	loginFollow        func(store.Browser, string)
-	accountOpen        func(store.Browser) error
-	pluginWasConnected bool
-	pluginWatch        bool
-	extensionDir       string
+	wizardOn        bool
+	wizardStep      wizard.Step
+	wizardDir       int
+	wizardPlan      wizard.BrowserPlan
+	wizardQueue     wizard.Queue
+	wizardAccount   store.Browser
+	wizardExtra     bool
+	wizardChoice    string                      // 第一步选中的平台，三选一
+	wizardFirst     bool                        // 打开向导时还没有可用账号：选定的平台就是全部勾选
+	wizardAgy       wizardAgyState              // 安装步骤里对 agy 的检测结果
+	wizardPlanFn    func() wizard.BrowserPlan   // 测试可换掉本机浏览器检测
+	agyLocate       func(string) (string, bool) // 测试可换掉 agy 查找
+	wizardPhase     string
+	wizardNote      string
+	wizardErr       string
+	wizardGen       int
+	wizardStop      chan struct{}
+	wizardLaunch    func(store.Browser) (string, error)
+	wizardOpen      func(ws, rawURL string) error
+	wizardProbe     func(ctx context.Context, endpoint string) (string, error)
+	wizardNavFailed bool
+	wizardName      string
+	wizardNameFor   int64
+	loginShots      map[int64]loginShot
+	loginWatchGen   map[int64]int
+	loginHold       map[int64]struct{}
+	loginFresh      map[int64]struct{} // 这一轮新建、还没登录成功，离开时可以删
+	loginProbed     map[int64]string   // 本进程已经探过的结果，避免每次刷新再堵一次
+	accountProbe    func(store.Browser) (string, error)
+	loginPoll       time.Duration
+	loginFollow     func(store.Browser, string)
+	accountOpen     func(store.Browser) error
 }
 
 type sourceImage struct {
@@ -264,18 +335,23 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		browserSel:   -1,
 		dedup:        dedupState{level: dedupDefaultLevel},
 	}
+	// 向导和账号列表都先看到干净的库：不走扩展的方式下，遗留的扩展账号行不算账号。
+	eng.DropInactiveExtensionAccounts()
 	a.loadSettings()
-	if dir, err := extbundle.Install(browser.ConfigDir()); err != nil {
-		logging.Log.Warning("页面桥扩展没有解压：%v", err)
-	} else {
-		a.extensionDir = dir
-		if bm != nil {
-			bm.SetExtensionDir(dir)
-			bm.SetExtensionReady(func(wsURL, extDir string) error {
-				return cdp.EnsureExtension(context.Background(), wsURL, extDir)
-			})
+	defer func() {
+		for _, task := range a.dlTasks {
+			if task.cancel != nil {
+				task.cancel()
+			}
 		}
-	}
+		if a.dlBrowserCancel != nil {
+			a.dlBrowserCancel()
+		}
+		if a.dlBrowser != nil {
+			a.dlBrowser.Close()
+		}
+	}()
+
 	a.applyWizardGate()
 	if a.engine != nil {
 		if err := a.engine.ServeLocal(); err != nil && a.extTokenNote == "" {
@@ -283,16 +359,14 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		}
 	}
 	a.wireHealing()
-	a.startAgyUsage()
 	defer a.stopAgyUsage()
 	loginCtx, loginStop := context.WithCancel(context.Background())
 	defer loginStop()
-	if a.engine != nil {
-		go a.engine.WatchLogins(loginCtx)
-	}
 	mygo.App.SetMenu(a.installMenu())
 	a.updateStop = make(chan struct{})
 	offQuit := mygo.App.OnQuit(func() {
+		a.closeBrowserDrawer()
+		a.waitRename()
 		a.saveSettings()
 		select {
 		case <-a.updateStop:
@@ -301,19 +375,6 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		}
 	})
 	defer offQuit()
-	logging.Log.SetSink(func(e logging.Entry) {
-		if a.window == nil {
-			return
-		}
-		a.window.Update(func() {
-			a.mu.Lock()
-			a.logs = append(a.logs, e)
-			if len(a.logs) > 500 {
-				a.logs = a.logs[len(a.logs)-400:]
-			}
-			a.mu.Unlock()
-		})
-	})
 	mygo.App.WhenReady(func() {
 		a.window = mygo.NewWindow(mygo.WindowOptions{
 			Title:   "tulai",
@@ -321,6 +382,21 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 			Height:  900,
 			Content: ui.View(a.view),
 		})
+		// 窗口初始化后再发布后台回调，避免读到尚未赋值的 window。
+		logging.Log.SetSink(func(e logging.Entry) {
+			a.window.Update(func() {
+				a.mu.Lock()
+				a.logs = append(a.logs, e)
+				if len(a.logs) > 500 {
+					a.logs = a.logs[len(a.logs)-400:]
+				}
+				a.mu.Unlock()
+			})
+		})
+		a.startAgyUsage()
+		if a.engine != nil {
+			go a.engine.WatchLogins(loginCtx)
+		}
 		applyAppIcon(a.window)
 		if a.manager != nil {
 			w := a.window
@@ -406,6 +482,7 @@ func (a *App) loadSettings() {
 	if strings.TrimSpace(a.riskyWords) == "" {
 		a.riskyWords = tasks.RiskySetting()
 	}
+	a.loadImageEditSettings()
 	a.waitBefore = float64(clampInt(s.GetInt("wait_before_sending"), 0, 60))
 	a.waitResult = s.GetBool("wait_result")
 	a.waitResultS = float64(clampInt(s.GetInt("wait_result_seconds"), 10, 1800))
@@ -413,15 +490,39 @@ func (a *App) loadSettings() {
 	a.switchCount = float64(clampInt(s.GetInt("task_switching_count"), 1, 9999))
 	a.startBrowserIdx = float64(clampInt(s.GetInt("start_browser_index"), 1, 999))
 	a.outputPath = s.Get("output_path")
+	a.dlURLs = s.Get("download_urls")
+	a.dlDir = strings.TrimSpace(s.Get("download_dir"))
+	a.dlDepth = float64(clampInt(s.GetInt("download_depth"), 1, 32767))
+	a.dlMinKB = float64(clampInt(s.GetInt("download_min_kb"), 0, 10000000))
+	a.dlMaxKB = float64(clampInt(s.GetInt("download_max_kb"), 0, 10000000))
+	a.dlMinWidth = float64(clampInt(s.GetInt("download_min_width"), 0, 10000000))
+	a.dlMaxWidth = float64(clampInt(s.GetInt("download_max_width"), 0, 10000000))
+	a.dlMinHeight = float64(clampInt(s.GetInt("download_min_height"), 0, 10000000))
+	a.dlMaxHeight = float64(clampInt(s.GetInt("download_max_height"), 0, 10000000))
+	a.dlBrowserMode = s.GetBool("download_browser_mode")
+	if raw := s.Get("download_concurrency"); raw == "" {
+		a.downloadConc = 2
+	} else {
+		a.downloadConc = float64(clampInt(s.GetInt("download_concurrency"), 1, 8))
+	}
+	if raw := s.Get("download_retries"); raw == "" {
+		a.downloadRetries = 2
+	} else {
+		a.downloadRetries = float64(clampInt(s.GetInt("download_retries"), 0, 10))
+	}
+	a.downloadRateKB = float64(clampInt(s.GetInt("download_rate_kbps"), 0, 102400))
 	a.removeWatermark = s.GetBool("remove_watermark")
 	a.prompts = s.Get("prompts")
 	a.freeformPrompts = s.Get("prompts_freeform")
 	a.userPrompts = prompts.ParseUser(s.Get("user_prompts"))
-	a.promptPick = prompts.NormalizePick(s.Get("prompt_pick"), a.userPrompts)
+	a.promptPick = s.Get("prompt_pick")
+	if a.promptPick != detachedPromptID {
+		a.promptPick = prompts.NormalizePick(a.promptPick, a.userPrompts)
+	}
 	if a.promptPick == "" {
 		a.freeformPrompts = a.prompts
 	}
-	a.promptChoice = prompts.LabelFor(a.promptPick, a.userPrompts)
+	a.promptChoice = a.workspacePromptLabel()
 	a.promptSuffix = s.Get("prompt_suffix")
 	a.useSuffix = s.GetBool("use_suffix")
 
@@ -489,6 +590,7 @@ func (a *App) loadSettings() {
 		a.tab = pageWash
 		a.workspacePage = store.PageWash
 	}
+	a.loadDownloadRecords()
 	a.syncPage()
 }
 
@@ -500,17 +602,7 @@ func (a *App) saveSettings() {
 	a.extPort = extbridge.NormalizeExtPort(a.extPort)
 	s.Set(extbridge.SettingExtToken, a.extToken)
 	s.Set(extbridge.SettingExtPort, a.extPort)
-	var plats []string
-	if a.platDoubao {
-		plats = append(plats, "豆包")
-	}
-	if a.platQianwen {
-		plats = append(plats, "千问")
-	}
-	if a.platAntigravity {
-		plats = append(plats, agy.Platform)
-	}
-	s.SetPlatforms(plats)
+	s.SetPlatforms(a.selectedPlatforms())
 	a.persistAgySettings()
 	s.SetInt("platform_auto", boolInt(a.platformAuto))
 	s.Set("send_strategy", a.sendStrategy)
@@ -534,8 +626,22 @@ func (a *App) saveSettings() {
 	s.SetInt("task_switching_count", int(a.switchCount))
 	s.SetInt("start_browser_index", int(a.startBrowserIdx))
 	s.Set("output_path", a.outputPath)
+	s.Set("download_urls", redactQzoneURLs(a.dlURLs))
+	s.Set("download_dir", strings.TrimSpace(a.dlDir))
+	s.SetInt("download_depth", clampInt(int(a.dlDepth), 1, 32767))
+	s.SetInt("download_min_kb", clampInt(int(a.dlMinKB), 0, 10000000))
+	s.SetInt("download_max_kb", clampInt(int(a.dlMaxKB), 0, 10000000))
+	s.SetInt("download_min_width", clampInt(int(a.dlMinWidth), 0, 10000000))
+	s.SetInt("download_max_width", clampInt(int(a.dlMaxWidth), 0, 10000000))
+	s.SetInt("download_min_height", clampInt(int(a.dlMinHeight), 0, 10000000))
+	s.SetInt("download_max_height", clampInt(int(a.dlMaxHeight), 0, 10000000))
+	s.SetInt("download_browser_mode", boolInt(a.dlBrowserMode))
+	s.SetInt("download_concurrency", clampInt(int(a.downloadConc), 1, 8))
+	s.SetInt("download_retries", clampInt(int(a.downloadRetries), 0, 10))
+	s.SetInt("download_rate_kbps", clampInt(int(a.downloadRateKB), 0, 102400))
 	s.SetInt("remove_watermark", boolInt(a.removeWatermark))
 	a.noteWorkspacePage()
+	a.saveImageEditSettings()
 	if a.workspacePage == store.PageGen || a.workspacePage == store.PageWash {
 		s.Set("workspace_page", a.workspacePage)
 	}
@@ -610,8 +716,10 @@ func (a *App) captchaConfig() captcha.Config {
 }
 
 // view 主视图。向导盖住全部页面；否则是出图、浏览器、提示词或设置。
-// 向导和主界面、以及四个页之间各走一段淡入位移，页内状态不变。
+// 向导和主界面之间淡入，页面切换沿侧栏方向轻移；页内状态不变。
 func (a *App) view(c *ui.Context) {
+	a.flushUIUpdates()
+	a.look = applyWorkbenchTheme(c)
 	if a.wizardOn {
 		ui.Column(c.Key("screen-wizard")).Fill().Transition(screenMotion()).Children(func() {
 			a.wizardView(c)
@@ -620,7 +728,6 @@ func (a *App) view(c *ui.Context) {
 	}
 	a.noteTab()
 	a.syncPage()
-	a.look = applyWorkbenchTheme(c)
 	ui.Column(c.Key("screen-main")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
 		slot := ui.Column(c.Key("update-slot"))
 		if a.updateNotice != "" {
@@ -629,7 +736,11 @@ func (a *App) view(c *ui.Context) {
 		slot.Children(func() { a.updateBanner(c) })
 		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 			a.navRail(c)
-			ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinWidth(0).MinHeight(0).Padding(12, pagePadX, 12, pagePadX).Transition(a.pageMotion()).Children(func() {
+			page := ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinWidth(0).MinHeight(0).Transition(a.pageMotion())
+			if a.tab != pageRename && a.tab != pageImageEdit {
+				page.Padding(12, pagePadX, 12, pagePadX)
+			}
+			page.Children(func() {
 				switch a.tab {
 				case pageWash:
 					a.washPage(c)
@@ -639,6 +750,12 @@ func (a *App) view(c *ui.Context) {
 					a.browserPane(c)
 				case pagePrompts:
 					a.promptsPage(c)
+				case pageDownload:
+					a.downloadPage(c)
+				case pageRename:
+					a.renamePage(c)
+				case pageImageEdit:
+					a.imageEditPage(c)
 				case pageSettings:
 					a.settingsPage(c)
 				default:
@@ -647,13 +764,14 @@ func (a *App) view(c *ui.Context) {
 			})
 		})
 	})
+	a.browserDrawerView(c)
 }
 
 // missingBrowserNames 是已勾选、但还没有浏览器实例的平台。
 func (a *App) missingBrowserNames() []string {
 	// 扩展桥不使用本机实例。空的网页方式（部分测试）也不在这里拦截。
 	switch a.browserBackend {
-	case browser.KindChrome, browser.KindEdge, browser.KindBuiltin:
+	case browser.KindCamoufox:
 	default:
 		return nil
 	}
@@ -703,30 +821,56 @@ func (a *App) syncUI(fn func()) {
 	a.window.Update(fn)
 }
 
+// postUI 把后台结果送回界面；没有窗口时由下一帧统一应用。
+func (a *App) postUI(fn func()) {
+	if a.window != nil {
+		if !a.window.IsDestroyed() {
+			a.window.Update(fn)
+		}
+		return
+	}
+	a.mu.Lock()
+	a.uiUpdates = append(a.uiUpdates, fn)
+	a.mu.Unlock()
+}
+
+func (a *App) flushUIUpdates() {
+	a.mu.Lock()
+	pending := a.uiUpdates
+	a.uiUpdates = nil
+	a.mu.Unlock()
+	for _, fn := range pending {
+		fn()
+	}
+}
+
 func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 	return tasks.Options{
-		Platforms:          platforms,
-		Prompts:            prompts,
-		PromptSuffix:       a.promptSuffix,
-		UseSuffix:          a.useSuffix,
-		Images:             paths,
-		Concurrency:        a.taskConcurrency(),
-		RetryCount:         int(a.retryCount),
-		SendWait:           int(a.sendWait),
-		WaitBeforeSend:     int(a.waitBefore),
-		WaitResult:         a.waitResult,
-		WaitResultSeconds:  int(a.waitResultS),
-		TaskSwitching:      a.taskSwitch,
-		TaskSwitchingCount: int(a.switchCount),
-		StartBrowserIndex:  int(a.startBrowserIdx),
-		OutputPath:         a.outputPath,
-		RemoveWatermark:    a.removeWatermark,
-		DailyCap:           a.shownDailyCap(),
-		RiskyWords:         tasks.ParseWords(a.riskyWords),
-		AgyBin:             a.agyBin,
-		AgyModel:           a.agyModel,
-		AgyHomeRoot:        a.agyHomeRoot,
-		AgyTimeoutSec:      a.agyTimeoutSec(),
+		Platforms:           platforms,
+		Prompts:             prompts,
+		PromptSuffix:        a.promptSuffix,
+		UseSuffix:           a.useSuffix,
+		Images:              paths,
+		Concurrency:         a.taskConcurrency(),
+		RetryCount:          int(a.retryCount),
+		SendWait:            int(a.sendWait),
+		WaitBeforeSend:      int(a.waitBefore),
+		WaitResult:          a.waitResult,
+		WaitResultSeconds:   int(a.waitResultS),
+		TaskSwitching:       a.taskSwitch,
+		TaskSwitchingCount:  int(a.switchCount),
+		StartBrowserIndex:   int(a.startBrowserIdx),
+		OutputPath:          a.outputPath,
+		RemoveWatermark:     a.removeWatermark,
+		DownloadConcurrency: int(a.downloadConc),
+		DownloadRetries:     int(a.downloadRetries),
+		DownloadRateKBps:    int(a.downloadRateKB),
+		DailyCap:            a.shownDailyCap(),
+		RiskyWords:          tasks.ParseWords(a.riskyWords),
+		AgyBin:              a.agyBin,
+		AgyModel:            a.agyModel,
+		AgyHomeRoot:         a.agyHomeRoot,
+		AgyTimeoutSec:       a.agyTimeoutSec(),
 	}
 }
 

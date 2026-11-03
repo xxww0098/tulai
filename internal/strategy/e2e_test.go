@@ -1,30 +1,28 @@
 package strategy
 
-// 端到端测试：本地 mock 页面 + 无头 Chrome，验证真实链路
+// 端到端测试：本地 mock 页面 + 无头 Camoufox，验证真实链路
 //   - TestChatFlowE2E：composer 打开上传 → 文件注入 → 发送 → hook 截获结果 → 抓字节
 //   - TestCaptchaGridE2E：验证码检测 → 截图 → free CV 求解 → 拟人拖拽 → 验证通过
-// 无 Chrome 或 -short 时跳过。
+// 无 Camoufox 或 -short 时跳过。
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -37,97 +35,12 @@ type mockChat struct{ base }
 func (mockChat) Platform() string { return "mock" }
 func (mockChat) HomeURL() string  { return "" } // 由测试注入 URL
 
-// launchChrome 启动无头 Chrome，返回关闭函数。
-func launchChrome(t *testing.T) (wsURL string, shutdown func()) {
+// launchCamoufox 启动无头 Camoufox，返回关闭函数。
+func launchCamoufox(t *testing.T) (wsURL string, shutdown func()) {
 	t.Helper()
-	return launchChromeArgs(t, nil)
+	p, endpoint := camoufoxtest.Start(t, "about:blank")
+	return endpoint, p.Close
 }
-
-func launchChromeArgs(t *testing.T, extra []string) (wsURL string, shutdown func()) {
-	t.Helper()
-	chromePath, err := findChrome()
-	if err != nil {
-		t.Skip("本机无 Chrome，跳过 E2E")
-	}
-	port := freePort(t)
-	dir := t.TempDir()
-	args := []string{
-		fmt.Sprintf("--remote-debugging-port=%d", port),
-		"--user-data-dir=" + dir,
-		"--headless=new", "--disable-gpu", "--no-first-run",
-		"--remote-allow-origins=*", "--window-size=1280,900",
-	}
-	args = append(args, extra...)
-	args = append(args, "about:blank")
-	cmd := exec.Command(chromePath, args...)
-	if err := cmd.Start(); err != nil {
-		t.Skipf("Chrome 启动失败: %v", err)
-	}
-	shutdown = func() {
-		// 先正常退出，避免缓存子进程在 TempDir 清理时继续写入。
-		if err := cmd.Process.Signal(os.Interrupt); err != nil {
-			cmd.Process.Kill()
-		}
-		done := make(chan struct{})
-		go func() { cmd.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(3 * time.Second):
-			cmd.Process.Kill()
-			<-done
-		}
-	}
-	// 轮询 CDP
-	url := fmt.Sprintf("http://127.0.0.1:%d/json/version", port)
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
-		if err == nil {
-			var v struct {
-				WS string `json:"webSocketDebuggerUrl"`
-			}
-			buf := &bytes.Buffer{}
-			buf.ReadFrom(resp.Body)
-			resp.Body.Close()
-			if jsonDecode(buf.Bytes(), &v) == nil && v.WS != "" {
-				return v.WS, shutdown
-			}
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	shutdown()
-	t.Fatal("CDP 未就绪")
-	return
-}
-
-func findChrome() (string, error) {
-	for _, p := range []string{
-		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-		"/Applications/Chromium.app/Contents/MacOS/Chromium",
-		"google-chrome", "chromium",
-	} {
-		if strings.Contains(p, "/") {
-			if _, err := os.Stat(p); err == nil {
-				return p, nil
-			}
-		} else if full, err := exec.LookPath(p); err == nil {
-			return full, nil
-		}
-	}
-	return "", fmt.Errorf("chrome 未找到")
-}
-
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-func jsonDecode(b []byte, v any) error { return json.Unmarshal(b, v) }
 
 // noisePNG 生成一张 >20KB 的随机噪声图（触发 hook 的网络图片阈值）。
 func noisePNG(size int) []byte {
@@ -231,7 +144,7 @@ func TestChatFlowE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 
 	resultPNG := noisePNG(400)
@@ -261,6 +174,12 @@ func TestChatFlowE2E(t *testing.T) {
 	if err := strat.InstallHook(sess); err != nil {
 		t.Fatal(err)
 	}
+	if visible, err := sess.Evaluate(`Object.getOwnPropertyNames(document.defaultView).some(k=>/^(?:__tulai|tulai)/i.test(k))`); err != nil || visible != "false" {
+		t.Fatalf("任务脚本暴露在网页全局对象: %s, %v", visible, err)
+	}
+	if available, err := sess.Evaluate(`typeof window.TULAIRefuse?.match === 'function'`); err != nil || available != "true" {
+		t.Fatalf("审核检测不可用: %s, %v", available, err)
+	}
 	src := makeSourcePNG(t)
 
 	// 1) 上传：打开附件入口 → 注入文件
@@ -274,8 +193,14 @@ func TestChatFlowE2E(t *testing.T) {
 	if err := strat.MarkTask(sess); err != nil {
 		t.Fatal(err)
 	}
+	if visible, err := sess.Evaluate(`!!document.querySelector('[data-tulai-id]')`); err != nil || visible != "false" {
+		t.Fatalf("任务在网页图片上留下标记: %s, %v", visible, err)
+	}
 	if err := strat.SendPrompt(sess, "把这张图变成油画风格"); err != nil {
 		t.Fatal(err)
+	}
+	if visible, err := sess.Evaluate(`!!document.querySelector('[data-tulai-composer]')`); err != nil || visible != "false" {
+		t.Fatalf("输入框留下应用标记: %s, %v", visible, err)
 	}
 	got := sessEvaluateString(t, sess, "window.__mockSent")
 	if !strings.Contains(got, "油画风格") {
@@ -308,7 +233,7 @@ func TestUploadTrustedPointerDownE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	html := `<!doctype html><body><div data-chat-input-body="1"><textarea style="width:420px;height:60px"></textarea><button id="entry" aria-label="添加附件">+</button><button>发送</button><div id="menu" role="menu" style="display:none;width:160px;height:80px"><button id="upload">本地上传</button></div></div><script>
 window.__trustedPointer=0;window.__entryClicks=0;window.__uploadClicks=0;
@@ -342,7 +267,7 @@ func TestUploadMenuClicksOnceE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	html := `<!doctype html><body><div data-chat-input-body="1"><textarea style="width:420px;height:60px"></textarea><button id="entry" aria-label="添加附件">+</button><button>发送</button><div id="menu" role="menu" style="display:none;width:160px;height:80px"><button id="upload">本地上传</button></div></div><script>
 window.__entryClicks=0;window.__uploadClicks=0;
@@ -376,7 +301,7 @@ func TestUploadDoesNotClickHistoryE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	html := `<!doctype html><body><button id="history">本地上传 私密历史会话</button><div data-chat-input-body="1"><textarea style="width:420px;height:60px"></textarea><button aria-label="添加附件">+</button><button>发送</button></div><script>window.__historyClicks=0;history.onclick=function(){window.__historyClicks++};</script>`
 	html = strings.Replace(html, "history.onclick", "document.getElementById('history').onclick", 1)
@@ -408,7 +333,7 @@ func TestUploadTargetsCurrentComposerE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, strings.Replace(strings.Replace(chatMockHTML, `data-chat-input-body="1"`, `data-chat-input-body=""`, 1), `<button id="send">发送</button>`, `<button id="send" aria-label="语音">麦克风</button>`, 1))
@@ -442,7 +367,7 @@ func TestUploadSiblingPreviewScopeE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	html := strings.Replace(chatMockHTML, `<div id="compose" data-chat-input-body="1">`, `<div id="surface" class="guidance-input-surface relative flex flex-col"><div id="preview"></div><div id="compose" data-chat-input-body="">`, 1)
 	html = strings.Replace(html, "<div id=\"preview\"></div>\n</div>", "</div></div>", 1)
@@ -493,7 +418,7 @@ func TestUploadRequiresNewComposerAttachmentE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, strings.Replace(chatMockHTML, "document.body.appendChild(input);", "input.addEventListener('change',function(){document.getElementById('preview').replaceChildren()});document.body.appendChild(input);", 1))
@@ -537,7 +462,7 @@ func TestFetchResultBytesCORSE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	imageData := noisePNG(220)
 	asset := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -578,7 +503,7 @@ func TestSignedStreamResultURLE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	resultPNG := noisePNG(220)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -614,6 +539,12 @@ func TestSignedStreamResultURLE2E(t *testing.T) {
 	}
 	if _, err := sess.Evaluate(`window.__installedFetch=window.fetch`); err != nil {
 		t.Fatal(err)
+	}
+	if visible, err := sess.Evaluate(`(()=>{const x=new XMLHttpRequest();x.open('GET','/');return Object.hasOwn(x,'__tulaiUrl')})()`); err != nil || visible != "false" {
+		t.Fatalf("XHR 暴露应用标记: %s, %v", visible, err)
+	}
+	if native, err := sess.Evaluate(`(()=>{const w=document.defaultView;return [w.fetch,w.XMLHttpRequest.prototype.open,w.XMLHttpRequest.prototype.send].every(f=>/\[native code\]/.test(Function.prototype.toString.call(f)))})()`); err != nil || native != "true" {
+		t.Fatalf("网络接口暴露应用包装代码: %s, %v", native, err)
 	}
 	if err := strat.InstallHook(sess); err != nil {
 		t.Fatal(err)
@@ -653,7 +584,7 @@ func TestWaitForGenerationStreamE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	preview := noisePNG(384)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -726,7 +657,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	small := noisePNG(200)
 	oldImage := noisePNG(128)
@@ -913,7 +844,7 @@ func TestWaitForResultStopsWithSessionE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	client, err := cdp.NewClient(ws)
 	if err != nil {
@@ -945,7 +876,7 @@ func TestSendPromptE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, chatMockHTML)
@@ -1095,7 +1026,7 @@ func TestUploadPreviewE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	previewPNG, resultPNG := noisePNG(220), noisePNG(400)
 	html := strings.Replace(chatMockHTML, "prev.textContent = '已选择 ' + input.files.length + ' 个文件';", `
@@ -1247,7 +1178,7 @@ func TestCaptchaGridE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchChrome(t)
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1268,6 +1199,9 @@ func TestCaptchaGridE2E(t *testing.T) {
 
 	// 挂真实求解链：free 后端 + 注入脚本
 	captcha.Attach(sess, captcha.NewFreeSolver(captcha.Config{Backend: "free"}), true, nil)
+	if visible, err := sess.Evaluate(`Object.getOwnPropertyNames(document.defaultView).some(k=>/^(?:__tulai|tulai)/i.test(k))`); err != nil || visible != "false" {
+		t.Fatalf("验证码脚本暴露在网页全局对象: %s, %v", visible, err)
+	}
 
 	deadline := time.Now().Add(45 * time.Second)
 	var lastDiag string

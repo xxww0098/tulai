@@ -3,11 +3,10 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net"
 	"time"
 
 	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -19,7 +18,6 @@ func (a *App) wireHealing() {
 		return
 	}
 	a.engine.SetLoginProbe(a.probeAccount)
-	a.engine.SetLoginFocus(a.focusAccount)
 	a.engine.SetSlider(a.solveSlider)
 	a.engine.SetHealNotify(func() {
 		if a.window == nil {
@@ -33,15 +31,10 @@ func (a *App) probeAccount(ctx context.Context, b store.Browser) (string, error)
 	if b.ExtAccount != "" || b.Port <= 0 || !debugPortOpen(b.Port) {
 		return "unknown", nil
 	}
-	return cdp.ProbeLogin(ctx, fmt.Sprintf("http://127.0.0.1:%d", b.Port))
+	return cdp.ProbeLogin(ctx, camoufox.Endpoint(b.Port))
 }
 
-func (a *App) focusAccount(ctx context.Context, b store.Browser) error {
-	return a.ensureAccountPage(ctx, b)
-}
-
-// ensureAccountPage 打开这个账号的登录页。调试端口已经在听时复用窗口；
-// 页面还停在 about:blank 或欢迎页时导航过去。已经在站点上则只把窗口拉到前面。
+// ensureAccountPage 在应用内打开后台账号，或显示用户手动启动的登录窗口。
 func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	if a != nil && a.accountOpen != nil {
 		err := a.accountOpen(b)
@@ -53,6 +46,12 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	if a == nil || b.ExtAccount != "" || a.manager == nil {
 		return nil
 	}
+	a.mu.Lock()
+	viewing := a.browserViewingID == b.ID
+	a.mu.Unlock()
+	if viewing {
+		return nil
+	}
 	page := accountHomeURL(b)
 	ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, page, false)
 	if errors.Is(err, browser.ErrDebugPort) {
@@ -62,6 +61,10 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	if err != nil {
 		logging.Log.Errorf("%s 打开登录页失败：%v", accountLabel(b), err)
 		return err
+	}
+	if a.manager.IsHeadless(b.ID) {
+		a.postUI(func() { a.openBrowserDrawer(b) })
+		return nil
 	}
 	if ws != "" {
 		// 去处理要马上把已经开着的窗口拿到前台，不要等后面的导航重试。
@@ -100,14 +103,10 @@ func (a *App) solveSlider(ctx context.Context, b store.Browser) error {
 	if b.Platform != "千问" || b.Port <= 0 {
 		return errors.New("没有滑块处理")
 	}
-	return captcha.SolveQianwenSliderAt(ctx, fmt.Sprintf("http://127.0.0.1:%d", b.Port))
+	return captcha.SolveQianwenSliderAt(ctx, camoufox.Endpoint(b.Port))
 }
 
 func debugPortOpen(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
+	_, err := camoufox.Find(camoufox.Endpoint(port))
+	return err == nil
 }

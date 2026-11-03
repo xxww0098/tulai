@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	extbundle "github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -54,11 +53,10 @@ func main() {
 		log.Fatalf("打开配置库失败: %v", err)
 	}
 	bm := browser.NewManager()
-	if extDir, err := extbundle.Install(browser.ConfigDir()); err != nil {
-		logging.Log.Warning("页面桥扩展没有解压：%v", err)
-	} else {
-		bm.SetExtensionDir(extDir)
+	if err := db.PrepareCamoufoxProfiles(dataRoot); err != nil {
+		log.Fatalf("迁移 Camoufox 账号: %v", err)
 	}
+
 	engine := tasks.NewEngine(db, bm, nil, dataRoot)
 	// mygo build 会把 mygo.json 的版本链进二进制；go run 没有这段链接信息。
 	logging.Log.Info("tulai %s 启动（数据目录: %s）", runningVersion(), dataRoot)

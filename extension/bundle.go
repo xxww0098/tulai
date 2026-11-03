@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//go:embed manifest.json background.js bridge_logic.js content.js pair.js popup.html options.html options.js protocol.js quota.js refuse.js
+//go:embed manifest.json background.js bridge_logic.js content.js network.js pair.js popup.html options.html options.js protocol.js quota.js refuse.js
 //go:embed all:icons
 //go:embed all:qianwen
 //go:embed all:doubao
@@ -34,6 +34,15 @@ func Version() string {
 // RefuseJS 是豆包和千问共用的审核话术。桌面端页面脚本也注入这一份。
 func RefuseJS() string {
 	body, err := fs.ReadFile(packed, "refuse.js")
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+// DoubaoRawJS 同时供扩展和桌面端提取豆包响应中的原图。
+func DoubaoRawJS() string {
+	body, err := fs.ReadFile(packed, "doubao/raw.js")
 	if err != nil {
 		return ""
 	}

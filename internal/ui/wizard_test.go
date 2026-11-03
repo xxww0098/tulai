@@ -28,13 +28,16 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	}
 	a.loadSettings()
 	a.applyWizardGate()
-	if !a.wizardOn || a.wizardStep != wizard.StepBrowser {
-		t.Fatal("a new config should open on the browser step")
+	if !a.wizardOn || a.wizardStep != wizard.StepPlatform {
+		t.Fatal("a new config should open on the platform step")
 	}
-	a.wizardPlan = wizard.BrowserPlan{
-		Backend: browser.KindChrome, Kind: browser.KindChrome,
-		Title: "将使用本机 Chrome", Detail: "/opt/google/chrome/chrome", CanNext: true,
+	a.wizardPlanFn = func() wizard.BrowserPlan {
+		return wizard.BrowserPlan{
+			Backend: browser.KindCamoufox, Kind: browser.KindCamoufox,
+			Title: "Camoufox 已就绪", Detail: "/camoufox", CanNext: true,
+		}
 	}
+	a.refreshWizardPlan()
 	var probes int
 	a.wizardLaunch = func(b store.Browser) (string, error) {
 		if b.Name == "" || b.Platform == "" {
@@ -57,26 +60,43 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	}
 
 	tt := ui.NewTester(a.view, 1280, 900)
-	for _, label := range []string{"tulai", "准备浏览器", "将使用本机 Chrome", "下一步"} {
+	for _, label := range []string{"tulai", "选择平台", "豆包", "千问", "Antigravity", "下一步"} {
 		assertVisible(t, tt, label, 1280, 900)
-	}
-	if err := tt.Click("下一步"); err != nil {
-		t.Fatal(err)
 	}
 	doubao := assertVisible(t, tt, "豆包", 1280, 900)
 	qianwen := assertVisible(t, tt, "千问", 1280, 900)
-	if qianwen.X <= doubao.X+40 {
-		t.Fatalf("platform cards are stacked or overlapping: doubao=%+v qianwen=%+v", doubao, qianwen)
+	agyCard := assertVisible(t, tt, "Antigravity", 1280, 900)
+	if qianwen.X <= doubao.X+40 || agyCard.X <= qianwen.X+40 {
+		t.Fatalf("platform cards are stacked or overlapping: doubao=%+v qianwen=%+v agy=%+v", doubao, qianwen, agyCard)
 	}
 	next := assertVisible(t, tt, "下一步", 1280, 900)
 	if next.Y < doubao.Y+80 {
 		t.Fatalf("next crowds the platform cards: card=%+v next=%+v", doubao, next)
 	}
+	if a.wizardChoice != "豆包" {
+		t.Fatalf("a new config should start on doubao, got %q", a.wizardChoice)
+	}
+	// 三选一：点千问之后豆包就不再选中。
 	if err := tt.Click("千问"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.platDoubao || !a.platQianwen {
-		t.Fatalf("platforms doubao=%v qianwen=%v", a.platDoubao, a.platQianwen)
+	if a.wizardChoice != "千问" {
+		t.Fatalf("choice = %q", a.wizardChoice)
+	}
+	if err := tt.Click("豆包"); err != nil {
+		t.Fatal(err)
+	}
+	if a.wizardChoice != "豆包" {
+		t.Fatalf("choice = %q", a.wizardChoice)
+	}
+	if err := tt.Click("下一步"); err != nil {
+		t.Fatal(err)
+	}
+	if a.wizardStep != wizard.StepBrowser {
+		t.Fatalf("doubao should go to the browser step, got %v", a.wizardStep)
+	}
+	for _, label := range []string{"准备浏览器", "Camoufox 已就绪"} {
+		assertVisible(t, tt, label, 1280, 900)
 	}
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
@@ -90,42 +110,29 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	if err := tt.Click("已登录? 重新检测"); err != nil {
 		t.Fatal(err)
 	}
-	if a.wizardStep != wizard.StepPlugin || probes < 3 {
+	if a.wizardStep != wizard.StepDone || probes < 2 {
 		t.Fatalf("after login step=%v probes=%d", a.wizardStep, probes)
 	}
-	for _, label := range []string{"安装浏览器插件", "打开「开发者模式」", "加载已解压的扩展程序", "选这个文件夹", "打开扩展页面", "跳过"} {
+	for _, label := range []string{"可以开始了", "拖入图片", "选提示词", "开始", "进入主页", "再添加一个账号"} {
 		assertVisible(t, tt, label, 1280, 900)
 	}
-	if err := tt.Click("跳过"); err != nil {
-		t.Fatal(err)
-	}
-	if a.wizardStep != wizard.StepDone {
-		t.Fatalf("skip plugin step=%v", a.wizardStep)
-	}
-	for _, label := range []string{"拖入图片 → 选提示词 → 开始", "拖入图片", "选提示词", "开始", "进入主页", "再添加一个账号"} {
-		assertVisible(t, tt, label, 1280, 900)
+	if !a.platDoubao || a.platQianwen || a.platAntigravity {
+		t.Fatalf("only the chosen platform is selected: doubao=%v qianwen=%v agy=%v", a.platDoubao, a.platQianwen, a.platAntigravity)
 	}
 	if err := tt.Click("再添加一个账号"); err != nil {
 		t.Fatal(err)
 	}
-	assertVisible(t, tt, "再添加豆包", 1280, 900)
-	if err := tt.Click("再添加豆包"); err != nil {
-		t.Fatal(err)
-	}
-	if a.wizardStep != wizard.StepPlugin {
+	if a.wizardStep != wizard.StepDone {
 		t.Fatalf("extra account did not finish login, step=%v phase=%s err=%s", a.wizardStep, a.wizardPhase, a.wizardErr)
 	}
-	if err := tt.Click("跳过"); err != nil {
-		t.Fatal(err)
-	}
 	rows := st.Browsers()
-	if len(rows) != 3 || rows[0].Name != "豆包1" || rows[0].Platform != "豆包" || !rows[0].IsLoggedIn || rows[0].IsRunning || rows[1].Name != "千问1" || rows[1].Platform != "千问" || !rows[1].IsLoggedIn || rows[1].IsRunning || rows[2].Name != "豆包2" || rows[2].Platform != "豆包" || !rows[2].IsLoggedIn || rows[2].IsRunning {
+	if len(rows) != 2 || rows[0].Name != "豆包1" || rows[0].Platform != "豆包" || !rows[0].IsLoggedIn || rows[0].IsRunning || rows[1].Name != "豆包2" || rows[1].Platform != "豆包" || !rows[1].IsLoggedIn || rows[1].IsRunning {
 		t.Fatalf("accounts: %+v", rows)
 	}
-	if len(a.loginClosed) < 3 {
+	if len(a.loginClosed) < 2 {
 		t.Fatalf("login windows left open: %v", a.loginClosed)
 	}
-	if st.Get("browser_backend") != browser.KindChrome {
+	if st.Get("browser_backend") != browser.KindCamoufox {
 		t.Fatalf("backend = %q", st.Get("browser_backend"))
 	}
 	if err := tt.Click("进入主页"); err != nil {
@@ -163,10 +170,13 @@ func TestWizardSkipsHealthyAccountAndCanReopen(t *testing.T) {
 	if err := tt.Click("设置向导"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.wizardOn || a.wizardStep != wizard.StepBrowser {
-		t.Fatal("settings did not reopen the wizard")
+	if !a.wizardOn || a.wizardStep != wizard.StepPlatform {
+		t.Fatal("settings did not reopen the wizard on the platform step")
 	}
-	assertVisible(t, tt, "准备浏览器", 1280, 900)
+	assertVisible(t, tt, "选择平台", 1280, 900)
+	if a.wizardChoice != "豆包" || a.wizardFirst {
+		t.Fatalf("reopen: choice=%q first=%v", a.wizardChoice, a.wizardFirst)
+	}
 }
 
 func TestWizardReopenWhenLoginPageStaysBlank(t *testing.T) {
@@ -178,7 +188,7 @@ func TestWizardReopenWhenLoginPageStaysBlank(t *testing.T) {
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
 		dataRoot: t.TempDir(), splitSz: 380, sourceHeight: 210,
-		wizardOn: true, wizardStep: wizard.StepPlatform, platDoubao: true,
+		wizardOn: true, wizardStep: wizard.StepBrowser, wizardChoice: "豆包", platDoubao: true,
 	}
 	var opens int
 	a.wizardLaunch = func(b store.Browser) (string, error) {
@@ -198,6 +208,7 @@ func TestWizardReopenWhenLoginPageStaysBlank(t *testing.T) {
 		t.Fatal("blank page should not be probed")
 		return "", nil
 	}
+	a.wizardPlan = wizard.BrowserPlan{Title: "Camoufox 已就绪", CanNext: true}
 	tt := ui.NewTester(a.view, 1280, 900)
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
@@ -227,11 +238,11 @@ func TestWizardReopenWhenLoginPageStaysBlank(t *testing.T) {
 }
 
 func TestWizardBlocksNextUntilBrowserIsReady(t *testing.T) {
-	a := &App{splitSz: 380, sourceHeight: 210, wizardOn: true, wizardStep: wizard.StepBrowser}
-	a.wizardPlan = wizard.BrowserPlan{Title: "需要下载内置浏览器", NeedsDownload: true, Blocked: ""}
+	a := &App{splitSz: 380, sourceHeight: 210, wizardOn: true, wizardStep: wizard.StepBrowser, wizardChoice: "豆包"}
+	a.wizardPlan = wizard.BrowserPlan{Title: "需要安装 Camoufox", NeedsDownload: true, Blocked: ""}
 	tt := ui.NewTester(a.view, 1000, 720)
-	assertVisible(t, tt, "需要下载内置浏览器", 1000, 720)
-	assertVisible(t, tt, "下载内置浏览器", 1000, 720)
+	assertVisible(t, tt, "需要安装 Camoufox", 1000, 720)
+	assertVisible(t, tt, "安装 Camoufox", 1000, 720)
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
 	}

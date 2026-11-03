@@ -12,8 +12,8 @@ import (
 // Direct3D、Linux OpenGL，浏览器里是同一套着色器的 WebGL），不是一张
 // CSS 页，所以时长和缓动放在这里，作用和样式表里的自定义属性一样。
 //
-// 短交互 150ms，步骤和列表 220ms，都在 150–250ms 里。进入用 ease-out。
-// Transition 一次只有一条曲线，离开和进入共用它；离开的位移更短。
+// 短交互 150ms，页面、步骤和列表 220ms。进入用 ease-out。
+// 页面从接近完全可见的状态开始，不叠放离开的整页。
 // 系统要求减少动态效果时（macOS 的 Reduce Motion、Windows 的动画效果、
 // GNOME 的动画，以及浏览器的 prefers-reduced-motion），位移和缩放取消，
 // 只保留淡入淡出。
@@ -31,20 +31,17 @@ var (
 	motionEaseFast = ui.Animation{Duration: motionFast, Ease: ui.EaseOut}
 )
 
-// motionTravel 是带方向的淡入加一小段位移。不做出场副本：整页叠在一起会糊成两层字。
-// 位移只有十几个 DIP，动画停在第一帧时，控件仍在窗口里，点得到。
+// motionTravel 从接近可见的状态轻移进入，不缩放或叠放离开的页面。
 func motionTravel(x, y float32) ui.ElementTransition {
 	return ui.ElementTransition{
 		Animation: &motionEaseOut,
 		Position:  true,
-		Enter:     &ui.Motion{X: x, Y: y, Scale: 0.98},
+		Enter:     &ui.Motion{X: x, Y: y, Opacity: 0.9},
 	}
 }
 
 func screenMotion() ui.ElementTransition {
-	t := motionTravel(0, motionSlide)
-	t.Exit = &ui.Motion{Y: -6, Scale: 0.98}
-	return t
+	return motionTravel(0, 0)
 }
 
 func motionBanner() ui.ElementTransition {
@@ -104,7 +101,7 @@ func (a *App) noteTab() {
 		a.tabDir = -1
 	}
 	a.tabSeen = a.tab
-	if a.tab == pageBrowser && !a.cftBusy {
+	if a.tab == pageBrowser && !a.camoufoxBusy {
 		a.refreshDetected()
 	}
 }
@@ -114,7 +111,7 @@ func (a *App) pageMotion() ui.ElementTransition {
 	if dir == 0 {
 		dir = 1
 	}
-	return motionTravel(float32(dir)*motionSlide, 0)
+	return motionTravel(0, float32(dir)*6)
 }
 
 func (a *App) stepMotion() ui.ElementTransition {
@@ -122,7 +119,7 @@ func (a *App) stepMotion() ui.ElementTransition {
 	if dir == 0 {
 		dir = 1
 	}
-	return motionTravel(float32(dir)*motionSlide, 0)
+	return motionTravel(float32(dir)*6, 0)
 }
 
 // goWizard 记下这一步相对上一步的方向，供步骤切换时滑入。不改向导该去哪。
@@ -133,8 +130,11 @@ func (a *App) goWizard(step wizard.Step) {
 		a.wizardDir = -1
 	}
 	a.wizardStep = step
-	if step == wizard.StepBrowser {
+	switch step {
+	case wizard.StepBrowser:
 		a.refreshWizardPlan()
+	case wizard.StepInstall:
+		a.enterInstallStep()
 	}
 }
 
@@ -215,26 +215,6 @@ func motionProgress(c *ui.Context, key string, fraction float64, indeterminate b
 	shown := float64(host.AnimateTo("fraction", float32(fraction), motionEaseOut))
 	host.Children(func() {
 		ui.Progress(c, shown).FillWidth().Height(6)
-	})
-}
-
-func wizardSteps(c *ui.Context, step wizard.Step) {
-	t := c.Theme()
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		for i := 0; i < wizard.Count(); i++ {
-			w := float32(8)
-			color := t.Border
-			switch {
-			case i == int(step):
-				w = 22
-				color = t.Accent
-			case i < int(step):
-				color = t.Accent.Alpha(0.45)
-			}
-			dot := ui.Box(c.Key(i)).Height(4).Radius(2)
-			dot.Width(dot.AnimateTo("w", w, motionEaseFast))
-			dot.Background(dot.AnimateColor("c", color, motionEaseFast))
-		}
 	})
 }
 

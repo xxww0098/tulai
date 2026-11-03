@@ -38,6 +38,11 @@ func (d Doubao) FetchResultBytes(s *cdp.Session, raw string) ([]byte, error) {
 	return nil, last
 }
 
+// FetchRawResultBytes 保留接口返回的原图签名，不改写 CDN 模板。
+func (d Doubao) FetchRawResultBytes(s *cdp.Session, raw string) ([]byte, error) {
+	return d.base.FetchResultBytes(s, raw)
+}
+
 // OriginalImageURL 去掉 imagex 的 ~tplv 缩略图模板，留下对象原图地址。
 // 没有模板时原样返回。签名跟模板绑在一起时，调用方还会再试页面上的原地址。
 func OriginalImageURL(raw string) string {

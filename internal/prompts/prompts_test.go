@@ -107,6 +107,22 @@ func TestUserCopyDoesNotReplaceBuiltin(t *testing.T) {
 	}
 }
 
+func TestPromptKindsKeepLegacyEntriesShared(t *testing.T) {
+	users := ParseUser(`[{"id":"u1","label":"旧模板","body":"旧正文"},{"id":"u2","label":"洗图模板","body":"洗图正文","kind":"wash"}]`)
+	if len(users) != 2 || users[0].Kind != "" || users[1].Kind != KindWash {
+		t.Fatalf("legacy or typed prompts: %+v", users)
+	}
+	again := ParseUser(FormatUser(users))
+	if len(again) != 2 || again[0].Kind != "" || again[1].Kind != KindWash {
+		t.Fatalf("kind round trip: %+v", again)
+	}
+	for _, item := range Catalog(again) {
+		if item.ID == "u2" && item.Kind != KindWash {
+			t.Fatalf("catalog lost kind: %+v", item)
+		}
+	}
+}
+
 func BuiltinBody(id string) string {
 	item, _ := Builtin(id)
 	return item.Body

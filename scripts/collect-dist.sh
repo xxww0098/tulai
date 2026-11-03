@@ -7,6 +7,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
 kind=${1:?usage: scripts/collect-dist.sh linux|windows|macos}
+require_signed=${REQUIRE_SIGNED_UPDATES:-0}
 version=$(jq -r .version mygo.json)
 if [[ -z "$version" || "$version" == "null" ]]; then
   echo "mygo.json has no version" >&2
@@ -23,6 +24,22 @@ require() {
   fi
 }
 
+collect_update() {
+  local target=$1 dir="build/$1" manifest="build/$1/update-$1.json"
+  if [[ ! -f "$manifest" ]]; then
+    if [[ "$require_signed" == 1 ]]; then
+      echo "missing signed update manifest $manifest" >&2
+      exit 1
+    fi
+    return
+  fi
+  require "$dir/tulai-$version-$target.tar.gz"
+  cp "$manifest" dist/
+  if [[ "$target" != linux-* ]]; then
+    cp "$dir/tulai-$version-$target.tar.gz" dist/
+  fi
+}
+
 case "$kind" in
 linux)
   for arch in amd64 arm64; do
@@ -30,6 +47,7 @@ linux)
     require "$dir/tulai-$version-linux-$arch.tar.gz"
     require "$dir/tulai_${version}_${arch}.deb"
     cp "$dir/tulai-$version-linux-$arch.tar.gz" "$dir/tulai_${version}_${arch}.deb" dist/
+    collect_update "linux-$arch"
   done
   require build/linux-amd64/install.sh
   require build/linux-arm64/install.sh
@@ -42,20 +60,18 @@ linux)
 windows)
   for arch in amd64 arm64; do
     dir="build/windows-$arch"
-    require "$dir/tulai Setup $version $arch.exe"
+    require "$dir/tulai-setup-$version-$arch.exe"
     require "$dir/tulai.exe"
-    cp "$dir/tulai Setup $version $arch.exe" dist/
+    cp "$dir/tulai-setup-$version-$arch.exe" "dist/tulai Setup $version $arch.exe"
     cp "$dir/tulai.exe" "dist/tulai-$version-windows-$arch.exe"
+    collect_update "windows-$arch"
   done
   ;;
 macos)
   shopt -s nullglob
-  dmgs=(build/darwin-*/*.dmg)
-  if [[ ${#dmgs[@]} -eq 0 ]]; then
-    echo "no .dmg under build/darwin-*; disk images are created on macOS only" >&2
-    exit 1
-  fi
-  cp "${dmgs[@]}" dist/
+  require "build/darwin-universal/tulai-$version.dmg"
+  cp "build/darwin-universal/tulai-$version.dmg" "dist/tulai $version.dmg"
+  collect_update "darwin-universal"
   ;;
 *)
   echo "unknown target $kind (want linux, windows, or macos)" >&2

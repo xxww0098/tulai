@@ -19,9 +19,9 @@ const Version = 1
 // DefaultAddr 只监听本机回环地址。
 const DefaultAddr = "127.0.0.1:18765"
 
-// SettingBrowserBackend 是配置库里的控制面开关，取值 extension 或 ego。
-// 它和 browser_backend（Chrome | Edge）不是同一个键。
-// 任务引擎在千问或豆包且该值为 extension 时走扩展；否则打开 Chrome 或 Edge 实例。
+// SettingBrowserBackend 是配置库里的控制面开关，取值 extension 或 camoufox。
+// 它和 browser_backend（Camoufox 账号环境）不是同一个键。
+// 任务引擎在千问或豆包且该值为 extension 时兼容旧手动扩展；否则打开 Camoufox。
 const SettingBrowserBackend = "browserBackend"
 
 // 页面桥令牌和端口。扩展弹出页必须填写同一组值。
@@ -163,12 +163,12 @@ func CodeOf(err error) string {
 	return ""
 }
 
-// NormalizeBrowserBackend 只把精确的 extension 当成扩展控制面，其余值保持 ego。
+// NormalizeBrowserBackend 只把精确的 extension 当成扩展控制面，其余值使用 Camoufox。
 func NormalizeBrowserBackend(v string) string {
 	if strings.EqualFold(strings.TrimSpace(v), "extension") {
 		return "extension"
 	}
-	return "ego"
+	return "camoufox"
 }
 
 // Commands 按协议固定顺序列出命令名。

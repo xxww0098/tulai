@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -48,31 +50,31 @@ func (a *App) applyWizardGate() {
 // openWizard 从第一步重新打开。已经登录的账号会留着。
 func (a *App) openWizard() {
 	a.stopWizardLoop()
+	if a.wizardAgy.created != 0 {
+		a.abandonAgyAccount()
+	}
 	a.wizardOn = true
 	a.wizardDir = 1
-	a.wizardStep = wizard.StepBrowser
+	a.wizardStep = wizard.StepPlatform
 	a.wizardExtra = false
-	a.wizardPickExtra = false
 	a.wizardPhase = ""
 	a.wizardNote = ""
 	a.wizardErr = ""
 	a.wizardAccount = store.Browser{}
 	a.wizardName = ""
 	a.wizardNameFor = 0
-	a.refreshWizardPlan()
+	a.wizardChoice = wizard.DefaultChoice(a.selectedPlatforms())
+	a.wizardFirst = wizard.ShouldShow("", wizardAccounts(a.store), time.Now())
+	a.wizardAgy = wizardAgyState{watch: a.wizardAgy.watch}
 }
 
 func (a *App) refreshWizardPlan() {
-	dir := browser.ConfigDir()
-	var found []wizard.Found
-	for _, rt := range browser.Detect(dir) {
-		if rt.Kind == browser.KindBuiltin {
-			continue
-		}
-		found = append(found, wizard.Found{Kind: rt.Kind, Path: rt.Path})
+	if a.wizardPlanFn != nil {
+		a.wizardPlan = a.wizardPlanFn()
+		return
 	}
-	_, builtinReady := browser.InstalledBuiltin(dir)
-	a.wizardPlan = wizard.PlanBrowser(runtime.GOOS, runtime.GOARCH, found, builtinReady, browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH))
+	_, ready := browser.InstalledCamoufox(browser.ConfigDir())
+	a.wizardPlan = wizard.PlanBrowser(runtime.GOOS, runtime.GOARCH, nil, ready, browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH))
 }
 
 func wizardAccounts(st *store.Store) []wizard.Account {
@@ -94,134 +96,291 @@ func wizardAccounts(st *store.Store) []wizard.Account {
 	return out
 }
 
+const (
+	wizardSideWidth float32 = 248
+	wizardBodyWidth float32 = 640
+)
+
+// wizardFlow 是选定平台要走的步骤，左侧步骤栏照它画。
+func (a *App) wizardFlow() []wizard.Step { return wizard.Flow(a.wizardChoice) }
+
 func (a *App) wizardView(c *ui.Context) {
-	ui.Column(c).Fill().Padding(36, 48).Gap(8).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(16).Children(func() {
-			ui.Text(c, "tulai").FontSize(22).Bold()
-			wizardSteps(c, a.wizardStep)
-			ui.Text(c, fmt.Sprintf("第 %d / %d 步", a.wizardStep.Index(), wizard.Count())).FontSize(13).TextColor(c.Theme().TextMuted).Grow(1)
-			ui.Text(c, "当前版本 "+currentVersion()).FontSize(13).TextColor(c.Theme().TextMuted)
-			ui.Button(c, "检查更新").Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
-		})
-		a.updateBanner(c)
-		ui.Scroll(c.Key("wizard-body")).Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().MaxWidth(840).Gap(20).Padding(28, 8, 12, 8).Children(func() {
-				ui.Column(c.Key(a.wizardStep)).FillWidth().Gap(20).Transition(a.stepMotion()).Children(func() {
-					ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-						if a.wizardStep == wizard.StepDone {
-							doneMark(c)
+	tok := a.look
+	ui.Row(c).Fill().AlignItems(ui.Stretch).Background(tok.paper).Children(func() {
+		a.wizardSidebar(c)
+		ui.Column(c.Key("wizard-main")).Grow(1).MinWidth(0).Children(func() {
+			slot := ui.Column(c.Key("wizard-update-slot")).FillWidth()
+			if a.updateNotice != "" {
+				slot.Padding(16, 40, 0, 40)
+			}
+			slot.Children(func() { a.updateBanner(c) })
+			ui.Scroll(c.Key("wizard-body")).Grow(1).MinHeight(0).Children(func() {
+				ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(56, 40, 28, 40).Children(func() {
+					ui.Column(c.Key(a.wizardStep)).FillWidth().MaxWidth(wizardBodyWidth).Gap(24).Transition(a.stepMotion()).Children(func() {
+						a.wizardHeader(c)
+						switch a.wizardStep {
+						case wizard.StepBrowser:
+							a.wizardBrowserStep(c)
+						case wizard.StepInstall:
+							a.wizardInstallStep(c)
+						case wizard.StepAccount:
+							a.wizardAccountStep(c)
+						case wizard.StepDone:
+							a.wizardDoneStep(c)
+						default:
+							a.wizardPlatformStep(c)
 						}
-						ui.Text(c, a.wizardStep.Title()).FontSize(28).Bold()
 					})
-					switch a.wizardStep {
-					case wizard.StepPlatform:
-						a.wizardPlatformStep(c)
-					case wizard.StepAccount:
-						a.wizardAccountStep(c)
-					case wizard.StepPlugin:
-						a.wizardPluginStep(c)
-					case wizard.StepDone:
-						a.wizardDoneStep(c)
-					default:
-						a.wizardBrowserStep(c)
-					}
 				})
 			})
+			a.wizardFooter(c)
 		})
-		a.wizardFooter(c)
+	})
+}
+
+// wizardSidebar 左侧栏：品牌、竖排步骤、版本和检查更新。
+func (a *App) wizardSidebar(c *ui.Context) {
+	tok := a.look
+	ui.Column(c.Key("wizard-side")).Width(wizardSideWidth).FillHeight().Shrink(0).Padding(32, 24, 20, 24).
+		Background(tok.card).BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Column(c.Key("wizard-logo")).Size(36, 36).Radius(10).Center().Shrink(0).Background(tok.accent.Alpha(0.12)).Children(func() {
+				ui.Icon(c, iconLogo).FontSize(22).TextColor(tok.accent)
+			})
+			ui.Column(c).Children(func() {
+				ui.Text(c, "tulai").FontSize(20).Bold()
+				ui.Text(c, "快速设置").FontSize(tok.caption).TextColor(tok.muted)
+			})
+		})
+		ui.Box(c).Height(40)
+		for i, step := range a.wizardFlow() {
+			state := railUpcoming
+			switch {
+			case step < a.wizardStep || a.wizardStep == wizard.StepDone:
+				state = railDone
+			case step == a.wizardStep:
+				state = railCurrent
+			}
+			if i > 0 {
+				link := ui.Box(c.Key(fmt.Sprintf("rail-link-%d", i))).Width(2).Height(20).Margin(3, 0, 3, 10).Radius(1)
+				col := tok.border
+				if state != railUpcoming {
+					col = tok.accent
+				}
+				link.Background(link.AnimateColor("c", col, motionEaseFast))
+			}
+			ui.Row(c.Key(fmt.Sprintf("rail-%d", i))).Gap(12).AlignItems(ui.Center).Children(func() {
+				wizardBadge(c, i, state, tok)
+				label := ui.Text(c, step.Label()).FontSize(tok.body)
+				switch state {
+				case railCurrent:
+					label.Bold()
+				case railUpcoming:
+					label.TextColor(tok.muted)
+				}
+			})
+		}
+		ui.Spacer(c)
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			ui.Text(c, "当前版本 "+currentVersion()).FontSize(tok.caption).TextColor(tok.muted)
+			ui.Button(c, "检查更新").FillWidth().Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
+		})
+	})
+}
+
+const (
+	railUpcoming = iota
+	railCurrent
+	railDone
+)
+
+func wizardBadge(c *ui.Context, i, state int, tok tokens) {
+	b := ui.Column(c.Key(fmt.Sprintf("rail-badge-%d", i))).Size(22, 22).Radius(11).Center().Shrink(0)
+	switch state {
+	case railDone:
+		b.Background(b.AnimateColor("bg", tok.accent, motionEaseFast))
+		b.Children(func() { ui.Icon(c, iconCheck).FontSize(13).TextColor(tok.onAccent) })
+	case railCurrent:
+		b.Border(2, tok.accent).Background(tok.accent.Alpha(0.1))
+		b.Children(func() { ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).Bold().TextColor(tok.accent) })
+	default:
+		b.Border(1, tok.border)
+		b.Children(func() { ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).TextColor(tok.muted) })
+	}
+}
+
+func (a *App) wizardHeader(c *ui.Context) {
+	tok := a.look
+	lead, sub := wizardIntro(a.wizardStep, a.wizardIsAgy())
+	ui.Column(c).FillWidth().Gap(8).Children(func() {
+		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+			if a.wizardStep == wizard.StepDone {
+				doneMark(c)
+			}
+			ui.Text(c, a.wizardStep.Title()).FontSize(26).Bold()
+		})
+		if lead != "" {
+			ui.Text(c, lead).FontSize(15)
+		}
+		ui.Text(c, sub).FontSize(tok.body).TextColor(tok.muted)
+	})
+}
+
+func wizardIntro(step wizard.Step, agyFlow bool) (lead, sub string) {
+	switch step {
+	case wizard.StepBrowser:
+		return "", "已自动选好。确认后点下一步即可。"
+	case wizard.StepInstall:
+		return "", "tulai 通过 Antigravity 命令行（agy）出图，不用浏览器。先装好它，再登录 Google 账号。"
+	case wizard.StepAccount:
+		if agyFlow {
+			return "", "选一种方式登录。登录成功后，账号会留在列表里。"
+		}
+		return pageLoginTitle, "浏览器会打开平台登录页。登录成功后窗口自动关闭，账号留在列表里。"
+	case wizard.StepDone:
+		return "", "图生图先加图片；只写提示词就是文生图。"
+	default:
+		return "", "先选一个平台开始，之后可以再添加别的平台。每个平台用自己的免费账号。"
+	}
+}
+
+func wizardCard(e ui.Element, tok tokens) ui.Element {
+	e = e.Radius(tok.radiusL).Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow)
+	if !tok.dark {
+		e.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.9))
+	}
+	return e
+}
+
+func wizardTile(c *ui.Context, key string, icon *ui.SVG, size float32, tok tokens) {
+	ui.Column(c.Key(key)).Size(size, size).Radius(size / 4).Center().Shrink(0).Background(tok.accent.Alpha(0.12)).Children(func() {
+		ui.Icon(c, icon).FontSize(size * 0.5).TextColor(tok.accent)
+	})
+}
+
+func wizardPill(c *ui.Context, key, text string, fg ui.Color) {
+	ui.Row(c.Key(key)).Padding(2, 8).Radius(999).Shrink(0).AlignItems(ui.Center).Background(fg.Alpha(0.14)).Children(func() {
+		ui.Text(c, text).FontSize(12).TextColor(fg).SingleLine()
 	})
 }
 
 func (a *App) wizardBrowserStep(c *ui.Context) {
+	tok := a.look
 	plan := a.wizardPlan
 	if plan.Title == "" {
 		plan.Title = "正在检查本机浏览器…"
 	}
-	ui.Text(c, "已自动选好。确认后点下一步即可。").FontSize(15).TextColor(c.Theme().TextMuted)
-	ui.Column(c).FillWidth().MinHeight(168).Padding(28, 28).Gap(10).Radius(16).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
-		ui.Text(c, plan.Title).FontSize(22).Bold()
-		if plan.Detail != "" {
-			ui.Text(c, plan.Detail).FontSize(14).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(plan.Detail)
-		}
-		if plan.Blocked != "" {
-			ui.Text(c, plan.Blocked).FontSize(14).TextColor(c.Theme().Warning)
+	wizardCard(ui.Row(c.Key("browser-card")).FillWidth().Gap(16).AlignItems(ui.Center).Padding(20), tok).Children(func() {
+		wizardTile(c, "browser-tile", iconGlobe, 48, tok)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+			ui.Text(c, plan.Title).FontSize(18).Bold()
+			if plan.Detail != "" {
+				detail := ui.Text(c, plan.Detail).FontSize(13).TextColor(tok.muted)
+				if !plan.NeedsDownload {
+					detail.SingleLine().Tooltip(plan.Detail)
+				}
+			}
+			if plan.Blocked != "" {
+				ui.Text(c, plan.Blocked).FontSize(13).TextColor(tok.warning)
+			}
+		})
+		switch {
+		case plan.Blocked != "":
+			wizardPill(c, "browser-pill", "不可用", tok.warning)
+		case plan.NeedsDownload && a.camoufoxBusy:
+			wizardPill(c, "browser-pill", "下载中", tok.accent)
+		case plan.NeedsDownload:
+			wizardPill(c, "browser-pill", "待下载", tok.warning)
+		case plan.CanNext:
+			wizardPill(c, "browser-pill", "已就绪", tok.success)
 		}
 	})
 	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 		if plan.NeedsDownload {
-			label := "下载内置浏览器"
-			if a.cftReady {
-				label = "重新下载内置浏览器"
+			label := "安装 Camoufox"
+			if a.camoufoxReady {
+				label = "检查 Camoufox"
 			}
-			ui.Button(c, label).Disabled(a.cftBusy || !browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH)).OnClick(func() { a.downloadBuiltin() })
+			ui.PrimaryButton(c, label).Disabled(a.camoufoxBusy || !browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH)).OnClick(func() { a.installCamoufox() })
 		}
-		ui.Button(c, "重新检测").Disabled(a.cftBusy).OnClick(func() {
+		ui.Button(c, "重新检测").Disabled(a.camoufoxBusy).OnClick(func() {
 			a.refreshDetected()
 			a.refreshWizardPlan()
 		})
 	})
-	if a.cftBusy || (plan.NeedsDownload && a.cftStatus != "") {
-		if a.cftBusy {
-			motionProgress(c, "cft-progress", a.cftPercent, a.cftPercent <= 0)
-		}
-		if a.cftStatus != "" {
-			ui.Text(c, a.cftStatus).FontSize(13).TextColor(c.Theme().TextMuted)
-		}
+	if a.camoufoxBusy {
+		a.camoufoxProgressBlock(c, "camoufox-progress")
+	} else if plan.NeedsDownload && a.camoufoxStatus != "" {
+		ui.Text(c, a.camoufoxStatus).FontSize(13).TextColor(tok.muted)
 	}
 }
 
 func (a *App) wizardPlatformStep(c *ui.Context) {
-	ui.Text(c, "选一个，或两个都选。每个平台用自己的免费账号。").FontSize(15).TextColor(c.Theme().TextMuted)
-	ui.Row(c).Gap(20).AlignItems(ui.Stretch).Children(func() {
-		a.wizardPlatformCard(c, "豆包", "在豆包里生图。在打开的网页里登录一个免费账号。", &a.platDoubao)
-		a.wizardPlatformCard(c, "千问", "在千问里生图。在打开的网页里登录一个免费账号。", &a.platQianwen)
-	})
-	if !wizard.CanChoosePlatform(a.platDoubao, a.platQianwen) {
-		ui.Text(c, "请至少选择一个平台。").FontSize(14).TextColor(c.Theme().Warning)
-	}
+	a.wizardNormalizeChoice()
+	ui.RadioGroup(c, func() {
+		for _, name := range wizard.Platforms() {
+			a.wizardPlatformCard(c, name, wizardBlurb(name))
+		}
+	}).Label("选择一个平台").Row().FillWidth().Gap(16).AlignItems(ui.Stretch)
 }
 
-func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string, on *bool) {
-	border := c.Theme().Border
-	width := float32(1)
-	if *on {
-		border = c.Theme().Accent
-		width = 2
+func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string) {
+	tok := a.look
+	on := a.wizardChoice == name
+	card := ui.RadioBase(c.Key("wizard-"+name), &a.wizardChoice, name).Grow(1).Basis(0).MinWidth(0).MinHeight(188).
+		AlignItems(ui.Stretch).Radius(tok.radiusL).Cursor(ui.CursorPointer)
+	bg, border, width := tok.card, tok.border, float32(1)
+	switch {
+	case on:
+		bg, border, width = tok.accent.Alpha(0.07), tok.accent, 1.5
+	case card.Hovered():
+		border = tok.accent.Alpha(0.5)
 	}
-	card := ui.Button(c.Key("wizard-"+name), "").Grow(1).MinHeight(200).Border(width, border).OnClick(func() {
-		*on = !*on
-	})
-	card.Transition(motionColors())
+	card.Background(bg).Border(width, border).Transition(motionColors())
+	if on {
+		card.Shadow(0, 8, 24, 0, tok.lift)
+	} else {
+		card.Shadow(0, 1, 2, 0, tok.shadow)
+	}
 	hoverPressPose(card)
 	card.Children(func() {
-		ui.Column(c).FillWidth().Gap(12).Padding(8, 4).Children(func() {
-			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-				platformIcon(c, name, 28, a.look)
-				ui.Text(c, name).FontSize(26).Bold()
+		ui.Column(c).Grow(1).MinWidth(0).Gap(14).Padding(20).Children(func() {
+			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+				ui.Column(c.Key("plat-tile")).Size(44, 44).Radius(12).Center().Shrink(0).Background(tok.sunken).Children(func() {
+					platformIcon(c, name, 26, tok)
+				})
+				ui.Text(c, name).FontSize(18).Bold().SingleLine().MinWidth(0)
 			})
-			ui.Text(c, blurb).FontSize(14).TextColor(c.Theme().TextMuted)
-			label, color := "点击选择", c.Theme().TextMuted
-			if *on {
-				label, color = "已选择", c.Theme().Accent
-			}
-			ui.Text(c.Key("pick"), label).FontSize(14).TextColor(color).
-				ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
+			ui.Text(c, blurb).FontSize(tok.body).TextColor(tok.muted).Grow(1)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				mark := ui.Column(c.Key("pick-mark")).Size(18, 18).Radius(9).Center().Shrink(0).Transition(motionColors())
+				label, color := "点击选择", tok.muted
+				if on {
+					label, color = "已选择", tok.accent
+					mark.Background(tok.accent).Children(func() {
+						ui.Icon(c, iconCheck).FontSize(12).TextColor(tok.onAccent)
+					})
+				} else {
+					mark.Border(1.5, tok.muted.Alpha(0.55))
+				}
+				ui.Text(c.Key("pick"), label).FontSize(tok.body).TextColor(color).
+					ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
+			})
 		})
 	})
 }
 
 func (a *App) wizardAccountStep(c *ui.Context) {
+	if a.wizardIsAgy() {
+		a.wizardAgyAccountStep(c)
+		return
+	}
+	tok := a.look
 	a.syncWizardName()
 	platform := a.wizardQueue.Current()
 	if platform == "" {
 		platform = a.wizardAccount.Platform
 	}
-	ui.Text(c, pageLoginTitle).FontSize(18).Bold()
-	ui.Text(c, "浏览器会打开平台登录页。登录成功后窗口自动关闭，账号留在列表里。").FontSize(14).TextColor(c.Theme().TextMuted)
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "账号名称").FontSize(13).TextColor(c.Theme().TextMuted)
-		ui.TextInput(c, &a.wizardName).Width(220).Placeholder("例如工作号")
-	})
 	name := strings.TrimSpace(a.wizardName)
 	if name == "" {
 		name = a.wizardAccount.Name
@@ -233,19 +392,32 @@ func (a *App) wizardAccountStep(c *ui.Context) {
 		}
 		line += name
 	}
-	ui.Column(c).Width(320).Padding(16, 16).Gap(10).Radius(16).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
-		if line != "" {
-			ui.Text(c, line).FontSize(15).Bold().SingleLine()
-		}
-		a.loginStatusBody(c, a.wizardAccount, true)
+	wizardCard(ui.Column(c.Key("login-card")).FillWidth(), tok).Children(func() {
+		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Center).Padding(16, 20).Children(func() {
+			ui.Column(c.Key("login-tile")).Size(44, 44).Radius(12).Center().Shrink(0).Background(tok.sunken).Children(func() {
+				platformIcon(c, platform, 26, tok)
+			})
+			if line != "" {
+				ui.Text(c, line).FontSize(tok.title).Bold().SingleLine().Grow(1).MinWidth(0)
+			}
+		})
+		ui.Divider(c)
+		ui.Column(c).FillWidth().Padding(16, 20).Children(func() {
+			a.loginStatusBody(c, a.wizardAccount, true)
+		})
+	})
+	ui.Column(c.Key("login-name")).Gap(6).Children(func() {
+		ui.Text(c, "账号名称").FontSize(tok.caption).TextColor(tok.muted)
+		ui.TextInput(c, &a.wizardName).Width(280).Placeholder("例如工作号")
 	})
 }
 
 func (a *App) loginStatusBody(c *ui.Context, b store.Browser, inWizard bool) {
+	tok := a.look
 	shot := a.loginShot(b.ID)
 	loggedIn := b.IsLoggedIn || shot.state == wizard.ProbeIn || (inWizard && a.wizardPhase == "in")
 	if loggedIn {
-		ui.Text(c, "已登录").FontSize(15).TextColor(c.Theme().Success)
+		wizardStatus(c, "ok", "已登录", tok.success, tok)
 		return
 	}
 	if shot.state == wizard.ProbeRegion || (inWizard && a.wizardPhase == "region") {
@@ -253,16 +425,15 @@ func (a *App) loginStatusBody(c *ui.Context, b store.Browser, inWizard bool) {
 		if inWizard && a.wizardErr != "" {
 			msg = a.wizardErr
 		}
-		ui.Text(c, msg).FontSize(13).TextColor(c.Theme().Warning)
+		wizardStatus(c, "warn", msg, tok.warning, tok)
 		return
 	}
 	if shot.hint != "" {
-		ui.Text(c, shot.hint).FontSize(13).TextColor(c.Theme().Warning)
+		wizardStatus(c, "warn", shot.hint, tok.warning, tok)
 		return
 	}
 	msg := pageLoginHint
-	color := c.Theme().Text
-	waiting := true
+	kind, color := "wait", tok.text
 	if inWizard {
 		switch a.wizardPhase {
 		case "launching":
@@ -270,136 +441,152 @@ func (a *App) loginStatusBody(c *ui.Context, b store.Browser, inWizard bool) {
 				msg = a.wizardNote
 			}
 		case "error":
-			waiting = false
+			kind, color = "warn", tok.warning
 			msg = a.wizardErr
 			if msg == "" {
 				msg = "还没检测到登录"
 			}
-			color = c.Theme().Warning
 		case "waiting":
 			if a.wizardNote != "" {
 				msg = a.wizardNote
 			}
 		}
 	}
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		if waiting {
-			waitingDot(c)
+	if msg == pageLoginTitle {
+		msg = "等待登录…"
+	}
+	wizardStatus(c, kind, msg, color, tok)
+}
+
+// wizardStatus 是登录卡片里的一行状态：左边一个标记，右边文字，多行时标记对齐第一行。
+func wizardStatus(c *ui.Context, kind, text string, color ui.Color, tok tokens) {
+	ui.Row(c.Key("wizard-status")).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+		switch kind {
+		case "wait":
+			ui.Row(c).Shrink(0).Margin(6, 0, 0, 0).Children(func() { waitingDot(c) })
+		case "ok":
+			ui.Icon(c, iconCheck).FontSize(16).TextColor(tok.success).Shrink(0).Margin(2, 0, 0, 0)
+		default:
+			ui.Box(c.Key("warn-dot")).Size(8, 8).Radius(4).Shrink(0).Margin(6, 0, 0, 0).Background(tok.warning)
 		}
-		ui.Text(c.Key("wizard-phase"), msg).FontSize(13).TextColor(color)
+		ui.Text(c.Key("wizard-phase"), text).FontSize(tok.body).TextColor(color).Grow(1).MinWidth(0)
 	})
 }
 
+type doneAccount struct{ platform, name string }
+
 func (a *App) wizardDoneStep(c *ui.Context) {
-	ui.Text(c, "拖入图片 → 选提示词 → 开始").FontSize(20).Bold()
-	ui.Text(c, "图生图先加图片；只写提示词就是文生图。").FontSize(15).TextColor(c.Theme().TextMuted)
-	ui.Column(c).FillWidth().Gap(14).Padding(8, 0).Children(func() {
-		for _, tip := range []struct{ n, text string }{
-			{"1", "拖入图片"},
-			{"2", "选提示词"},
-			{"3", "开始"},
+	tok := a.look
+	ui.Row(c.Key("done-tips")).FillWidth().Gap(12).AlignItems(ui.Stretch).Children(func() {
+		for i, tip := range []struct {
+			icon *ui.SVG
+			text string
+		}{
+			{iconImages, "拖入图片"},
+			{iconPen, "选提示词"},
+			{iconPlay, "开始"},
 		} {
-			ui.Row(c).Gap(16).AlignItems(ui.Center).Padding(16, 20).Radius(14).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
-				ui.Text(c, tip.n).FontSize(20).Bold().TextColor(c.Theme().Accent)
-				ui.Text(c, tip.text).FontSize(18)
+			wizardCard(ui.Column(c.Key(fmt.Sprintf("tip-%d", i))).Grow(1).Basis(0).Gap(16).Padding(16, 18), tok).Children(func() {
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+					wizardTile(c, "tip-tile", tip.icon, 36, tok)
+					ui.Spacer(c)
+					ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).TextColor(tok.muted)
+				})
+				ui.Text(c, tip.text).FontSize(16).Bold()
 			})
 		}
 	})
-	if summary := a.wizardDoneSummary(); summary != "" {
-		ui.Text(c, "已登录 "+summary).FontSize(14).TextColor(c.Theme().TextMuted)
-	}
-	ui.Text(c, "再添加一个账号后，额度用尽、限流或验证码会自动换号。").FontSize(14).TextColor(c.Theme().TextMuted)
-	if a.wizardPickExtra {
-		ui.Column(c.Key("extra-account")).FillWidth().Gap(12).Transition(motionReveal()).Children(func() {
-			ui.Text(c, "要给哪个平台再加一个账号？").FontSize(15)
-			ui.Row(c).Gap(12).Children(func() {
-				if a.platDoubao {
-					ui.Button(c, "再添加豆包").OnClick(func() { a.wizardEnterAccount("豆包") })
-				}
-				if a.platQianwen {
-					ui.Button(c, "再添加千问").OnClick(func() { a.wizardEnterAccount("千问") })
+	if accounts := a.wizardDoneAccounts(); len(accounts) > 0 {
+		ui.Column(c.Key("done-accounts")).FillWidth().Gap(8).Children(func() {
+			ui.Text(c, "已登录").FontSize(tok.caption).TextColor(tok.muted)
+			ui.Row(c).FillWidth().Gap(8).Wrap().Children(func() {
+				for i, acct := range accounts {
+					ui.Row(c.Key(fmt.Sprintf("acct-%d", i))).Gap(8).AlignItems(ui.Center).Padding(6, 12).Radius(999).
+						Background(tok.card).Border(1, tok.border).Children(func() {
+						platformIcon(c, acct.platform, 16, tok)
+						ui.Text(c, acct.platform+" · "+acct.name).FontSize(13).SingleLine()
+					})
 				}
 			})
 		})
 	}
+	ui.Row(c.Key("done-hint")).FillWidth().Gap(10).AlignItems(ui.Start).Padding(14, 16).Radius(tok.radiusM).Background(tok.sunken).Children(func() {
+		ui.Icon(c, iconRefresh).FontSize(16).TextColor(tok.accent).Shrink(0).Margin(2, 0, 0, 0)
+		ui.Text(c, "再添加一个账号后，额度用尽、限流或验证码会自动换号。").FontSize(13).TextColor(tok.muted).Grow(1).MinWidth(0)
+	})
 }
 
-func (a *App) wizardDoneSummary() string {
+func (a *App) wizardDoneAccounts() []doneAccount {
 	if a.store == nil {
-		return ""
+		return nil
 	}
-	var parts []string
+	var out []doneAccount
 	for _, row := range a.store.Browsers() {
 		if row.ExtAccount != "" || !row.IsLoggedIn || row.Name == "" {
 			continue
 		}
-		parts = append(parts, row.Platform+" · "+row.Name)
-	}
-	return joinChinese(parts)
-}
-
-func joinChinese(parts []string) string {
-	out := ""
-	for i, part := range parts {
-		if i > 0 {
-			out += "，"
-		}
-		out += part
+		out = append(out, doneAccount{row.Platform, row.Name})
 	}
 	return out
 }
 
 func (a *App) wizardFooter(c *ui.Context) {
-	ui.Row(c).Gap(12).AlignItems(ui.Center).Padding(12, 8, 0, 8).Children(func() {
-		if a.wizardStep != wizard.StepBrowser {
-			ui.Button(c, "上一步").OnClick(func() { a.wizardBack() })
-		}
-		ui.Column(c).Grow(1)
-		switch a.wizardStep {
-		case wizard.StepDone:
-			if !a.wizardPickExtra {
+	tok := a.look
+	_, hasPrev := wizard.Prev(a.wizardChoice, a.wizardStep)
+	ui.Column(c.Key("wizard-footer")).FillWidth().AlignItems(ui.Center).Padding(14, 40).
+		Background(tok.card).BorderWidth(1, 0, 0, 0).BorderColor(tok.border).Children(func() {
+		ui.Row(c).FillWidth().MaxWidth(wizardBodyWidth).Gap(12).AlignItems(ui.Center).Children(func() {
+			if hasPrev {
+				ui.Button(c, "上一步").OnClick(func() { a.wizardBack() })
+			}
+			ui.Column(c).Grow(1)
+			switch a.wizardStep {
+			case wizard.StepDone:
 				ui.Button(c, "再添加一个账号").OnClick(func() { a.wizardAddAnother() })
+				ui.PrimaryButton(c, "进入主页").OnClick(func() { a.wizardFinish() })
+			case wizard.StepAccount:
+				// Antigravity 的登录方式和重试都在页面里，底栏只留上一步。
+				if a.wizardIsAgy() {
+					break
+				}
+				if a.wizardNavFailed {
+					ui.Button(c, "重新打开").Disabled(a.wizardPhase == "launching").OnClick(func() { a.wizardRecheck() })
+				}
+				ui.Button(c, "已登录? 重新检测").Disabled(a.wizardPhase == "launching").OnClick(func() { a.wizardRecheck() })
+			default:
+				ui.PrimaryButton(c, "下一步").Disabled(!a.wizardCanNext()).OnClick(func() { a.wizardNext() })
 			}
-			ui.PrimaryButton(c, "进入主页").OnClick(func() { a.wizardFinish() })
-		case wizard.StepPlugin:
-			ui.Button(c, "跳过").OnClick(func() { a.goWizard(wizard.StepDone) })
-			ui.PrimaryButton(c, "下一步").OnClick(func() { a.goWizard(wizard.StepDone) })
-		case wizard.StepAccount:
-			if a.wizardNavFailed {
-				ui.Button(c, "重新打开").Disabled(a.wizardPhase == "launching").OnClick(func() { a.wizardRecheck() })
-			}
-			ui.Button(c, "已登录? 重新检测").Disabled(a.wizardPhase == "launching").OnClick(func() { a.wizardRecheck() })
-		default:
-			ui.PrimaryButton(c, "下一步").Disabled(!a.wizardCanNext()).OnClick(func() { a.wizardNext() })
-		}
+		})
 	})
 }
 
 func (a *App) wizardCanNext() bool {
 	switch a.wizardStep {
-	case wizard.StepBrowser:
-		return a.wizardPlan.CanNext && !a.cftBusy
 	case wizard.StepPlatform:
-		return wizard.CanChoosePlatform(a.platDoubao, a.platQianwen)
+		return true
+	case wizard.StepBrowser:
+		return a.wizardPlan.CanNext && !a.camoufoxBusy
+	case wizard.StepInstall:
+		return a.wizardAgy.found
 	default:
 		return false
 	}
 }
 
 func (a *App) wizardNext() {
+	if !a.wizardCanNext() {
+		return
+	}
 	switch a.wizardStep {
-	case wizard.StepBrowser:
-		if !a.wizardCanNext() {
-			return
-		}
-		a.wizardCommitChoices()
-		a.goWizard(wizard.StepPlatform)
 	case wizard.StepPlatform:
-		if !a.wizardCanNext() {
-			return
+		a.wizardNormalizeChoice()
+		a.wizardApplyChoice()
+		if next, ok := wizard.Next(a.wizardChoice, wizard.StepPlatform); ok {
+			a.goWizard(next)
 		}
+	case wizard.StepBrowser, wizard.StepInstall:
 		a.wizardCommitChoices()
-		a.wizardEnterAccount("")
+		a.wizardEnterAccount(false)
 	}
 }
 
@@ -407,16 +594,18 @@ func (a *App) wizardBack() {
 	account := a.wizardAccount
 	leavingLogin := a.wizardStep == wizard.StepAccount
 	a.stopWizardLoop()
-	a.wizardPickExtra = false
 	if leavingLogin {
 		a.abandonUnlogged(account)
 		a.wizardAccount = store.Browser{}
+		a.abandonAgyAccount()
 	}
-	switch a.wizardStep {
-	case wizard.StepDone, wizard.StepPlugin, wizard.StepAccount:
+	// 完成页回到第一步：可以改选，也可以再选另一个平台。
+	if a.wizardStep == wizard.StepDone {
 		a.goWizard(wizard.StepPlatform)
-	case wizard.StepPlatform:
-		a.goWizard(wizard.StepBrowser)
+		return
+	}
+	if prev, ok := wizard.Prev(a.wizardChoice, a.wizardStep); ok {
+		a.goWizard(prev)
 	}
 }
 
@@ -424,53 +613,41 @@ func (a *App) wizardCommitChoices() {
 	if a.store == nil {
 		return
 	}
-	if a.wizardPlan.Backend != "" {
+	if a.wizardNeedsBrowser() && a.wizardPlan.Backend != "" {
 		a.browserBackend = a.wizardPlan.Backend
 		a.browserChoice = browser.ChoiceLabel(a.browserBackend)
 		a.store.Set("browser_backend", a.browserBackend)
 	}
-	if ps := wizard.SelectedPlatforms(a.platDoubao, a.platQianwen); len(ps) > 0 {
+	a.wizardNormalizeChoice()
+	a.wizardApplyChoice()
+	if ps := a.selectedPlatforms(); len(ps) > 0 {
 		a.store.SetPlatforms(ps)
 	}
 }
 
-func (a *App) wizardAddAnother() {
-	platforms := wizard.SelectedPlatforms(a.platDoubao, a.platQianwen)
-	if len(platforms) <= 1 {
-		extra := "豆包"
-		if len(platforms) == 1 {
-			extra = platforms[0]
-		}
-		a.wizardEnterAccount(extra)
-		return
-	}
-	a.wizardPickExtra = true
-}
+// wizardAddAnother 给刚设置的这个平台再加一个账号。想加别的平台，点上一步回到第一步重选。
+func (a *App) wizardAddAnother() { a.wizardEnterAccount(true) }
 
-func (a *App) wizardEnterAccount(extra string) {
-	a.wizardPickExtra = false
-	a.wizardExtra = extra != ""
-	var platforms []string
-	if extra != "" {
-		platforms = []string{extra}
-	} else {
-		for _, platform := range wizard.SelectedPlatforms(a.platDoubao, a.platQianwen) {
-			if a.platformNeedsLogin(platform) {
-				platforms = append(platforms, platform)
-			}
-		}
-	}
-	a.wizardQueue = wizard.NewQueue(platforms)
+// wizardEnterAccount 进入登录步骤。extra 为真是再加一个账号，哪怕这个平台已经有能用的。
+func (a *App) wizardEnterAccount(extra bool) {
+	a.wizardExtra = extra
+	a.wizardQueue = wizard.NewQueue(nil)
 	a.wizardAccount = store.Browser{}
 	a.wizardErr = ""
+	if a.wizardIsAgy() {
+		a.wizardEnterAgyAccount(extra)
+		return
+	}
+	if extra || a.platformNeedsLogin(a.wizardChoice) {
+		a.wizardQueue = wizard.NewQueue([]string{a.wizardChoice})
+	}
 	if a.wizardQueue.Done() {
-		a.enterPluginStep()
+		a.enterDoneStep()
 		return
 	}
 	a.goWizard(wizard.StepAccount)
 	a.wizardPhase = "launching"
 	a.wizardNote = "正在打开登录页…"
-	a.wizardErr = ""
 	a.startWizardLoop()
 }
 
@@ -489,10 +666,10 @@ func (a *App) wizardFinish() {
 	a.wizardCommitChoices()
 	if a.store != nil {
 		a.store.Set(wizard.KeyComplete, wizard.CompleteYes)
+		a.wizardLandOnChoice()
 		a.saveSettings()
 	}
 	a.wizardOn = false
-	a.wizardPickExtra = false
 	a.refreshBrowsers()
 }
 
@@ -648,7 +825,7 @@ func (a *App) wizardPrepare(gen int) bool {
 			return
 		}
 		if a.wizardQueue.Done() {
-			a.enterPluginStep()
+			a.enterDoneStep()
 			return
 		}
 		account, err := a.ensureWizardAccount()
@@ -706,7 +883,7 @@ func (a *App) ensureWizardAccount() (store.Browser, error) {
 	name := wizard.NextInstanceName(platform, names)
 	dir := ""
 	if strings.TrimSpace(a.dataRoot) != "" {
-		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
+		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, "account-"+rand.Text())
 	}
 	row, err := a.store.AddBrowser(platform, name, dir)
 	if err == nil {
@@ -751,102 +928,18 @@ func (a *App) noteProbe(gen int, raw string, err error) wizard.Poll {
 		a.wizardErr = ""
 	}
 	if poll == wizard.PollDone {
-		a.enterPluginStep()
+		a.enterDoneStep()
 	}
 	return poll
 }
 
-func (a *App) enterPluginStep() {
+func (a *App) enterDoneStep() {
 	a.wizardPhase = "ready"
 	a.wizardNote = ""
 	a.wizardErr = ""
-	a.pluginWasConnected = a.extensionConnected()
-	a.goWizard(wizard.StepPlugin)
-	a.watchPlugin()
-}
-
-func (a *App) extensionConnected() bool {
-	if a == nil || a.engine == nil {
-		return false
-	}
-	_, paired := a.engine.PairState()
-	st := a.engine.BridgeStatus()
-	return paired || st.Qianwen || st.Doubao
-}
-
-func (a *App) watchPlugin() {
-	if a.pluginWatch {
-		return
-	}
-	a.pluginWatch = true
-	go func() {
-		for i := 0; i < 180; i++ {
-			time.Sleep(time.Second)
-			var step wizard.Step
-			var connected, already bool
-			a.wizardUI(func() {
-				step = a.wizardStep
-				already = a.pluginWasConnected
-				connected = a.extensionConnected()
-				if step == wizard.StepPlugin && connected && !already {
-					a.goWizard(wizard.StepDone)
-				}
-			})
-			if step != wizard.StepPlugin || (connected && !already) {
-				a.wizardUI(func() { a.pluginWatch = false })
-				return
-			}
-		}
-		a.wizardUI(func() { a.pluginWatch = false })
-	}()
-}
-
-func (a *App) wizardPluginStep(c *ui.Context) {
-	ui.Text(c, "tulai 自己打开的浏览器会带上页面桥。日常使用的 Chrome 或 Edge 需要装一次。").FontSize(15).TextColor(c.Theme().TextMuted)
-	if a.extensionConnected() {
-		ui.Text(c, "扩展已连接").FontSize(16).TextColor(c.Theme().Accent)
-	}
-	if notice := a.extensionNotice(); notice != "" {
-		ui.Text(c, notice).FontSize(15).TextColor(c.Theme().Warning)
-	}
-	dir := a.extensionDir
-	if dir == "" {
-		dir = "扩展目录还没准备好"
-	}
-	ui.Text(c, dir).FontSize(13).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(dir)
-	for _, step := range []struct{ n, text string }{
-		{"1", "打开「开发者模式」"},
-		{"2", "加载已解压的扩展程序"},
-		{"3", "选这个文件夹"},
-	} {
-		ui.Row(c).Gap(16).AlignItems(ui.Center).Padding(14, 18).Radius(14).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
-			ui.Text(c, step.n).FontSize(20).Bold().TextColor(c.Theme().Accent)
-			ui.Text(c, step.text).FontSize(16)
-		})
-	}
-	ui.Button(c, "打开扩展页面").OnClick(func() { a.openExtensionInstall() })
-}
-
-func (a *App) extensionNotice() string {
-	if a == nil || a.engine == nil {
-		return ""
-	}
-	return a.engine.ExtensionNotice()
-}
-
-func (a *App) openExtensionInstall() {
-	kind := a.browserBackend
-	if kind != browser.KindEdge {
-		kind = browser.KindChrome
-	}
-	if err := browser.OpenExtensionsPage(kind); err != nil {
-		logging.Log.Errorf("打开扩展页面失败：%v", err)
-	}
-	if a.extensionDir != "" {
-		if err := browser.OpenFolder(a.extensionDir); err != nil {
-			logging.Log.Errorf("打开扩展目录失败：%v", err)
-		}
-	}
+	// 已经有账号了：回到第一步再选别的平台，是在原来的基础上加，不是重来。
+	a.wizardFirst = false
+	a.goWizard(wizard.StepDone)
 }
 
 func (a *App) launchWizardBrowser(b store.Browser) (string, error) {
@@ -907,6 +1000,12 @@ func (a *App) closeLoginWindow(b store.Browser) {
 		return
 	}
 	a.mu.Lock()
+	viewing := a.browserViewingID == b.ID
+	a.mu.Unlock()
+	if viewing {
+		return
+	}
+	a.mu.Lock()
 	a.loginClosed = append(a.loginClosed, b.ID)
 	a.mu.Unlock()
 	cdp.ReleaseLoginFront(loginEndpoint(b))
@@ -952,10 +1051,10 @@ func loginEndpoint(b store.Browser) string {
 	if b.Port <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("http://127.0.0.1:%d", b.Port)
+	return camoufox.Endpoint(b.Port)
 }
 
-// watchLogin 在打开的网页上探测登录。测试可换成 loginFollow。
+// watchLogin 只更新登录状态，保留手动打开的环境窗口。测试可换成 loginFollow。
 func (a *App) watchLogin(b store.Browser, ws string) {
 	if a == nil || b.ID == 0 {
 		return
@@ -1002,7 +1101,6 @@ func (a *App) followLogin(b store.Browser, ws string) {
 				return
 			}
 			if state == wizard.ProbeIn {
-				a.closeLoginWindow(b)
 				return
 			}
 			if !a.loginSleep(b.ID, gen) {

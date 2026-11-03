@@ -71,7 +71,7 @@ type Options struct {
 	TaskSwitchingCount int
 	StartBrowserIndex  int
 	OutputPath         string
-	RemoveWatermark    bool // 另存计算去水印版本，始终保留原图
+	RemoveWatermark    bool // 千问另存去水印版本，保留原图
 	DailyCap           int
 	RiskyWords         []string
 	AgyBin             string
@@ -80,6 +80,10 @@ type Options struct {
 	AgyTimeoutSec      int
 	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
 	Wash bool
+	// 结果图不经页面、直接按地址下载时的设置。并发按站点算，整批任务共用。
+	DownloadConcurrency int // 每个站点同时下载几个，0 按 2
+	DownloadRetries     int // 失败重试次数
+	DownloadRateKBps    int // 限速，0 不限制
 }
 
 // queueUnit 是队列的一行原料。图生图带一张源图并循环提示词；文生图固定一条提示词且没有源图。

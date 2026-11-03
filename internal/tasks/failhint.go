@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
@@ -186,7 +187,7 @@ func (e *Engine) softenModeration(t *Task, err error) (again, stop bool) {
 }
 
 // noteUse 在这一单结束时记下次数。派出时先不记，避免正在跑的账号被当成已经用满，把并发名额收掉。
-func (e *Engine) noteUse(t Task) {
+func (e *Engine) noteUse(t Task, previousSoften int) {
 	if e == nil || e.store == nil || t.Attempts == 0 {
 		return
 	}
@@ -197,9 +198,15 @@ func (e *Engine) noteUse(t Task) {
 	if id <= 0 {
 		return
 	}
-	when := time.Now()
-	for i := 0; i < 1+t.soften; i++ {
-		e.store.AddUse(id, when)
+	success, failed := 0, 0
+	switch t.Status {
+	case StatusSuccess:
+		success = 1
+	case StatusFailed:
+		failed = 1
+	}
+	if err := e.store.RecordUse(id, time.Now(), 1+t.soften-previousSoften, success, failed); err != nil {
+		logging.Log.Errorf("保存账号今日统计失败: %v", err)
 	}
 }
 

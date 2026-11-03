@@ -8,10 +8,8 @@
   var existingImages = new WeakSet();
   var ignoredURLs = new Set();
   var baselineURLs = new Set();
-  var baselineIDs = new Set();
   var baselineActions = new WeakSet();
   var baselineReplies = new WeakSet();
-  var idSeq = 0;
   var taskNumber = 0, pendingGeneration = 0;
   function generationURL(url) { return /sse|event-stream|chat|completion|stream|message|segment|generation/i.test(url); }
   function beginGeneration() {
@@ -31,8 +29,8 @@
   window.__tulaiAddResult = function (url, src) {
     if (!url || junkURL(url)) return;
     // 去重
-    for (var i = 0; i < results.length; i++) if (results[i].url === url) return;
-    results.push({ url: url, src: src || '', ts: Date.now() });
+    for (var i = 0; i < results.length; i++) if (results[i].task === taskNumber && results[i].url === url) return;
+    results.push({ url: url, src: src || '', ts: Date.now(), task: taskNumber });
     if (results.length > 400) results.shift();
   };
 
@@ -48,10 +46,12 @@
   // ---- fetch 拦截 ----
   var origFetch = window.fetch;
   if (origFetch) {
-    window.fetch = function (input, init) {
+    // Preserve the original function metadata while observing responses.
+    window.fetch = new Proxy(origFetch, {apply: function (target, receiver, args) {
+      var input = args[0];
       var url = (typeof input === 'string') ? input : (input && input.url) || '';
       var requestTask = taskNumber, relevant = generationURL(url), ticket = relevant ? beginGeneration() : null, p;
-      try { p = origFetch.apply(this, arguments); } catch (e) { finishGeneration(ticket); throw e; }
+      try { p = Reflect.apply(target, receiver, args); } catch (e) { finishGeneration(ticket); throw e; }
       if (relevant) {
         // 流式响应：读取文本里出现的图片 URL
         p.then(function (resp) {
@@ -86,26 +86,27 @@
         }).catch(function () {});
       }
       return p;
-    };
+    }});
   }
 
   // ---- XHR 拦截 ----
+  var xhrURLs = new WeakMap();
   var origOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (method, url) {
-    this.__tulaiUrl = url;
-    return origOpen.apply(this, arguments);
-  };
+  XMLHttpRequest.prototype.open = new Proxy(origOpen, {apply: function (target, receiver, args) {
+    xhrURLs.set(receiver, args[1]);
+    return Reflect.apply(target, receiver, args);
+  }});
   var origSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.send = function () {
-    var xhr = this, requestTask = taskNumber, ticket = generationURL(xhr.__tulaiUrl || '') ? beginGeneration() : null;
+  XMLHttpRequest.prototype.send = new Proxy(origSend, {apply: function (target, xhr, args) {
+    var url = xhrURLs.get(xhr) || '', requestTask = taskNumber, ticket = generationURL(url) ? beginGeneration() : null;
     xhr.addEventListener('loadend', function () { finishGeneration(ticket); }, { once: true });
     xhr.addEventListener('load', function () {
       if (requestTask !== taskNumber) return;
       try {
         var mime = xhr.getResponseHeader('content-type') || '';
-        if (looksLikeImage(xhr.__tulaiUrl, mime)) {
+        if (looksLikeImage(url, mime)) {
           if ((xhr.responseType === '' || xhr.responseType === 'blob') && xhr.response && xhr.response.size > 20480) {
-            window.__tulaiAddResult(xhr.__tulaiUrl, 'net');
+            window.__tulaiAddResult(url, 'net');
           }
         } else if (/json|text/i.test(mime)) {
           var txt = typeof xhr.responseText === 'string' ? xhr.responseText : '';
@@ -115,8 +116,8 @@
         }
       } catch (e) {}
     });
-    try { return origSend.apply(this, arguments); } catch (e) { finishGeneration(ticket); throw e; }
-  };
+    try { return Reflect.apply(target, xhr, args); } catch (e) { finishGeneration(ticket); throw e; }
+  }});
 
   // ---- DOM 观察兜底：消息列表新增的图片 ----
   var mo = new MutationObserver(function (muts) {
@@ -135,18 +136,6 @@
     if (/^data:image\/svg/i.test(value) || /\.svg(\?|#|$)/i.test(value)) return true;
     if (/avatar|icon|logo|emoji|sprite/i.test(value)) return true;
     return false;
-  }
-  function imageID(img) {
-    if (!img) return '';
-    var id = img.getAttribute && (img.getAttribute('data-tulai-id') || img.id || img.getAttribute('data-id') || '');
-    return String(id || '');
-  }
-  function rememberID(img) {
-    var id = imageID(img);
-    if (id || !img || typeof img.setAttribute !== 'function') return id;
-    id = 'tulai-' + (++idSeq);
-    try { img.setAttribute('data-tulai-id', id); } catch (e) {}
-    return id;
   }
   function pushURL(list, url) {
     var value = String(url || '').trim();
@@ -592,7 +581,7 @@
     groups.forEach(function (group) {
       if (!group.url || seen[group.url]) return;
       seen[group.url] = true;
-      images.push({ url: group.url, src: 'dom', w: group.img.naturalWidth || 0, h: group.img.naturalHeight || 0 });
+      images.push({ url: group.url, rawUrl: window.__tulaiDoubaoRaw ? window.__tulaiDoubaoRaw.get(group.url) : '', src: 'dom', w: group.img.naturalWidth || 0, h: group.img.naturalHeight || 0 });
     });
     // 千问生成卡没有 data-finished。灰块没了、实图还在，这一轮就停了。
     if (qwenPage() && !busy && images.length) finished = true;
@@ -717,6 +706,7 @@
   // ---- 标记当前任务起点（MarkJs） ----
   window.__tulaiMarkTask = function () {
     taskNumber++;
+    if (window.__tulaiDoubaoRaw) window.__tulaiDoubaoRaw.clear();
     pendingGeneration = 0;
     window.__tulaiMark = Date.now();
     window.__tulaiAssistantBaseline = assistantNodes().length;
@@ -724,15 +714,12 @@
     existingImages = new WeakSet();
     ignoredURLs = new Set();
     baselineURLs = new Set();
-    baselineIDs = new Set();
     baselineActions = new WeakSet();
     baselineReplies = new WeakSet();
     assistantNodes().forEach(function (node) { baselineReplies.add(node); });
     document.querySelectorAll('button,[role="button"],a').forEach(function (el) { baselineActions.add(el); });
     Array.from(document.images || document.querySelectorAll('img')).forEach(function (img) {
       existingImages.add(img);
-      var id = rememberID(img);
-      if (id) baselineIDs.add(id);
       urlsOf(img).forEach(function (url) {
         baselineURLs.add(url);
         ignoredURLs.add(url);
@@ -741,6 +728,6 @@
     });
   };
   window.__tulaiResultsSince = function () {
-    return results.filter(function (r) { return r.ts >= window.__tulaiMark && !ignoredURLs.has(r.url); });
+    return results.filter(function (r) { return r.task === taskNumber && !ignoredURLs.has(r.url); });
   };
 })();

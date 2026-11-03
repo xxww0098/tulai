@@ -30,12 +30,20 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 		}
 	}
 	current := findBrowser(rows, task.BrowserID)
-	if current == nil || openAccount(*current, now, limit) {
+	if current != nil && openAccount(*current, now, limit) {
 		return time.Time{}, false
 	}
 	if id, ok := pickHealthy(rows, task.BrowserID, now, limit); ok {
 		task.BrowserID = id
 		task.Error = ""
+		return time.Time{}, false
+	}
+	for _, b := range rows {
+		if b.Disabled {
+			return now.Add(heal.RecheckAfter), false
+		}
+	}
+	if current == nil {
 		return time.Time{}, false
 	}
 	until := earliestCool(rows, now)
@@ -168,6 +176,10 @@ func (e *Engine) accountsFor(platform string) []store.Browser {
 		if !extension && b.ExtAccount != "" {
 			continue
 		}
+		if e.AccountManual(b.ID) {
+			// 只改调度快照，用户账号的健康状态和登录信息仍保留在库里。
+			b.Health, b.CoolUntil = store.HealthCooling, time.Now().Add(2*time.Second).Unix()
+		}
 		out = append(out, b)
 	}
 	return out
@@ -194,7 +206,7 @@ func agyAccountsBlocked(rows []store.Browser, now time.Time, cap int) bool {
 }
 
 func openAccount(b store.Browser, now time.Time, cap int) bool {
-	if !b.Usable(now) {
+	if b.Disabled || !b.Usable(now) {
 		return false
 	}
 	return cap <= 0 || b.UsedToday(now) < cap
@@ -250,7 +262,7 @@ func ParallelSlots(rows []store.Browser, now time.Time, cap int) int {
 func earliestCool(rows []store.Browser, now time.Time) time.Time {
 	var earliest time.Time
 	for _, b := range rows {
-		if b.Usable(now) || b.CoolUntil <= 0 {
+		if b.Disabled || b.Usable(now) || b.CoolUntil <= 0 {
 			continue
 		}
 		until := time.Unix(b.CoolUntil, 0)

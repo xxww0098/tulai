@@ -2,9 +2,9 @@ package ui
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -22,61 +23,36 @@ import (
 	"github.com/xxww0098/tulai/internal/wizard"
 )
 
-const browserInstanceHint = "只有登录成功的账号会留在这里。同一平台再登录一个后，额度用尽、限流或验证码会自动换号。扩展账号只保留当前连上的页面桥。"
+const browserInstanceHint = "同一平台可以登录多个账号。每个账号的登录资料与指纹相互隔离，额度用尽、限流或验证码时自动换号。"
 
-// browserPane 浏览器管理。网页方式是 Chrome、Edge，或下载到本机的内置浏览器。
+// browserPane 管理 Camoufox 服务商账号。
 func (a *App) browserPane(c *ui.Context) {
 	a.syncBrowserChoice()
-	if a.detectedNote == "" && !a.cftBusy {
+	if a.detectedNote == "" && !a.camoufoxBusy {
 		a.refreshDetected()
 	}
-	w, _ := c.Size()
-	if homeSplit(w) {
-		ui.Row(c).Grow(1).MinHeight(0).Gap(16).AlignItems(ui.Stretch).Children(func() {
-			ui.Scroll(c.Key("browser-setup")).Width(340).Shrink(0).MinHeight(0).Children(func() {
-				ui.Column(c).Gap(12).Padding(0, 2, 12, 0).Children(func() {
-					a.browserSetup(c)
-				})
-			})
-			ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).MaxWidth(720).Gap(12).Children(func() {
-				a.browserInstances(c)
-			})
-		})
-		return
-	}
-	ui.Column(c).Grow(1).MinHeight(0).MaxWidth(720).Gap(12).Children(func() {
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().Gap(16).Children(func() {
 		a.browserSetup(c)
+		a.downloadBrowserEnvironment(c)
 		a.browserInstances(c)
 	})
 }
 
 func (a *App) browserSetup(c *ui.Context) {
-	ui.Field(c, "网页方式", func() {
-		motionSelect(c.Key("browser-backend"), &a.browserChoice, []string{"Chrome", "Edge", "内置浏览器"}).Disabled(a.running).OnChange(func() {
-			a.browserBackend = browser.CanonicalBackend(a.browserChoice)
-			if a.store != nil {
-				a.store.Set("browser_backend", a.browserBackend)
-			}
+	ui.Row(c).FillWidth().Gap(20).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
+			ui.Text(c, "Camoufox 账号环境").FontSize(18).Bold()
+			ui.Text(c, "集中管理独立环境，登录与验证在打开的网页中完成。").FontSize(12).
+				TextColor(c.Theme().TextMuted).SingleLine().Tooltip(browserInstanceHint)
+		})
+		ui.Column(c).Width(260).Shrink(0).Gap(6).AlignItems(ui.End).Children(func() {
+			a.camoufoxSection(c)
 		})
 	})
-	a.extensionBridgeSection(c)
-	a.builtinBrowserSection(c)
 }
 
 func (a *App) browserInstances(c *ui.Context) {
 	a.followStagePlatform()
-	ui.Text(c, "浏览器实例").FontSize(15).Bold()
-	ui.Text(c, browserInstanceHint).FontSize(12).TextColor(c.Theme().TextMuted)
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Shrink(0).Label("浏览器平台")
-		ui.TextInput(c, &a.newBrowserName).Grow(1).MinWidth(0).Placeholder("名称（可选）").Label("浏览器名称")
-		ui.Button(c, "添加").Shrink(0).Disabled(a.running).OnClick(func() { a.addBrowser() })
-	})
-	if hint := missingBrowserHint(a.missingBrowserNames()); hint != "" {
-		ui.Text(c, hint).Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
-	} else if len(a.browserRows) == 0 {
-		ui.Text(c, "尚无已登录的账号。添加豆包或千问，在打开的页面登录后即可使用。").Padding(12, 0).FontSize(12).TextColor(c.Theme().TextMuted)
-	}
 	active := map[int64]bool{}
 	if a.engine != nil {
 		active = a.engine.ActiveAccounts()
@@ -101,33 +77,55 @@ func (a *App) browserInstances(c *ui.Context) {
 		}
 		a.browserRows = shown
 	}
-	if len(a.browserRows) > 0 {
-		ui.Scroll(c.Key("accounts")).FillWidth().Shrink(0).MaxHeight(420).Children(func() {
-			ui.Column(c).FillWidth().Border(1, c.Theme().Border).Radius(12).Children(func() {
-				for i := range a.browserRows {
-					b := a.browserRows[i]
-					idx := i
-					face := c.Theme().Background
-					if idx == a.browserSel {
-						face = c.Theme().Selection
-					}
-					ui.ButtonBase(c.Key(b.ID)).FillWidth().AlignItems(ui.Stretch).Justify(ui.Start).
-						Background(face).OnClick(func() { a.browserSel = idx }).Children(func() {
-						a.accountRow(c, b, active[b.ID])
-					})
-				}
-			})
+	a.pruneBrowserSelection()
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().Gap(12).Children(func() {
+		running := 0
+		for _, b := range a.browserRows {
+			if b.IsRunning {
+				running++
+			}
+		}
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "浏览器实例").FontSize(14).Bold()
+			ui.Text(c, fmt.Sprintf("共 %d 个账号环境 · %d 个运行中", len(a.browserRows), running)).FontSize(12).TextColor(c.Theme().TextMuted)
+			if hint := missingBrowserHint(a.missingBrowserNames()); hint != "" {
+				ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(hint)
+			}
 		})
-	}
-	selected, hasSelection := a.selectedBrowser()
-	ui.Row(c).Gap(8).AlignSelf(ui.Start).Children(func() {
-		ui.Button(c, "启动选中").Shrink(0).Disabled(a.running || !hasSelection || selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.launchBrowser() })
-		ui.Button(c, "停止选中").Shrink(0).Disabled(a.running || !hasSelection || !selected.IsRunning || selected.ExtAccount != "").OnClick(func() { a.stopBrowser() })
-		ui.Button(c, "刷新列表").Shrink(0).OnClick(func() { a.refreshBrowsers() })
-		ui.Button(c, "恢复选中").Shrink(0).Disabled(!hasSelection).OnClick(func() { a.restoreBrowser() })
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Shrink(0).Label("浏览器平台")
+			ui.TextInput(c, &a.newBrowserName).Grow(1).MaxWidth(280).MinWidth(0).Placeholder("环境名称（可选）").Label("浏览器名称")
+			ui.Button(c, "添加环境").Shrink(0).Disabled(a.running || len(a.browserPending) > 0).Background(c.Theme().Accent).TextColor(c.Theme().AccentText).OnClick(func() { a.addBrowser() })
+			ui.Box(c).Grow(1)
+			ui.Button(c, "刷新列表").Shrink(0).OnClick(func() { a.refreshBrowsers() })
+		})
+		a.browserBatchToolbar(c)
+		if len(a.browserRows) == 0 {
+			ui.Column(c).Grow(1).FillWidth().Center().Gap(8).Border(1, c.Theme().Border).Radius(8).Children(func() {
+				ui.Icon(c, iconGlobe).FontSize(28).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "添加第一个浏览器环境").FontSize(15).Bold()
+				ui.Text(c, "选择服务商并点击「添加环境」，在打开的页面中登录账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+			})
+		} else {
+			a.browserEnvironmentTable(c, active)
+		}
+		selected, hasSelection := a.selectedBrowser()
+		ui.Column(c).FillWidth().Padding(12, 14).Gap(8).Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(8).Children(func() {
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				title := "选择环境以配置代理"
+				if hasSelection {
+					title = "环境配置 · " + selected.Name
+				}
+				ui.Text(c, title).FontSize(13).Bold().Grow(1).MinWidth(0).SingleLine()
+				ui.Button(c, "恢复当前").FontSize(12).Shrink(0).Disabled(!hasSelection || len(a.browserPending) > 0).OnClick(func() { a.restoreBrowser() })
+				ui.Button(c, "删除当前").FontSize(12).Shrink(0).Disabled(a.running || !hasSelection || len(a.browserPending) > 0).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
+			})
+			if hasSelection && selected.ExtAccount == "" && selected.Platform != "Antigravity" {
+				a.accountProxySettings(c, selected)
+			}
+		})
+		ui.Text(c, "勾选环境可批量启停；配置仅作用于当前环境。登录成功后窗口保持打开。").FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
 	})
-	ui.Button(c, "删除选中").Shrink(0).AlignSelf(ui.Start).Disabled(a.running || !hasSelection).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
-	ui.Text(c, "双击名称或点笔图标改名。登录在打开的网页里完成，成功后窗口会自动关闭。").FontSize(12).TextColor(c.Theme().TextMuted)
 }
 
 // followStagePlatform 让添加账号的平台下拉跟着右侧当前 Tab，直到用户自己改下拉。
@@ -219,6 +217,7 @@ func (a *App) openSelectedPages() {
 }
 
 func (a *App) refreshBrowsers() {
+	focused, hadFocus := a.selectedBrowser()
 	a.dropAbandoned()
 	a.mu.Lock()
 	if a.store != nil {
@@ -230,6 +229,10 @@ func (a *App) refreshBrowsers() {
 		}
 	}
 	a.mu.Unlock()
+	if hadFocus {
+		a.browserSel = -1
+		a.selectBrowserID(focused.ID)
+	}
 	a.refreshDetected()
 }
 
@@ -300,15 +303,18 @@ func (a *App) clearLoginHold(id int64) {
 }
 
 // dropAbandoned 只删两类本机档案：这一轮新建后放弃的（走 abandonUnlogged），
-// 或探测明确返回 out 的未登录档案。标志是 0、端口没开、探测失败、地区或验证，都留下。
+// 或探测明确返回 out 的未登录档案。标志是 0、窗口没开、探测失败、地区或验证，都留下。
 // 扩展行同样不能凭 is_logged_in=0 删，要等 hello 明确说没登录。
-// ponytail: 端口开着时同步探测，每个账号每进程只探一次。要跟着页面变化再探，放到后台。
+// shortcut: 窗口开着时同步探测，每个账号每进程只探一次；需要持续观察页面时改为后台探测。
 func (a *App) dropAbandoned() {
 	if a == nil || a.store == nil || a.running {
 		return
 	}
 	keep := map[int64]struct{}{}
 	for _, id := range a.loginKeepIDs() {
+		keep[id] = struct{}{}
+	}
+	for id := range a.browserPending {
 		keep[id] = struct{}{}
 	}
 	if a.manager != nil {
@@ -346,7 +352,7 @@ func (a *App) dropAbandoned() {
 	}
 }
 
-// accountLoginState 是删档案前的登录探测。出错、端口没开、地区和验证都不是 out。
+// accountLoginState 是删档案前的登录探测。出错、窗口没开、地区和验证都不是 out。
 func (a *App) accountLoginState(b store.Browser) string {
 	if a != nil && a.accountProbe != nil {
 		state, err := a.accountProbe(b)
@@ -419,104 +425,61 @@ func (a *App) syncBrowserChoice() {
 }
 
 func (a *App) refreshDetected() {
-	dir := browser.ConfigDir()
-	a.detectedNote, a.detectedDetail = browser.FormatDetected(browser.Detect(dir))
-	if rt, ok := browser.InstalledBuiltin(dir); ok {
-		a.cftReady = true
-		if a.cftBusy {
-			return
-		}
-		ver := rt.Version
-		if ver == "" {
-			ver = browser.PinnedCfTVersion()
-		}
-		a.cftStatus = "内置浏览器已就绪（" + ver + "）"
+	a.detectedNote, a.detectedDetail = browser.FormatDetected(browser.Detect(browser.ConfigDir()))
+	_, a.camoufoxReady = browser.InstalledCamoufox(browser.ConfigDir())
+	if a.camoufoxBusy {
 		return
 	}
-	a.cftReady = false
-	if a.cftBusy {
+	if a.camoufoxReady {
+		a.camoufoxStatus = "Camoufox 已就绪"
 		return
 	}
-	if !browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH) {
-		a.cftStatus = "当前架构没有可下载的内置浏览器，请使用系统 Edge 或已安装的 Chrome"
+	if !browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH) {
+		a.camoufoxStatus = "当前架构不支持 Camoufox；Windows 请使用 x64 版本"
 		return
 	}
-	a.cftStatus = "内置浏览器未下载"
+	a.camoufoxStatus = "安装后即可添加服务商账号"
 }
 
-func (a *App) builtinBrowserSection(c *ui.Context) {
-	note := a.detectedNote
-	if note == "" {
-		note = "正在检查本机浏览器…"
+func (a *App) camoufoxSection(c *ui.Context) {
+	ui.Text(c, a.camoufoxStatus).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(a.camoufoxStatus + "\n" + a.detectedDetail)
+	label := "安装 Camoufox"
+	if a.camoufoxReady {
+		label = "检查 Camoufox"
 	}
-	if a.cftStatus != "" {
-		note += " · " + a.cftStatus
-	}
-	label := "下载内置浏览器"
-	if a.cftReady {
-		label = "重新下载内置浏览器"
-	}
-	supported := browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH)
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, note).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(a.detectedDetail)
-		ui.Button(c, label).Disabled(a.running || a.cftBusy || !supported).OnClick(func() { a.downloadBuiltin() })
-	})
-	if a.cftBusy {
-		motionProgress(c, "cft-progress", a.cftPercent, a.cftPercent <= 0)
+	ui.Button(c, label).AlignSelf(ui.End).FontSize(12).Disabled(a.running || a.camoufoxBusy || a.renameUpdateActive() || !browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH)).OnClick(func() { a.installCamoufox() })
+	if a.camoufoxBusy {
+		a.camoufoxCompactProgress(c, "camoufox-progress")
 	}
 }
 
-func (a *App) downloadBuiltin() {
-	if a.cftBusy || a.running {
+func (a *App) installCamoufox() {
+	if a.camoufoxBusy || a.running || a.renameUpdateActive() {
 		return
 	}
-	if !browser.BuiltinSupported(runtime.GOOS, runtime.GOARCH) {
-		a.cftStatus = "当前架构没有可下载的内置浏览器，请使用系统 Edge 或已安装的 Chrome"
-		return
-	}
-	force := a.cftReady
-	a.cftBusy = true
-	a.cftPercent = 0
-	a.cftStatus = "正在下载内置浏览器…"
+	a.camoufoxBusy = true
+	a.camoufoxStatus = "正在准备 Camoufox…"
+	a.camoufoxPercent = -1
+	a.camoufoxDone, a.camoufoxTotal, a.camoufoxSpeed, a.camoufoxLast = 0, 0, 0, 0
+	a.camoufoxAt = time.Time{}
+	a.camoufoxStage = ""
+	a.pushProxy()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		done := make(chan struct{})
+		go a.camoufoxTick(done)
+		defer close(done)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
-		dir := browser.ConfigDir()
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			a.syncUI(func() {
-				a.cftBusy = false
-				a.cftStatus = "下载失败：" + err.Error()
-			})
-			logging.Log.Errorf("下载内置浏览器失败: %v", err)
-			return
-		}
-		var err error
-		progress := func(done, total int64) {
-			a.syncUI(func() {
-				if total > 0 && done >= total {
-					a.cftPercent = 1
-					a.cftStatus = "正在解压内置浏览器…"
-					return
-				}
-				if total > 0 && done > 0 {
-					a.cftPercent = float64(done) / float64(total)
-					a.cftStatus = fmt.Sprintf("正在下载内置浏览器 %d%%", done*100/total)
-				}
-			})
-		}
-		if force {
-			_, err = browser.RedownloadCfT(ctx, dir, nil, progress)
-		} else {
-			_, err = browser.EnsureCfT(ctx, dir, nil, progress)
-		}
+		_, err := browser.EnsureCamoufox(ctx, browser.ConfigDir(), func(p camoufox.Progress) {
+			a.syncUI(func() { a.applyCamoufoxProgress(p) })
+		})
 		a.syncUI(func() {
-			a.cftBusy = false
+			a.camoufoxBusy = false
+			defer a.maybeInstallPending()
 			if err != nil {
-				a.cftStatus = "下载失败：" + err.Error()
-				logging.Log.Errorf("下载内置浏览器失败: %v", err)
+				a.camoufoxStatus = "安装失败：" + err.Error()
 				return
 			}
-			logging.Log.Success("内置浏览器已就绪")
 			a.refreshDetected()
 			a.refreshWizardPlan()
 		})
@@ -570,7 +533,7 @@ func (a *App) createBrowser(platform, name string) {
 	}
 	dir := ""
 	if strings.TrimSpace(a.dataRoot) != "" {
-		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, name)
+		dir = browser.ProfileDir(a.dataRoot, a.browserBackend, "account-"+rand.Text())
 	}
 	row, err := a.store.AddBrowser(platform, name, dir)
 	if err != nil {
@@ -578,7 +541,7 @@ func (a *App) createBrowser(platform, name string) {
 		return
 	}
 	a.markFreshLogin(row.ID)
-	logging.Log.Info("正在打开 %s（%s），请在网页里登录，成功后窗口会自动关闭", name, platform)
+	logging.Log.Info("正在打开 %s（%s），请在网页里登录，成功后窗口保持打开", name, platform)
 	a.refreshBrowsers()
 	for i := range a.browserRows {
 		if a.browserRows[i].ID == row.ID {
@@ -596,31 +559,17 @@ func (a *App) selectedBrowser() (store.Browser, bool) {
 	return a.browserRows[a.browserSel], true
 }
 
-func (a *App) accountRow(c *ui.Context, b store.Browser, active bool) {
+func (a *App) accountRow(c *ui.Context, b store.Browser) {
 	shot := a.loginShot(b.ID)
-	ui.Column(c).FillWidth().Padding(10, 12).Gap(6).Children(func() {
-		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-				signedIn := accountSignedIn(b, shot)
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					a.accountNameField(c, b)
-					ui.Badge(c, accountHealthLabel(b, active, signedIn)).Shrink(0)
-				})
-				line := fmt.Sprintf("%s · 端口 %d", b.Platform, b.Port)
-				if b.ExtAccount != "" {
-					line = b.Platform + " · 扩展会话"
-				}
-				ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(0).Children(func() {
-					platformIcon(c, b.Platform, 16, a.look)
-					ui.Text(c, line).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().MinWidth(0)
-				})
-				ui.Text(c, fmt.Sprintf("今日已用 %d/%d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).TextColor(c.Theme().TextMuted)
-				if b.LastError != "" && !b.Usable(time.Now()) && !staleLoginCopy(b, signedIn) {
-					ui.Text(c, b.LastError).FontSize(12).TextColor(c.Theme().Danger).SingleLine().Tooltip(b.LastError)
-				}
-			})
+	ui.Column(c).FillWidth().MinWidth(0).MinHeight(44).Justify(ui.Center).Gap(3).Children(func() {
+		ui.Row(c).FillWidth().MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
+			a.accountNameField(c, b)
 		})
-		a.accountLoginStatus(c, b, shot)
+		if b.ExtAccount != "" {
+			ui.Text(c, "扩展会话").FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+		} else {
+			a.accountLoginStatus(c, b, shot)
+		}
 	})
 }
 
@@ -645,7 +594,7 @@ func (a *App) accountNameField(c *ui.Context, b store.Browser) {
 		}
 		return
 	}
-	name := ui.Text(c, b.Name).Bold().SingleLine()
+	name := ui.Text(c, b.Name).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(b.Name)
 	if name.Clicked() {
 		a.selectBrowserID(b.ID)
 	}
@@ -713,13 +662,13 @@ func (a *App) accountLoginStatus(c *ui.Context, b store.Browser, shot loginShot)
 	}
 	switch {
 	case shot.state == wizard.ProbeRegion:
-		ui.Text(c, regionProxyHint).FontSize(12).TextColor(c.Theme().Warning)
+		ui.Text(c, regionProxyHint).FontSize(12).TextColor(c.Theme().Warning).SingleLine().Tooltip(regionProxyHint)
 	case accountSignedIn(b, shot):
 		ui.Text(c, "已登录").FontSize(12).TextColor(c.Theme().Success)
 	case shot.hint != "":
-		ui.Text(c, shot.hint).FontSize(12).TextColor(c.Theme().Warning)
+		ui.Text(c, shot.hint).FontSize(12).TextColor(c.Theme().Warning).SingleLine().Tooltip(shot.hint)
 	default:
-		ui.Text(c, pageLoginHint).FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, pageLoginHint).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine().Tooltip(pageLoginHint)
 	}
 }
 
@@ -743,51 +692,75 @@ func (a *App) launchBrowser() {
 	if !ok {
 		return
 	}
+	a.launchBrowserInstance(b, nil)
+}
+
+func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
+	if !a.beginBrowserOperation(b, false, batch) {
+		return
+	}
 	platform := strategy.Factory(b.Platform)
 	if platform == nil {
 		logging.Log.Errorf("无法识别浏览器平台: %s", b.Platform)
+		a.finishBrowserOperation(b.ID, fmt.Errorf("无法识别浏览器平台: %s", b.Platform))
 		return
 	}
 	if a.loginLaunch != nil {
-		if err := a.loginLaunch(b); err != nil {
+		err := a.loginLaunch(b)
+		if err != nil {
 			logging.Log.Errorf("启动失败: %v", err)
 		}
+		a.finishBrowserOperation(b.ID, err)
+		return
+	}
+	if a.manager == nil {
+		err := errors.New("没有浏览器，无法启动环境")
+		logging.Log.Errorf("启动失败: %v", err)
+		a.finishBrowserOperation(b.ID, err)
 		return
 	}
 	a.pushProxy()
 	a.refreshDetected()
+	fresh := !b.IsLoggedIn && a.loginIsFresh(b.ID)
 	go func() {
+		var operationErr error
+		cleanupFresh := false
+		defer func() {
+			a.postUI(func() {
+				if cleanupFresh && fresh {
+					a.abandonUnlogged(b)
+				}
+				a.finishBrowserOperation(b.ID, operationErr)
+			})
+		}()
 		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, platform.HomeURL(), false)
 		if err != nil && !errors.Is(err, browser.ErrDebugPort) {
 			logging.Log.Errorf("启动失败: %v", err)
-			if !b.IsLoggedIn && a.loginIsFresh(b.ID) {
-				a.onUI(func() {
-					a.abandonUnlogged(b)
-					a.browserSel = -1
-					a.refreshBrowsers()
-				})
-			}
+			operationErr, cleanupFresh = err, true
 			return
 		}
 		if errors.Is(err, browser.ErrDebugPort) {
-			a.store.SetRunning(b.ID, true)
+			if a.store != nil {
+				a.store.SetRunning(b.ID, true)
+			}
 			a.watchLogin(b, loginEndpoint(b))
-			a.onUI(func() { a.refreshBrowsers() })
 			return
 		}
 		err = cdp.OpenURLContext(context.Background(), ws, platform.HomeURL())
-		a.store.SetRunning(b.ID, true)
+		if a.store != nil {
+			a.store.SetRunning(b.ID, true)
+		}
 		if err == nil || errors.Is(err, cdp.ErrDebugUnavailable) {
 			a.watchLogin(b, ws)
 		}
 		if err != nil && !errors.Is(err, cdp.ErrDebugUnavailable) {
+			operationErr = err
 			logging.Log.Errorf("浏览器[%s] 打开登录页失败：%v", b.Name, err)
 		} else if err != nil {
-			logging.Log.Warning("浏览器[%s] 调试端口还没连上，已打开登录页", b.Name)
+			logging.Log.Warning("浏览器[%s] 页面控制尚未就绪，已打开登录页", b.Name)
 		} else {
 			logging.Log.Success("浏览器[%s]已打开%s，可在浏览器中登录账号", b.Name, b.Platform)
 		}
-		a.onUI(func() { a.refreshBrowsers() })
 	}()
 }
 
@@ -796,6 +769,24 @@ func (a *App) stopBrowser() {
 	if !ok {
 		return
 	}
+	a.stopBrowserInstance(b, nil)
+}
+
+func (a *App) stopBrowserInstance(b store.Browser, batch *browserBatchRun) {
+	if !a.beginBrowserOperation(b, true, batch) {
+		return
+	}
+	if a.manager == nil || !a.manager.IsRunning(b.ID) {
+		a.finishStopBrowser(b)
+		return
+	}
+	go func() {
+		a.manager.Stop(b.ID)
+		a.postUI(func() { a.finishStopBrowser(b) })
+	}()
+}
+
+func (a *App) finishStopBrowser(b store.Browser) {
 	if a.store != nil {
 		for _, row := range a.store.Browsers() {
 			if row.ID == b.ID {
@@ -804,21 +795,17 @@ func (a *App) stopBrowser() {
 			}
 		}
 	}
-	if a.manager != nil {
-		a.manager.Stop(b.ID)
-	}
 	if !b.IsLoggedIn && a.loginIsFresh(b.ID) {
 		a.abandonUnlogged(b)
 		logging.Log.Info("浏览器[%s] 未登录，已从列表移除", b.Name)
-		a.browserSel = -1
-		a.refreshBrowsers()
+		a.finishBrowserOperation(b.ID, nil)
 		return
 	}
 	if a.store != nil {
 		a.store.SetRunning(b.ID, false)
 	}
 	logging.Log.Info("浏览器[%s] 已停止", b.Name)
-	a.refreshBrowsers()
+	a.finishBrowserOperation(b.ID, nil)
 }
 
 func (a *App) restoreBrowser() {
@@ -874,6 +861,9 @@ func (a *App) bridgePairLabel() string {
 }
 
 func accountHealthLabel(b store.Browser, active, signedIn bool) string {
+	if b.Disabled && !active {
+		return "已禁用"
+	}
 	if !b.Usable(time.Now()) {
 		if b.Health == store.HealthCooling {
 			if strings.Contains(b.LastError, "验证") {
@@ -925,26 +915,12 @@ func (a *App) deleteBrowser() {
 	a.refreshBrowsers()
 }
 
-// pairedProfileIDs 是这个账号页面桥写在自己配置里的标识。
-// 调试端口还开着时从扩展里读；扩展账号行本身就带着这个标识。
+// pairedProfileIDs 返回旧手动扩展账号携带的标识。
 func (a *App) pairedProfileIDs(b store.Browser) []string {
 	if id := strings.TrimSpace(b.ExtAccount); id != "" {
 		return []string{id}
 	}
-	if b.Port <= 0 || !debugPortOpen(b.Port) {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	id, _, _, err := cdp.ExtensionPairState(ctx, fmt.Sprintf("http://127.0.0.1:%d", b.Port))
-	if err != nil {
-		return nil
-	}
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return nil
-	}
-	return []string{id}
+	return nil
 }
 
 func (a *App) pickOutputDir() {
@@ -1007,4 +983,50 @@ func baseName(p string) string {
 		}
 	}
 	return p
+}
+
+func (a *App) accountProxySettings(c *ui.Context, b store.Browser) {
+	if a.accountProxyID != b.ID {
+		a.accountProxyID = b.ID
+		a.accountProxy = b.Proxy
+		a.accountProxyNote = ""
+	}
+	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.End).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+			ui.Field(c, "当前账号代理", func() {
+				ui.TextInput(c.Key("account-proxy"), &a.accountProxy).Label("当前账号代理").Placeholder("留空使用全局代理").Disabled(a.running || b.IsRunning || len(a.browserPending) > 0)
+			})
+		})
+		ui.Button(c, "保存账号代理").Shrink(0).Disabled(a.store == nil || a.running || b.IsRunning || len(a.browserPending) > 0).OnClick(func() { a.saveAccountProxy(b) })
+	})
+	ui.Text(c, "支持 HTTP 代理（可带用户名和密码）或无认证的 SOCKS5 代理。下次打开此账号生效。").FontSize(12).TextColor(c.Theme().TextMuted)
+	if b.IsRunning {
+		ui.Text(c, "先停止此账号窗口，再修改代理。").FontSize(12).TextColor(c.Theme().TextMuted)
+	}
+	if a.accountProxyNote != "" {
+		ui.Text(c, a.accountProxyNote).FontSize(12).TextColor(c.Theme().TextMuted)
+	}
+}
+
+func (a *App) saveAccountProxy(b store.Browser) {
+	raw := strings.TrimSpace(a.accountProxy)
+	if raw != "" {
+		var ok bool
+		raw, ok = browser.NormalizeProxy(raw)
+		if !ok {
+			a.accountProxyNote = "代理地址无效，请填写协议、主机和端口"
+			return
+		}
+		if strings.HasPrefix(raw, "socks5://") && strings.Contains(raw, "@") {
+			a.accountProxyNote = "SOCKS5 认证不受支持，请改用 HTTP 代理"
+			return
+		}
+	}
+	if err := a.store.SetBrowserProxy(b.ID, raw); err != nil {
+		a.accountProxyNote = "保存失败：" + err.Error()
+		return
+	}
+	a.accountProxy = raw
+	a.accountProxyNote = "已保存，下次打开此账号生效"
+	a.refreshBrowsers()
 }

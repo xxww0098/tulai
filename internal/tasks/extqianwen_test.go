@@ -646,6 +646,68 @@ func TestExtDownloadRejectsSVGPlaceholder(t *testing.T) {
 	}
 }
 
+func TestExtensionDownloadPrefersDoubaoRawAndFallsBack(t *testing.T) {
+	raw := resultPNG(t, 31)
+	marked := watermarkResultPNG(t, "豆包")
+	repaired := repairedPNG(t, marked, "豆包")
+	const rawURL = "https://p3.byteimg.com/a.jpeg~tplv-x-image_raw.png?signature=raw"
+	const displayURL = "https://p3.byteimg.com/a.jpeg~tplv-x-cgen_dwm.png?signature=display"
+	for _, tc := range []struct {
+		name  string
+		raw   []byte
+		want  []byte
+		calls string
+	}{
+		{"raw", raw, raw, rawURL},
+		{"invalid raw", []byte("not an image"), repaired, rawURL + "," + displayURL},
+		{"truncated raw", raw[:len(raw)-1000], repaired, rawURL + "," + displayURL},
+		{"unavailable raw", nil, repaired, rawURL + "," + displayURL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var urls []string
+			sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+				name, _ := env.Name()
+				switch name {
+				case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt, extbridge.CmdSend:
+					return ackOK(env, map[string]any{"ok": true})
+				case extbridge.CmdWaitResult:
+					return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": displayURL, "rawUrl": rawURL}}})
+				case extbridge.CmdDownload:
+					var request struct {
+						URL string `json:"url"`
+					}
+					_ = json.Unmarshal(env.Payload, &request)
+					mu.Lock()
+					urls = append(urls, request.URL)
+					mu.Unlock()
+					if request.URL == rawURL {
+						if tc.raw == nil {
+							return ackFail(env, extbridge.EDownloadFail, "raw unavailable")
+						}
+						return chunkAck(env, tc.raw, len(tc.raw))
+					}
+					return chunkAck(env, marked, len(marked))
+				default:
+					return ackFail(env, extbridge.EProtocol, name)
+				}
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			out, err := RunDoubaoExtension(ctx, sess, QianwenJob{TaskID: "raw", IdempotencyPrefix: "raw", Prompt: "水彩", Wait: time.Second})
+			if err != nil || len(out.Results) != 1 || !bytes.Equal(out.Results[0].Data, tc.want) || !out.Results[0].WatermarkRemoved {
+				t.Fatalf("扩展结果不符: err=%v, count=%d", err, len(out.Results))
+			}
+			mu.Lock()
+			got := strings.Join(urls, ",")
+			mu.Unlock()
+			if got != tc.calls {
+				t.Fatalf("下载地址 = %s, want %s", got, tc.calls)
+			}
+		})
+	}
+}
+
 func TestExtensionDownloadStripsDoubaoWatermarkAndRepairs(t *testing.T) {
 	pageURL := "https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.png?x-expires=1&watermark=1&wm=2"
 	cleanURL := "https://p9-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.png"
@@ -1039,6 +1101,7 @@ func TestExtensionHelloSavesOnlyLoggedInAccounts(t *testing.T) {
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			st := openTaskStore(t)
+			st.Set(extbridge.SettingBrowserBackend, "extension")
 			port := freePort(t)
 			st.Set(extbridge.SettingExtPort, port)
 			st.Set(extbridge.SettingExtToken, "token-a")
@@ -1099,6 +1162,63 @@ func TestExtensionHelloSavesOnlyLoggedInAccounts(t *testing.T) {
 				t.Fatalf("profile-y = %+v", rows)
 			}
 		})
+	}
+}
+
+func TestExtensionLoginIsOnlyRecordedInExtensionMode(t *testing.T) {
+	for _, tc := range []struct{ protocol, label string }{
+		{extbridge.PlatformQianwen, "千问"},
+		{extbridge.PlatformDoubao, "豆包"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			st := openTaskStore(t)
+			e := NewEngine(st, nil, nil, t.TempDir())
+			raw, _ := json.Marshal(map[string]any{"name": "login", "loggedIn": true, "account": "profile-x"})
+			login := extbridge.Envelope{
+				V: extbridge.Version, ID: "login-x", Type: extbridge.TypeEvent,
+				TS: time.Now().UnixMilli(), Platform: tc.protocol, Payload: raw,
+			}
+
+			e.noteExtensionLogin(nil, login)
+			if rows := st.Browsers(); len(rows) != 0 {
+				t.Fatalf("ego mode recorded an extension account: %+v", rows)
+			}
+
+			st.Set(extbridge.SettingBrowserBackend, "extension")
+			e.noteExtensionLogin(nil, login)
+			rows := st.Browsers()
+			if len(rows) != 1 || rows[0].Platform != tc.label || rows[0].ExtAccount != "profile-x" || !rows[0].IsLoggedIn {
+				t.Fatalf("extension mode did not record the login: %+v", rows)
+			}
+		})
+	}
+}
+
+func TestDropInactiveExtensionAccounts(t *testing.T) {
+	st := openTaskStore(t)
+	local, err := st.AddBrowser("豆包", "豆包1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(local.ID, false, true)
+	for _, platform := range []string{"豆包", "千问"} {
+		if _, err := st.SaveLoggedInExtension(platform, "profile-x", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := NewEngine(st, nil, nil, t.TempDir())
+
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	e.DropInactiveExtensionAccounts()
+	if rows := st.Browsers(); len(rows) != 3 {
+		t.Fatalf("extension mode lost accounts: %+v", rows)
+	}
+
+	st.Set(extbridge.SettingBrowserBackend, "ego")
+	e.DropInactiveExtensionAccounts()
+	rows := st.Browsers()
+	if len(rows) != 1 || rows[0].ID != local.ID || rows[0].ExtAccount != "" {
+		t.Fatalf("the local account should remain alone: %+v", rows)
 	}
 }
 

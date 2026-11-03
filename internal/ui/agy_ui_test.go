@@ -249,3 +249,32 @@ func TestAntigravityTabShowsAccountAndLogin(t *testing.T) {
 		t.Fatal("账号日志里出现了授权码")
 	}
 }
+
+func TestAntigravityNoAccountShowsAddAccountCallout(t *testing.T) {
+	cases := []struct {
+		name string
+		app  *App
+	}{
+		{
+			// 洗图页自带默认指令，还没有图片也应该先提示去加账号。
+			name: "wash",
+			app: &App{platformAuto: true, tab: pageWash, statePage: pageWash,
+				stageTab: 2, stagePicked: true, prompts: DefaultWashPrompt},
+		},
+		{
+			// 生图页写了提示词，没加图片。
+			name: "home",
+			app: &App{platformAuto: true, stageTab: 2, stagePicked: true,
+				prompts: "一只猫"},
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tester := ui.NewTester(tt.app.view, 1280, 900)
+			tester.Advance(200 * time.Millisecond)
+			if !tester.HasText("还没有可用账号。在右侧点「+ 添加账号」登录。") {
+				t.Fatalf("Antigravity 没有账号时缺少提示: %v", tester.Texts())
+			}
+		})
+	}
+}

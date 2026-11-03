@@ -104,7 +104,7 @@ func TestCommandAndErrorHelpers(t *testing.T) {
 	if !errors.Is(err, &ProtoError{Code: ETimeout}) || CodeOf(err) != ETimeout {
 		t.Fatalf("errors.Is: %v", err)
 	}
-	if NormalizeBrowserBackend(" Extension ") != "extension" || NormalizeBrowserBackend("Chrome") != "ego" || NormalizeBrowserBackend("") != "ego" {
+	if NormalizeBrowserBackend(" Extension ") != "extension" || NormalizeBrowserBackend("Chrome") != "camoufox" || NormalizeBrowserBackend("") != "camoufox" {
 		t.Fatal("browserBackend normalize")
 	}
 	if SettingBrowserBackend != "browserBackend" {
@@ -179,7 +179,7 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		t.Fatalf("options_ui.page = %#v", options["page"])
 	}
 	perms, _ := manifest["permissions"].([]any)
-	need := map[string]bool{"storage": true, "tabs": true, "alarms": true, "scripting": true}
+	need := map[string]bool{"storage": true, "tabs": true, "alarms": true, "scripting": true, "debugger": true}
 	for _, item := range perms {
 		delete(need, item.(string))
 	}
@@ -223,6 +223,7 @@ func TestExtensionScriptsParse(t *testing.T) {
 	for _, rel := range []string{
 		"extension/content.js",
 		"extension/background.js",
+		"extension/network.js",
 		"extension/protocol.js",
 		"extension/options.js",
 		"extension/doubao/page.js",
@@ -249,6 +250,14 @@ func TestContentResultWait(t *testing.T) {
 	out, err := exec.Command("node", filepath.Join(root, "extension", "content_test.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("content_test.js: %v\n%s", err, out)
+	}
+}
+
+func TestExtensionNetworkObservation(t *testing.T) {
+	root := repoRoot(t)
+	out, err := exec.Command("node", filepath.Join(root, "extension", "network_test.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("network_test.js: %v\n%s", err, out)
 	}
 }
 

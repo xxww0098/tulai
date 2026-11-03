@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -12,59 +11,102 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-
-	protocol "github.com/chromedp/cdproto/cdp"
-	cdpio "github.com/chromedp/cdproto/io"
-	"github.com/chromedp/chromedp"
-
-	"github.com/xxww0098/tulai/internal/browser"
 )
 
-type resourceStreamExecutor struct {
-	chunks []cdpio.ReadReturns
+func TestResourceRejectsNonHTTP(t *testing.T) {
+	for _, raw := range []string{"file:///tmp/private.png", "data:image/png;base64,AA==", "javascript:alert(1)", "http:///missing"} {
+		if _, err := (&Session{}).LoadResource(raw); err == nil {
+			t.Fatal(raw)
+		}
+	}
 }
 
-func (e *resourceStreamExecutor) Execute(ctx context.Context, method string, params, result any) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func TestCanceledResourceClosesTemporaryPage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("隔离浏览器资源下载 E2E")
 	}
-	if method != cdpio.CommandRead || len(e.chunks) == 0 {
-		return fmt.Errorf("unexpected stream command %s", method)
-	}
-	*result.(*cdpio.ReadReturns) = e.chunks[0]
-	e.chunks = e.chunks[1:]
-	return nil
-}
-
-func TestResourceStreamEncodingLimitAndCancellation(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		chunks []cdpio.ReadReturns
-		limit  int
-		want   string
-		err    bool
-	}{
-		{"binary and text", []cdpio.ReadReturns{{Data: "AP8=", Base64encoded: true}, {Data: "text", EOF: true}}, 6, "\x00\xfftext", false},
-		{"limit", []cdpio.ReadReturns{{Data: "abc"}, {Data: "de", EOF: true}}, 4, "", true},
-		{"bad encoding", []cdpio.ReadReturns{{Data: "!", Base64encoded: true, EOF: true}}, 10, "", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := protocol.WithExecutor(context.Background(), &resourceStreamExecutor{chunks: tc.chunks})
-			data, err := readResourceStream(ctx, "stream", tc.limit)
-			if (err != nil) != tc.err || string(data) != tc.want {
-				t.Fatalf("data=%q error=%v", data, err)
+	started := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			once.Do(func() { close(started) })
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
 			}
-		})
+			return
+		}
+		fmt.Fprint(w, "<!doctype html><title>resource fixture</title>")
+	}))
+	defer srv.Close()
+	s := newFixtureSession(t, srv.URL)
+	pages := func() map[string]bool {
+		t.Helper()
+		var result struct {
+			Targets []struct {
+				ID string `json:"targetId"`
+			} `json:"targetInfos"`
+		}
+		if err := s.client.proc.Call(s.ctx, "", "Target.getTargets", nil, &result); err != nil {
+			t.Fatal(err)
+		}
+		ids := make(map[string]bool, len(result.Targets))
+		for _, target := range result.Targets {
+			ids[target.ID] = true
+		}
+		return ids
 	}
-	ctx, cancel := context.WithCancel(protocol.WithExecutor(context.Background(), &resourceStreamExecutor{}))
+	before := pages()
+	ctx, cancel := context.WithCancel(s.ctx)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- s.client.proc.Call(ctx, s.target, "resource", map[string]any{"url": srv.URL + "/slow"}, nil)
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		cancel()
+		t.Fatal("资源请求未开始")
+	}
+	extra := 0
+	for id := range pages() {
+		if before[id] {
+			continue
+		}
+		extra++
+		var result struct {
+			Result struct {
+				Value bool `json:"value"`
+			} `json:"result"`
+		}
+		check, stop := context.WithTimeout(s.ctx, 5*time.Second)
+		err := s.client.proc.Call(check, id, "Runtime.evaluate", map[string]any{"expression": "window.opener === null"}, &result)
+		stop()
+		if err != nil || !result.Result.Value {
+			cancel()
+			t.Fatalf("资源页面不应访问原页面: %v", err)
+		}
+	}
+	if extra != 1 {
+		cancel()
+		t.Fatalf("资源请求应只有一个临时页面，实际 %d", extra)
+	}
 	cancel()
-	if _, err := readResourceStream(ctx, "stream", 10); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancellation not preserved: %v", err)
+	if err := <-finished; err == nil {
+		t.Fatal("取消资源请求后没有返回错误")
 	}
-	if _, err := (&Session{}).LoadResource("file:///tmp/private.png"); err == nil {
-		t.Fatal("non-HTTP resource accepted")
+	deadline := time.Now().Add(5 * time.Second)
+	for len(pages()) != len(before) {
+		if time.Now().After(deadline) {
+			t.Fatal("取消后临时资源页面没有关闭")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got, err := s.Evaluate("document.title"); err != nil || !strings.Contains(got, "resource fixture") {
+		t.Fatalf("取消资源请求影响了原页面: %q, %v", got, err)
 	}
 }
 
@@ -72,7 +114,7 @@ func TestLoadResourceCrossOrigin(t *testing.T) {
 	if testing.Short() {
 		t.Skip("隔离浏览器资源下载 E2E")
 	}
-	for _, backend := range []string{"Chrome", "Ego"} {
+	for _, backend := range []string{"Camoufox", "Ego"} {
 		t.Run(backend, func(t *testing.T) {
 			if backend == "Ego" && os.Getenv("TULAI_EGO_E2E") != "1" {
 				t.Skip("需显式 TULAI_EGO_E2E=1；仅访问隔离 localhost")
@@ -83,6 +125,10 @@ func TestLoadResourceCrossOrigin(t *testing.T) {
 			}
 			const signedQuery = "sig=a%2Fb%2Bc%3D&expires=7"
 			resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/redirect" {
+					http.Redirect(w, r, "/result.png?"+signedQuery, http.StatusFound)
+					return
+				}
 				cookie, err := r.Cookie("tulai_resource_fixture")
 				if r.URL.Path != "/result.png" || r.URL.RawQuery != signedQuery || err != nil || cookie.Value != "logged-in" {
 					http.Error(w, "forbidden", http.StatusForbidden)
@@ -127,18 +173,7 @@ func TestLoadResourceCrossOrigin(t *testing.T) {
 					}
 				}()
 			} else {
-				chrome, err := browser.FindChromePath()
-				if err != nil {
-					t.Skip("无本地 Chrome")
-				}
-				alloc, stop := chromedp.NewExecAllocator(ctx, append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chrome))...)
-				defer stop()
-				tab, closeTab := chromedp.NewContext(alloc)
-				defer closeTab()
-				if err := chromedp.Run(tab, chromedp.Navigate(source.URL)); err != nil {
-					t.Fatal(err)
-				}
-				s = &Session{ctx: tab}
+				s = newFixtureSession(t, source.URL)
 			}
 			url := resource.URL + "/result.png?" + signedQuery
 			out, err := s.EvaluateAsync(fmt.Sprintf(`fetch(%q,{credentials:'include'}).then(()=>false,error=>error instanceof TypeError)`, url))
@@ -151,6 +186,20 @@ func TestLoadResourceCrossOrigin(t *testing.T) {
 			}
 			if cfg, err := png.DecodeConfig(bytes.NewReader(data)); err != nil || cfg.Width != 32 || cfg.Height != 24 {
 				t.Fatalf("returned image did not decode: %+v, %v", cfg, err)
+			}
+			if data, err := s.LoadResource(resource.URL + "/redirect"); err != nil || !bytes.Equal(data, encoded.Bytes()) {
+				t.Fatalf("redirected resource bytes differ: bytes=%d error=%v", len(data), err)
+			}
+			if backend == "Camoufox" {
+				var wg sync.WaitGroup
+				for range 2 {
+					wg.Go(func() {
+						if data, err := s.LoadResource(url); err != nil || !bytes.Equal(data, encoded.Bytes()) {
+							t.Errorf("concurrent resource bytes differ: bytes=%d error=%v", len(data), err)
+						}
+					})
+				}
+				wg.Wait()
 			}
 			if data, err := s.LoadResource(resource.URL + "/denied"); err == nil || !strings.Contains(err.Error(), "HTTP 403") || data != nil {
 				t.Fatalf("HTTP failure hidden: bytes=%d error=%v", len(data), err)

@@ -38,12 +38,12 @@ var ErrModeration = errors.New("审核不通过")
 
 // Result 一张生成结果。
 type Result struct {
-	URL  string `json:"url"`
-	Src  string `json:"src"` // net/dom/stream 来源
-	TS   int64  `json:"ts"`
-	Data []byte `json:"-"` // Ego 官方下载入口返回的原始文件
-	// WatermarkRemoved 为真表示 Data 已是扩展下载换成的去水印 PNG。
-	// 任务设置里的另存开关不再对这张图算第二遍。
+	URL    string `json:"url"`
+	RawURL string `json:"rawUrl,omitempty"` // 豆包响应中的无水印原图地址
+	Src    string `json:"src"`              // net/dom/stream 来源
+	TS     int64  `json:"ts"`
+	Data   []byte `json:"-"` // Ego 官方下载入口返回的原始文件
+	// WatermarkRemoved 为真表示扩展已下载无水印原图或完成局部修复。
 	WatermarkRemoved bool `json:"-"`
 }
 
@@ -112,7 +112,8 @@ func (base) InstallHook(s *cdp.Session) error {
 		logEgoDiagnostic("页面图片", state.Diagnostic)
 		return nil
 	}
-	revision := fmt.Sprintf("%x", sha256.Sum256([]byte(hookJS)))
+	rawJS := extbundle.DoubaoRawJS()
+	revision := fmt.Sprintf("%x", sha256.Sum256([]byte(rawJS+hookJS)))
 	out, err := s.Evaluate(`JSON.stringify({installed:!!window.__tulaiHookInstalled,revision:window.__tulaiHookRevision||''})`)
 	if err != nil {
 		return err
@@ -129,7 +130,7 @@ func (base) InstallHook(s *cdp.Session) error {
 			return fmt.Errorf("更新页面脚本: %w", err)
 		}
 	}
-	s.AppendNavigateScript(fmt.Sprintf(`window.__tulaiHookRevision=%q;`, revision) + hookJS)
+	s.AppendNavigateScript(fmt.Sprintf(`window.__tulaiHookRevision=%q;`, revision) + rawJS + hookJS)
 	s.AppendNavigateScript(extbundle.RefuseJS())
 	s.AppendNavigateScript(composerJS)
 	return nil
@@ -236,10 +237,10 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if err := cdp.ParseJSValue(out, &found); err != nil || !found {
 		return fmt.Errorf("未找到可写入提示词的输入框")
 	}
-	if err := s.InsertText(`[data-tulai-composer="1"]`, prompt); err != nil {
+	if err := s.InsertTextElement(`window.__tulaiComposer`, prompt); err != nil {
 		return fmt.Errorf("写入提示词: %w", err)
 	}
-	out, err = s.Evaluate(`window.tulaiReadComposer ? tulaiReadComposer(document.querySelector('[data-tulai-composer="1"]')) : null`)
+	out, err = s.Evaluate(`window.tulaiReadComposer ? tulaiReadComposer(window.__tulaiComposer) : null`)
 	if err != nil {
 		return fmt.Errorf("校验提示词: %w", err)
 	}
@@ -250,7 +251,7 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if strings.TrimSpace(strings.ReplaceAll(actual, "\r\n", "\n")) != strings.TrimSpace(strings.ReplaceAll(prompt, "\r\n", "\n")) {
 		points := []rune(actual)
 		logging.Log.Debugf("提示词校验失败 expectedChars=%d; composerChars=%d; first=%U; last=%U", len([]rune(prompt)), len(points), points[:min(3, len(points))], points[max(0, len(points)-3):])
-		if diagnostic, err := s.Evaluate(`JSON.stringify(window.tulaiComposerDiagnostic ? tulaiComposerDiagnostic(document.querySelector('[data-tulai-composer="1"]')) : [])`); err == nil {
+		if diagnostic, err := s.Evaluate(`JSON.stringify(window.tulaiComposerDiagnostic ? tulaiComposerDiagnostic(window.__tulaiComposer) : [])`); err == nil {
 			var lines []string
 			if cdp.ParseJSValue(diagnostic, &lines) == nil {
 				for _, line := range lines {
@@ -625,9 +626,14 @@ func (base) FetchResultBytes(s *cdp.Session, url string) ([]byte, error) {
 		return data, nil
 	}
 	if browserFetch(pageErr) {
-		if via, err := s.LoadResource(url); err == nil && len(via) >= 1024 {
-			return via, nil
+		via, err := s.LoadResource(url)
+		if err != nil {
+			return nil, err
 		}
+		if len(via) < 1024 {
+			return nil, fmt.Errorf("结果过小")
+		}
+		return via, nil
 	}
 	return nil, pageErr
 }
@@ -719,16 +725,8 @@ func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 				continue
 			}
 		}
-		seen := map[string]bool{}
-		for _, candidate := range []string{OriginalImageURL(urls[i]), urls[i]} {
-			if candidate == "" || seen[candidate] {
-				continue
-			}
-			seen[candidate] = true
-			if data, err := (base{}).FetchResultBytes(s, candidate); err == nil {
-				out[i] = data
-				break
-			}
+		if data, err := (base{}).FetchResultBytes(s, urls[i]); err == nil {
+			out[i] = data
 		}
 	}
 	return out

@@ -21,6 +21,7 @@ import (
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/download"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/images"
@@ -37,19 +38,22 @@ type Progress struct {
 
 // Engine 批量执行引擎。
 type Engine struct {
-	mu        sync.Mutex
-	store     *store.Store
-	browsers  *browser.Manager
-	solver    captcha.Solver
-	opts      Options
-	view      *QueueView
-	cancel    context.CancelFunc
-	running   bool
-	sessions  map[string]*cdp.Session // key: backend:platform:browserID
-	seenHash  map[string]bool         // 结果 SHA256 去重
-	srcHashes map[string]bool         // 源图哈希（回声过滤）
-	dataRoot  string
-	active    map[int64]bool
+	mu          sync.Mutex
+	store       *store.Store
+	browsers    *browser.Manager
+	solver      captcha.Solver
+	opts        Options
+	view        *QueueView
+	cancel      context.CancelFunc
+	running     bool
+	sessions    map[string]*cdp.Session // key: backend:platform:browserID
+	runBrowsers map[int64]struct{}
+	seenHash    map[string]bool // 结果 SHA256 去重
+	srcHashes   map[string]bool // 源图哈希（回声过滤）
+	dataRoot    string
+	active      map[int64]bool
+	manual      map[int64]bool
+	dlFetch     *download.Fetcher // 结果图改用直接下载时共用：站点并发和限速按这一次运行算
 
 	extMu       sync.Mutex
 	extSrv      *extbridge.Server
@@ -186,7 +190,7 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 		e.mu.Unlock()
 		return err
 	}
-	// 浏览器映射：平台 → 可用浏览器 ID。Chrome 与 Edge 都用已添加的实例。
+	// 浏览器映射：平台 → 可用的 Camoufox 账号 ID。
 	browsersOf := e.browsersOfPlatforms()
 	for _, p := range opts.Platforms {
 		if len(browsersOf[p]) == 0 {
@@ -220,6 +224,7 @@ func (e *Engine) claimRun() error {
 // driveLocked 执行已经建好的队列。调用时持有 e.mu。
 func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	e.opts = opts
+	e.dlFetch = newResultFetcher(opts)
 	e.agyNoted = false
 	e.noAccountNoted = false
 	e.view = NewQueueView(queue)
@@ -234,6 +239,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	nudge := make(chan struct{}, 1)
 	e.cancel = cancel
 	e.running = true
+	e.runBrowsers = make(map[int64]struct{})
 	e.wake = nudge
 	e.mu.Unlock()
 	e.rotateExtBatch()
@@ -241,7 +247,9 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 
 	defer func() {
 		cancel()
+		e.closeRunBrowsers()
 		e.finishLanes()
+		logging.Event(logging.Line{Stage: "queue", Msg: "任务结束"})
 		e.mu.Lock()
 		e.running = false
 		e.cancel = nil
@@ -257,7 +265,6 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	runErr := e.runPlatforms(ctx, nudge, queue, onTask, onProgress, attempt)
 	// 跑完或停下时，还排着的都改成已停止。界面和计数共用这一份状态。
 	e.stopLeftovers()
-	logging.Event(logging.Line{Stage: "queue", Msg: "任务结束"})
 	return runErr
 }
 
@@ -317,20 +324,31 @@ func (e *Engine) slotKey(id int64) int64 {
 	return accountSlot(e.store.Browsers(), id)
 }
 
-// pickIdleAccount 在当前名额正忙或还在发送间隔里时，改派到同平台另一个空闲账号。
-func (e *Engine) pickIdleAccount(platform string, busySlot int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
+// pickIdleAccount 优先选择剩余日额度较少的空闲账号；相同时保留原分配或最近最少使用的账号。
+func (e *Engine) pickIdleAccount(platform string, preferred, avoid int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
+	if e == nil || e.store == nil {
+		return 0, false
+	}
+	all := e.store.Browsers()
 	var best *store.Browser
+	bestUsed := 0
 	for _, b := range e.accountsFor(platform) {
-		if !openAccount(b, now, e.capNow()) {
+		if b.ID == avoid || !openAccount(b, now, e.capNow()) {
 			continue
 		}
-		slot := e.slotKey(b.ID)
-		if slot == busySlot || busy[slot] || now.Before(readyAt[slot]) {
+		slot := accountSlot(all, b.ID)
+		if busy[slot] || now.Before(readyAt[slot]) {
 			continue
 		}
-		if best == nil || b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID) {
+		used := 0
+		if platform != agy.Platform {
+			used = b.UsedToday(now)
+		}
+		if best == nil || used > bestUsed || (used == bestUsed &&
+			(b.ID == preferred || (best.ID != preferred && (b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID))))) {
 			row := b
 			best = &row
+			bestUsed = used
 		}
 	}
 	if best == nil {
@@ -857,6 +875,9 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	key := fmt.Sprintf("%s:%s:%d", backend, platform, browserID)
 	e.mu.Lock()
 	if s, ok := e.sessions[key]; ok {
+		if e.runBrowsers != nil {
+			e.runBrowsers[browserID] = struct{}{}
+		}
 		e.mu.Unlock()
 		return s, nil
 	}
@@ -886,18 +907,20 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if strat != nil {
 		home = strat.HomeURL()
 	}
-	// 出图冷启动不要盖住 tulai。窗口在创建时放在屏幕外，启动后把 tulai 拉回前面。
-	// 登录走界面的 Start(..., false)，窗口可以到前面。
-	ws, startErr := e.browsers.Start(b, e.dataRoot, backend, home, true)
+	ws, startErr := e.browsers.StartTask(b, e.dataRoot, backend, home)
 	if startErr != nil {
 		return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
 	}
+	e.mu.Lock()
+	if e.runBrowsers != nil {
+		e.runBrowsers[browserID] = struct{}{}
+	}
+	e.mu.Unlock()
 	client, clientErr := cdp.NewClient(ws)
 	if clientErr != nil {
 		return nil, clientErr
 	}
 	sess, err := client.NewBackgroundSession(home, onLog)
-	e.browsers.KeepAppInFront()
 	e.traceTask(&Task{Index: 0, Platform: platform, BrowserID: browserID}, "open", "打开页面", 0, 0, err)
 	if err != nil {
 		client.Close()
@@ -928,6 +951,28 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	e.mu.Unlock()
 	e.store.UpdateBrowser(browserID, true, true)
 	return sess, nil
+}
+
+func (e *Engine) closeRunBrowsers() {
+	e.mu.Lock()
+	ids := e.runBrowsers
+	e.runBrowsers = nil
+	e.mu.Unlock()
+	var wg sync.WaitGroup
+	for id := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.dropSessions(id)
+			if e.browsers != nil {
+				e.browsers.Stop(id)
+				if e.store != nil {
+					e.store.SetRunning(id, e.browsers.IsRunning(id))
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 type failedSession interface {
@@ -1082,6 +1127,18 @@ func (e *Engine) forgetSession(sess *cdp.Session) {
 // 限制解码分配，仍允许 8K 结果图。
 const maxResultPixels = 32 * 1024 * 1024
 
+func validRawResult(data []byte) bool {
+	if !images.AcceptGenerated(data) {
+		return false
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Height <= 0 || int64(cfg.Width) > maxResultPixels/int64(cfg.Height) {
+		return false
+	}
+	_, _, err = image.Decode(bytes.NewReader(data))
+	return err == nil
+}
+
 // prefetchResults 在同一页里并行下载多张结果。单张仍走原来的逐张抓取。
 func prefetchResults(strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) [][]byte {
 	out := make([][]byte, len(results))
@@ -1095,7 +1152,11 @@ func prefetchResults(strat strategy.Strategy, sess *cdp.Session, results []strat
 	var idx []int
 	for i, r := range results {
 		if r.Data == nil && r.URL != "" {
-			urls = append(urls, r.URL)
+			url := r.URL
+			if r.RawURL != "" {
+				url = r.RawURL
+			}
+			urls = append(urls, url)
 			idx = append(idx, i)
 		}
 	}
@@ -1111,6 +1172,44 @@ func prefetchResults(strat strategy.Strategy, sess *cdp.Session, results []strat
 	return out
 }
 
+// newResultFetcher 按这次运行的设置建结果图下载器。
+// 站点并发和限速在整批任务之间共用，不是每张图各算一份。
+// 三项设置都没配时不启用兜底，测试和直接调用引擎的地方不会意外发起网络请求。
+func newResultFetcher(opts Options) *download.Fetcher {
+	if opts.DownloadConcurrency <= 0 && opts.DownloadRetries <= 0 && opts.DownloadRateKBps <= 0 {
+		return nil
+	}
+	conc := opts.DownloadConcurrency
+	if conc <= 0 {
+		conc = 2
+	}
+	var band *download.BandwidthLimiter
+	if opts.DownloadRateKBps > 0 {
+		band = download.NewBandwidthLimiter(int64(opts.DownloadRateKBps) * 1024)
+	}
+	return &download.Fetcher{
+		Getter:    download.NewHTTPGetter(browser.CurrentProxyServer()),
+		Host:      download.NewHostLimiter(conc),
+		Bandwidth: band,
+		Retries:   opts.DownloadRetries,
+	}
+}
+
+// fetchViaDownload 是不经过页面、直接按地址取结果的兜底路径。
+func (e *Engine) fetchViaDownload(ctx context.Context, rawURL string) ([]byte, error) {
+	e.mu.Lock()
+	fetcher := e.dlFetch
+	if fetcher == nil {
+		fetcher = newResultFetcher(e.opts)
+		e.dlFetch = fetcher
+	}
+	e.mu.Unlock()
+	if fetcher == nil {
+		return nil, errors.New("下载设置没有启用")
+	}
+	return fetcher.FetchBytes(ctx, rawURL, nil)
+}
+
 // saveResults 校验 + 去重 + 按日期目录落盘。
 func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) ([]string, error) {
 	t.matchedSavedResult = false
@@ -1122,11 +1221,38 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 		}
 		data := r.Data
 		var err error
+		usingRaw := false
 		if data == nil && i < len(batched) && batched[i] != nil {
 			data = batched[i]
+			if r.RawURL != "" {
+				usingRaw = validRawResult(data)
+				if !usingRaw {
+					data = nil
+				}
+			}
+		}
+		if data == nil && r.RawURL != "" {
+			if fetch, ok := strat.(interface {
+				FetchRawResultBytes(*cdp.Session, string) ([]byte, error)
+			}); ok {
+				data, err = fetch.FetchRawResultBytes(sess, r.RawURL)
+			} else {
+				data, err = strat.FetchResultBytes(sess, r.RawURL)
+			}
+			usingRaw = err == nil && validRawResult(data)
+			if !usingRaw {
+				data = nil
+			}
 		}
 		if data == nil {
 			data, err = strat.FetchResultBytes(sess, r.URL)
+		}
+		if data == nil && ctx.Err() == nil {
+			// 页面内 fetch 拿不到时，用下载引擎按地址再取一次：带重试、站点并发和限速。
+			if via, dlErr := e.fetchViaDownload(ctx, r.URL); dlErr == nil {
+				data, err = via, nil
+				logging.Log.Debugf("候选图 #%d 页面取回失败，改用下载引擎", i+1)
+			}
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return saved, ctxErr
@@ -1184,6 +1310,23 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			t.matchedSavedResult = true
 			continue
 		}
+		if t.Platform == "豆包" && !usingRaw && !r.WatermarkRemoved && watermarkStaticImage(data, format) {
+			repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return saved, ctxErr
+			}
+			if repairErr == nil && changed {
+				if png, encErr := images.EncodePNG(repaired); encErr == nil {
+					data, decoded, format = png, repaired, "png"
+				} else {
+					logging.Log.Warning("#%d 图片 #%d 去水印编码失败，保留原图: %s", t.Index, i+1, encErr)
+				}
+			} else if repairErr != nil {
+				logging.Log.Warning("#%d 图片 #%d 去水印失败，保留原图: %s", t.Index, i+1, repairErr)
+			} else {
+				logging.Log.Warning("#%d 图片 #%d 未匹配到已支持的水印，保留原图", t.Index, i+1)
+			}
+		}
 		e.mu.Lock()
 		dup := e.seenHash[hash] || e.srcHashes[hash] // 全局去重 + 源图回声过滤
 		e.seenHash[hash] = true
@@ -1218,7 +1361,7 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 		}
 		t.savedHashes[hash] = true
 		// 扩展下载已经换成去水印 PNG 时，不再按实验开关另存一份。
-		if !e.opts.RemoveWatermark || r.WatermarkRemoved {
+		if t.Platform == "豆包" || !e.opts.RemoveWatermark || r.WatermarkRemoved {
 			continue
 		}
 		if !watermarkStaticImage(data, format) {

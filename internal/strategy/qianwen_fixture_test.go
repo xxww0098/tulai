@@ -11,7 +11,7 @@ import (
 )
 
 func TestQianwenLiveFixtures(t *testing.T) {
-	ws, shutdown := launchChromeArgs(t, []string{"--blink-settings=imagesEnabled=false"})
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	client, err := cdp.NewClient(ws)
 	if err != nil {
@@ -32,6 +32,7 @@ func TestQianwenLiveFixtures(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", fixtureCSP)
 		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()
@@ -67,11 +68,11 @@ func TestQianwenLiveFixtures(t *testing.T) {
 		prompt := "雪山下的小木屋，油画风格"
 		sess := openFixture(t, client, srv.URL+"/9338-0", hook, composer)
 		defer sess.Close()
-		if !sess.EvaluateBool(`window.__tulaiPageHost='www.qianwen.com'; window.tulaiMarkComposer() && document.querySelector('[data-tulai-composer="1"]').getAttribute('data-slate-editor') === 'true'`) {
+		if !sess.EvaluateBool(`window.__tulaiPageHost='www.qianwen.com'; window.tulaiMarkComposer() && window.__tulaiComposer.getAttribute('data-slate-editor') === 'true'`) {
 			t.Fatal("应写到 Slate 输入框，而不是别的可编辑节点")
 		}
-		if !sess.EvaluateBool(`window.tulaiReadComposer(document.querySelector('[data-tulai-composer="1"]')) === ''`) {
-			out, _ := sess.Evaluate(`JSON.stringify(window.tulaiReadComposer(document.querySelector('[data-tulai-composer="1"]')))`)
+		if !sess.EvaluateBool(`window.tulaiReadComposer(window.__tulaiComposer) === ''`) {
+			out, _ := sess.Evaluate(`JSON.stringify(window.tulaiReadComposer(window.__tulaiComposer))`)
 			t.Fatalf("占位文案被读成了正文: %s", out)
 		}
 		sendBtn := `document.querySelector('[data-session-switch-target="send-query"]')`
@@ -139,7 +140,7 @@ func TestQianwenLiveFixtures(t *testing.T) {
 }
 
 func TestQianwenGenerationFixtures(t *testing.T) {
-	ws, shutdown := launchChromeArgs(t, []string{"--blink-settings=imagesEnabled=false"})
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	client, err := cdp.NewClient(ws)
 	if err != nil {
@@ -164,6 +165,7 @@ func TestQianwenGenerationFixtures(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", fixtureCSP)
 		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()

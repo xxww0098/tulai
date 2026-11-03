@@ -216,9 +216,12 @@ func TestExportWorkbenchShots(t *testing.T) {
 	blocked.preloadThumbs([]string{land})
 	saveTall("lanes-blocked", blocked)
 
-	saveAt := func(name string, width, height int, app *App) {
+	saveAt := func(name string, width, height int, app *App, dark ...bool) {
 		t.Helper()
 		tt := ui.NewTester(app.view, width, height)
+		if len(dark) > 0 {
+			tt.SetDark(dark[0])
+		}
 		tt.Advance(450 * time.Millisecond)
 		f, err := os.Create(filepath.Join(dir, name+".png"))
 		if err != nil {
@@ -267,13 +270,44 @@ func TestExportWorkbenchShots(t *testing.T) {
 		// 列表状态不能跨两个 Tester，每个尺寸用一份新的页面状态。
 		saveAt("browser-"+tag, sz[0], sz[1], &App{
 			tab: pageBrowser, platformAuto: true, browserChoice: "Chrome", newBrowserPlat: "豆包",
-			detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
+			detectedNote: "已检测到 Chrome", camoufoxStatus: "内置浏览器未下载",
 			browserRows: []store.Browser{
 				{ID: 1, Name: "豆包主力", Platform: "豆包", Port: 9333, IsLoggedIn: true, Health: store.HealthReady},
 				{ID: 2, Name: "千问备用", Platform: "千问", Port: 9334, IsLoggedIn: true, Health: store.HealthReady},
 			},
 		})
 		saveAt("settings-"+tag, sz[0], sz[1], settingsShot(shotOut))
+		saveAt("download-"+tag, sz[0], sz[1], &App{tab: pageDownload, dlDir: shotOut})
+		saveAt("download-tasks-"+tag, sz[0], sz[1], &App{
+			tab: pageDownload, dlDir: shotOut,
+			dlTasks: []*downloadTask{
+				{ID: 1, URL: "https://cdn.example.com/posts/2026/11/cat-01.jpg", Name: "cat-01.jpg",
+					Site: "cdn.example.com", Dir: shotOut, Phase: dlActive,
+					Written: 3_400_000, Total: 8_100_000, Speed: 3_100_000},
+				{ID: 2, URL: "https://cdn.example.com/posts/2026/11/cat-02.jpg", Name: "cat-02.jpg",
+					Site: "cdn.example.com", Dir: shotOut, Phase: dlQueued, Total: 4_200_000},
+				{ID: 3, URL: "https://pbs.example.org/media/portrait.jpg", Name: "portrait.jpg",
+					Site: "pbs.example.org", Dir: shotOut, Phase: dlPaused,
+					Written: 900_000, Total: 5_000_000},
+				{ID: 4, URL: "https://pbs.example.org/media/street.jpg", Name: "street.jpg",
+					Site: "pbs.example.org", Dir: shotOut, Phase: dlDone, Written: 2_000_000, Total: 2_000_000},
+				{ID: 5, URL: "https://img.example.net/a/flower.jpg", Name: "flower.jpg",
+					Site: "img.example.net", Dir: shotOut, Phase: dlFailed,
+					Err: "服务器返回 403"},
+			},
+		})
+		composer := &App{
+			tab: pageDownload, dlDir: shotOut, dlComposerOn: true,
+			dlURLs:       "https://cdn.example.com/posts/2026/11/cat-01.jpg\nhttps://cdn.example.com/posts/2026/11/cat-02.jpg",
+			downloadConc: 2, downloadRetries: 2, dlDepth: 1,
+		}
+		saveAt("download-composer-"+tag, sz[0], sz[1], composer)
+		browserComposer := &App{
+			tab: pageDownload, dlDir: shotOut, dlComposerOn: true,
+			dlURLs: "https://example.com/gallery", dlDepth: 1, dlBrowserMode: true,
+			downloadConc: 2, downloadRetries: 2,
+		}
+		saveAt("download-browser-"+tag, sz[0], sz[1], browserComposer)
 	}
 	agyHome := filepath.Join(t.TempDir(), "acc1")
 	writeAgyHome(t, agyHome, "li@gmail.com")
@@ -337,6 +371,9 @@ func TestExportWorkbenchShots(t *testing.T) {
 	}
 	washMany.preloadThumbs(washManyPaths)
 	saveAt("wash-many-1024x700", 1024, 700, washMany)
+	saveAt("gen-760x900", 760, 900, &App{platformAuto: true, prompts: "一只坐在窗边的猫", outputPath: shotOut})
+	saveAt("wash-760x900", 760, 900, &App{platformAuto: true, tab: pageWash, statePage: pageWash, sources: washManySrc, outputPath: shotOut})
+	saveAt("gen-dark-1024x700", 1024, 700, agyBase(false), true)
 	shotStore, err := store.Open(filepath.Join(t.TempDir(), "shots.db"))
 	if err != nil {
 		t.Fatal(err)

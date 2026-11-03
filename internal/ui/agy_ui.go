@@ -109,7 +109,6 @@ func (a *App) agySettings(c *ui.Context) {
 			ui.NumberInput(c, &a.agyTimeoutMin, 1, 60, 1).Disabled(a.running)
 		})
 	}).FillWidth().Gap(8)
-	a.persistAgySettings()
 }
 
 func (a *App) attachAgyLanes(board tasks.Board) tasks.Board {
@@ -130,7 +129,7 @@ func (a *App) attachAgyLanes(board tasks.Board) tasks.Board {
 			ln.Email = agy.Email(b.UserDataDir)
 		}
 		ln.CoolUntil = b.CoolUntil
-		if strings.TrimSpace(b.UserDataDir) != "" && !b.IsLoggedIn && ln.State != tasks.LaneRunning {
+		if strings.TrimSpace(b.UserDataDir) != "" && !b.IsLoggedIn && !b.Disabled && ln.State != tasks.LaneRunning {
 			ln.State = tasks.LaneLogin
 			ln.Action = "去登录"
 		}
@@ -166,6 +165,9 @@ func pausedAgy(rows []store.Browser, now time.Time, cap int) (time.Time, bool) {
 	var until time.Time
 	saw := false
 	for _, b := range rows {
+		if b.Disabled {
+			continue
+		}
 		if !b.IsLoggedIn {
 			return time.Time{}, false
 		}
@@ -189,13 +191,20 @@ func pausedAgy(rows []store.Browser, now time.Time, cap int) (time.Time, bool) {
 }
 
 func (a *App) agyChooserPanel(c *ui.Context) {
-	if a == nil || a.agyChooser == nil || a.agyLogin != nil || a.stagePlatform() != agy.Platform {
+	if a == nil || a.stagePlatform() != agy.Platform {
+		return
+	}
+	a.agyChooserCard(c, false)
+}
+
+// agyChooserCard 是「添加账号」的两种方式。roomy 为真时用向导里宽松的卡片。
+func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
+	if a == nil || a.agyChooser == nil || a.agyLogin != nil {
 		return
 	}
 	s := a.agyChooser
 	tok := a.look
-	ui.Column(c.Key("agy-add")).Label("agy-add-chooser").FillWidth().Gap(8).Padding(10, 12).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border).Children(func() {
+	a.agyBox(c, "agy-add", "agy-add-chooser", roomy).Children(func() {
 		a.agyMethodRow(c, "Google 登录（OAuth）", "在这个窗口里粘贴授权码，不会写入日志", "登录", "agy-oauth-go", s.busy, a.startAgyOAuth)
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Children(func() {
@@ -228,6 +237,19 @@ func (a *App) agyChooserPanel(c *ui.Context) {
 			})
 		}
 	})
+}
+
+// agyBox 是选择方式和授权共用的外框。出图页里紧凑，向导里和其它卡片一样宽松。
+func (a *App) agyBox(c *ui.Context, key, label string, roomy bool) ui.Element {
+	tok := a.look
+	box := ui.Column(c.Key(key)).FillWidth()
+	if label != "" {
+		box = box.Label(label)
+	}
+	if roomy {
+		return wizardCard(box.Gap(12).Padding(16, 20), tok)
+	}
+	return box.Gap(8).Padding(10, 12).Radius(tok.radiusM).Background(tok.card).Border(1, tok.border)
 }
 
 // agyChooserHint 把「已检查 <路径>」单独放在一行。路径不换行，放不下就在行尾省略。
@@ -274,13 +296,20 @@ func (a *App) agyMethodRow(c *ui.Context, title, hint, button, label string, bus
 }
 
 func (a *App) agyLoginPanel(c *ui.Context) {
-	if a == nil || a.agyLogin == nil || a.stagePlatform() != agy.Platform {
+	if a == nil || a.stagePlatform() != agy.Platform {
+		return
+	}
+	a.agyLoginCard(c, false)
+}
+
+// agyLoginCard 是授权面板：打开链接，把授权码粘贴回来。
+func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
+	if a == nil || a.agyLogin == nil {
 		return
 	}
 	s := a.agyLogin
 	tok := a.look
-	ui.Column(c.Key("agy-login")).FillWidth().Gap(8).Padding(10, 12).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border).Children(func() {
+	a.agyBox(c, "agy-login", "", roomy).Children(func() {
 		ui.Text(c, "登录 Antigravity").FontSize(tok.body).Bold()
 		ui.Text(c, "把浏览器给出的授权码粘贴到下面，不会写入日志。").FontSize(tok.caption).TextColor(tok.muted)
 		ui.Field(c, "授权链接", func() {
@@ -367,8 +396,13 @@ func (a *App) addAgyAccount() {
 		a.agyChooser = nil
 		return
 	}
+	a.agyChooser = newAgyChooser()
+}
+
+// newAgyChooser 看一眼本机有没有已登录的 CLI，作为「添加账号」面板的初始状态。
+func newAgyChooser() *agyChooserState {
 	found := agy.DetectLocal()
-	a.agyChooser = &agyChooserState{
+	return &agyChooserState{
 		hint:      found.Hint,
 		home:      found.Home,
 		email:     found.Email,
@@ -399,6 +433,9 @@ func (a *App) startAgyOAuth() {
 		logging.Log.Errorf("添加 Antigravity 账号失败: %v", err)
 		_ = os.RemoveAll(dir)
 		return
+	}
+	if a.wizardOn {
+		a.wizardAgy.created = row.ID
 	}
 	a.agyChooser = nil
 	a.refreshBrowsers()
@@ -586,6 +623,7 @@ func (a *App) finishAgyImport(res agy.ImportResult, err error) {
 	logging.Log.Success("%s", line)
 	// 账号已经在表里，选择方式可以收起来。失败时留着面板给重试。
 	a.agyChooser = nil
+	a.agyAccountAdded()
 }
 
 func (a *App) beginAgyLogin(row store.Browser) {
@@ -686,6 +724,7 @@ func (a *App) finishAgyLogin(id int64, name string) {
 	logging.Log.Success("Antigravity 账号「%s」已登录", name)
 	if a != nil {
 		a.agyLogin = nil
+		a.agyAccountAdded()
 	}
 }
 

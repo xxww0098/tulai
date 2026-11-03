@@ -258,7 +258,7 @@ func (a *App) dedupGoButton(c *ui.Context, th *ui.Theme, busy bool) {
 	if busy {
 		label = "去重中"
 	}
-	disabled := busy || len(a.dedup.items) == 0
+	disabled := busy || a.renameUpdateActive() || len(a.dedup.items) == 0
 	b := ui.Button(c.Key("dedup-go"), label).Padding(8, 16).Radius(th.Radius).
 		Shrink(0).AlignSelf(ui.Center).FontSize(tok.body)
 	bg, fg := th.Accent, th.AccentText
@@ -537,7 +537,7 @@ func (a *App) dedupPickOut() {
 // dedupStart 起一个后台任务：算指纹、分组、复制留下来的图、写报告。
 // 这一页不占引擎，生图和洗图可以同时跑。
 func (a *App) dedupStart() {
-	if a.dedup.busy || len(a.dedup.items) == 0 {
+	if a.dedup.busy || a.renameUpdateActive() || len(a.dedup.items) == 0 {
 		return
 	}
 	paths := append([]string(nil), a.dedup.items...)
@@ -572,6 +572,7 @@ func (a *App) dedupStart() {
 // finishDedup 收尾。只在界面线程上调。
 func (a *App) finishDedup(rep dedup.Report, err error) {
 	a.dedup.busy = false
+	defer a.maybeInstallPending()
 	a.dedup.report = rep
 	a.dedup.scanned = rep.Scanned
 	a.dedup.total = rep.Scanned

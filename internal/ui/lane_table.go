@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/agy"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -17,7 +18,7 @@ const (
 	laneColState    = 96
 	laneColQuota    = 92
 	laneColAgyQuota = 96
-	laneColOps      = 104
+	laneColOps      = 170
 	laneRowH        = 30
 	// laneTableMaxH 是高窗口大约 8 行的上限。矮窗口用 laneRowCap，给结果区留高度。
 	laneTableMaxH = laneRowH*8 + 8
@@ -31,34 +32,40 @@ func laneRowCap(winH float32) int {
 	return 8
 }
 
+func laneColumns(winW float32, mail bool) (state, quota, ops, accountGrow, taskGrow float32) {
+	if mail {
+		return 88, laneColAgyQuota, 88, 2, 1
+	}
+	if winW >= 900 && winW < 1150 {
+		return 86, 88, 130, 3, 2
+	}
+	return laneColState, laneColQuota, laneColOps, 2, 3
+}
+
 // laneTable 一个账号一行：账号、状态、今日或额度、当前任务、操作。
 func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	tok := a.look
+	winW, winH := c.Size()
+	mail := a.stagePlatform() == "Antigravity"
+	stateW, quotaW, opsW, accountGrow, taskGrow := laneColumns(winW, mail)
 	ui.Column(c.Key("lane-table")).FillWidth().Gap(4).Padding(6, 8).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border).Transition(motionReveal()).Children(func() {
 		a.laneHeader(c)
-		mail := a.stagePlatform() == "Antigravity"
 		ui.Row(c.Key("lane-head")).FillWidth().Gap(8).Padding(2, 6, 4, 6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 			head := func(label string) ui.Element {
 				return ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).SingleLine()
 			}
+			head("账号").Grow(accountGrow).Basis(0).MinWidth(0)
+			head("状态").Width(stateW).Shrink(0)
+			quotaLabel := "今日"
 			if mail {
-				// Antigravity 账号列直接显示邮箱，不再单独开邮箱列。
-				head("账号").Grow(2).Basis(0).MinWidth(0)
-				head("状态").Width(88).Shrink(0)
-				head("额度").Width(laneColAgyQuota).Shrink(0)
-				head("当前任务").Grow(1).Basis(0).MinWidth(0)
-				ui.Row(c).Width(88).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
-				return
+				quotaLabel = "额度"
 			}
-			head("账号").Grow(2).Basis(0).MinWidth(0)
-			head("状态").Width(laneColState).Shrink(0)
-			head("今日").Width(laneColQuota).Shrink(0)
-			head("当前任务").Grow(3).Basis(0).MinWidth(0)
-			ui.Row(c).Width(laneColOps).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
+			head(quotaLabel).Width(quotaW).Shrink(0)
+			head("当前任务").Grow(taskGrow).Basis(0).MinWidth(0)
+			ui.Row(c).Width(opsW).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
 		})
-		_, winH := c.Size()
 		capN := laneRowCap(winH)
 		rowsH := float32(len(board.Lanes)) * laneRowH
 		if len(board.Lanes) > capN {
@@ -92,16 +99,29 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			p.Fill(ui.Rect{X: r.X, Y: r.Y + 6, W: 2, H: r.H - 12}, tok.accent.Alpha(0.35+0.5*wave), 1)
 		})
 	}
-	mail := ln.Platform == "Antigravity"
-	stateW, quotaW, opsW := float32(laneColState), float32(laneColQuota), float32(laneColOps)
-	accountGrow := float32(2)
-	taskGrow := float32(3)
-	if mail {
-		stateW, quotaW, opsW = 88, laneColAgyQuota, 88
-		taskGrow = 1
-	}
+	winW, _ := c.Size()
+	stateW, quotaW, opsW, accountGrow, taskGrow := laneColumns(winW, ln.Platform == "Antigravity")
 	row.Children(func() {
-		ui.Row(c).Grow(accountGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Grow(accountGrow).Basis(0).MinWidth(0).Gap(5).AlignItems(ui.Center).Children(func() {
+			on := !ln.Disabled
+			if ui.Switch(c.Key("enabled"), &on).Size(32, 18).Radius(9).Label("启用账号 " + ln.Name).Tooltip("禁用后不再接新任务，当前任务会完成").Changed() {
+				var err error
+				switch {
+				case a.engine != nil && a.store != nil:
+					err = a.engine.SetAccountDisabled(ln.ID, !on)
+				case a.store != nil:
+					err = a.store.SetBrowserDisabled(ln.ID, !on)
+				}
+				if err != nil {
+					logging.Log.Errorf("更改账号状态失败: %v", err)
+				} else {
+					for i := range a.browserRows {
+						if a.browserRows[i].ID == ln.ID {
+							a.browserRows[i].Disabled = !on
+						}
+					}
+				}
+			}
 			platformMark(c, ln.Platform, tok)
 			if a.renameID == ln.ID {
 				a.accountNameField(c, store.Browser{ID: ln.ID, Name: ln.Name})
@@ -111,23 +131,45 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			ui.Text(c, title).FontSize(tok.body).SingleLine().MinWidth(0).Tooltip(title)
 		})
 		ui.Row(c).Width(stateW).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
-			a.laneChip(c, ln)
-		})
-		gap := float32(2)
-		if ln.Platform == agy.Platform {
-			gap = 4
-		}
-		ui.Column(c).Width(quotaW).Shrink(0).Gap(gap).Justify(ui.Center).Children(func() {
-			if ln.Platform == agy.Platform {
-				a.agyQuotaCell(c, ln.ID)
-				return
+			if ln.State != tasks.LaneDisabled && a.engine != nil && a.engine.AccountManual(ln.ID) {
+				ui.Text(c, "手动接管").FontSize(tok.caption).TextColor(tok.accent).SingleLine()
+			} else {
+				a.laneChip(c, ln)
 			}
-			used, capN, frac, fill := laneQuotaFill(tok, ln)
-			ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).
-				FontFeatures("tnum").SingleLine().
-				ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
-			quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
 		})
+		if ln.Platform == agy.Platform {
+			ui.Column(c).Width(quotaW).Shrink(0).Gap(4).Justify(ui.Center).Children(func() {
+				a.agyQuotaCell(c, ln.ID)
+			})
+		} else {
+			used, capN, frac, fill := laneQuotaFill(tok, ln)
+			ui.Column(c).Width(quotaW).Shrink(0).Justify(ui.Center).Children(func() {
+				ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
+					ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).
+						FontFeatures("tnum").SingleLine().Shrink(0).Tooltip("今日已用次数 / 每日上限").
+						ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
+					ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+						quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
+					})
+				})
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					for _, stat := range []struct {
+						label string
+						count int
+						color ui.Color
+						icon  *ui.SVG
+					}{{"成功", ln.SuccessToday, tok.success, iconCheck}, {"失败", ln.FailedToday, tok.danger, iconX}} {
+						label := fmt.Sprintf("今日%s %d", stat.label, stat.count)
+						ui.Row(c.Key(stat.label)).Shrink(0).Gap(2).AlignItems(ui.Center).Label(label).
+							Tooltip(label + "（只统计已完成任务，更新前的记录未计入）").Children(func() {
+							ui.Icon(c, stat.icon).FontSize(14).TextColor(stat.color)
+							ui.Text(c, fmt.Sprint(stat.count)).FontSize(tok.caption).
+								FontFeatures("tnum").TextColor(tok.text).SingleLine()
+						})
+					}
+				})
+			})
+		}
 		ui.Row(c).Grow(taskGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
 			switch {
 			case ln.Job != nil:
@@ -143,6 +185,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			}
 		})
 		ui.Row(c).Width(opsW).Shrink(0).Gap(6).Justify(ui.End).AlignItems(ui.Center).Children(func() {
+			a.laneBrowserButton(c, ln)
 			if ln.State == tasks.LaneGap {
 				gapRing(c, ln, tok)
 			}

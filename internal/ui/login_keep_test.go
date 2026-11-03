@@ -58,7 +58,7 @@ func TestStartupKeepsStaleLoginWhenProbeUnknown(t *testing.T) {
 			}
 			a := &App{
 				store: st, manager: browser.NewManager(), dataRoot: root,
-				browserBackend: browser.KindChrome, accountProbe: tc.probe,
+				browserBackend: browser.KindCamoufox, accountProbe: tc.probe,
 			}
 			a.loadSettings()
 			rows := st.Browsers()
@@ -113,7 +113,7 @@ func TestStartupDropsConfirmedLoggedOutProfile(t *testing.T) {
 			}
 			a := &App{
 				store: st, manager: browser.NewManager(), dataRoot: root,
-				browserBackend: browser.KindChrome,
+				browserBackend: browser.KindCamoufox,
 				accountProbe: func(b store.Browser) (string, error) {
 					if b.ID == kept.ID || b.IsLoggedIn {
 						t.Fatalf("probed a stored login: %+v", b)
@@ -162,7 +162,7 @@ func TestProbeAndRestorePersistLogin(t *testing.T) {
 			}
 			a := &App{
 				store: st, manager: browser.NewManager(), dataRoot: root,
-				browserBackend: browser.KindChrome,
+				browserBackend: browser.KindCamoufox,
 				loginWatchGen:  map[int64]int{row.ID: 1},
 			}
 			if !a.publishLogin(row.ID, 1, wizard.ProbeIn, "") {
@@ -226,8 +226,9 @@ func TestWizardBackDropsUnloggedAccount(t *testing.T) {
 			defer st.Close()
 			a := &App{
 				store: st, manager: browser.NewManager(), dataRoot: root,
-				browserBackend: browser.KindChrome, wizardOn: true, wizardStep: wizard.StepPlatform,
-				platDoubao: platform == "豆包", platQianwen: platform == "千问",
+				browserBackend: browser.KindCamoufox, wizardOn: true, wizardStep: wizard.StepBrowser,
+				wizardChoice: platform, platDoubao: platform == "豆包", platQianwen: platform == "千问",
+				wizardPlan: wizard.BrowserPlan{Title: "将使用本机 Chrome", CanNext: true},
 			}
 			a.wizardLaunch = func(b store.Browser) (string, error) {
 				if b.Platform != platform {
@@ -271,7 +272,7 @@ func TestWizardBackDropsUnloggedAccount(t *testing.T) {
 func TestLoggedInRowDoesNotAlsoSayLoggedOut(t *testing.T) {
 	a := &App{
 		tab: pageBrowser, browserSel: -1, browserChoice: "Chrome", browserBackend: "Chrome",
-		newBrowserPlat: "豆包", detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
+		newBrowserPlat: "豆包", detectedNote: "已检测到 Chrome", camoufoxStatus: "内置浏览器未下载",
 		browserRows: []store.Browser{
 			{ID: 2, Name: "豆包2", Platform: "豆包", Port: 9340, Health: store.HealthExhausted, LastError: "未登录"},
 			{ID: 3, Name: "千问2", Platform: "千问", Port: 9341, IsLoggedIn: true, Health: store.HealthExhausted, LastError: "未登录"},

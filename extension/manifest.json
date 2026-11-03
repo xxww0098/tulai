@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "tulai 页面桥",
-  "version": "0.3.10",
+  "version": "0.3.12",
   "description": "把本机 tulai 的图生图命令转到通义 / 千问或豆包页面：上传、填词、发送、等待和下载。",
   "permissions": [
     "storage",
+    "debugger",
     "tabs",
     "alarms",
     "scripting",
@@ -24,6 +25,7 @@
     "https://www.doubao.com/*",
     "https://*.doubao.com/*",
     "https://doubao.com/*",
+    "https://*.byteimg.com/*",
     "http://127.0.0.1/*",
     "ws://127.0.0.1/*"
   ],
@@ -75,6 +77,18 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.doubao.com/*",
+        "https://*.doubao.com/*",
+        "https://doubao.com/*"
+      ],
+      "js": [
+        "doubao/raw.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
     },
     {
       "matches": [

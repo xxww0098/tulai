@@ -15,12 +15,12 @@ import (
 
 func TestProxyCardAndAccountQR(t *testing.T) {
 	settings := &App{
-		tab: pageSettings, autoCheck: true, captchaEnabled: true, captchaBackend: "free",
+		tab: pageSettings, settingsTab: settingsAdvanced, autoCheck: true, captchaEnabled: true, captchaBackend: "free",
 		proxyCustom: true, proxyURL: "http://127.0.0.1:7890", proxySaved: "http://127.0.0.1:7890",
 	}
 	st := ui.NewTester(settings.view, 1280, 900)
 	scrollIntoView(t, st, "跟随系统", 1280, 900)
-	for _, label := range []string{"网络", "跟随系统", "自定义代理", "浏览器和内置浏览器下载走同一条代理。"} {
+	for _, label := range []string{"网络", "跟随系统", "自定义代理", "Camoufox 安装使用此代理；账号可在浏览器页设置独立代理。"} {
 		assertVisible(t, st, label, 1280, 900)
 	}
 	follow := assertVisible(t, st, "跟随系统", 1280, 900)
@@ -31,7 +31,7 @@ func TestProxyCardAndAccountQR(t *testing.T) {
 
 	account := &App{
 		tab: pageBrowser, browserSel: -1, browserChoice: "Chrome", browserBackend: "Chrome", newBrowserPlat: "豆包",
-		detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
+		detectedNote: "已检测到 Chrome", camoufoxStatus: "内置浏览器未下载",
 		browserRows: []store.Browser{{
 			ID: 1, Name: "工作号", Platform: "豆包", Port: 9333, Health: store.HealthReady,
 		}},
@@ -46,24 +46,24 @@ func TestProxyCardAndAccountQR(t *testing.T) {
 	}
 	name := assertVisible(t, at, "工作号", 1280, 900)
 	caption := assertVisible(t, at, pageLoginHint, 1280, 900)
-	start := assertVisible(t, at, "启动选中", 1280, 900)
+	start := assertVisible(t, at, "启动 工作号", 1280, 900)
 	if caption.Y < name.Y || caption.Y > name.Y+200 {
 		t.Fatalf("QR caption should sit in the account row: name=%+v caption=%+v", name, caption)
 	}
-	if start.Y < caption.Y || start.Y > name.Y+280 {
-		t.Fatalf("instance list should hug its row, actions just under it: name=%+v start=%+v", name, start)
+	if start.X <= name.X || start.Y < name.Y-16 || start.Y > caption.Y+16 {
+		t.Fatalf("start should be in the same table row: name=%+v caption=%+v start=%+v", name, caption, start)
 	}
 	if start.W > 160 {
 		t.Fatalf("action button is too wide: %+v", start)
 	}
-	del := assertVisible(t, at, "删除选中", 1280, 900)
-	if del.W > 160 || del.Y > start.Y+80 {
-		t.Fatalf("delete should stay a compact button under the actions: %+v start=%+v", del, start)
+	del := assertVisible(t, at, "删除当前", 1280, 900)
+	if del.W > 160 || del.Y < start.Y {
+		t.Fatalf("delete should stay compact in the selected-environment panel: %+v start=%+v", del, start)
 	}
 
 	timed := &App{
 		tab: pageBrowser, browserSel: -1, browserChoice: "Chrome", browserBackend: "Chrome", newBrowserPlat: "豆包",
-		detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
+		detectedNote: "已检测到 Chrome", camoufoxStatus: "内置浏览器未下载",
 		browserRows: []store.Browser{{
 			ID: 1, Name: "工作号", Platform: "豆包", Port: 9333, Health: store.HealthReady,
 		}},
@@ -150,7 +150,7 @@ func TestReloginWatchesQR(t *testing.T) {
 	}
 	select {
 	case ws := <-watched:
-		if ws != "http://127.0.0.1:9333" {
+		if ws != "camoufox://9333" {
 			t.Fatalf("watch endpoint %q", ws)
 		}
 	case <-time.After(time.Second):

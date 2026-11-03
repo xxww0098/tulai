@@ -59,6 +59,11 @@ func Run(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("创建临时目录失败: %w", err)
 	}
 	defer os.RemoveAll(work)
+	// 子进程的 PWD 会解析符号链接，参考图路径使用同一个实际目录。
+	work, err = filepath.EvalSymlinks(work)
+	if err != nil {
+		return "", fmt.Errorf("解析临时目录失败: %w", err)
+	}
 	prompt, err := promptWithReference(work, req.Prompt, req.Ref)
 	if err != nil {
 		return "", err

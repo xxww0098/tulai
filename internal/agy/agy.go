@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -32,9 +33,23 @@ type QuotaError struct {
 
 func (e *QuotaError) Error() string { return "额度不足" }
 
-// DefaultBin 是没填 agy 路径时用的位置。
+// DefaultBin 是没填 agy 路径时用的位置。官方安装脚本的落点：
+// macOS 和 Linux 是 ~/.local/bin/agy，Windows 是 %LOCALAPPDATA%\agy\bin\agy.exe。
 func DefaultBin() string {
-	home, err := os.UserHomeDir()
+	return defaultBin(runtime.GOOS, os.UserHomeDir, os.Getenv)
+}
+
+func defaultBin(goos string, userHome func() (string, error), getenv func(string) string) string {
+	if goos == "windows" {
+		if dir := strings.TrimSpace(getenv("LOCALAPPDATA")); dir != "" {
+			return filepath.Join(dir, "agy", "bin", "agy.exe")
+		}
+		if home, err := userHome(); err == nil && home != "" {
+			return filepath.Join(home, "AppData", "Local", "agy", "bin", "agy.exe")
+		}
+		return filepath.Join("agy", "bin", "agy.exe")
+	}
+	home, err := userHome()
 	if err != nil || home == "" {
 		return filepath.Join(".local", "bin", "agy")
 	}

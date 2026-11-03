@@ -1,4 +1,4 @@
-importScripts('protocol.js', 'bridge_logic.js', 'pair.js')
+importScripts('protocol.js', 'bridge_logic.js', 'pair.js', 'network.js')
 
 const TULAI = globalThis.TULAI
 const ALARM = 'tulai-bridge-reconnect'
@@ -428,7 +428,23 @@ async function dispatchCommand(link, env) {
   // 下发页内命令前先把标签页拉到前台。
   await focusTab(tab)
   markTab(tab.id, 'busy', env.taskId || '', tab.url || '')
+  let keepNetwork = false
   try {
+    if (name === TULAI.commands.send) {
+      await TULAINetwork.start(tab.id, link.platform, env.taskId || '', (observation) => {
+        const event = TULAI.envelope('event', {
+          platform: link.platform,
+          taskId: env.taskId || '',
+          payload: Object.assign({ name: 'network' }, observation),
+        })
+        try { sendToHost(link, event) } catch (err) {}
+        if (observation.kind) {
+          chrome.tabs.sendMessage(tab.id, { type: 'NETWORK_FAULT', taskId: env.taskId || '', kind: observation.kind }).catch(() => {})
+        }
+      })
+    } else if (name === TULAI.commands.waitResult) {
+      TULAINetwork.extend(tab.id, env.taskId || '', env.payload && env.payload.timeoutMs)
+    }
     const response = await chrome.tabs.sendMessage(tab.id, {
       type: 'COMMAND_FROM_HOST',
       envelope: env,
@@ -437,10 +453,14 @@ async function dispatchCommand(link, env) {
       sendToHost(link, TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '内容脚本没有返回结果'))
       return
     }
+    keepNetwork = name === TULAI.commands.send && !!(response.payload && response.payload.ok)
     sendToHost(link, response)
   } catch (err) {
     sendToHost(link, TULAI.fail(env, TULAI.errors.E_NO_TAB, String(err && err.message || err)))
   } finally {
+    if (!keepNetwork && (name === TULAI.commands.send || name === TULAI.commands.waitResult || name === TULAI.commands.cancel)) {
+      await TULAINetwork.stop(tab.id, env.taskId || '')
+    }
     markTab(tab.id, 'idle', '', tab.url || '')
   }
 }
@@ -557,6 +577,11 @@ function downloadToFile(url) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return
+  if (msg.type === 'NETWORK_MARK' && sender.tab) {
+    TULAINetwork.mark(sender.tab.id, msg.taskId || '')
+    sendResponse({ ok: true })
+    return
+  }
   if (msg.type === 'FETCH_URL') {
     fetchOrDownload(msg.url).then(sendResponse).catch((err) => {
       sendResponse({ error: String(err && err.message || err) })
@@ -573,6 +598,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 })
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  TULAINetwork.stop(tabId)
   tabs.delete(tabId)
 })
 

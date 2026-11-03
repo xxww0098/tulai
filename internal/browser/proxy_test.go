@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -53,34 +52,5 @@ func TestProxyServerPrefersCustomThenEnv(t *testing.T) {
 	}
 	if _, ok := NormalizeProxy("http://127.0.0.1"); ok {
 		t.Fatal("missing port should be rejected")
-	}
-}
-
-func TestLaunchArgsIncludeProxyBeforeURL(t *testing.T) {
-	userData := "/tmp/profile"
-	login := "https://www.doubao.com/chat/"
-	args := launchArgs(9333, userData, login, "", "http://127.0.0.1:7890", []string{"--disable-gpu"})
-	if args[len(args)-1] != login {
-		t.Fatalf("url = %q", args[len(args)-1])
-	}
-	joined := strings.Join(args, "\n")
-	if !strings.Contains(joined, "--proxy-server=http://127.0.0.1:7890") {
-		t.Fatalf("missing proxy flag: %v", args)
-	}
-	proxyAt := strings.Index(joined, "--proxy-server=")
-	extraAt := strings.Index(joined, "--disable-gpu")
-	if proxyAt < 0 || extraAt < proxyAt {
-		t.Fatalf("proxy should come before extra flags: %v", args)
-	}
-	plain := strings.Join(launchArgs(9333, userData, login, "", "", nil), "\n")
-	if strings.Contains(plain, "--proxy-server") {
-		t.Fatalf("empty proxy leaked: %s", plain)
-	}
-	socks := launchArgs(9333, userData, login, "/tmp/ext", "socks5://127.0.0.1:1080", nil)
-	if socks[len(socks)-1] != login || !strings.Contains(strings.Join(socks, "\n"), "--proxy-server=socks5://127.0.0.1:1080") {
-		t.Fatalf("socks args: %v", socks)
-	}
-	if !strings.Contains(strings.Join(socks, "\n"), "--load-extension=/tmp/ext") {
-		t.Fatalf("proxy ate the extension flag: %v", socks)
 	}
 }

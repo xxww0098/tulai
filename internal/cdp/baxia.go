@@ -1,23 +1,16 @@
 package cdp
 
 import (
-	"bufio"
 	"context"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
+	"github.com/xxww0098/tulai/internal/camoufox"
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/gobwas/ws"
-	"github.com/gobwas/ws/wsutil"
 )
 
 //go:embed slider_probe.js
@@ -70,18 +63,13 @@ type SliderLook struct {
 	Passed bool
 }
 
-// SliderConn 附着在已经打开远程调试的 Chrome 上。关闭时只 detach，不关掉用户的标签页。
+// SliderConn 附着在已打开的 Camoufox 账号上。关闭时只 detach，不关掉用户的标签页。
 type SliderConn struct {
 	endpoint string
-	conn     net.Conn
-	reader   *bufio.Reader
-	writeMu  sync.Mutex
+	proc     *camoufox.Process
 	mu       sync.Mutex
-	pending  map[int64]chan cdpMsg
-	next     atomic.Int64
-	closed   chan struct{}
-	fail     error
 	sess     map[string]string
+	closed   chan struct{}
 }
 
 type cdpMsg struct {
@@ -129,39 +117,16 @@ type sliderTarget struct {
 	URL  string
 }
 
-// DialSlider 连接到浏览器级 CDP WebSocket。endpoint 可以是 http://127.0.0.1:9222 或 ws://...。
+// DialSlider 连接应用内的 Camoufox 账号句柄；不监听或连接调试端口。
 func DialSlider(ctx context.Context, endpoint string) (*SliderConn, error) {
-	wsURL, err := browserWebsocket(ctx, endpoint)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	proc, err := camoufox.Find(endpoint)
 	if err != nil {
 		return nil, err
 	}
-	origin := "http://127.0.0.1"
-	if parsed, err := url.Parse(wsURL); err == nil && parsed.Host != "" {
-		origin = "http://" + parsed.Host
-	}
-	dialCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-	defer cancel()
-	dialer := ws.Dialer{Timeout: 1500 * time.Millisecond, Header: ws.HandshakeHeaderHTTP(http.Header{
-		"Origin": []string{origin},
-	})}
-	conn, br, _, err := dialer.Dial(dialCtx, wsURL)
-	if err != nil {
-		return nil, fmt.Errorf("连接 CDP: %w", err)
-	}
-	reader := br
-	if reader == nil {
-		reader = bufio.NewReader(conn)
-	}
-	c := &SliderConn{
-		endpoint: endpoint,
-		conn:     conn,
-		reader:   reader,
-		pending:  map[int64]chan cdpMsg{},
-		closed:   make(chan struct{}),
-		sess:     map[string]string{},
-	}
-	go c.readLoop()
-	return c, nil
+	return &SliderConn{endpoint: endpoint, proc: proc, sess: map[string]string{}, closed: make(chan struct{})}, nil
 }
 
 // Close 断开调试连接，不关闭页面。
@@ -170,15 +135,12 @@ func (c *SliderConn) Close() {
 		return
 	}
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	select {
 	case <-c.closed:
-		c.mu.Unlock()
-		return
 	default:
 		close(c.closed)
 	}
-	c.mu.Unlock()
-	_ = c.conn.Close()
 }
 
 // Look 在已打开的页面和子 frame 里找滑块。坐标换算到接收事件的目标视口。
@@ -444,7 +406,7 @@ func (c *SliderConn) session(ctx context.Context, targetID string) (string, erro
 		return "", err
 	}
 	if out.SessionID == "" {
-		return "", fmt.Errorf("没有 CDP 会话")
+		return "", fmt.Errorf("没有 Camoufox 页面会话")
 	}
 	c.mu.Lock()
 	c.sess[targetID] = out.SessionID
@@ -463,139 +425,10 @@ func (c *SliderConn) Activate(ctx context.Context, targetID string) error {
 func (c *SliderConn) call(ctx context.Context, session, method string, params, dest any) error {
 	select {
 	case <-c.closed:
-		return fmt.Errorf("CDP 已断开")
+		return fmt.Errorf("Camoufox 页面连接已关闭")
 	default:
 	}
-	id := c.next.Add(1)
-	ch := make(chan cdpMsg, 1)
-	c.mu.Lock()
-	if c.fail != nil {
-		err := c.fail
-		c.mu.Unlock()
-		return err
-	}
-	c.pending[id] = ch
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-	}()
-	body := map[string]any{"id": id, "method": method}
-	if session != "" {
-		body["sessionId"] = session
-	}
-	if params != nil {
-		body["params"] = params
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	c.writeMu.Lock()
-	_ = c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	err = wsutil.WriteClientMessage(c.conn, ws.OpText, raw)
-	c.writeMu.Unlock()
-	if err != nil {
-		return err
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-c.closed:
-		return fmt.Errorf("CDP 已断开")
-	case msg := <-ch:
-		if msg.Error != nil {
-			return fmt.Errorf("%s: %s", method, msg.Error.Message)
-		}
-		if dest != nil && len(msg.Result) > 0 && string(msg.Result) != "null" {
-			if err := json.Unmarshal(msg.Result, dest); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-}
-
-func (c *SliderConn) readLoop() {
-	rw := sliderRW{r: c.reader, c: c}
-	for {
-		payload, err := wsutil.ReadServerText(rw)
-		if err != nil {
-			c.failAll(err)
-			return
-		}
-		var msg cdpMsg
-		if err := json.Unmarshal(payload, &msg); err != nil || msg.ID == 0 {
-			continue
-		}
-		c.mu.Lock()
-		ch := c.pending[msg.ID]
-		c.mu.Unlock()
-		if ch != nil {
-			ch <- msg
-		}
-	}
-}
-
-func (c *SliderConn) failAll(err error) {
-	c.mu.Lock()
-	if c.fail == nil {
-		c.fail = err
-	}
-	c.mu.Unlock()
-	select {
-	case <-c.closed:
-	default:
-		_ = c.conn.Close()
-	}
-}
-
-type sliderRW struct {
-	r io.Reader
-	c *SliderConn
-}
-
-func (s sliderRW) Read(p []byte) (int, error) { return s.r.Read(p) }
-
-func (s sliderRW) Write(p []byte) (int, error) {
-	s.c.writeMu.Lock()
-	defer s.c.writeMu.Unlock()
-	return s.c.conn.Write(p)
-}
-
-func browserWebsocket(ctx context.Context, endpoint string) (string, error) {
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" {
-		return "", fmt.Errorf("缺少 CDP 地址")
-	}
-	if strings.HasPrefix(endpoint, "ws://") || strings.HasPrefix(endpoint, "wss://") {
-		return endpoint, nil
-	}
-	if !strings.Contains(endpoint, "://") {
-		endpoint = "http://" + endpoint
-	}
-	endpoint = strings.TrimRight(endpoint, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/json/version", nil)
-	if err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 800 * time.Millisecond}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	var body struct {
-		WS string `json:"webSocketDebuggerUrl"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return "", err
-	}
-	if body.WS == "" {
-		return "", fmt.Errorf("CDP 没有 webSocketDebuggerUrl")
-	}
-	return body.WS, nil
+	return c.proc.Call(ctx, session, method, params, dest)
 }
 
 func (c *SliderConn) lookInChildFrames(ctx context.Context, page sliderPage) (SliderLook, error) {

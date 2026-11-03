@@ -10,11 +10,12 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/logging"
+	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 // DefaultWashPrompt 是洗图的内置指令。用户改过就存在 wash_prompt 里。
-const DefaultWashPrompt = "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变"
+const DefaultWashPrompt = prompts.DefaultWashPrompt
 
 // pageState 是生图和洗图各自的一份：图片、提示词、进度和右栏平台。
 // 当前页的那份放在 App 字段里，另一页的收在 parked，换页时对调。
@@ -56,7 +57,7 @@ func statePageFor(tab int) int {
 // syncPage 让 App 字段里装着当前导航页那一份状态。
 // 去重页有自己的图片列表和阈值，不借用生图、洗图那一份。
 func (a *App) syncPage() {
-	if a == nil || a.tab == pageDedup {
+	if a == nil || a.tab == pageDedup || a.tab == pageImageEdit {
 		return
 	}
 	a.noteWorkspacePage()
@@ -180,7 +181,8 @@ func (a *App) washPromptCard(c *ui.Context) {
 	tok := a.look
 	a.stepCard(c, "wash-prompt", stepDone).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "洗图指令").FontSize(tok.title).Bold().Grow(1).MinWidth(0)
+			ui.Text(c, "洗图指令").FontSize(tok.title).Bold().Shrink(0)
+			a.washPromptSelect(c)
 			a.washReset(c)
 		})
 		ui.TextArea(c, &a.prompts).Height(84).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)

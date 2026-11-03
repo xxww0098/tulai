@@ -80,7 +80,11 @@ func (a *App) updateBanner(c *ui.Context) {
 				ui.Text(c, a.updateProgressText).FontSize(12).TextColor(c.Theme().TextMuted)
 			}
 		}
-		ui.Text(c, "安装包未签名，下载后会用 SHA256SUMS 校验。").FontSize(11).TextColor(c.Theme().TextMuted)
+		if a.updateSigned != nil {
+			ui.Text(c, "更新包由 MyGo 验证开发者签名。").FontSize(11).TextColor(c.Theme().TextMuted)
+		} else {
+			ui.Text(c, "安装包未签名，下载后会用 SHA256SUMS 校验。").FontSize(11).TextColor(c.Theme().TextMuted)
+		}
 		ui.Row(c).Gap(8).Children(func() {
 			ui.Button(c, "立即更新").Disabled(a.updateBusy || a.updateDownloading).OnClick(func() { a.applyUpdate() })
 			ui.Button(c, "稍后").Disabled(a.updateDownloading).OnClick(func() { a.dismissUpdate() })
@@ -209,9 +213,30 @@ func (a *App) runUpdateCheck(manual bool) {
 			return
 		}
 	}
+	var signed *mygo.Update
+	exe, err := update.RunningExecutable()
+	if err != nil {
+		logging.Log.Errorf("定位应用失败: %v", err)
+		if manual {
+			a.tellUpdate(mygo.MessageError, "检查更新失败", err.Error())
+		}
+		return
+	}
+	if update.MyGoInstall(runtime.GOOS, exe) && !mygo.IsDev() {
+		signed, err = client.CheckSigned(ctx, rel)
+		if err != nil {
+			logging.Log.Errorf("检查签名更新失败: %v", err)
+			if manual {
+				a.tellUpdate(mygo.MessageError, "检查更新失败", err.Error())
+			}
+			return
+		}
+	}
 	notes := update.ShortNotes(rel.Body, 180)
 	a.onUI(func() {
 		a.updateRel = rel
+		a.updateSigned = signed
+		a.updateSignedClient = client
 		a.updateNotice = latest
 		a.updateNotes = notes
 		a.updateErr = ""
@@ -224,8 +249,13 @@ func (a *App) runUpdateCheck(manual bool) {
 }
 
 func (a *App) tasksRunning() bool {
-	if a.running {
+	if a.running || a.fileRename.busy || a.edit.running || a.dedup.busy || a.camoufoxBusy || a.downloadsRunning > 0 {
 		return true
+	}
+	for _, task := range a.dlTasks {
+		if task.Phase == dlActive || task.Phase == dlQueued {
+			return true
+		}
 	}
 	return a.engine != nil && a.engine.IsRunning()
 }
@@ -248,6 +278,9 @@ func (a *App) applyUpdate() {
 			defer a.onUI(func() {
 				a.updateBusy = false
 				a.updateDownloading = false
+				if !a.updatePending {
+					a.pumpDownloads()
+				}
 			})
 			a.downloadAndInstall()
 		}()
@@ -271,6 +304,9 @@ func (a *App) maybeInstallPending() {
 		defer a.onUI(func() {
 			a.updateBusy = false
 			a.updateDownloading = false
+			if !a.updatePending {
+				a.pumpDownloads()
+			}
 		})
 		a.downloadAndInstall()
 	}()
@@ -280,12 +316,16 @@ func (a *App) downloadAndInstall() {
 	var running bool
 	var rel update.Release
 	var asset, mirror, ver string
+	var signed *mygo.Update
+	var signedClient *update.Client
 	a.onUI(func() {
 		running = a.tasksRunning()
 		rel = a.updateRel
 		asset = a.updateAsset
 		mirror = a.updateMirror
 		ver = a.updateNotice
+		signed = a.updateSigned
+		signedClient = a.updateSignedClient
 	})
 	if running {
 		a.onUI(func() {
@@ -305,6 +345,31 @@ func (a *App) downloadAndInstall() {
 	mode := update.DetectMode(runtime.GOOS, exe)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	if signed != nil {
+		signedClient.ApplyMirrorSetting(mirror)
+		signedClient.OnProgress = func(p update.Progress) {
+			a.onUI(func() {
+				a.updateProgressText = "正在下载 " + p.Name
+				if p.Total > 0 {
+					a.updateFraction = float64(p.Done) / float64(p.Total)
+				}
+			})
+		}
+		a.onUI(func() {
+			a.updateDownloading = true
+			a.updateProgressText = "正在下载 " + ver
+			a.updateFraction = 0
+			a.updateErr = ""
+		})
+		if err := signed.Install(ctx, nil); err != nil {
+			logging.Log.Errorf("安装签名更新失败: %v", err)
+			a.failUpdate(err)
+			return
+		}
+		logging.Log.Success("已安装签名更新 %s", ver)
+		mygo.App.Relaunch()
+		return
+	}
 	if asset == "" {
 		if rel.Tag == "" {
 			a.failUpdate(errors.New("还没有可安装的版本"))
@@ -426,6 +491,8 @@ func (a *App) dismissUpdate() {
 	a.updateDownloading = false
 	a.updateProgressText = ""
 	a.updateAsset = ""
+	a.updateSigned = nil
+	a.updateSignedClient = nil
 }
 
 func (a *App) skipUpdate() {

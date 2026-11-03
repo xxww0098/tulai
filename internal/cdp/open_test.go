@@ -4,15 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/chromedp/chromedp"
-
-	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/camoufoxtest"
 )
 
 func TestTaskTargetStaysInBackground(t *testing.T) {
@@ -176,30 +172,9 @@ func TestOpenURLKeepsPageAfterDisconnect(t *testing.T) {
 	if testing.Short() {
 		t.Skip("跳过 Chrome E2E")
 	}
-	chrome, err := browser.FindChromePath()
-	if err != nil {
-		t.Skip("本机无 Chrome，跳过 E2E")
-	}
-	profile := t.TempDir()
-	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chrome), chromedp.UserDataDir(profile))
-	alloc, stop := chromedp.NewExecAllocator(context.Background(), opts...)
-	defer stop()
-	ctx, closeTab := chromedp.NewContext(alloc)
-	defer closeTab()
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	_, wsURL := camoufoxtest.Start(t, "about:blank")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := chromedp.Run(ctx); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := strings.Fields(string(data))
-	if len(address) != 2 {
-		t.Fatalf("无效 CDP 地址: %q", data)
-	}
-	wsURL := "ws://127.0.0.1:" + address[0] + address[1]
 	requested := make(chan struct{}, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" {
@@ -219,7 +194,12 @@ func TestOpenURLKeepsPageAfterDisconnect(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("控制连接退出后登录页未加载")
 	}
-	pages, err := chromedp.Targets(ctx)
+	conn, err := DialSlider(ctx, wsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	pages, err := conn.targets(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

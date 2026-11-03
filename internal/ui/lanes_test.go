@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"image/png"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -69,6 +71,69 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	}
 }
 
+func TestDailyResultsFitAccountTable(t *testing.T) {
+	for _, width := range []int{1024, 1280} {
+		for _, dark := range []bool{false, true} {
+			for _, large := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%d-dark-%v-large-%v", width, dark, large), func(t *testing.T) {
+					b := loggedLane(1, "豆包主力", "豆包")
+					b.DayCount, b.DaySuccess, b.DayFailed = 15, 12, 3
+					usedLabel, successLabel, failedLabel, cap := "15/100", "今日成功 12", "今日失败 3", 100.0
+					if large {
+						b.DayCount, b.DaySuccess, b.DayFailed = 200, 100, 100
+						usedLabel, successLabel, failedLabel, cap = "200/200", "今日成功 100", "今日失败 100", 200
+					}
+					a := &App{platformAuto: true, dailyCap: cap, browserRows: []store.Browser{b}}
+					tt := ui.NewTester(a.view, width, 700)
+					tt.SetDark(dark)
+					tt.Advance(400 * time.Millisecond)
+					used, usedOK := tt.Find(usedLabel)
+					success, successOK := tt.Find(successLabel)
+					failed, failedOK := tt.Find(failedLabel)
+					task, taskOK := tt.Find("当前任务")
+					if !usedOK || !successOK || !failedOK || !taskOK || used.Y+used.H > success.Y+1 || success.X+success.W > failed.X || failed.X+failed.W > task.X {
+						t.Fatalf("today stats overlap: used=%+v success=%+v failed=%+v task=%+v", used, success, failed, task)
+					}
+					if dir := os.Getenv("TULAI_SHOTS"); dir != "" {
+						f, err := os.Create(filepath.Join(dir, fmt.Sprintf("today-%d-dark-%v-large-%v.png", width, dark, large)))
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer f.Close()
+						if err := png.Encode(f, tt.Image()); err != nil {
+							t.Fatal(err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDailyResultsRefreshAtMidnight(t *testing.T) {
+	b := loggedLane(1, "豆包主力", "豆包")
+	b.DayCount, b.DaySuccess, b.DayFailed = 2, 1, 1
+	a := &App{}
+	var midnight time.Time
+	tt := ui.NewTester(func(c *ui.Context) {
+		now := c.Now()
+		if midnight.IsZero() {
+			midnight = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+		}
+		board := tasks.Assemble([]store.Browser{b}, tasks.LaneLive{}, 100, now)
+		a.laneClock(c, board)
+		ln := board.Lanes[0]
+		ui.Text(c, fmt.Sprintf("%d/%d/%d", ln.UsedToday, ln.SuccessToday, ln.FailedToday))
+	}, 300, 80)
+	if !tt.HasText("2/1/1") || tt.FramePending() {
+		t.Fatalf("initial stats or idle frame: %v", tt.Texts())
+	}
+	tt.Advance(time.Until(midnight) + time.Second)
+	if !tt.HasText("0/0/0") || tt.FramePending() {
+		t.Fatalf("stats did not refresh at midnight: %v", tt.Texts())
+	}
+}
+
 func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	a := &App{
 		platformAuto:    true,
@@ -114,12 +179,14 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	if tt.FramePending() {
 		t.Fatal("stop button kept asking for frames")
 	}
+	a.settingsTab = settingsDownload
 	if err := tt.Click(saveLine); err != nil {
 		t.Fatal(err)
 	}
-	if a.tab != pageSettings {
-		t.Fatal("输出位置应该打开设置")
+	if a.tab != pageSettings || a.settingsTab != settingsOutput {
+		t.Fatal("输出位置应该打开输出设置")
 	}
+	assertVisible(t, tt, "输出目录", 1280, 900)
 }
 
 func TestOutputHintUsesTodayFolder(t *testing.T) {
@@ -609,19 +676,42 @@ func TestLaneChipShowsSendGap(t *testing.T) {
 	if !tt.HasText("等待间隔") {
 		t.Fatal("gap chip missing")
 	}
-	if !tt.FramePending() {
-		t.Fatal("countdown ring should keep painting")
-	}
-	tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
-	tt.Frame()
-	tt.Advance(motionUI + 80*time.Millisecond)
-	if tt.FramePending() {
-		t.Fatal("reduced motion countdown kept painting every frame")
-	}
 	cancel()
 	select {
 	case <-finished:
 	case <-time.After(3 * time.Second):
 		t.Fatal("run did not stop")
+	}
+}
+
+func TestLaneCountdownUpdatesWithoutContinuousFrames(t *testing.T) {
+	for _, reduce := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reduce=%t", reduce), func(t *testing.T) {
+			a := &App{}
+			ln := tasks.AccountLane{State: tasks.LaneGap}
+			tt := ui.NewTester(func(c *ui.Context) {
+				a.look = applyWorkbenchTheme(c)
+				if ln.NextReadyAt.IsZero() {
+					ln.NextReadyAt = c.Now().Add(20 * time.Second)
+				}
+				a.laneClock(c, tasks.Board{Lanes: []tasks.AccountLane{ln}})
+				a.laneChip(c, ln)
+			}, 220, 60)
+			tt.SetPreferences(ui.Preferences{ReduceMotion: reduce, TextScale: 1})
+			tt.Advance(motionUI + 80*time.Millisecond)
+			if !tt.HasText("等待间隔 20") {
+				t.Fatal("initial countdown missing")
+			}
+			if tt.FramePending() {
+				t.Fatal("countdown kept painting between ticks")
+			}
+			tt.Advance(time.Second)
+			if !tt.HasText("等待间隔 19") {
+				t.Fatal("countdown did not update after one second")
+			}
+			if tt.FramePending() {
+				t.Fatal("countdown kept painting after the tick transition")
+			}
+		})
 	}
 }

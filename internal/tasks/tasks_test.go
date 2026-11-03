@@ -284,28 +284,20 @@ func addBrowsers(t *testing.T, st *store.Store, platforms ...string) {
 	}
 }
 
-func TestSessionCacheSeparatesBackends(t *testing.T) {
+func TestLegacyBackendSettingsUseCamoufoxSession(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
 	e := NewEngine(st, nil, nil, "")
-	chrome, edge, builtin := &cdp.Session{}, &cdp.Session{}, &cdp.Session{}
-	e.sessions["Chrome:豆包:1"] = chrome
-	e.sessions["Edge:豆包:1"] = edge
-	e.sessions["Builtin:豆包:1"] = builtin
-	st.Set("browser_backend", "Chrome")
-	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != chrome {
-		t.Fatalf("chrome session = %p, %v", got, err)
-	}
-	st.Set("browser_backend", "Edge")
-	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != edge {
-		t.Fatalf("edge session = %p, %v", got, err)
-	}
-	st.Set("browser_backend", "Builtin")
-	if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != builtin {
-		t.Fatalf("builtin session = %p, %v", got, err)
+	session := &cdp.Session{}
+	e.sessions["Camoufox:豆包:1"] = session
+	for _, legacy := range []string{"Chrome", "Edge", "Builtin", "Camoufox"} {
+		st.Set("browser_backend", legacy)
+		if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != session {
+			t.Fatalf("%s: %p %v", legacy, got, err)
+		}
 	}
 }
 
@@ -781,6 +773,67 @@ func (s *resultSequenceStrategy) FetchResultBytes(_ *cdp.Session, url string) ([
 	return nil, os.ErrNotExist
 }
 
+type prefetchRawStrategy struct {
+	strategy.Strategy
+	urls []string
+}
+
+func (s *prefetchRawStrategy) FetchResultList(_ *cdp.Session, urls []string) [][]byte {
+	s.urls = append([]string(nil), urls...)
+	return make([][]byte, len(urls))
+}
+
+func TestPrefetchResultsUsesEachRawURL(t *testing.T) {
+	s := &prefetchRawStrategy{}
+	prefetchResults(s, &cdp.Session{}, []strategy.Result{
+		{URL: "display-1", RawURL: "raw-1"},
+		{URL: "display-2", RawURL: "raw-2"},
+		{URL: "display-3"},
+	})
+	if strings.Join(s.urls, ",") != "raw-1,raw-2,display-3" {
+		t.Fatalf("预取地址 = %v", s.urls)
+	}
+}
+
+func TestSaveResultsPrefersDoubaoRawAndFallsBack(t *testing.T) {
+	raw := resultPNG(t, 21)
+	marked := watermarkResultPNG(t, "豆包")
+	repaired := repairedPNG(t, marked, "豆包")
+	for _, tc := range []struct {
+		name  string
+		raw   []byte
+		want  []byte
+		calls string
+	}{
+		{"raw", raw, raw, "raw"},
+		{"invalid raw", []byte("not an image"), repaired, "raw,display"},
+		{"truncated raw", raw[:len(raw)-1000], repaired, "raw,display"},
+		{"unavailable raw", nil, repaired, "raw,display"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEngine(nil, nil, nil, "")
+			e.opts = Options{OutputPath: t.TempDir()}
+			var calls []string
+			s := &resultSequenceStrategy{data: map[string][]byte{"display": marked}, onFetch: func(url string) { calls = append(calls, url) }}
+			if tc.raw != nil {
+				s.data["raw"] = tc.raw
+			}
+			saved, err := e.saveResults(context.Background(), &Task{Platform: "豆包"}, s, nil, []strategy.Result{{URL: "display", RawURL: "raw"}})
+			if err != nil || len(saved) != 1 || strings.Join(calls, ",") != tc.calls {
+				t.Fatalf("保存结果=%v, 请求=%v, err=%v", saved, calls, err)
+			}
+			data, err := os.ReadFile(saved[0])
+			if err != nil || !bytes.Equal(data, tc.want) {
+				t.Fatalf("保存的图片不符: %v", err)
+			}
+			files, err := os.ReadDir(e.opts.ResultDir(time.Now()))
+			if err != nil || len(files) != 1 {
+				t.Fatalf("应只保存一张图: %v, %v", files, err)
+			}
+		})
+	}
+}
+
 func TestSaveResultsFailureURLDiagnostic(t *testing.T) {
 	e := &Engine{}
 	start := len(logging.Log.Entries())
@@ -1172,6 +1225,17 @@ func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
 				}
 				day := e.opts.ResultDir(time.Now())
 				original := filepath.Join(day, "雪景_01.png")
+				if platform == "豆包" {
+					file, err := os.ReadFile(original)
+					if err != nil || !bytes.Equal(file, repairedPNG(t, data, platform)) || task.Results[0] != original {
+						t.Fatalf("豆包应直接保存去水印结果: %v", err)
+					}
+					files, err := os.ReadDir(day)
+					if err != nil || len(files) != 1 {
+						t.Fatalf("豆包只应保存一张: %v, %v", files, err)
+					}
+					return
+				}
 				if saved, err := os.ReadFile(original); err != nil || !bytes.Equal(saved, data) {
 					t.Fatalf("原图始终保留下载字节: %v", err)
 				}
@@ -1202,10 +1266,10 @@ func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
 func TestSaveResultsWatermarkWriteFailureKeepsOriginalWithoutRetry(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{OutputPath: t.TempDir(), RemoveWatermark: true, WaitResultSeconds: 60, RetryCount: 2, Wash: true}
-	data := watermarkResultPNG(t, "豆包")
+	data := watermarkResultPNG(t, "千问")
 	strat := &resultSequenceStrategy{rounds: [][]strategy.Result{{{Data: data}}}}
-	// 原图名合法，另存的「_01_去水印」将超过文件系统单文件名上限。
-	task := Task{Platform: "豆包", Images: []string{strings.Repeat("s", 240) + ".png"}}
+	// 原图名 254 字符，处理版 258 字符；同时超过 UTF-8 字节和 UTF-16 字符上限。
+	task := Task{Platform: "千问", Images: []string{strings.Repeat("s", 247) + ".png"}}
 	start := len(logging.Log.Entries())
 	task = e.execute(context.Background(), task, func(ctx context.Context, task *Task) error {
 		return e.waitAndSave(ctx, task, strat, nil)

@@ -180,6 +180,8 @@ function makeDoc(hostname) {
 }
 
 
+let rawMessage
+globalThis.addEventListener = (type, fn) => { if (type === 'message') rawMessage = fn }
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'protocol.js'), 'utf8'))
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'page.js'), 'utf8'))
 const Page = globalThis.TULAIPage
@@ -364,6 +366,30 @@ function generatedCard(prompt) {
   const answer = message(doc, 'assistant', '已转成水彩风格')
   const card = answer.append(new El('div', { 'data-testid': 'mdbox_image' }))
   return { doc, marked, card }
+}
+
+{
+  const fixture = fs.readFileSync(path.join(__dirname, '..', '..', 'internal', 'strategy', 'testdata', 'doubao', '9336-1', 'page.html'), 'utf8')
+  const rawMatch = fixture.match(/"image_ori_raw"\s*:\s*\{\s*"url"\s*:\s*("(?:\\.|[^"\\])*")/)
+  assert.ok(rawMatch, '豆包页面夹具必须含无水印原图')
+  const raw = JSON.parse(rawMatch[1])
+  const imagePath = new URL(raw).pathname.split('~tplv-')[0]
+  const tag = Array.from(fixture.matchAll(/<img\b[^>]*>/g), (match) => match[0]).find((value) => value.includes(imagePath))
+  assert.ok(tag, '豆包页面夹具必须含对应的展示图')
+  const display = tag.match(/\bsrc="([^"]+)"/)[1].replace(/&amp;/g, '&')
+  const { doc, marked, card } = generatedCard('原图')
+  rasterImg(card, display, 1024)
+  const main = vm.createContext({ URL, location: { href: 'https://www.doubao.com/chat/', hostname: 'www.doubao.com', origin: 'https://www.doubao.com' } })
+  main.window = main
+  main.postMessage = (data) => rawMessage({ source: globalThis, data })
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'raw.js'), 'utf8'), main)
+  main.payload = JSON.stringify({ creations: [{ image: { image_preview: { url: display }, image_ori_raw: { url: raw } } }] })
+  vm.runInContext('JSON.parse(payload)', main)
+  assert.strictEqual(Page.resultImages(doc, marked)[0].rawUrl, raw, '扩展应按真实页面图片路径匹配响应原图')
+  rawMessage({ source: {}, data: { type: 'TULAI_DOUBAO_RAW_IMAGES', pairs: [{ source: display, raw: 'https://evil.example/wrong.png' }] } })
+  assert.strictEqual(Page.resultImages(doc, marked)[0].rawUrl, raw, '不得接受其他窗口消息')
+  Page.mark(doc, '下一轮')
+  assert.strictEqual(Page.resultImages(doc, marked)[0].rawUrl, '', '新任务应清除旧原图')
 }
 
 {

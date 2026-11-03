@@ -185,6 +185,9 @@ func agyFullyPaused(rows []store.Browser, now time.Time, cap int) (time.Time, bo
 	var until time.Time
 	saw := false
 	for _, b := range rows {
+		if b.Disabled {
+			continue
+		}
 		if !b.IsLoggedIn {
 			return time.Time{}, false
 		}

@@ -167,9 +167,8 @@ func TestFetchUsageKillsAuthAndIgnoresStdin(t *testing.T) {
 	if !errorsIsLogin(err) {
 		t.Fatalf("stdin err = %v", err)
 	}
-	buf, statErr := os.ReadFile(filepath.Join(home, "stdin.txt"))
-	if statErr == nil && strings.TrimSpace(string(buf)) != "none" {
-		t.Fatalf("stdin got %q", buf)
+	if got := strings.TrimSpace(readUsageFile(t, home, "stdin.txt")); got != "none" {
+		t.Fatalf("stdin got %q", got)
 	}
 }
 
@@ -248,12 +247,12 @@ auth)
   exec sleep 30
   ;;
 stdin)
-  printf '%s\n' 'Authentication required'
   if IFS= read -r line; then
     printf '%s\n' "$line" > "$HOME/stdin.txt"
   else
     printf 'none\n' > "$HOME/stdin.txt"
   fi
+  printf '%s\n' 'Authentication required'
   exit 0
   ;;
 sleep)

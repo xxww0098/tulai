@@ -1,7 +1,7 @@
 // tulai composer 流程：找输入框 → 打开上传入口 → 让 input[type=file] 出现。
 // 浏览器先等待真实文件选择器，脚本只点击当前输入区入口与本次菜单。
 (function () {
-  window.__tulaiComposer = window.__tulaiComposer || {};
+  window.__tulaiComposer = window.__tulaiComposer || null;
 
   function visible(el) {
     if (!el) return false;
@@ -264,8 +264,7 @@
   window.tulaiMarkComposer = function () {
     var comp = findComposer();
     if (!comp || comp.readOnly) return false;
-    document.querySelectorAll('[data-tulai-composer]').forEach(function (el) { el.removeAttribute('data-tulai-composer'); });
-    comp.setAttribute('data-tulai-composer', '1');
+    window.__tulaiComposer = comp;
     return true;
   };
 
@@ -377,8 +376,8 @@
   }
 
   window.tulaiSendPrompt = async function () {
-    var comp = document.querySelector('[data-tulai-composer="1"]');
-    if (!comp) return JSON.stringify({ attempted: false, error: '未找到已定位的输入框' });
+    var comp = window.__tulaiComposer;
+    if (!comp || !comp.isConnected) return JSON.stringify({ attempted: false, error: '未找到已定位的输入框' });
     commitComposer(comp);
     var deadline = Date.now() + 5000, button;
     while (Date.now() < deadline) {
@@ -394,36 +393,32 @@
     var beforeMatches = promptMatches(promptText);
     var attempted = false;
     if (button) {
-      var clicked = false;
-      if (window.tulaiClick) {
-        try { clicked = await window.tulaiClick(button); } catch (e) { clicked = false; }
+      button.scrollIntoView({ block: 'center', inline: 'center' });
+      var rect = button.getBoundingClientRect();
+      var hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      // Choose one trusted action before sending; never retry an uncertain click with Enter.
+      if ((!hit || !button.contains(hit)) && window.tulaiPressEnter) {
+        comp.focus();
+        if (document.activeElement !== comp) return JSON.stringify({ attempted: false, error: '发送按钮被遮挡，输入框无法获得焦点' });
+        attempted = true;
+        try { await window.tulaiPressEnter(); } catch (e) {}
+      } else {
+        attempted = true;
+        try {
+          if (window.tulaiClick) await window.tulaiClick(button);
+          else button.click();
+        } catch (e) {}
       }
-      if (!clicked) {
-        try { button.click(); clicked = true; } catch (e) {}
-      }
-      attempted = clicked;
     }
-    var enterAt = Date.now() + 1200;
-    var entered = false;
+    if (!attempted && !button) return JSON.stringify({ attempted: false, error: '未找到发送按钮', diagnostic: sendDiagnostic(comp) });
     deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       if (window.tulaiSendAccepted(beforeHref, promptText, beforeMatches)) {
         var note = window.__tulaiQwenNote ? __tulaiQwenNote() : {};
         return JSON.stringify({ sent: true, chat: (note && note.url) || '', wrap: (note && note.wrap) || '' });
       }
-      if (!entered && Date.now() >= enterAt) {
-        entered = true;
-        attempted = true;
-        try { comp.focus(); } catch (e) {}
-        if (window.tulaiPressEnter) {
-          try { await window.tulaiPressEnter(); } catch (e) {}
-        } else {
-          try { comp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })); } catch (e) {}
-        }
-      }
       await sleep(100);
     }
-    if (!attempted && !button) return JSON.stringify({ attempted: false, error: '未找到发送按钮', diagnostic: sendDiagnostic(comp) });
     var latest = findComposer();
     var remaining = window.tulaiReadComposer(latest);
     var missed = window.__tulaiQwenNote ? __tulaiQwenNote() : {};

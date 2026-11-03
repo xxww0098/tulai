@@ -10,29 +10,31 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 func TestWizardStepSlidesInFromTheSide(t *testing.T) {
-	a := &App{wizardOn: true, wizardStep: wizard.StepBrowser, platDoubao: true}
+	a := &App{wizardOn: true, wizardStep: wizard.StepPlatform, wizardChoice: "豆包", platDoubao: true}
 	a.wizardPlan = wizard.BrowserPlan{Title: "将使用本机 Chrome", CanNext: true}
 	tt := ui.NewTester(a.view, 1280, 900)
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
 	}
-	early, ok := tt.Find("选择平台")
+	early, ok := tt.Find("准备浏览器")
 	if !ok {
 		t.Fatal("platform step did not show")
 	}
+	if darkPixels(tt, 440, 60, 950, 300) < 100 {
+		t.Fatal("切换向导步骤时内容不应先消失")
+	}
 	tt.Advance(motionUI + 40*time.Millisecond)
-	late, ok := tt.Find("选择平台")
+	late, ok := tt.Find("准备浏览器")
 	if !ok {
 		t.Fatal("platform step disappeared")
 	}
-	if early.X < late.X+6 {
-		t.Fatalf("forward step should arrive from the right: early=%v late=%v", early.X, late.X)
+	if early.X <= late.X+2 || early.X > late.X+8 {
+		t.Fatalf("forward step should arrive gently from the right: early=%v late=%v", early.X, late.X)
 	}
 	if tt.FramePending() {
 		t.Fatal("step transition kept asking for frames")
@@ -40,24 +42,124 @@ func TestWizardStepSlidesInFromTheSide(t *testing.T) {
 }
 
 func TestWizardStepStaysPutWhenMotionIsReduced(t *testing.T) {
-	a := &App{wizardOn: true, wizardStep: wizard.StepBrowser, platDoubao: true}
+	a := &App{wizardOn: true, wizardStep: wizard.StepPlatform, wizardChoice: "豆包", platDoubao: true}
 	a.wizardPlan = wizard.BrowserPlan{Title: "将使用本机 Chrome", CanNext: true}
 	tt := ui.NewTester(a.view, 1280, 900)
 	tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
 	}
-	early, ok := tt.Find("选择平台")
+	early, ok := tt.Find("准备浏览器")
 	if !ok {
 		t.Fatal("platform step did not show")
 	}
 	tt.Advance(motionUI + 40*time.Millisecond)
-	late, ok := tt.Find("选择平台")
+	late, ok := tt.Find("准备浏览器")
 	if !ok {
 		t.Fatal("platform step disappeared")
 	}
 	if delta := early.X - late.X; delta > 0.5 || delta < -0.5 {
 		t.Fatalf("reduced motion still slid the step: early=%v late=%v", early.X, late.X)
+	}
+}
+
+func TestPageSwitchStartsVisibleAndFollowsSidebar(t *testing.T) {
+	a := &App{platformAuto: true}
+	tt := ui.NewTester(a.view, 1024, 700)
+	tt.Advance(motionUI + 40*time.Millisecond)
+	if err := tt.Click("洗图"); err != nil {
+		t.Fatal(err)
+	}
+	early, ok := tt.Find("洗图指令")
+	if !ok {
+		t.Fatal("洗图页面没有出现")
+	}
+	if darkPixels(tt, 80, 80, 400, 440) < 100 {
+		t.Fatal("切换后的第一帧不应显示空白页面")
+	}
+	tt.Advance(motionUI + 40*time.Millisecond)
+	late, ok := tt.Find("洗图指令")
+	if !ok || early.Y <= late.Y+1 || early.Y > late.Y+7 || early.X < late.X-1 || early.X > late.X+1 {
+		t.Fatalf("向下切换应以短距离纵向进入: early=%+v late=%+v", early, late)
+	}
+	if err := tt.Click("生图"); err != nil {
+		t.Fatal(err)
+	}
+	early, ok = tt.Find("提示词内容")
+	if !ok {
+		t.Fatal("生图页面没有出现")
+	}
+	tt.Advance(motionUI + 40*time.Millisecond)
+	late, ok = tt.Find("提示词内容")
+	if !ok || early.Y >= late.Y-1 || early.Y < late.Y-7 || early.X < late.X-1 || early.X > late.X+1 {
+		t.Fatalf("向上切换应以短距离纵向进入: early=%+v late=%+v", early, late)
+	}
+}
+
+func TestWizardTransitionDoesNotOverlayPreviousPage(t *testing.T) {
+	a := &App{platformAuto: true, tab: pageWash, statePage: pageWash, prompts: DefaultWashPrompt}
+	tt := ui.NewTester(a.view, 1280, 900)
+	tt.Advance(motionUI + 40*time.Millisecond)
+	if err := tt.Click("设置向导"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(32 * time.Millisecond)
+	if !tt.HasText("选择平台") {
+		t.Fatal("设置向导没有出现")
+	}
+	if darkPixels(tt, 75, 330, 220, 700) > 20 {
+		t.Fatal("向导的空白侧栏上仍有上一页的内容")
+	}
+}
+
+func darkPixels(tt *ui.Tester, left, top, right, bottom int) int {
+	img, count := tt.Image(), 0
+	for y := top; y < bottom; y++ {
+		for x := left; x < right; x++ {
+			p := img.RGBAAt(x, y)
+			if p.R < 160 && p.G < 160 && p.B < 160 {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func TestPageSwitchReducedMotionAndRapidNavigation(t *testing.T) {
+	for _, reduced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reduced=%v", reduced), func(t *testing.T) {
+			a := &App{platformAuto: true, prompts: "保留提示词"}
+			tt := ui.NewTester(a.view, 1024, 700)
+			tt.SetPreferences(ui.Preferences{ReduceMotion: reduced, TextScale: 1})
+			tt.Advance(motionUI + 40*time.Millisecond)
+			if err := tt.Click("洗图"); err != nil {
+				t.Fatal(err)
+			}
+			early, ok := tt.Find("洗图指令")
+			if !ok {
+				t.Fatal("洗图页面没有出现")
+			}
+			tt.Advance(48 * time.Millisecond)
+			if reduced {
+				later, _ := tt.Find("洗图指令")
+				if dy := early.Y - later.Y; dy < -0.5 || dy > 0.5 {
+					t.Fatalf("减少动态效果时页面仍在移动: early=%+v later=%+v", early, later)
+				}
+			}
+			for _, page := range []string{"浏览器", "生图"} {
+				if err := tt.Click(page); err != nil {
+					t.Fatal(err)
+				}
+				tt.Advance(48 * time.Millisecond)
+			}
+			tt.Advance(motionUI + 40*time.Millisecond)
+			if a.tab != pageHome || a.prompts != "保留提示词" || !tt.HasText("提示词内容") || tt.HasText("洗图指令") {
+				t.Fatalf("快速切换后页面或输入错误: tab=%d prompts=%q", a.tab, a.prompts)
+			}
+			if tt.FramePending() {
+				t.Fatal("页面切换结束后仍在请求动画帧")
+			}
+		})
 	}
 }
 
@@ -122,14 +224,11 @@ func TestUpdateBannerSlidesDownAndStaysClickable(t *testing.T) {
 func TestPromptSelectChoosesWhileOpening(t *testing.T) {
 	a := &App{tab: pagePrompts}
 	tt := ui.NewTester(a.view, 1280, 840)
-	if err := tt.Click(prompts.LabelCustom); err != nil {
+	if err := tt.Click("编辑 数字油画"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("数字油画"); err != nil {
-		t.Fatal(err)
-	}
-	if a.promptChoice != "数字油画" || a.promptPick == "" {
-		t.Fatalf("choice=%q pick=%q", a.promptChoice, a.promptPick)
+	if a.promptEditChoice != "数字油画" || a.promptEditPick == "" {
+		t.Fatalf("choice=%q pick=%q", a.promptEditChoice, a.promptEditPick)
 	}
 }
 
@@ -178,12 +277,17 @@ func TestExportMotionFrames(t *testing.T) {
 		}
 	}
 
-	setup := &App{wizardOn: true, wizardStep: wizard.StepBrowser, platDoubao: true, platQianwen: true}
+	setup := &App{wizardOn: true, wizardStep: wizard.StepPlatform, wizardChoice: "豆包", platDoubao: true}
 	setup.wizardPlan = wizard.BrowserPlan{
 		Title: "将使用本机 Chrome", Detail: "本机已安装，下一步即可", CanNext: true,
 	}
 	tt := ui.NewTester(setup.view, 1280, 900)
-	save("01-wizard-browser", tt)
+	save("01-wizard-platform", tt)
+	if err := tt.Click("千问"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(motionFast)
+	save("02-wizard-platform-picked", tt)
 	if err := tt.Click("下一步"); err != nil {
 		t.Fatal(err)
 	}
@@ -193,14 +297,9 @@ func TestExportMotionFrames(t *testing.T) {
 		}
 		save(fmt.Sprintf("seq-%02d", i), tt)
 		if i == 0 || i == 5 || i == 10 || i == 16 {
-			save(fmt.Sprintf("02-wizard-step-%d", i), tt)
+			save(fmt.Sprintf("03-wizard-step-%d", i), tt)
 		}
 	}
-	if err := tt.Click("千问"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Advance(motionFast)
-	save("03-wizard-platforms", tt)
 
 	work := &App{
 		platDoubao: true, platformAuto: true,
@@ -215,11 +314,27 @@ func TestExportMotionFrames(t *testing.T) {
 	wt := ui.NewTester(work.view, 1280, 900)
 	wt.Advance(80 * time.Millisecond)
 	save("04-workbench", wt)
-	if err := wt.Click(prompts.LabelCustom); err != nil {
+	work.tab = pagePrompts
+	wt.Frame()
+	wt.Advance(motionUI)
+	if err := wt.Click("编辑 数字油画"); err != nil {
 		t.Fatal(err)
 	}
 	wt.Advance(80 * time.Millisecond)
 	save("06-prompt-menu", wt)
+	compact := ui.NewTester((&App{tab: pagePrompts}).view, 760, 900)
+	compact.Advance(motionUI)
+	save("06-prompts-compact", compact)
+	darkApp := &App{tab: pagePrompts}
+	dark := ui.NewTester(func(c *ui.Context) {
+		theme := *c.Theme()
+		theme.Dark = true
+		c.SetTheme(&theme)
+		darkApp.view(c)
+	}, 1280, 900)
+	dark.Advance(motionUI)
+	save("06-prompts-dark", dark)
+	work.tab = pageHome
 	work.updateNotice = "0.2.0"
 	work.updateNotes = "下载和安装会显示进度"
 	work.updateDownloading = true
@@ -228,4 +343,26 @@ func TestExportMotionFrames(t *testing.T) {
 	wt.Frame()
 	wt.Advance(120 * time.Millisecond)
 	save("05-update-banner", wt)
+
+	pages := &App{platformAuto: true}
+	pt := ui.NewTester(pages.view, 1280, 900)
+	pt.Advance(300 * time.Millisecond)
+	if err := pt.Click("洗图"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= 8; i++ {
+		if i > 0 {
+			pt.Advance(32 * time.Millisecond)
+		}
+		save(fmt.Sprintf("page-%02d", i), pt)
+	}
+	if err := pt.Click("设置向导"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= 8; i++ {
+		if i > 0 {
+			pt.Advance(32 * time.Millisecond)
+		}
+		save(fmt.Sprintf("screen-%02d", i), pt)
+	}
 }

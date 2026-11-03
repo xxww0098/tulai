@@ -14,7 +14,7 @@ import (
 // 检测要直接报 error-reply，而不是 no-new-image 等到超时。
 // 豆包新对话：长连接让 readyState 停在 interactive，空对话加上输入框就该能打字。
 func TestReplyFaultAndDoubaoReady(t *testing.T) {
-	ws, shutdown := launchChromeArgs(t, []string{"--blink-settings=imagesEnabled=false"})
+	ws, shutdown := launchCamoufox(t)
 	defer shutdown()
 	client, err := cdp.NewClient(ws)
 	if err != nil {
@@ -34,6 +34,7 @@ func TestReplyFaultAndDoubaoReady(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", fixtureCSP)
 		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()

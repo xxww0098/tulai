@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,57 +18,51 @@ import (
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
-func (a *App) promptsPage(c *ui.Context) {
-	w, _ := c.Size()
-	if homeSplit(w) {
-		ui.Row(c).Grow(1).MinHeight(0).Gap(20).AlignItems(ui.Stretch).Children(func() {
-			ui.Column(c).Width(300).Shrink(1).MinWidth(240).Gap(12).Children(func() {
-				a.promptsHead(c)
-				a.promptControls(c, true)
-				a.promptNoteLine(c)
-			})
-			ui.Column(c).Grow(1).MinWidth(0).MaxWidth(640).MinHeight(0).Children(func() {
-				ui.TextArea(c, &a.prompts).Grow(1).MinHeight(220).FillWidth().Label("提示词内容").Placeholder("每行一条。选了模板后，整段一起发送")
-			})
-		})
-		return
-	}
-	ui.Column(c).Fill().MaxWidth(720).Gap(14).Children(func() {
-		a.promptsHead(c)
-		a.promptRow(c)
-		ui.TextArea(c, &a.prompts).Grow(1).MinHeight(220).Label("提示词内容").Placeholder("每行一条。选了模板后，整段一起发送")
-		a.promptNoteLine(c)
-	})
-}
-
-func (a *App) promptsHead(c *ui.Context) {
-	ui.Text(c, "提示词").FontSize(22).Bold()
-	ui.Text(c, "内置模板和保存过的提示词。出图页会记住上次的选择。").FontSize(13).TextColor(c.Theme().TextMuted)
-}
-
-func (a *App) promptNoteLine(c *ui.Context) {
-	if a.promptNote == "" {
-		return
-	}
-	ui.Text(c, a.promptNote).FontSize(12).TextColor(c.Theme().TextMuted)
-}
+const (
+	settingsOutput = iota
+	settingsDownload
+	settingsAccount
+	settingsAgy
+	settingsRules
+	settingsAdvanced
+	settingsUpdate
+)
 
 func (a *App) settingsPage(c *ui.Context) {
+	a.persistAgySettings()
+	if a.proxyURL != a.proxySaved {
+		a.proxySaved = a.proxyURL
+		a.persistProxy()
+	}
 	ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).Children(func() {
-		ui.Column(c).MaxWidth(720).Gap(12).Padding(4, 0, 20, 0).Children(func() {
-			ui.Text(c, "设置").FontSize(22).Bold()
-			ui.Text(c, "生图和洗图只负责输入和开始。输出、并发和生成规则都在这里。").FontSize(13).TextColor(c.Theme().TextMuted)
-			a.settingsCard(c, "输出", "生图和洗图按日期放进各自的文件夹。", func() { a.outputSettings(c) })
-			a.settingsCard(c, "账号与并发", "用哪些平台、同时跑几个账号、每天的上限。", func() { a.accountSettings(c) })
-			a.settingsCard(c, "Antigravity", "agy 路径、账号目录、模型和单任务超时。一次只跑一个账号。", func() { a.agySettings(c) })
-			a.settingsCard(c, "生成规则", "发送节奏、审核改写、等待和去水印。", func() { a.ruleSettings(c) })
-			a.settingsCard(c, "验证码 / 高级", "遇到验证时怎么处理，以及浏览器走的代理。", func() {
-				a.captchaFields(c)
-				ui.Text(c, "网络").Bold().Margin(8, 0, 0, 0)
-				ui.Text(c, "浏览器和内置浏览器下载走同一条代理。").FontSize(12).TextColor(c.Theme().TextMuted)
-				a.proxyFields(c)
+		// Scroll 是盒子，Justify 不生效；用撑满的行把限宽的内容列居中。
+		ui.Row(c).FillWidth().Justify(ui.Center).Children(func() {
+			ui.Column(c).FillWidth().MaxWidth(720).Gap(12).Padding(4, 0, 20, 0).Children(func() {
+				ui.Text(c, "设置").FontSize(22).Bold()
+				ui.Text(c, "生图和洗图只负责输入和开始。输出、并发和生成规则都在这里。").FontSize(13).TextColor(c.Theme().TextMuted)
+				ui.Tabs(c.Key("settings-tabs"), &a.settingsTab, "输出", "下载", "账号与并发", "Antigravity", "生成规则", "验证码 / 高级", "更新").FillWidth().Wrap()
+				switch a.settingsTab {
+				case settingsOutput:
+					a.settingsCard(c, "输出", "生图和洗图按日期放进各自的文件夹。", func() { a.outputSettings(c) })
+				case settingsDownload:
+					a.settingsCard(c, "下载", "下载并发、重试、限速和网页图片筛选。", func() { a.downloadSettings(c) })
+				case settingsAccount:
+					a.settingsCard(c, "账号与并发", "用哪些平台、同时跑几个账号、每天的上限。", func() { a.accountSettings(c) })
+				case settingsAgy:
+					a.settingsCard(c, "Antigravity", "agy 路径、账号目录、模型和单任务超时。一次只跑一个账号。", func() { a.agySettings(c) })
+				case settingsRules:
+					a.settingsCard(c, "生成规则", "发送节奏、审核改写、等待和去水印。", func() { a.ruleSettings(c) })
+				case settingsAdvanced:
+					a.settingsCard(c, "验证码 / 高级", "遇到验证时怎么处理，以及浏览器走的代理。", func() {
+						a.captchaFields(c)
+						ui.Text(c, "网络").Bold().Margin(8, 0, 0, 0)
+						ui.Text(c, "Camoufox 安装使用此代理；账号可在浏览器页设置独立代理。").FontSize(12).TextColor(c.Theme().TextMuted)
+						a.proxyFields(c)
+					})
+				case settingsUpdate:
+					a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
+				}
 			})
-			a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
 		})
 	})
 }
@@ -133,10 +128,6 @@ func captchaLabels() []string {
 }
 
 func (a *App) proxyFields(c *ui.Context) {
-	if a.proxyURL != a.proxySaved {
-		a.proxySaved = a.proxyURL
-		a.persistProxy()
-	}
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		a.proxyModeButton(c, "跟随系统", false)
 		a.proxyModeButton(c, "自定义代理", true)
@@ -232,6 +223,45 @@ func (a *App) outputPathLine(c *ui.Context, line, dir string) {
 	}
 }
 
+// downloadSettings 是结果图直接下载的通道。浏览器页面里 fetch 拿不到时才会走它。
+func (a *App) downloadSettings(c *ui.Context) {
+	ui.Form(c, func() {
+		ui.Field(c, "每个站点同时下载", func() {
+			ui.NumberInput(c, &a.downloadConc, 1, 8, 1).Disabled(a.running)
+		})
+		ui.Text(c, "同一个站点同时下几张结果图。调大更快，也更容易被限流。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Field(c, "失败重试", func() {
+			ui.NumberInput(c, &a.downloadRetries, 0, 10, 1).Disabled(a.running)
+		})
+		ui.Text(c, "网络中断或服务器 5xx 时自动重试，服务器给了等待时间就按它的来。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Field(c, "限速 (KB/s)", func() {
+			ui.NumberInput(c, &a.downloadRateKB, 0, 102400, 64).Disabled(a.running)
+		})
+		ui.Text(c, "0 表示不限制。只在本机直接下载时生效，页面内取回的图不受影响。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "网页图片筛选").Bold().Margin(8, 0, 0, 0)
+		ui.Text(c, "只作用于下载页的新任务；0 表示不限。").FontSize(12).TextColor(c.Theme().TextMuted)
+		for _, row := range []struct {
+			label, minLabel, maxLabel string
+			min, max                  *float64
+		}{
+			{"文件大小 (KB)", "最小文件大小", "最大文件大小", &a.dlMinKB, &a.dlMaxKB},
+			{"图片宽度 (px)", "最小图片宽度", "最大图片宽度", &a.dlMinWidth, &a.dlMaxWidth},
+			{"图片高度 (px)", "最小图片高度", "最大图片高度", &a.dlMinHeight, &a.dlMaxHeight},
+		} {
+			ui.Field(c, row.label, func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.NumberInput(c, row.min, 0, 10000000, 1).Label(row.minLabel)
+					ui.Text(c, "至").TextColor(c.Theme().TextMuted)
+					ui.NumberInput(c, row.max, 0, 10000000, 1).Label(row.maxLabel)
+				})
+			})
+		}
+		if err := a.downloadImageFilter().Validate(); err != nil {
+			ui.Text(c, err.Error()).FontSize(12).TextColor(c.Theme().Danger)
+		}
+	}).FillWidth().Gap(8)
+}
+
 func (a *App) accountSettings(c *ui.Context) {
 	tok := a.look
 	ui.Form(c, func() {
@@ -274,7 +304,7 @@ func (a *App) ruleSettings(c *ui.Context) {
 		})
 		ui.Checkbox(c, &a.useSuffix, "附加提示词后缀")
 		ui.Checkbox(c, &a.removeWatermark, "去水印（实验）").Disabled(a.running)
-		ui.Text(c, "已适配豆包/千问方图。另存修复 PNG，保留原图；仅匹配已支持水印，复杂背景可能有痕迹。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "豆包自动去水印后保存；勾选后千问方图另存修复 PNG。未匹配时保留原图，复杂背景可能有痕迹。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "发送策略", func() {
 			motionSelect(c, &a.sendStrategy, []string{"顺序循环", "随机循环"}).Disabled(a.running)
 		})
@@ -438,6 +468,7 @@ func (a *App) accountSnaps() []AccountSnap {
 			Platform:  row.Platform,
 			LoggedIn:  row.IsLoggedIn,
 			Extension: row.ExtAccount != "",
+			Disabled:  row.Disabled,
 			Health:    row.Health,
 			CoolUntil: row.CoolUntil,
 		})
@@ -495,10 +526,13 @@ func (a *App) removeSourceAt(i int) {
 }
 
 func (a *App) canStart() bool {
-	return a.workbenchPlan().Action == StartGenerate
+	return !a.renameUpdateActive() && len(a.browserPending) == 0 && a.workbenchPlan().Action == StartGenerate
 }
 
 func (a *App) startTasks() {
+	if a.renameUpdateActive() || len(a.browserPending) > 0 {
+		return
+	}
 	plan := a.workbenchPlan()
 	switch plan.Action {
 	case StartWizard:
@@ -540,8 +574,24 @@ func (a *App) retryTasks(items []tasks.Task) {
 }
 
 func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task) {
-	if a.engine == nil || a.running {
+	if a.engine == nil || a.running || a.renameUpdateActive() || len(a.browserPending) > 0 {
 		return
+	}
+	if !a.extensionTasks() {
+		for _, platform := range platforms {
+			if platform != "豆包" && platform != "千问" {
+				continue
+			}
+			if _, ready := browser.InstalledCamoufox(browser.ConfigDir()); !ready {
+				a.refreshDetected()
+				if !a.camoufoxBusy && browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH) {
+					a.camoufoxStatus = "请先安装 Camoufox，再返回任务页重试"
+				}
+				a.tab = pageBrowser
+				return
+			}
+			break
+		}
 	}
 	dir, err := EnsureOutputDir(DefaultOutputDir(a.outputPath, mustWd()))
 	if err != nil {
@@ -613,6 +663,16 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		a.syncUI(func() {
 			a.running = false
 			a.useRunView = false
+			if a.browserDrawer != nil && a.manager != nil && !a.manager.IsRunning(a.browserDrawer.row.ID) {
+				a.closeBrowserDrawer()
+			}
+			if a.manager != nil {
+				for i := range a.browserRows {
+					if a.browserRows[i].ExtAccount == "" {
+						a.browserRows[i].IsRunning = a.manager.IsRunning(a.browserRows[i].ID)
+					}
+				}
+			}
 			a.onPage(page, func() {
 				if view := a.engine.View(); view != nil {
 					a.queue = view.Snapshot()

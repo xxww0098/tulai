@@ -15,13 +15,11 @@ import (
 
 func saveCaptchaHooks(t *testing.T) {
 	t.Helper()
-	visible, manual, show, hide, alert, limit := captchaVisible, captchaManual, captchaShow, captchaHide, captchaAlert, humanVerifyLimit
+	visible, manual, alert, limit := captchaVisible, captchaManual, captchaAlert, humanVerifyLimit
 	t.Cleanup(func() {
-		captchaVisible, captchaManual, captchaShow, captchaHide, captchaAlert, humanVerifyLimit = visible, manual, show, hide, alert, limit
+		captchaVisible, captchaManual, captchaAlert, humanVerifyLimit = visible, manual, alert, limit
 	})
 	captchaManual = func(*cdp.Session) {}
-	captchaShow = func(*cdp.Session) {}
-	captchaHide = func(*cdp.Session) {}
 	captchaAlert = func(string, string) {}
 }
 
@@ -34,9 +32,7 @@ func TestHumanWaitPausesImageBudgetAndContinues(t *testing.T) {
 		}
 		return time.Since(start) < 1500*time.Millisecond, nil
 	}
-	shows, hides, alerts := 0, 0, 0
-	captchaShow = func(*cdp.Session) { shows++ }
-	captchaHide = func(*cdp.Session) { hides++ }
+	alerts := 0
 	captchaAlert = func(title, body string) {
 		alerts++
 		if title != "需要人工验证" || !strings.Contains(body, "千问2") {
@@ -62,8 +58,8 @@ func TestHumanWaitPausesImageBudgetAndContinues(t *testing.T) {
 	if time.Since(start) < time.Second {
 		t.Fatal("测试没有真正停住等人")
 	}
-	if strat.waits != 2 || strat.sends != 0 || shows != 1 || hides != 1 || alerts != 1 || !task.submitted {
-		t.Fatalf("waits=%d sends=%d show=%d hide=%d alert=%d submitted=%v", strat.waits, strat.sends, shows, hides, alerts, task.submitted)
+	if strat.waits != 2 || strat.sends != 0 || alerts != 1 || !task.submitted {
+		t.Fatalf("waits=%d sends=%d alert=%d submitted=%v", strat.waits, strat.sends, alerts, task.submitted)
 	}
 }
 
@@ -73,7 +69,7 @@ func TestCaptchaBeforeSendResendsAfterVerify(t *testing.T) {
 	captchaVisible = func(*cdp.Session) (bool, error) {
 		return step == 1 && !opened, nil
 	}
-	captchaShow = func(*cdp.Session) { opened = true }
+	captchaAlert = func(string, string) { opened = true }
 	strat := &flowStrategy{}
 	strat.send = func() error {
 		step++
@@ -93,18 +89,19 @@ func TestHumanWaitSurvivesImageDeadlineAndThenRequeues(t *testing.T) {
 	saveCaptchaHooks(t)
 	humanVerifyLimit = 80 * time.Millisecond
 	captchaVisible = func(*cdp.Session) (bool, error) { return true, nil }
-	shows, hides, alerts := 0, 0, 0
+	alerts := 0
 	e := NewEngine(nil, nil, nil, "")
 	e.view = NewQueueView([]Task{{Index: 2, Platform: "豆包", BrowserID: 7, Status: StatusRunning}})
 	var during Status
-	captchaShow = func(*cdp.Session) {
-		shows++
+	captchaAlert = func(string, string) {
+		alerts++
+		if !e.AccountAwaitingUser(7) {
+			t.Error("verification must allow manual input while the task is waiting")
+		}
 		if e.View() != nil && len(e.View().Snapshot()) > 0 {
 			during = e.View().Snapshot()[0].Status
 		}
 	}
-	captchaHide = func(*cdp.Session) { hides++ }
-	captchaAlert = func(string, string) { alerts++ }
 	logFrom := len(logging.Log.Entries())
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
 	defer cancel()
@@ -116,12 +113,12 @@ func TestHumanWaitSurvivesImageDeadlineAndThenRequeues(t *testing.T) {
 	if time.Since(start) < 50*time.Millisecond {
 		t.Fatalf("出图超时把人工等待掐断了: %s", time.Since(start))
 	}
-	if shows != 1 || hides != 0 || alerts != 1 || during != StatusAwaitUser {
-		t.Fatalf("show=%d hide=%d alert=%d during=%s", shows, hides, alerts, during)
+	if alerts != 1 || during != StatusAwaitUser || e.AccountAwaitingUser(7) {
+		t.Fatalf("alert=%d during=%s still awaiting=%v", alerts, during, e.AccountAwaitingUser(7))
 	}
 	notes := 0
 	for _, entry := range logging.Log.Entries()[logFrom:] {
-		if strings.Contains(entry.Text, "需要人工验证，请在弹出的浏览器窗口里完成") {
+		if strings.Contains(entry.Text, "需要人工验证，请打开账号的查看浏览器并接管操作") {
 			notes++
 		}
 	}
@@ -192,16 +189,54 @@ func TestCaptchaPausesOuterBudget(t *testing.T) {
 	}
 }
 
+func TestCaptchaWaitsForManualTakeoverToBeReleased(t *testing.T) {
+	saveCaptchaHooks(t)
+	humanVerifyLimit = 3 * time.Second
+	calls := 0
+	captchaVisible = func(*cdp.Session) (bool, error) {
+		calls++
+		return calls == 1, nil
+	}
+	e := NewEngine(nil, nil, nil, "")
+	entered := make(chan struct{})
+	captchaAlert = func(string, string) {
+		e.SetAccountManual(7, true)
+		close(entered)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- e.holdForHuman(context.Background(), nil, &Task{Index: 1, Platform: "豆包", BrowserID: 7})
+	}()
+	<-entered
+	if !e.AccountAwaitingUser(7) {
+		t.Fatal("account must allow manual input during verification")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("task resumed while manual takeover was active: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	e.SetAccountManual(7, false)
+	select {
+	case err := <-done:
+		if err != nil || e.AccountAwaitingUser(7) {
+			t.Fatalf("task did not resume after release: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("task did not resume after release")
+	}
+}
+
 func TestHumanWaitStopsWhenUserStops(t *testing.T) {
 	saveCaptchaHooks(t)
 	captchaVisible = func(*cdp.Session) (bool, error) { return true, nil }
-	hides := 0
-	captchaHide = func(*cdp.Session) { hides++ }
+	alerts := 0
+	captchaAlert = func(string, string) { alerts++ }
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := (&Engine{}).holdForHuman(ctx, nil, &Task{Index: 1, Platform: "豆包"})
-	if !errors.Is(err, context.Canceled) || hides != 0 {
-		t.Fatalf("err=%v hides=%d", err, hides)
+	if !errors.Is(err, context.Canceled) || alerts != 0 {
+		t.Fatalf("err=%v alerts=%d", err, alerts)
 	}
 }
 

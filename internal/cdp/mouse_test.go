@@ -1,26 +1,16 @@
 package cdp
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
-
-	"github.com/chromedp/chromedp"
-
-	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestTrustedPointerClickUpload(t *testing.T) {
 	if testing.Short() {
 		t.Skip("隔离可信 pointerdown E2E")
-	}
-	chrome, err := browser.FindChromePath()
-	if err != nil {
-		t.Skip("无本地 Chrome")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<!doctype html><html><body>
@@ -37,16 +27,7 @@ document.querySelector('#active').addEventListener('change',()=>window.changes++
 </script></body></html>`))
 	}))
 	defer server.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	alloc, stop := chromedp.NewExecAllocator(ctx, append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chrome))...)
-	defer stop()
-	client := &Client{alloc: alloc}
-	s, err := client.NewSession(server.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
+	s := newFixtureSession(t, server.URL)
 	if _, err := s.Evaluate(`document.querySelector('#open').click()`); err != nil || s.EvaluateBool(`!!document.querySelector('#menu-item')`) {
 		t.Fatal("fixture must require a trusted pointerdown")
 	}

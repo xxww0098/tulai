@@ -11,6 +11,26 @@ globalThis.TULAIPage = (function () {
   const USER_Q = '[data-message-author-role="user"],[data-message-role="user"],[data-role="user"],[data-author="user"],[data-testid="send_message"],[data-testid="message_text_user"]'
   const ASSISTANT_Q = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-author="assistant"],[data-testid="receive_message"]'
   const CAPTCHA_TEXT = /人机验证|安全验证|滑动验证|滑块验证|请完成.{0,30}验证|请(?:输入|填写)(?:下方|图中|图片|图形)?验证码|完成下方验证|(?:complete|solve|enter).{0,20}\bcaptcha\b|verify (?:that )?you are human|human verification|security verification/i
+  const rawURLs = new Map()
+
+  function rawImageKey(raw) {
+    try {
+      const url = new URL(raw)
+      if (url.protocol !== 'https:' || !/(^|\.)byteimg\.com$/i.test(url.hostname)) return ''
+      return url.pathname.split('~tplv-')[0]
+    } catch (e) { return '' }
+  }
+
+  if (typeof globalThis.addEventListener === 'function') globalThis.addEventListener('message', function (event) {
+    if (event.source !== globalThis || !event.data || event.data.type !== 'TULAI_DOUBAO_RAW_IMAGES' || !Array.isArray(event.data.pairs)) return
+    event.data.pairs.slice(0, 2048).forEach(function (item) {
+      const key = rawImageKey(item && item.source)
+      if (key && rawImageKey(item.raw)) {
+        if (rawURLs.size >= 2048 && !rawURLs.has(key)) rawURLs.delete(rawURLs.keys().next().value)
+        rawURLs.set(key, item.raw)
+      }
+    })
+  })
 
   function hostOf(doc) {
     if (doc && doc.hostname) return String(doc.hostname)
@@ -522,6 +542,7 @@ globalThis.TULAIPage = (function () {
   }
 
   function mark(doc, prompt) {
+    rawURLs.clear()
     const q = queries(doc)
     const comp = composer(doc)
     const entry = uploadEntry(doc, comp)
@@ -596,7 +617,7 @@ globalThis.TULAIPage = (function () {
     best.forEach(function (item) {
       if (seen.has(item.url)) return
       seen.add(item.url)
-      images.push({ url: item.url, img: item.img })
+      images.push({ url: item.url, rawUrl: rawURLs.get(rawImageKey(item.url)) || '', img: item.img })
     })
     return images
   }

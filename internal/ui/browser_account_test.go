@@ -27,7 +27,7 @@ func TestRenamePersistsAndShowsOnTheStage(t *testing.T) {
 	a := &App{
 		store: st, manager: browser.NewManager(),
 		tab: pageBrowser, browserChoice: "Chrome", browserBackend: "Chrome",
-		detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
+		detectedNote: "已检测到 Chrome", camoufoxStatus: "内置浏览器未下载",
 		stageTab: 1, stagePicked: true,
 	}
 	a.refreshBrowsers()
@@ -90,7 +90,7 @@ func TestAddAccountFollowsStageAndNumbersPerPlatform(t *testing.T) {
 		store: st, manager: browser.NewManager(),
 		tab: pageBrowser, stageTab: 1, stagePicked: true,
 		browserChoice: "Chrome", browserBackend: "Chrome",
-		detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
+		detectedNote: "已检测到 Chrome", camoufoxStatus: "内置浏览器未下载",
 		loginLaunch: func(b store.Browser) error {
 			launched = b
 			return nil
@@ -125,42 +125,55 @@ func TestAddAccountFollowsStageAndNumbersPerPlatform(t *testing.T) {
 	}
 }
 
-func TestFollowLoginClosesBrowserAfterWebpageLogin(t *testing.T) {
+func TestFollowLoginKeepsBrowsersOpenAfterWebpageLogin(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	row, err := st.AddBrowser("豆包", "豆包1", "/data/豆包1")
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"豆包1", "豆包2"} {
+		row, err := st.AddBrowser("豆包", name, filepath.Join(t.TempDir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.SetRunning(row.ID, true)
 	}
-	st.SetRunning(row.ID, true)
-	done := make(chan struct{})
+	rows := st.Browsers()
+	st.ConfirmLogin(rows[0].ID)
+	rows = st.Browsers()
+	closeEvent := make(chan struct{}, len(rows))
 	a := &App{
 		store: st, manager: browser.NewManager(), loginPoll: time.Hour,
 		tab: pageBrowser, browserChoice: "Chrome", browserBackend: "Chrome",
-		detectedNote: "已检测到 Chrome", cftStatus: "内置浏览器未下载",
-		afterClose: func() { close(done) },
+		detectedNote: "已检测到 Chrome", camoufoxStatus: "内置浏览器未下载",
+		afterClose: func() { closeEvent <- struct{}{} },
 		wizardProbe: func(context.Context, string) (string, error) {
 			return wizard.ProbeIn, nil
 		},
 	}
-	a.followLogin(row, "http://127.0.0.1:9333")
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("login window stayed open")
+	for _, row := range rows {
+		a.watchLogin(row, loginEndpoint(row))
+		waitShot(t, a, row.ID, func(shot loginShot) bool { return shot.state == wizard.ProbeIn })
+		select {
+		case <-closeEvent:
+			t.Fatal("login detection closed a manually opened browser")
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	a.mu.Lock()
 	closed := append([]int64(nil), a.loginClosed...)
 	a.mu.Unlock()
-	if len(closed) != 1 || closed[0] != row.ID {
+	if len(closed) != 0 {
 		t.Fatalf("closed = %v", closed)
 	}
 	got := st.Browsers()
-	if len(got) != 1 || !got[0].IsLoggedIn || got[0].IsRunning || got[0].Name != "豆包1" {
+	if len(got) != 2 {
 		t.Fatalf("after login: %+v", got)
+	}
+	for _, row := range got {
+		if !row.IsLoggedIn || !row.IsRunning {
+			t.Fatalf("after login: %+v", row)
+		}
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
 	if !tt.HasText("已登录") || tt.HasText("二维码") || tt.HasText("用手机扫码") {

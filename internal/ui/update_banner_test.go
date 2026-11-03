@@ -71,8 +71,37 @@ func TestUpdateDefersWhileTasksRun(t *testing.T) {
 	}
 }
 
+func TestUpdateWaitsForOtherWork(t *testing.T) {
+	for name, start := range map[string]func(*App){
+		"rename":   func(a *App) { a.fileRename.busy = true },
+		"editor":   func(a *App) { a.edit.running = true },
+		"dedup":    func(a *App) { a.dedup.busy = true },
+		"browser":  func(a *App) { a.camoufoxBusy = true },
+		"download": func(a *App) { a.downloadsRunning = 1 },
+		"queued":   func(a *App) { a.dlTasks = []*downloadTask{{Phase: dlQueued}} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := &App{updateNotice: "0.2.0"}
+			start(a)
+			a.applyUpdate()
+			if !a.updatePending || !a.updateDeferred {
+				t.Fatal("update did not wait for active work")
+			}
+		})
+	}
+}
+
+func TestUpdateBlocksNewDownloads(t *testing.T) {
+	task := &downloadTask{Phase: dlQueued}
+	a := &App{updateBusy: true, updatePending: true, dlTasks: []*downloadTask{task}}
+	a.pumpDownloads()
+	if task.Phase != dlQueued || a.downloadsRunning != 0 {
+		t.Fatal("a download started while the update was installing")
+	}
+}
+
 func TestSettingsShowVersionAndCheck(t *testing.T) {
-	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), tab: pageSettings, autoCheck: true}
+	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), tab: pageSettings, settingsTab: settingsUpdate, autoCheck: true}
 	tt := ui.NewTester(a.view, 1280, 900)
 	scrollIntoView(t, tt, "当前版本 "+currentVersion(), 1280, 900)
 	for _, label := range []string{"当前版本 " + currentVersion(), "自动检查更新", "检查更新"} {

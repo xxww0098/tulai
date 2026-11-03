@@ -39,9 +39,14 @@ jobs:
         run: go test ./... -short -race
       - name: Vet
         run: go tool mygo vet
+      - name: Install fingerprint test dependencies
+        run: npm ci --prefix internal/camoufox/driver --ignore-scripts --omit=dev --no-audit --no-fund
+      - name: Fingerprint policy tests
+        run: node --test internal/camoufox/driver/*.test.mjs
       - name: Extension tests
         run: |
           node extension/content_test.js
+          node extension/network_test.js
           node extension/qianwen/page_test.js
           node extension/doubao/page_test.js
           node extension/bridge_test.js
@@ -67,37 +72,24 @@ jobs:
             dist-extension/*.zip
             dist-extension/SHA256SUMS.txt
 
-  edge:
+  camoufox:
     needs: guard
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install Microsoft Edge
-        run: |
-          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /usr/share/keyrings/microsoft-edge.gpg >/dev/null
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-edge.gpg] https://packages.microsoft.com/repos/edge stable main" | sudo tee /etc/apt/sources.list.d/microsoft-edge.list
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y microsoft-edge-stable xvfb
-          microsoft-edge-stable --version
-      - name: Edge login page is not about:blank
-        env:
-          TULAI_EDGE_E2E: "1"
-          TULAI_EDGE_EVIDENCE: ${{ github.workspace }}/edge-evidence
-        run: |
-          xvfb-run -a --server-args="-screen 0 1280x800x24" go test -count=1 -timeout 18m -run 'TestEdgeLoginLaunchLeavesVisiblePage|TestEdgeExtensionPairs|TestCfTExtensionPairs|TestCfTMultiAccount$|TestEdgeLoadUnpacked$' ./internal/browser/
-          xvfb-run -a --server-args="-screen 0 1280x800x24" go test -count=1 -timeout 12m -run 'TestEdgeMultiAccount$' ./internal/ui/
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: edge-login-evidence
-          if-no-files-found: ignore
-          retention-days: 14
-          path: edge-evidence/
+      - name: Install and smoke-test Camoufox
+        run: go run ./cmd/tulai-camoufox-smoke
+      - name: Account isolation, persistence and page operations
+        run: go test -count=1 -timeout 12m ./internal/browser ./internal/cdp ./internal/captcha ./internal/strategy
 
   package:
     needs: guard
@@ -129,8 +121,16 @@ jobs:
       - name: Package
         env:
           CGO_ENABLED: "0"
-        run: go tool mygo build -platform "${{ matrix.platform }}"
+          MYGO_UPDATER_PRIVATE_KEY: ${{ github.ref_type == 'tag' && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag && -z "$MYGO_UPDATER_PRIVATE_KEY" ]]; then
+            echo "MYGO_UPDATER_PRIVATE_KEY is required for a release" >&2
+            exit 1
+          fi
+          go tool mygo build -platform "${{ matrix.platform }}"
       - name: Collect distributable files
+        env:
+          REQUIRE_SIGNED_UPDATES: ${{ github.ref_type == 'tag' && '1' || '0' }}
         run: scripts/collect-dist.sh "${{ matrix.name }}"
       - uses: actions/upload-artifact@v7
         with:
@@ -141,7 +141,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [test, package, edge]
+    needs: [test, package, camoufox]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -196,6 +196,14 @@ jobs:
               "tulai-${version}-linux-arm64.tar.gz"
               "tulai_${version}_amd64.deb"
               "tulai_${version}_arm64.deb"
+              "tulai-${version}-darwin-universal.tar.gz"
+              "tulai-${version}-windows-amd64.tar.gz"
+              "tulai-${version}-windows-arm64.tar.gz"
+              "update-darwin-universal.json"
+              "update-windows-amd64.json"
+              "update-windows-arm64.json"
+              "update-linux-amd64.json"
+              "update-linux-arm64.json"
             )
             shopt -s nullglob
             extzips=(tulai-extension-*.zip)
@@ -229,8 +237,8 @@ jobs:
             echo
             echo "- macOS 磁盘映像只做了 ad-hoc 签名，没有公证。别的 Mac 上 Gatekeeper 会拦截。在访达里右键打开，或对应用执行 xattr -dr com.apple.quarantine。仓库里没有 Apple Developer ID。"
             echo "- Windows 安装器和 exe 没有代码签名，SmartScreen 可能报警。"
-            echo "- Linux 的 deb 和 tar.gz 没有签名。把 install.sh 和对应架构的 .tar.gz 放在同一目录再执行，会安装到当前用户。"
-            echo "- 已安装的桌面端启动后会自动检查（设置里可关闭），也可以用菜单「帮助 → 检查更新…」、标题栏「检查更新」或 \`tulai update\`。它请求 https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest（公开仓库，不带 token），GitHub 连不上时再试镜像前缀，按系统下载安装包并用 SHA256SUMS 校验。任务进行中不会打断。这些二进制没有公证，也没有代码签名。页面桥扩展不随桌面端更新。"
+            echo "- Linux 的 deb 没有系统包签名。执行 install.sh 会从 GitHub 下载并校验 MyGo 签名更新包，安装到当前用户。"
+            echo "- 桌面端启动后自动检查（设置里可关闭），也可用「帮助 → 检查更新…」或 \`tulai update\`。新版安装包使用 MyGo 验证更新签名，旧版仍使用 SHA256SUMS。任务结束后才安装。macOS 没有公证，Windows 没有代码签名。页面桥扩展单独更新。"
             echo
             echo "说明见 docs/RELEASING.md。"
           } >"$notes"
@@ -241,7 +249,10 @@ jobs:
           files=()
           while IFS= read -r -d '' file; do
             files+=("$file")
-          done < <(find release -maxdepth 1 -type f -print0)
+          done < <(find release -maxdepth 1 -type f ! -name 'update-*.json' -print0)
+          while IFS= read -r -d '' file; do
+            files+=("$file")
+          done < <(find release -maxdepth 1 -type f -name 'update-*.json' -print0)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${args[@]}"

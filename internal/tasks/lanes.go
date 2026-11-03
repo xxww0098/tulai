@@ -13,15 +13,16 @@ import (
 type LaneState string
 
 const (
-	LaneIdle    LaneState = "空闲"
-	LaneRunning LaneState = "出图中"
-	LaneGap     LaneState = "等待间隔"
-	LaneCooling LaneState = "冷却中"
-	LaneFull    LaneState = "今日已满"
-	LaneQuota   LaneState = "额度不足"
-	LaneLogin   LaneState = "需要登录"
-	LaneCaptcha LaneState = "验证码"
-	LaneOffline LaneState = "离线"
+	LaneIdle     LaneState = "空闲"
+	LaneRunning  LaneState = "出图中"
+	LaneGap      LaneState = "等待间隔"
+	LaneCooling  LaneState = "冷却中"
+	LaneFull     LaneState = "今日已满"
+	LaneQuota    LaneState = "额度不足"
+	LaneLogin    LaneState = "需要登录"
+	LaneCaptcha  LaneState = "验证码"
+	LaneOffline  LaneState = "离线"
+	LaneDisabled LaneState = "已禁用"
 )
 
 // LaneJob 是这个账号正在出的那一单。
@@ -87,6 +88,8 @@ func laneBlockReason(state LaneState) string {
 		return "需要验证"
 	case LaneOffline:
 		return "离线"
+	case LaneDisabled:
+		return "已禁用"
 	default:
 		return ""
 	}
@@ -94,19 +97,22 @@ func laneBlockReason(state LaneState) string {
 
 // AccountLane 是界面上一张账号卡。
 type AccountLane struct {
-	ID          int64
-	Platform    string
-	Name        string
-	Extension   bool
-	State       LaneState
-	NextReadyAt time.Time
-	Gap         time.Duration
-	UsedToday   int
-	Cap         int
-	Action      string
-	Job         *LaneJob
-	Email       string
-	CoolUntil   int64
+	ID           int64
+	Platform     string
+	Name         string
+	Extension    bool
+	Disabled     bool
+	State        LaneState
+	NextReadyAt  time.Time
+	Gap          time.Duration
+	UsedToday    int
+	SuccessToday int
+	FailedToday  int
+	Cap          int
+	Action       string
+	Job          *LaneJob
+	Email        string
+	CoolUntil    int64
 }
 
 // Board 是这一帧全部账号。
@@ -117,22 +123,25 @@ type Board struct {
 
 // LaneFact 是映射成车道之前的原始事实。测试直接构造它。
 type LaneFact struct {
-	ID        int64
-	Platform  string
-	Name      string
-	Extension bool
-	LoggedIn  bool
-	Health    string
-	CoolUntil int64
-	LastError string
-	UsedToday int
-	Cap       int
-	Busy      bool
-	Offline   bool
-	NextReady time.Time
-	Gap       time.Duration
-	Job       *LaneJob
-	Awaiting  bool
+	ID           int64
+	Platform     string
+	Name         string
+	Extension    bool
+	Disabled     bool
+	LoggedIn     bool
+	Health       string
+	CoolUntil    int64
+	LastError    string
+	UsedToday    int
+	SuccessToday int
+	FailedToday  int
+	Cap          int
+	Busy         bool
+	Offline      bool
+	NextReady    time.Time
+	Gap          time.Duration
+	Job          *LaneJob
+	Awaiting     bool
 }
 
 type laneClock struct {
@@ -231,8 +240,9 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 		name = f.Platform
 	}
 	ln := AccountLane{
-		ID: f.ID, Platform: f.Platform, Name: name, Extension: f.Extension,
-		UsedToday: f.UsedToday, Cap: cap, NextReadyAt: f.NextReady, Gap: f.Gap,
+		ID: f.ID, Platform: f.Platform, Name: name, Extension: f.Extension, Disabled: f.Disabled,
+		UsedToday: f.UsedToday, SuccessToday: f.SuccessToday, FailedToday: f.FailedToday,
+		Cap: cap, NextReadyAt: f.NextReady, Gap: f.Gap,
 		CoolUntil: f.CoolUntil,
 	}
 	switch {
@@ -243,6 +253,8 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 	case f.Busy || f.Job != nil:
 		ln.State = LaneRunning
 		ln.Job = f.Job
+	case f.Disabled:
+		ln.State = LaneDisabled
 	case f.Extension && f.Offline:
 		ln.State = LaneOffline
 	case needsLogin(f, now):
@@ -332,10 +344,11 @@ func Assemble(rows []store.Browser, live LaneLive, cap int, now time.Time) Board
 	var board Board
 	for _, b := range rows {
 		slot := accountSlot(rows, b.ID)
+		success, failed := b.ResultsToday(now)
 		fact := LaneFact{
-			ID: b.ID, Platform: b.Platform, Name: b.Name, Extension: b.ExtAccount != "",
+			ID: b.ID, Platform: b.Platform, Name: b.Name, Extension: b.ExtAccount != "", Disabled: b.Disabled,
 			LoggedIn: b.IsLoggedIn, Health: b.Health, CoolUntil: b.CoolUntil, LastError: b.LastError,
-			UsedToday: b.UsedToday(now), Cap: cap, Offline: live.Offline[b.ID],
+			UsedToday: b.UsedToday(now), SuccessToday: success, FailedToday: failed, Cap: cap, Offline: live.Offline[b.ID],
 		}
 		if !fact.Offline && !b.Usable(now) && (strings.Contains(b.LastError, "未连接") || strings.Contains(b.LastError, "离线")) {
 			fact.Offline = true

@@ -97,7 +97,10 @@ func (a *App) resultsHead(c *ui.Context) {
 	tally := TallyTasks(items)
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, "出图进度").FontSize(tok.title).Bold()
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "出图进度").FontSize(tok.title).Bold().Shrink(0)
+				ui.Text(c, "当前服务商："+a.stagePlatform()).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine()
+			})
 			if len(items) > 0 {
 				ui.Text(c, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 			}

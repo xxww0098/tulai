@@ -10,17 +10,13 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/chromedp/chromedp"
-
-	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestUploadFilesChooser(t *testing.T) {
 	if testing.Short() {
 		t.Skip("隔离文件选择器 E2E")
 	}
-	for _, backend := range []string{"Chrome", "Ego"} {
+	for _, backend := range []string{"Camoufox", "Ego"} {
 		t.Run(backend, func(t *testing.T) {
 			if backend == "Ego" && os.Getenv("TULAI_EGO_E2E") != "1" {
 				t.Skip("需显式 TULAI_EGO_E2E=1；仅访问隔离 localhost")
@@ -63,18 +59,7 @@ func TestUploadFilesChooser(t *testing.T) {
 					}
 				}()
 			} else {
-				chrome, err := browser.FindChromePath()
-				if err != nil {
-					t.Skip("无本地 Chrome")
-				}
-				alloc, stop := chromedp.NewExecAllocator(ctx, append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chrome))...)
-				defer stop()
-				tab, closeTab := chromedp.NewContext(alloc)
-				defer closeTab()
-				if err := chromedp.Run(tab, chromedp.Navigate(server.URL)); err != nil {
-					t.Fatal(err)
-				}
-				s = &Session{ctx: tab}
+				s = newFixtureSession(t, server.URL)
 			}
 			file := filepath.Join(t.TempDir(), "测试 图 % !.png")
 			if err := os.WriteFile(file, []byte("local chooser fixture"), 0o600); err != nil {
@@ -89,7 +74,7 @@ func TestUploadFilesChooser(t *testing.T) {
 				}
 			} else {
 				shortCtx, stop := context.WithTimeout(s.ctx, 100*time.Millisecond)
-				short := &Session{ctx: shortCtx}
+				short := &Session{ctx: shortCtx, client: s.client, target: s.target}
 				err := short.UploadFiles(`void 0`, []string{file})
 				stop()
 				if err == nil {

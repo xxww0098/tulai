@@ -1,7 +1,6 @@
 package browser
 
 import (
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -9,7 +8,7 @@ import (
 )
 
 // proxyEnvKeys 是「跟随系统」时读取的变量，按这个顺序。
-// Chrome 在 Linux 上不读这些变量，所以要写进 --proxy-server。
+// 同一设置用于 Camoufox 安装与账号默认代理。
 var proxyEnvKeys = []string{
 	"HTTPS_PROXY", "https_proxy",
 	"ALL_PROXY", "all_proxy",
@@ -34,12 +33,12 @@ func savedProxy() string {
 	return proxyCustom
 }
 
-// CurrentProxyServer 是这一次启动浏览器或下载内置浏览器时用的代理。
+// CurrentProxyServer 是这一次启动浏览器或安装 Camoufox时用的代理。
 func CurrentProxyServer() string {
 	return ProxyServer(savedProxy(), os.Getenv)
 }
 
-// ProxyServer 把自定义代理或环境变量收成 Chrome --proxy-server 的值。
+// ProxyServer 把自定义代理或环境变量规范为 Camoufox 可用的代理地址。
 // custom 非空时只用它；写错了就返回空，不再改走环境变量。
 // custom 为空时依次看 HTTPS_PROXY、ALL_PROXY、HTTP_PROXY，以及对应的小写名字。
 func ProxyServer(custom string, env func(string) string) string {
@@ -108,13 +107,4 @@ func validPort(port string) bool {
 		n = n*10 + int(c-'0')
 	}
 	return n >= 1 && n <= 65535
-}
-
-// downloadProxy 让内置浏览器的下载走和 Chrome 相同的代理。
-func downloadProxy(*http.Request) (*url.URL, error) {
-	raw := CurrentProxyServer()
-	if raw == "" {
-		return nil, nil
-	}
-	return url.Parse(raw)
 }

@@ -1,0 +1,9 @@
+{
+  "name": "tulai-camoufox",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "camoufox": "0.5.9",
+    "playwright-core": "1.62.0"
+  }
+}

@@ -129,7 +129,27 @@ func runUpdateWith(args []string, run updateRun) int {
 		fmt.Fprintf(run.Stderr, "检查更新失败: %v\n", err)
 		return 1
 	}
-	if checkOnly || !newer {
+	if !newer {
+		return printRelease(run.Stdout, current, rel)
+	}
+	if update.MyGoInstall(run.GOOS, run.Executable) && !mygo.IsDev() {
+		signed, err := run.Client.CheckSigned(ctx, rel)
+		if err != nil {
+			fmt.Fprintf(run.Stderr, "检查签名更新失败: %v\n", err)
+			return 1
+		}
+		if checkOnly {
+			return printRelease(run.Stdout, current, rel)
+		}
+		fmt.Fprintf(run.Stdout, "正在安装签名更新 %s\n", signed.Version)
+		if err := signed.Install(ctx, nil); err != nil {
+			fmt.Fprintf(run.Stderr, "安装签名更新失败: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(run.Stdout, "更新已安装，重新打开应用后生效。")
+		return 0
+	}
+	if checkOnly {
 		return printRelease(run.Stdout, current, rel)
 	}
 	fmt.Fprintln(run.Stderr, update.UnsignedWarning)

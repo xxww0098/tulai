@@ -1,26 +1,16 @@
 package cdp
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
-
-	"github.com/chromedp/chromedp"
-
-	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestTrustedInputAndSingleUploadChange(t *testing.T) {
 	if testing.Short() {
 		t.Skip("跳过 Chrome 输入 E2E")
-	}
-	chrome, err := browser.FindChromePath()
-	if err != nil {
-		t.Skip("本机无 Chrome")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<!doctype html><html><body>
@@ -30,22 +20,14 @@ func TestTrustedInputAndSingleUploadChange(t *testing.T) {
 <div id="aria-disabled" contenteditable="true" aria-disabled="true">disabled</div><div id="aria-readonly" contenteditable="true" aria-readonly="true">readonly</div><div id="plain">plain</div><input id="checkbox" type="checkbox">
 <input id="upload" type="file"><button id="send" disabled>send</button>
 <script>
-window.inputEvents=[];window.changes=0;
+window.inputEvents=[];window.changes=0;window.uploadMarks=0;
+new MutationObserver(events=>window.uploadMarks+=events.length).observe(document.body,{subtree:true,attributes:true,attributeFilter:['data-tulai-upload']});
 document.addEventListener('input',event=>{window.inputEvents.push({id:event.target.id,trusted:event.isTrusted});if(event.target.id==='editor'&&event.isTrusted)document.querySelector('#send').disabled=false});
 document.querySelector('#upload').addEventListener('change',()=>window.changes++);
 </script></body></html>`))
 	}))
 	defer server.Close()
-	alloc, stop := chromedp.NewExecAllocator(context.Background(), append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chrome))...)
-	defer stop()
-	ctx, closeTab := chromedp.NewContext(alloc)
-	defer closeTab()
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	if err := chromedp.Run(ctx, chromedp.Navigate(server.URL)); err != nil {
-		t.Fatal(err)
-	}
-	s := &Session{ctx: ctx}
+	s := newFixtureSession(t, server.URL)
 	if _, err := s.Evaluate(`window.__tulaiBaseInstalled=true;window.__tulaiSeq=7;window.__keptPending=window.__tulaiPending={marker:'retained'};window.tulaiUnmarkFileInput=()=>{window.__oldUnmark=true}`); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +59,7 @@ document.querySelector('#upload').addEventListener('change',()=>window.changes++
 			Text    string
 			Trusted bool
 		}
-		out, err := s.Evaluate(`(()=>{const e=document.activeElement;return {text:e.value??e.innerText,trusted:window.inputEvents.at(-1)?.trusted}})()`)
+		out, err := s.Evaluate(`(()=>{const e=document.activeElement;return {text:e.value??(e.textContent?e.innerText:''),trusted:window.inputEvents.at(-1)?.trusted}})()`)
 		if err != nil || ParseJSValue(out, &state) != nil || state.Text != tc.text || !state.Trusted {
 			t.Fatalf("%s did not receive trusted full replacement: %s, %v", tc.selector, out, err)
 		}
@@ -99,6 +81,12 @@ document.querySelector('#upload').addEventListener('change',()=>window.changes++
 	}
 	if changes := s.EvaluateInt(`window.changes`); changes != 1 {
 		t.Fatalf("one upload generated %d change events, want 1", changes)
+	}
+	if marks := s.EvaluateInt(`window.uploadMarks`); marks != 0 {
+		t.Fatalf("upload exposed %d DOM markers", marks)
+	}
+	if err := s.SetUploadFilesNth(-1, []string{path}); err == nil {
+		t.Fatal("negative upload index must fail")
 	}
 	if s.EvaluateBool(`window.__oldUnmark===true`) {
 		t.Fatal("the stale upload helper survived base upgrade")

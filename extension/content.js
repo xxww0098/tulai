@@ -10,8 +10,16 @@ const sendState = new Map()
 const downloadCache = new Map()
 let pageMark = null
 let cancelRequested = false
+let networkTask = ''
+let networkFault = ''
+let networkAccepted = false
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'NETWORK_FAULT') {
+    if (msg.taskId && msg.taskId === networkTask && (msg.kind === 'quota' || msg.kind === 'rate')) networkFault = msg.kind
+    sendResponse({ ok: true })
+    return true
+  }
   if (msg && msg.type === 'LOGIN_STATE') {
     let loggedIn = false
     try {
@@ -44,6 +52,9 @@ async function handleCommand(env) {
     case TULAI.commands.setPrompt:
       return setPrompt(env, payload)
     case TULAI.commands.send:
+      networkTask = String(env.taskId || '')
+      networkFault = ''
+      networkAccepted = false
       return sendPrompt(env, payload)
     case TULAI.commands.waitResult:
       return waitResult(env, payload)
@@ -84,6 +95,14 @@ function moderationBlocked(env) {
 }
 
 function accountBlocked(env) {
+  const name = env.payload && env.payload.name
+  if (networkTask && env.taskId === networkTask && networkFault && (name === TULAI.commands.send || name === TULAI.commands.waitResult)) {
+    if (networkAccepted) {
+      return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, '平台响应提示账号受限，本次已发送，请检查网页结果')
+    }
+    const code = networkFault === 'rate' ? TULAI.errors.E_RATE_LIMIT : TULAI.errors.E_QUOTA
+    return TULAI.fail(env, code, networkFault === 'rate' ? '平台返回请求过于频繁' : '平台返回账号额度已用尽')
+  }
   if (!globalThis.TULAIQuota || !document || typeof document.querySelectorAll !== 'function') return null
   const found = TULAIQuota.accountBlock(document)
   if (!found) return null
@@ -265,13 +284,17 @@ async function sendPrompt(env, payload) {
   if (key && sendState.has(key)) {
     const prev = sendState.get(key)
     if (prev.promise && prev.phase === 'clicking') return prev.promise
-    if (prev.phase === 'ok') return TULAI.ack(env, { name: payload.name, ok: true, deduped: true })
+    if (prev.phase === 'ok') {
+      networkAccepted = true
+      return TULAI.ack(env, { name: payload.name, ok: true, deduped: true })
+    }
     if (prev.phase === 'captcha') {
       const again = Page.detectCaptcha(document)
       if (again.blocked) return captchaAck(env, again, captchaSendMessage(again))
       if (prev.clicked) {
         if (Page.sendAccepted(document, pageMark)) {
           prev.phase = 'ok'
+          networkAccepted = true
           return TULAI.ack(env, { name: payload.name, ok: true, deduped: true })
         }
         return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, '验证码已消失，但发送状态仍未确认，未再次点击')
@@ -391,6 +414,9 @@ async function confirmSend(env, payload, button, rec) {
     }
   }
   await delay(humanGap())
+  if (env.taskId) {
+    try { await chrome.runtime.sendMessage({ type: 'NETWORK_MARK', taskId: env.taskId }) } catch (err) {}
+  }
   if (!pressSend(target)) {
     rec.phase = 'uncertain'
     rec.clicked = false
@@ -416,7 +442,15 @@ async function confirmSend(env, payload, button, rec) {
     if (Page.sendAccepted(document, pageMark)) {
       rec.phase = 'ok'
       rec.promise = null
+      networkAccepted = true
       return TULAI.ack(env, { name: payload.name, ok: true })
+    }
+    if (networkFault && networkTask === env.taskId) {
+      const blocked = accountBlocked(env)
+      rec.phase = 'uncertain'
+      rec.promise = null
+      rec.message = blocked.payload.message
+      return blocked
     }
     await delay(300)
   }
@@ -471,7 +505,7 @@ async function waitResult(env, payload) {
           return TULAI.ack(env, {
             name: payload.name,
             ok: true,
-            images: images.map(function (item) { return { url: item.url } }),
+            images: images.map(function (item) { return { url: item.url, rawUrl: item.rawUrl || undefined } }),
           })
         }
       } else {
@@ -485,7 +519,7 @@ async function waitResult(env, payload) {
         return TULAI.ack(env, {
           name: payload.name,
           ok: true,
-          images: images.map(function (item) { return { url: item.url } }),
+          images: images.map(function (item) { return { url: item.url, rawUrl: item.rawUrl || undefined } }),
         })
       }
     } else {

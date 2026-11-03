@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/logging"
@@ -30,6 +29,7 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 			ui.Column(c).FillWidth().Gap(10).Padding(4, 0, 8, 0).Children(func() {
 				a.loginBanner(c)
 				a.workspaceBar(c)
+				a.platformPicker(c)
 				input()
 				a.runCard(c)
 				a.platformStage(c)
@@ -70,6 +70,11 @@ func (a *App) washInput(c *ui.Context) {
 // promptFocus 是生图的主输入：直接写、粘贴，或从 txt 载入。
 func (a *App) promptFocus(c *ui.Context) {
 	tok := a.look
+	_, winH := c.Size()
+	inputHeight := float32(168)
+	if winH < 760 {
+		inputHeight = 132
+	}
 	card := a.stepCard(c, "prompt-focus", stepCurrent)
 	if paths := card.DroppedFiles(); len(paths) > 0 {
 		a.ingestPromptFiles(paths)
@@ -78,7 +83,7 @@ func (a *App) promptFocus(c *ui.Context) {
 		n := len(prompts.TaskPrompts(a.promptPick, a.prompts))
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "提示词").FontSize(tok.title).Bold().Shrink(0)
-			hint := "每行一条，空行隔开的段落收成一条"
+			hint := "每行一条；导入段落会合并"
 			if a.promptPick != "" {
 				hint = "当前模板整段发送"
 			}
@@ -88,7 +93,7 @@ func (a *App) promptFocus(c *ui.Context) {
 					FontFeatures("tnum")
 			}
 		})
-		ui.TextArea(c, &a.prompts).Height(168).FillWidth().Label("提示词内容").
+		ui.TextArea(c, &a.prompts).Height(inputHeight).FillWidth().Label("提示词内容").
 			Placeholder("输入或粘贴。也可以把 txt 拖到这里").Disabled(a.running)
 		if a.promptPick != "" {
 			line := "模板「" + a.promptChoice + "」整段一起发送"
@@ -98,10 +103,10 @@ func (a *App) promptFocus(c *ui.Context) {
 			ui.Text(c, a.promptNote).FontSize(tok.caption).TextColor(tok.muted)
 		}
 		ui.Row(c).FillWidth().Gap(6).Justify(ui.End).Children(func() {
+			a.workspacePromptSelect(c)
 			if a.promptPick != "" {
 				a.quietButton(c, "按行发送").OnClick(func() { a.useLinePrompts() })
 			}
-			a.quietButton(c, "从文件载入").OnClick(func() { a.loadPromptFile() })
 		})
 	})
 }
@@ -206,11 +211,16 @@ func (a *App) quietButton(c *ui.Context, label string) ui.Element {
 func (a *App) runCard(c *ui.Context) {
 	tok := a.look
 	plan := a.workbenchPlan()
-	card := a.stepCard(c, "step-run", stepPending)
+	card := a.stepCard(c, "step-run", stepPending).Gap(4)
 	card.Children(func() {
-		if !a.running && (plan.Action == StartWizard || a.loggedOutCallout()) {
+		if !a.running && (plan.Action == StartWizard || a.loggedOutCallout() || a.noAccountCallout()) {
 			a.accountCallout(c)
 		}
+		target := "本次发送至：" + a.stagePlatform()
+		if a.running {
+			target = "当前查看：" + a.stagePlatform()
+		}
+		ui.Text(c, target).FontSize(tok.caption).Bold().TextColor(tok.accent).SingleLine().Tooltip(target)
 		board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Clip().Children(func() {
@@ -230,7 +240,7 @@ func (a *App) runCard(c *ui.Context) {
 func (a *App) outputHint(c *ui.Context, tok tokens) {
 	path := a.resultFolder()
 	line := "保存到 " + path
-	open := func() { a.tab = pageSettings }
+	open := func() { a.settingsTab, a.tab = settingsOutput, pageSettings }
 	row := ui.Row(c).Gap(4).AlignItems(ui.Center).MinWidth(0).Cursor(ui.CursorPointer)
 	if row.Clicked() {
 		open()
@@ -249,7 +259,6 @@ func (a *App) useLinePrompts() {
 	if a.running {
 		return
 	}
-	a.commitPromptEdits()
 	a.promptPick = ""
 	a.promptChoice = prompts.LabelCustom
 	a.freeformPrompts = a.prompts
@@ -258,7 +267,6 @@ func (a *App) useLinePrompts() {
 }
 
 func (a *App) loadPromptText(raw string) {
-	a.commitPromptEdits()
 	a.promptPick = ""
 	a.promptChoice = prompts.LabelCustom
 	a.prompts = prompts.ImportText(raw)
@@ -270,36 +278,6 @@ func (a *App) loadPromptText(raw string) {
 		a.promptNote = fmt.Sprintf("已载入 %d 条提示词", n)
 	}
 	a.persistPromptLibrary()
-}
-
-func (a *App) loadPromptFile() {
-	if a.running {
-		return
-	}
-	window := a.window
-	page := a.statePage
-	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-			Parent: window, Title: "载入提示词", Multiple: true,
-			Filters: []mygo.FileFilter{{Name: "文本", Extensions: []string{"txt"}}},
-		})
-		if err != nil {
-			logging.Log.Errorf("选择提示词文件失败: %v", err)
-			return
-		}
-		text := readPromptFiles(paths)
-		if strings.TrimSpace(text) == "" {
-			return
-		}
-		apply := func() {
-			a.onPage(page, func() { a.loadPromptText(text) })
-		}
-		if window != nil {
-			window.Update(apply)
-			return
-		}
-		apply()
-	}()
 }
 
 func (a *App) ingestPromptFiles(paths []string) {

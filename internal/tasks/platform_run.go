@@ -181,14 +181,18 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		go func() {
 			defer wg.Done()
 			for t := range jobs {
-				if ctx.Err() != nil {
+				if ctx.Err() != nil || !e.enterAccount(ctx, t.BrowserID) {
+					t.slot, t.ranOn = 0, 0
+					if ctx.Err() == nil {
+						t.rotated = true
+					}
 					completed <- t
 					continue
 				}
 				tctx, cancel := e.budgetContext(ctx, t.BrowserID, budget)
-				t.slot = t.BrowserID
+				t.slot, t.ranOn = t.BrowserID, 0
+				previousSoften := t.soften
 				if t.BrowserID > 0 {
-					e.setActive(t.BrowserID, true)
 					if e.store != nil {
 						e.store.TouchBrowser(t.BrowserID, time.Now())
 					}
@@ -207,7 +211,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				}
 				t = e.execute(tctx, t, attempt)
 				cancel()
-				e.noteUse(t)
+				e.noteUse(t, previousSoften)
 				stage, msg := "done", "#"+itoa(t.Index)+" "+name+" 结束"
 				if t.rotated && t.Status == StatusPending {
 					stage = "retry"
@@ -270,6 +274,11 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			busy, readyAt := sched.snap()
 			for i := 0; i < len(pending); i++ {
 				task := pending[i]
+				if platform != agy.Platform && task.Attempts == 0 && task.Error == "" && !task.submitted {
+					if id, ok := e.pickIdleAccount(platform, task.BrowserID, task.avoidSend, busy, readyAt, now); ok {
+						task.BrowserID = id
+					}
+				}
 				wait, dead := e.settleAccount(ctx, &task)
 				pending[i] = task
 				if dead {
@@ -293,8 +302,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					continue
 				}
 				resource := e.slotKey(task.BrowserID)
-				if busy[resource] || now.Before(readyAt[resource]) {
-					if id, ok := e.pickIdleAccount(task.Platform, resource, busy, readyAt, now); ok && id != task.avoidSend {
+				if !task.submitted && (busy[resource] || now.Before(readyAt[resource])) {
+					if id, ok := e.pickIdleAccount(task.Platform, 0, task.avoidSend, busy, readyAt, now); ok {
 						task.BrowserID = id
 						pending[i] = task
 						resource = e.slotKey(id)
@@ -356,7 +365,10 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				used = resource
 			}
 			readySlot := e.slotKey(used)
-			gap := e.sendGap(time.Duration(e.opts.SendWait) * time.Second)
+			gap := time.Duration(0)
+			if t.slot != 0 {
+				gap = e.sendGap(time.Duration(e.opts.SendWait) * time.Second)
+			}
 			ready := time.Time{}
 			if gap > 0 {
 				ready = time.Now().Add(gap)

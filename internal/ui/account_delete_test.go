@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.UpdateBrowser(local.ID, false, true)
-	dir := browser.ProfileDir(root, browser.KindEdge, local.Name)
+	dir := browser.ProfileDir(root, browser.KindCamoufox, fmt.Sprintf("account-%d", local.ID))
 	if err := os.MkdirAll(filepath.Join(dir, "Default"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -39,14 +40,14 @@ func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.UpdateBrowser(other.ID, false, true)
-	otherDir := browser.ProfileDir(root, browser.KindEdge, other.Name)
+	otherDir := browser.ProfileDir(root, browser.KindCamoufox, fmt.Sprintf("account-%d", other.ID))
 	if err := os.MkdirAll(otherDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	a := &App{
 		store: st, manager: browser.NewManager(), dataRoot: root,
-		browserBackend: browser.KindEdge, browserSel: 0,
+		browserBackend: browser.KindCamoufox, browserSel: 0,
 	}
 	a.refreshBrowsers()
 	for i, row := range a.browserRows {

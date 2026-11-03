@@ -12,8 +12,9 @@ func TestRemoveProfileDeletesOnlyItsOwnDirectory(t *testing.T) {
 	root := t.TempDir()
 	keep := store.Browser{Name: "账号1", Platform: "豆包"}
 	drop := store.Browser{Name: "账号2", Platform: "千问"}
-	keepDir := ProfileDir(root, KindEdge, keep.Name)
-	dropDir := ProfileDir(root, KindEdge, drop.Name)
+	keepDir := ProfileDir(root, KindCamoufox, keep.Name)
+	dropDir := ProfileDir(root, KindCamoufox, drop.Name)
+	drop.UserDataDir = dropDir
 	if keepDir == dropDir {
 		t.Fatal("two account names share one profile directory")
 	}
@@ -29,13 +30,13 @@ func TestRemoveProfileDeletesOnlyItsOwnDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveProfile(root, KindEdge, store.Browser{Name: "账号2", UserDataDir: outside}); err != nil {
+	if err := RemoveProfile(root, KindCamoufox, store.Browser{Name: "账号2", UserDataDir: outside}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
 		t.Fatal("profile cleanup removed a directory outside the data root")
 	}
-	if err := RemoveProfile(root, KindEdge, drop); err != nil {
+	if err := RemoveProfile(root, KindCamoufox, drop); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dropDir); !os.IsNotExist(err) {
@@ -45,11 +46,11 @@ func TestRemoveProfileDeletesOnlyItsOwnDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	ext := store.Browser{Name: "扩展账号abcd", ExtAccount: "profile-a"}
-	extDir := ProfileDir(root, KindEdge, ext.Name)
+	extDir := ProfileDir(root, KindCamoufox, ext.Name)
 	if err := os.MkdirAll(extDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveProfile(root, KindEdge, ext); err != nil {
+	if err := RemoveProfile(root, KindCamoufox, ext); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(extDir); err != nil {

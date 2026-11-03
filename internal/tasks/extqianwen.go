@@ -61,7 +61,8 @@ type extAck struct {
 	Baxia          bool   `json:"baxia"`
 	Crop           string `json:"crop"`
 	Images         []struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		RawURL string `json:"rawUrl"`
 	} `json:"images"`
 	DataBase64 string `json:"dataBase64"`
 	Total      int    `json:"total"`
@@ -208,7 +209,7 @@ func (e *Engine) extensionServer() (*extbridge.Server, error) {
 		Addr:    addr,
 		Token:   token,
 		OnHello: e.noteHello,
-		OnEvent: e.noteExtensionLogin,
+		OnEvent: e.noteExtensionEvent,
 		OnChange: func() {
 			e.fireBridgeChange()
 		},
@@ -246,6 +247,66 @@ func (e *Engine) rememberExtension(sess *extbridge.Session) {
 		return
 	}
 	e.applyExtensionLogin(extensionPlatformLabel(sess.Platform()), sess.Account(), sess.AccountName(), loggedIn)
+}
+
+func (e *Engine) noteExtensionEvent(sess *extbridge.Session, env extbridge.Envelope) {
+	if e == nil || env.Type != extbridge.TypeEvent {
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		Status      int    `json:"status"`
+		Code        string `json:"code"`
+		Kind        string `json:"kind"`
+		Unavailable bool   `json:"unavailable"`
+		Failed      bool   `json:"failed"`
+	}
+	if json.Unmarshal(env.Payload, &body) != nil || body.Name != "network" {
+		e.noteExtensionLogin(sess, env)
+		return
+	}
+	platform := env.Platform
+	account := ""
+	if sess != nil {
+		platform = sess.Platform()
+		account = sess.AccountName()
+	}
+	label := extensionPlatformLabel(platform)
+	if account != "" {
+		label += "「" + account + "」"
+	}
+	switch {
+	case body.Unavailable:
+		logging.Log.Warning("%s网络响应观察不可用，继续使用网页提示", label)
+	case body.Failed:
+		logging.Log.Warning("%s发送请求未完成，原因需结合网页确认", label)
+	case body.Status >= 100 && body.Status <= 599:
+		code := body.Code
+		numeric := code != "" && len(code) <= 12 && strings.IndexFunc(code, func(r rune) bool { return r < '0' || r > '9' }) < 0
+		switch strings.ToUpper(code) {
+		case "OK", "SUCCESS", "QUOTAEXCEEDED", "RATELIMITEXCEEDED", "TOOMANYREQUESTS", "RESOURCE_EXHAUSTED", "E_QUOTA", "E_RATE_LIMIT":
+		default:
+			if !numeric {
+				code = ""
+			}
+		}
+		if code == "" {
+			logging.Log.Info("%s发送响应 HTTP %d", label, body.Status)
+		} else {
+			logging.Log.Info("%s发送响应 HTTP %d，业务码 %s", label, body.Status, code)
+		}
+	}
+	if sess != nil && (body.Kind == "quota" || body.Kind == "rate") {
+		if row, ok := loggedInExtension(e.store, extensionPlatformLabel(sess.Platform()), sess.Account()); ok {
+			kind := faultQuota
+			if body.Kind == "rate" {
+				kind = faultRate
+			}
+			e.noteFault(row.ID, kind, nil, time.Now())
+			logging.Log.Warning("%s%s", label, faultLabel(kind))
+			e.poke()
+		}
+	}
 }
 
 func (e *Engine) noteExtensionLogin(sess *extbridge.Session, env extbridge.Envelope) {
@@ -288,6 +349,12 @@ func (e *Engine) applyExtensionLogin(platform, account, name string, loggedIn bo
 	platform = strings.TrimSpace(platform)
 	account = strings.TrimSpace(account)
 	if platform == "" || account == "" {
+		return
+	}
+	// 扩展账号只在 browserBackend=extension 时参与调度。其它方式下页面桥照常对接，
+	// 但 tulai 自己启动的浏览器已经有一条本机账号，再登记一条会在列表里重复，
+	// 还会让向导以为已有可用账号。
+	if !e.useExtension(platform) {
 		return
 	}
 	if !loggedIn {
@@ -393,6 +460,18 @@ func (e *Engine) ExtensionNotice() string {
 	e.extMu.Lock()
 	defer e.extMu.Unlock()
 	return e.extNotice
+}
+
+// DropInactiveExtensionAccounts 在不走扩展的方式下，清掉库里遗留的扩展账号行。
+// 调度、车道和轮换在这种方式下都跳过它们，留着只会让浏览器页多一条重复账号，
+// 并让向导以为已有可用账号。启动时在向导判断之前调用一次。
+func (e *Engine) DropInactiveExtensionAccounts() {
+	if e == nil || e.store == nil || e.useExtension("千问") {
+		return
+	}
+	if n := e.store.DeleteExtensionAccounts(); n > 0 {
+		logging.Log.Info("已清掉 %d 条扩展账号：当前不是扩展方式", n)
+	}
 }
 
 func (e *Engine) syncExtensionAccounts() {
@@ -614,7 +693,24 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 	}
 	var dlErr error
 	for _, item := range body.Images {
-		data, usedURL, removed, err := extDownload(ctx, sess, job.TaskID, item.URL, platform)
+		var data []byte
+		var usedURL string
+		var removed bool
+		var err error
+		if platform == "豆包" && item.RawURL != "" {
+			data, err = extDownloadURL(ctx, sess, job.TaskID, item.RawURL, platform)
+			if err == nil && validRawResult(data) {
+				usedURL, removed = item.RawURL, true
+			} else {
+				data = nil
+			}
+		}
+		if data == nil && ctx.Err() == nil {
+			data, usedURL, removed, err = extDownload(ctx, sess, job.TaskID, item.URL, platform)
+		}
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
 		if err != nil {
 			dlErr = errors.Join(dlErr, err)
 			continue
@@ -750,7 +846,7 @@ func dewatermarkExtImage(ctx context.Context, data []byte, platform string) ([]b
 		return data, false, nil
 	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || !watermarkStaticImage(data, format) {
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width) > maxResultPixels/int64(cfg.Height) || !watermarkStaticImage(data, format) {
 		return data, false, nil
 	}
 	decoded, _, err := image.Decode(bytes.NewReader(data))

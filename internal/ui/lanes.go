@@ -116,15 +116,27 @@ func (a *App) accountPanel(c *ui.Context) {
 	a.laneTable(c, board)
 }
 
-// laneClock 让倒计时和已用时间每秒走一格。空闲时不预约下一帧。
+// laneClock 更新倒计时，并在换日时刷新有统计的账号。
 func (a *App) laneClock(c *ui.Context, board tasks.Board) {
 	now := c.Now()
 	var wait time.Duration
 	for _, ln := range board.Lanes {
+		if ln.UsedToday > 0 || ln.SuccessToday > 0 || ln.FailedToday > 0 {
+			midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+			if left := midnight.Sub(now); wait == 0 || left < wait {
+				wait = left
+			}
+		}
 		var left time.Duration
 		switch ln.State {
 		case tasks.LaneGap:
 			left = ln.NextReadyAt.Sub(now)
+			if left > 0 {
+				left %= time.Second
+				if left == 0 {
+					left = time.Second
+				}
+			}
 		case tasks.LaneRunning:
 			if ln.Job == nil {
 				continue
