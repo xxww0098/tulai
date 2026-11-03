@@ -259,7 +259,11 @@ async function start(params) {
       proxy: proxyOptions(params.proxy),
       geoip: params.proxy ? params.geoip !== false : undefined,
       executable_path: params.executable || undefined,
-      firefox_user_prefs: { 'browser.sessionstore.resume_from_crash': false },
+      firefox_user_prefs: {
+        'browser.sessionstore.resume_from_crash': false,
+        // An aborted operation closes its page; keep the account environment alive.
+        'browser.tabs.closeWindowWithLastTab': false,
+      },
     });
     const identityJSON = Object.keys(options.env).filter(key => /^CAMOU_CONFIG_\d+$/.test(key))
         .sort((a, b) => Number(a.split('_').at(-1)) - Number(b.split('_').at(-1)))
