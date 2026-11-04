@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.9
+# 发布 tulai 0.1.10
 
-当前桌面端版本是 **0.1.9**，标签 **`v0.1.9`**。页面桥扩展是 **0.3.13**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.10**，标签 **`v0.1.10`**。页面桥扩展是 **0.3.13**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.10
+
+修复 GitHub 接口限流时 Camoufox 安装失败，备用下载仍会验证官方固定版本的完整性。
 
 ## 0.1.9
 
@@ -60,8 +64,8 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.9` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.9` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.9` 之后，模块版本就是这个标签。 |
+| 桌面端 | `0.1.10` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.10` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.10` 之后，模块版本就是这个标签。 |
 | 页面桥扩展 | `0.3.13` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
@@ -95,14 +99,14 @@ git push origin vX.Y.Z
 
 ## 附件
 
-以桌面版本 `0.1.9` 为例，附件命名如下：
+以桌面版本 `0.1.10` 为例，附件命名如下：
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| macOS | `tulai 0.1.9.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `tulai.app` 拖进「应用程序」。 |
-| Windows | `tulai Setup 0.1.9 amd64.exe`、`tulai Setup 0.1.9 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.9-windows-amd64.exe` 和 `tulai-0.1.9-windows-arm64.exe`。 |
-| Linux | `tulai_0.1.9_amd64.deb`、`tulai_0.1.9_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
-| Linux | `tulai-0.1.9-linux-amd64.tar.gz`、`tulai-0.1.9-linux-arm64.tar.gz`、`install.sh` | 执行 `sh install.sh`，脚本从 GitHub 下载并校验签名。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
+| macOS | `tulai 0.1.10.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `tulai.app` 拖进「应用程序」。 |
+| Windows | `tulai Setup 0.1.10 amd64.exe`、`tulai Setup 0.1.10 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.10-windows-amd64.exe` 和 `tulai-0.1.10-windows-arm64.exe`。 |
+| Linux | `tulai_0.1.10_amd64.deb`、`tulai_0.1.10_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
+| Linux | `tulai-0.1.10-linux-amd64.tar.gz`、`tulai-0.1.10-linux-arm64.tar.gz`、`install.sh` | 执行 `sh install.sh`，脚本从 GitHub 下载并校验签名。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
 | 扩展 | `tulai-extension-0.3.13.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
 新版本还包含 `update-<系统>-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 另有本系统的 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。

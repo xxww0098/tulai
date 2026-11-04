@@ -102,6 +102,37 @@ if (process.argv[2] === 'install') {
   try {
     const { CamoufoxFetcher } = await import('camoufox');
     const { webdl } = await import('camoufox/dist/pkgman.js');
+    const getReleases = CamoufoxFetcher.prototype.getReleases;
+    if (typeof getReleases === 'function') {
+      const { effectivePin } = await import('camoufox/dist/browser-pin.js');
+      const { loadConfig } = await import('camoufox/dist/multiversion.js');
+      const pin = effectivePin(loadConfig());
+      const version = '158.0.1-beta.41';
+      if (pin?.repo === 'daijro/camoufox' && pin.repoName === 'official' &&
+          pin.tag === `v${version}` && `${pin.version}-${pin.build}` === version) {
+        // shortcut: hashes cover Camoufox 0.5.9's pinned build; update with the launcher.
+        const hashes = {
+          'mac.arm64':'9038f86d666c9780b6fff199d488737b8596c01f24e3e517845a0ecfb0cf8add',
+          'mac.x86_64':'1afd6caa1e82caa41a4f56d8519f673e36b0835700b1c9c904e78a84c5711f3a',
+          'win.x86_64':'2644bd14f1cc345c768f6a70b576bcc87eb3d0bf0df54856d6fe0bbc3027515f',
+          'lin.x86_64':'3f2eb1d0451fa58e45e43e55f5e6181565069791ae60c0574f0ceb1f01341c33',
+          'lin.arm64':'60e25f6eb95e13d9ec655bc02913d51057e669cb31542e6ace9d2190ab5380af',
+        };
+        const base = `https://github.com/${pin.repo}/releases/download/${pin.tag}`;
+        const assets = Object.entries(hashes).map(([platform, hash]) => {
+          const name = `camoufox-${version}-${platform}.zip`;
+          return {name, browser_download_url:`${base}/${name}`, digest:`sha256:${hash}`};
+        });
+        assets.push({name:'manifest.json', browser_download_url:`${base}/manifest.json`});
+        CamoufoxFetcher.prototype.getReleases = async function(repo) {
+          try { return await getReleases.call(this, repo); }
+          catch (error) {
+            if (repo !== pin.repo || !/^403\b/.test(error?.message || '')) throw error;
+            return [{tag_name:pin.tag, prerelease:false, assets}];
+          }
+        };
+      }
+    }
     let last = 0;
     CamoufoxFetcher.downloadFile = async (file, url) => {
       await webdl(url, undefined, false, file, {
