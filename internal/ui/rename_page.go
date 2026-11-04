@@ -189,6 +189,9 @@ func (a *App) renameTabs(c *ui.Context, colors renamePalette) {
 			if i == s.mode {
 				tab.TextColor(colors.text)
 			}
+			if !s.busy {
+				tab.Cursor(ui.CursorPointer)
+			}
 			tab.Children(func() {
 				ui.Icon(c, icons[i]).FontSize(15).Shrink(0)
 				text := ui.Text(c, label).FontSize(13).SingleLine()
