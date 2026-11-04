@@ -163,8 +163,14 @@ func TestExpandImagePathsReadsFolder(t *testing.T) {
 }
 
 func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
-	for _, n := range []int{3, 6, 9} {
-		t.Run(fmt.Sprintf("%d", n), func(t *testing.T) {
+	for _, tc := range []struct {
+		n, height, visibleRows int
+	}{
+		{3, 700, 1}, {6, 700, 1}, {9, 700, 1},
+		{9, 760, 1}, {9, 800, 2},
+	} {
+		t.Run(fmt.Sprintf("%d/%d", tc.n, tc.height), func(t *testing.T) {
+			n := tc.n
 			sources := make([]sourceImage, n)
 			for i := range sources {
 				sources[i] = sourceImage{Path: fmt.Sprintf("/wash/t%d.png", i+1)}
@@ -175,16 +181,16 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 				statePage:    pageWash,
 				sources:      sources,
 			}
-			tt := ui.NewTester(a.view, 1024, 700)
+			tt := ui.NewTester(a.view, 1024, tc.height)
 			tt.Advance(200 * time.Millisecond)
 			for _, label := range []string{"洗图指令", "开始洗图", "运行日志"} {
 				r, ok := tt.Find(label)
-				if !ok || r.Y < 0 || r.Y+r.H > 700 || r.H < 8 {
+				if !ok || r.Y < 0 || r.Y+r.H > float32(tc.height) || r.H < 8 {
 					t.Fatalf("%s not fully visible: ok=%v rect=%v", label, ok, r)
 				}
 			}
 			logCard, ok := tt.Find("运行日志区")
-			if !ok || logCard.H < 140 || logCard.Y < 0 || logCard.Y+logCard.H > 701 {
+			if !ok || logCard.H < 140 || logCard.Y < 0 || logCard.Y+logCard.H > float32(tc.height+1) {
 				t.Fatalf("运行日志 card %+v", logCard)
 			}
 			prompt, _ := tt.Find("洗图指令")
@@ -197,7 +203,7 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 				name := fmt.Sprintf("t%d.png", i)
 				r, found := tt.Find(name)
 				row := (i - 1) / washThumbCols
-				if row < 1 { // 700 高时只露一整行
+				if row < tc.visibleRows {
 					if !found || r.H < washThumbSize-4 {
 						t.Fatalf("row %d thumb %s clipped: ok=%v %+v", row, name, found, r)
 					}

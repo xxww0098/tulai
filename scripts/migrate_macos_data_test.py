@@ -27,13 +27,13 @@ class MigrationTest(unittest.TestCase):
         db = sqlite3.connect(self.source / "database/config.db")
         db.executescript("""
             CREATE TABLE browsers (id INTEGER PRIMARY KEY, platform TEXT, name TEXT, user_data_dir TEXT,
-                legacy_user_data_dir TEXT, is_logged_in INTEGER, ext_account TEXT, health TEXT,
+                legacy_user_data_dir TEXT, is_logged_in INTEGER, ext_account TEXT, health TEXT, port INTEGER, is_running INTEGER,
                 day_key TEXT, day_count INTEGER, day_success INTEGER, day_failed INTEGER);
             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE sessions (id INTEGER PRIMARY KEY, images TEXT);
             CREATE TABLE session_tasks (id INTEGER PRIMARY KEY, source TEXT, outputs TEXT);
         """)
-        db.execute("INSERT INTO browsers VALUES (1,'豆包','account',?, '',1,'','ready','2026-11-03',47,43,14)", (str(profile),))
+        db.execute("INSERT INTO browsers VALUES (1,'豆包','account',?, '',1,'','ready',9333,0,'2026-11-03',47,43,14)", (str(profile),))
         db.execute("INSERT INTO settings VALUES ('output_path',?)", (str(output),))
         db.execute("INSERT INTO settings VALUES ('download_records',?)", (json.dumps([{"path": str(output / "result.png")}]),))
         db.execute("INSERT INTO sessions VALUES (1,?)", (str(output / "result.png"),))
@@ -123,6 +123,68 @@ class MigrationTest(unittest.TestCase):
         self.assertEqual(db.execute("SELECT outputs FROM session_tasks").fetchone()[0], str(self.target / "data/输出结果/result.png"))
         self.assertEqual(db.execute("SELECT value FROM settings WHERE key='output_path'").fetchone()[0], str(self.target / "data/输出结果"))
         db.close()
+
+    def test_migrates_018_database_and_chromium_profiles(self):
+        source = self.source.parent / "legacy project"
+        target = self.source.parent / "legacy app data"
+        (source / "database").mkdir(parents=True)
+        profile = source / "BrowserData/Chrome/account-1"
+        profile.mkdir(parents=True)
+        (profile / "login-data").write_bytes(b"old browser data")
+        output = source / "输出结果"
+        output.mkdir()
+        (output / "result.png").write_bytes(b"old result")
+        db = sqlite3.connect(source / "database/config.db")
+        db.executescript("""
+            CREATE TABLE browsers (id INTEGER PRIMARY KEY, platform TEXT, name TEXT, port INTEGER,
+                user_data_dir TEXT, is_running INTEGER, is_logged_in INTEGER, health TEXT,
+                ext_account TEXT, day_key TEXT, day_count INTEGER);
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE prompts (id INTEGER PRIMARY KEY, content TEXT);
+            INSERT INTO browsers VALUES (1,'豆包','account',9333,'BrowserData/Chrome/account-1',0,1,'ready','','2026-10-29',5);
+            INSERT INTO settings VALUES ('output_path','');
+            INSERT INTO prompts VALUES (1,'saved prompt');
+        """)
+        db.commit()
+        db.close()
+        with mock.patch.object(migration, "require_stopped"):
+            self.assertTrue(migration.migrate(source, target))
+        db = sqlite3.connect(target / "database/config.db")
+        self.assertEqual(db.execute("SELECT name,day_count FROM browsers").fetchone(), ("account", 5))
+        self.assertEqual(db.execute("SELECT content FROM prompts").fetchone()[0], "saved prompt")
+        self.assertEqual(db.execute("SELECT value FROM settings WHERE key='output_path'").fetchone()[0], str(target / "data/输出结果"))
+        db.close()
+        self.assertEqual((target / "BrowserData/Chrome/account-1/login-data").read_bytes(), b"old browser data")
+        self.assertEqual((target / "data/输出结果/result.png").read_bytes(), b"old result")
+        self.assertEqual((profile / "login-data").read_bytes(), b"old browser data")
+
+    def test_preserves_custom_relative_output_directory(self):
+        db = sqlite3.connect(self.source / "database/config.db")
+        db.execute("UPDATE settings SET value='custom-output' WHERE key='output_path'")
+        db.commit()
+        db.close()
+        with mock.patch.object(migration, "require_stopped"):
+            self.assertTrue(migration.migrate(self.source, self.target))
+        db = sqlite3.connect(self.target / "database/config.db")
+        self.assertEqual(db.execute("SELECT value FROM settings WHERE key='output_path'").fetchone()[0], str(self.source / "custom-output"))
+        db.close()
+
+    def test_migrates_settings_without_browser_data(self):
+        source = self.source.parent / "settings only"
+        target = self.source.parent / "new app data"
+        (source / "database").mkdir(parents=True)
+        db = sqlite3.connect(source / "database/config.db")
+        db.executescript("""
+            CREATE TABLE browsers (id INTEGER PRIMARY KEY, platform TEXT, name TEXT, port INTEGER,
+                user_data_dir TEXT, is_running INTEGER, is_logged_in INTEGER);
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+            INSERT INTO settings VALUES ('output_path','');
+        """)
+        db.close()
+        with mock.patch.object(migration, "require_stopped"):
+            self.assertTrue(migration.migrate(source, target))
+        self.assertTrue((target / "database/config.db").is_file())
+        self.assertTrue((target / "BrowserData").is_dir())
 
 
 if __name__ == "__main__":

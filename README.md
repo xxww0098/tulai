@@ -33,7 +33,7 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 `go.mod` 把 MyGo 工具固定在 **v0.7.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.9**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.9` 上发布，页面桥扩展是 **0.3.12**。步骤见下文「发布 0.1.9」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.9**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.9` 上发布，页面桥扩展是 **0.3.13**。步骤见下文「发布 0.1.9」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。正在进行的任务结束后才安装。也可以用菜单 **帮助 → 检查更新…**、左侧导航、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。检查使用公开的 GitHub Releases，不附带 token，连接失败时尝试可配置的镜像。新发布的 macOS 应用、Windows 安装版和 Linux 用户目录版使用 MyGo 验证更新签名；免安装程序、系统包及旧版继续使用原有的 SHA256SUMS 流程。macOS 没有公证，Windows 没有代码签名。页面桥扩展单独更新。签名发布及安装方式见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
@@ -63,7 +63,7 @@ Camoufox 由官方启动库通过 Playwright Firefox / Juggler 管道控制，�
 
 macOS 打包版和源码版都将配置库、`BrowserData/` 和默认输出保存到 `~/Library/Application Support/tulai/`，不依赖项目目录。手动启动和任务执行共用同一个 profile 目录。
 
-若旧版账号资料仍在项目目录，先退出 tulai 和其内置浏览器，然后在项目目录运行 `python3 scripts/migrate_macos_data.py`。迁移会复制并校验数据库、浏览器资料及旧默认输出目录，保留原项目资料作为备份；若应用目录已有其他独立数据则停止，不会覆盖。自定义输出目录和其他历史源文件保留原路径。
+若旧版账号资料仍在项目目录，请在首次启动新版前退出 tulai 和其内置浏览器，然后在项目目录运行 `python3 scripts/migrate_macos_data.py`。迁移会复制并校验数据库、浏览器资料及旧默认输出目录，保留原项目资料作为备份；若应用目录已有其他独立数据则停止，不会覆盖。自定义输出目录和其他历史源文件保留原路径。
 
 配置库位于数据目录下的 `database/config.db`。已有配置使用旧目录名时，请先退出应用，再将 `数据库/` 重命名为 `database/`。
 
@@ -267,7 +267,7 @@ go run ./cmd/tulai-camoufox-smoke   # Camoufox 安装与页面控制冒烟
 
 ## 发布 0.1.9
 
-桌面端产品版本是 **0.1.9**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.12**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+桌面端产品版本是 **0.1.9**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.13**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
 
 0.1.9 改用 Camoufox 账号环境，增加图片下载和批量工具，并接入 MyGo 签名更新。旧浏览器资料会保留，账号需要重新登录。完整说明见 [`CHANGELOG.md`](CHANGELOG.md) 和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 

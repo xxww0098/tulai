@@ -179,13 +179,18 @@ func (a *App) washPage(c *ui.Context) {
 // washPromptCard 是洗图指令。默认是内置的一段，改过的会保存。
 func (a *App) washPromptCard(c *ui.Context) {
 	tok := a.look
+	_, winH := c.Size()
+	promptHeight := float32(84)
+	if winH < 760 {
+		promptHeight = 60
+	}
 	a.stepCard(c, "wash-prompt", stepDone).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "洗图指令").FontSize(tok.title).Bold().Shrink(0)
 			a.washPromptSelect(c)
 			a.washReset(c)
 		})
-		ui.TextArea(c, &a.prompts).Height(84).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
+		ui.TextArea(c, &a.prompts).Height(promptHeight).MinHeight(promptHeight).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
 		hint := "每张图单独发一次，结果存成「原文件名_01.png」"
 		if a.store != nil && a.store.Get("browserBackend") == "camoufox_extension" && a.waitResult && a.stagePlatform() == "豆包" {
 			hint = "每批最多 10 张一起发送，结果按源文件名保存"

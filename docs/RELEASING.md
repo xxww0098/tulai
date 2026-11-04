@@ -1,6 +1,6 @@
 # 发布 tulai 0.1.9
 
-当前桌面端版本是 **0.1.9**，标签 **`v0.1.9`**。页面桥扩展是 **0.3.12**，增加发送响应观察；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.9**，标签 **`v0.1.9`**。页面桥扩展是 **0.3.13**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
 
 ## 0.1.9
 
@@ -62,10 +62,10 @@
 |---|---|---|---|
 | 桌面端 | `0.1.9` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
 | Go 模块 | `v0.1.9` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.9` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.12` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 页面桥扩展 | `0.3.13` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载；当前源码是 0.3.12。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载；当前源码是 0.3.13。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
 
 ## 流水线
 
@@ -103,7 +103,7 @@ git push origin vX.Y.Z
 | Windows | `tulai Setup 0.1.9 amd64.exe`、`tulai Setup 0.1.9 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.9-windows-amd64.exe` 和 `tulai-0.1.9-windows-arm64.exe`。 |
 | Linux | `tulai_0.1.9_amd64.deb`、`tulai_0.1.9_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
 | Linux | `tulai-0.1.9-linux-amd64.tar.gz`、`tulai-0.1.9-linux-arm64.tar.gz`、`install.sh` | 执行 `sh install.sh`，脚本从 GitHub 下载并校验签名。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
-| 扩展 | `tulai-extension-0.3.12.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
+| 扩展 | `tulai-extension-0.3.13.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
 新版本还包含 `update-<系统>-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 另有本系统的 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。
 
@@ -147,7 +147,7 @@ MyGo 在安装时验证 Ed25519 签名；验证失败或缺少签名清单会报
 
 发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。旧更新器没有这份校验文件会拒绝安装；MyGo 更新验证清单里的开发者签名。
 
-版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.12.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.13.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
 以下是旧更新器选择的附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 

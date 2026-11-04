@@ -74,7 +74,8 @@ def relocate_json(value, old, new):
 
 def rewrite_database(db, source, target, move_output):
     profile_root = source / "BrowserData"
-    rows = db.execute("SELECT id, platform, user_data_dir, legacy_user_data_dir, is_logged_in, COALESCE(ext_account,'') FROM browsers").fetchall()
+    columns = {row[1] for row in db.execute("PRAGMA table_info(browsers)")}
+    rows = db.execute("SELECT id, platform, user_data_dir, legacy_user_data_dir, is_logged_in, COALESCE(ext_account,'') FROM browsers").fetchall() if "legacy_user_data_dir" in columns else ()
     for account_id, platform, current, legacy, logged_in, ext_account in rows:
         if platform not in ("豆包", "千问") or ext_account:
             continue
@@ -103,10 +104,14 @@ def rewrite_database(db, source, target, move_output):
         db.execute("UPDATE browsers SET user_data_dir=?, legacy_user_data_dir=? WHERE id=?", (current, legacy, account_id))
 
     if not move_output:
+        row = db.execute("SELECT value FROM settings WHERE key='output_path'").fetchone()
+        selected = row[0].strip() if row and row[0] else ""
+        if selected and not os.path.isabs(selected):
+            db.execute("UPDATE settings SET value=? WHERE key='output_path'", (str((source / selected).resolve()),))
         return
     old = source / "输出结果"
     new = target / "data" / "输出结果"
-    db.execute("UPDATE settings SET value=? WHERE key='output_path'", (str(new),))
+    db.execute("INSERT INTO settings(key,value) VALUES('output_path',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(new),))
     for key in ("source_images", "wash_images"):
         row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         if row and row[0]:
@@ -120,7 +125,10 @@ def rewrite_database(db, source, target, move_output):
                 raise RuntimeError("下载历史无法解析，未迁移") from error
         else:
             db.execute("UPDATE settings SET value=? WHERE key='download_records'", (json.dumps(relocate_json(records, old, new), ensure_ascii=False),))
+    tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     for table, columns in (("sessions", ("images",)), ("session_tasks", ("source", "outputs"))):
+        if table not in tables:
+            continue
         for column in columns:
             for row_id, value in db.execute(f"SELECT id, {column} FROM {table} WHERE {column}<>''").fetchall():
                 rewritten = "\n".join(relocated_path(p, old, new) for p in value.split("\n"))
@@ -131,8 +139,8 @@ def rewrite_database(db, source, target, move_output):
 def migrate(source, target):
     source, target = Path(source).resolve(), Path(target).resolve()
     database, profiles = source / "database", source / "BrowserData"
-    if not (database / "config.db").is_file() or not (profiles / "Camoufox").is_dir():
-        raise RuntimeError("找不到原账号数据库或 Camoufox 浏览器资料")
+    if not (database / "config.db").is_file() or ((profiles.exists() or profiles.is_symlink()) and not profiles.is_dir()):
+        raise RuntimeError("找不到原账号数据库或浏览器资料目录无效")
     target.mkdir(parents=True, exist_ok=True, mode=0o700)
     data = target / "data"
     if data.exists() or data.is_symlink():
@@ -156,7 +164,12 @@ def migrate(source, target):
         lock.execute("BEGIN IMMEDIATE")
         if lock.execute("PRAGMA quick_check").fetchone() != ("ok",):
             raise RuntimeError("原数据库完整性检查失败")
-        before = lock.execute("SELECT id,platform,name,is_logged_in,health,day_key,day_count,day_success,day_failed FROM browsers ORDER BY id").fetchall()
+        columns = {row[1] for row in lock.execute("PRAGMA table_info(browsers)")}
+        if not {"id", "platform", "name", "port", "user_data_dir", "is_running", "is_logged_in"} <= columns:
+            raise RuntimeError("原账号数据库结构无效")
+        fields = [name for name in ("id", "platform", "name", "is_logged_in", "health", "day_key", "day_count", "day_success", "day_failed") if name in columns]
+        snapshot_sql = f"SELECT {','.join(fields)} FROM browsers ORDER BY id"
+        before = lock.execute(snapshot_sql).fetchall()
         stage = Path(tempfile.mkdtemp(prefix=".migration-", dir=target))
         (stage / "database").mkdir(mode=0o700)
         readonly = sqlite3.connect((database / "config.db").as_uri() + "?mode=ro", uri=True)
@@ -168,10 +181,15 @@ def migrate(source, target):
             dest.close()
             readonly.close()
         print("正在复制并校验浏览器资料…", flush=True)
-        copy_verified(profiles, stage / "BrowserData")
+        if profiles.is_dir():
+            copy_verified(profiles, stage / "BrowserData")
+        else:
+            (stage / "BrowserData").mkdir(mode=0o700)
         output = source / "输出结果"
         row = lock.execute("SELECT value FROM settings WHERE key='output_path'").fetchone()
-        move_output = bool(row and row[0] and os.path.isabs(row[0]) and Path(row[0]).resolve() == output.resolve())
+        selected = row[0].strip() if row and row[0] else ""
+        selected_path = Path(selected) if os.path.isabs(selected) else source / selected
+        move_output = (selected_path.resolve() == output.resolve()) if selected else output.exists()
         if move_output:
             print("正在复制并校验默认输出目录…", flush=True)
             if output.is_dir():
@@ -184,7 +202,7 @@ def migrate(source, target):
         try:
             rewrite_database(dest, source, target, move_output)
             dest.commit()
-            after = dest.execute("SELECT id,platform,name,is_logged_in,health,day_key,day_count,day_success,day_failed FROM browsers ORDER BY id").fetchall()
+            after = dest.execute(snapshot_sql).fetchall()
             if after != before or dest.execute("PRAGMA quick_check").fetchone() != ("ok",):
                 raise RuntimeError("账号记录或新数据库校验失败")
         finally:

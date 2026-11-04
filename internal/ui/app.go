@@ -27,6 +27,7 @@ import (
 	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/update"
 	"github.com/xxww0098/tulai/internal/wizard"
+	"github.com/xxww0098/tulai/resources"
 )
 
 func splitLines(s string) []string {
@@ -983,7 +984,7 @@ func readAppIcon() ([]byte, error) {
 			return data, nil
 		}
 	}
-	return os.ReadFile(filepath.Join("resources", "icon.png"))
+	return resources.AppIcon, nil
 }
 
 func sourcePaths(list []sourceImage) []string {

@@ -409,7 +409,7 @@ func washThumbViewport(n int, winH float32) float32 {
 	}
 	rows := (n + washThumbCols - 1) / washThumbCols
 	maxRows := washThumbMaxRows
-	if winH < 760 {
+	if winH < 800 {
 		maxRows = 1
 	}
 	if rows > maxRows {
