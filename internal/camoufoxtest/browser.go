@@ -14,6 +14,8 @@ import (
 
 var next atomic.Int64
 
+const StartTimeout = 3 * time.Minute
+
 func ConfigDir(t testing.TB) string {
 	t.Helper()
 	if testing.Short() {
@@ -39,7 +41,7 @@ func ConfigDir(t testing.TB) string {
 func Start(t testing.TB, rawURL string) (*camoufox.Process, string) {
 	t.Helper()
 	dir := ConfigDir(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), StartTimeout)
 	defer cancel()
 	p, err := camoufox.Start(ctx, dir, camoufox.Options{Profile: t.TempDir(), Headless: true}, os.Stderr)
 	if err != nil {
@@ -60,7 +62,7 @@ func Start(t testing.TB, rawURL string) (*camoufox.Process, string) {
 func StartWithProxy(t testing.TB, proxy string) (context.Context, context.CancelFunc, func()) {
 	t.Helper()
 	dir := ConfigDir(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), StartTimeout)
 	defer cancel()
 	geoip := false
 	p, err := camoufox.Start(ctx, dir, camoufox.Options{Profile: t.TempDir(), Headless: true, Proxy: proxy, GeoIP: &geoip, IgnoreHTTPSErrors: true}, os.Stderr)

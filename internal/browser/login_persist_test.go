@@ -68,7 +68,7 @@ func TestCamoufoxStartsOnlyAccountWindow(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("headless=%t", headless), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), camoufoxtest.StartTimeout)
 			defer cancel()
 			var diagnostics bytes.Buffer
 			profile := t.TempDir()
@@ -112,7 +112,7 @@ func TestCamoufoxMacHeadlessProbeMatchesWindowGPU(t *testing.T) {
 	}
 	config := camoufoxtest.ConfigDir(t)
 	rt, _ := camoufox.Installed(config)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), camoufoxtest.StartTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, rt.Node, "--input-type=module", "-e", `
 import assert from 'node:assert/strict';

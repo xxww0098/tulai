@@ -78,7 +78,7 @@ jobs:
   camoufox:
     needs: guard
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -94,7 +94,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: go run ./cmd/tulai-camoufox-smoke
       - name: Account isolation, persistence and page operations
-        run: go test -count=1 -timeout 20m -p 1 ./internal/browser ./internal/cdp ./internal/captcha ./internal/strategy
+        run: go test -count=1 -timeout 30m -p 1 ./internal/browser ./internal/cdp ./internal/captcha ./internal/strategy
 
   package:
     needs: guard

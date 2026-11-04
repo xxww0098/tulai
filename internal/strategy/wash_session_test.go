@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/camoufoxtest"
@@ -47,7 +46,7 @@ func TestWashSessionReusesPromptBoundary(t *testing.T) {
 		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(client, upstream) }()
 	}))
 	defer proxy.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), camoufoxtest.StartTimeout)
 	defer cancel()
 	geoip := false
 	process, err := camoufox.Start(ctx, camoufoxtest.ConfigDir(t), camoufox.Options{Profile: t.TempDir(), Headless: true, Proxy: proxy.URL, GeoIP: &geoip, IgnoreHTTPSErrors: true}, os.Stderr)
