@@ -123,11 +123,6 @@ func (a *App) wizardView(c *ui.Context) {
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Background(tok.paper).Children(func() {
 		a.wizardSidebar(c)
 		ui.Column(c.Key("wizard-main")).Grow(1).MinWidth(0).Children(func() {
-			slot := ui.Column(c.Key("wizard-update-slot")).FillWidth()
-			if a.updateNotice != "" {
-				slot.Padding(16, 40, 0, 40)
-			}
-			slot.Children(func() { a.updateBanner(c) })
 			ui.Scroll(c.Key("wizard-body")).Grow(1).MinHeight(0).Children(func() {
 				ui.Column(c).FillWidth().AlignItems(ui.Center).Padding(56, 40, 28, 40).Children(func() {
 					ui.Column(c.Key(a.wizardStep)).FillWidth().MaxWidth(wizardBodyWidth).Gap(24).Transition(a.stepMotion()).Children(func() {
@@ -197,7 +192,11 @@ func (a *App) wizardSidebar(c *ui.Context) {
 		ui.Spacer(c)
 		ui.Column(c).FillWidth().Gap(8).Children(func() {
 			ui.Text(c, "当前版本 "+currentVersion()).FontSize(tok.caption).TextColor(tok.muted)
-			ui.Button(c, "检查更新").FillWidth().Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
+			label := "检查更新"
+			if a.updateHidden && a.updateDownloading {
+				label = "显示更新进度"
+			}
+			ui.Button(c, label).FillWidth().Disabled(a.updateBusy && !(a.updateHidden && a.updateDownloading)).OnClick(func() { a.checkForUpdates() })
 		})
 	})
 }

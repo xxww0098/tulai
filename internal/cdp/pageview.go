@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -43,7 +42,7 @@ func AttachPageView(ctx context.Context, endpoint, home string) (*PageView, erro
 	id := ""
 	for id == "" {
 		for _, page := range list {
-			if page.Type == "page" && strings.TrimPrefix(hostOf(page.URL), "www.") == strings.TrimPrefix(hostOf(home), "www.") {
+			if page.Type == "page" && landed(page.URL, home) {
 				id = page.ID
 				break
 			}
@@ -80,13 +79,13 @@ func (v *PageView) Close() {
 		_, _ = v.Input(ctx, in)
 	}
 	// 等已发出的输入处理完，再让调度恢复这个账号。
-	_ = v.conn.EvalJSON(ctx, v.target, `0`, nil)
+	_ = v.conn.readOnlyJSON(ctx, v.target, `0`, nil)
 	v.conn.Close()
 }
 
 func (v *PageView) Frame(ctx context.Context) (PageFrame, error) {
 	var frame PageFrame
-	if err := v.conn.EvalJSON(ctx, v.target, `({Width:innerWidth,Height:innerHeight,ScrollX:scrollX,ScrollY:scrollY,Title:document.title,URL:location.href})`, &frame); err != nil {
+	if err := v.conn.readOnlyJSON(ctx, v.target, `({Width:innerWidth,Height:innerHeight,ScrollX:scrollX,ScrollY:scrollY,Title:document.title,URL:location.href})`, &frame); err != nil {
 		return frame, err
 	}
 	var out struct{ Data string }
@@ -103,7 +102,7 @@ func (v *PageView) Frame(ctx context.Context) (PageFrame, error) {
 
 func (v *PageView) LoginState(ctx context.Context) (string, error) {
 	var result loginProbeResult
-	err := v.conn.EvalJSON(ctx, v.target, loginProbeJS, &result)
+	err := v.conn.readOnlyJSON(ctx, v.target, loginProbeJS, &result)
 	return NormalizeLoginState(result.State), err
 }
 
@@ -132,7 +131,7 @@ func (v *PageView) Input(ctx context.Context, in PageInput) (string, error) {
 		method = "Page.reload"
 	case "copy", "cut":
 		var result struct{ Text string }
-		err := v.conn.EvalJSON(ctx, v.target, `(()=>{const e=document.activeElement;return {text:e&&e.type==='password'?'':e&&typeof e.selectionStart==='number'?e.value.slice(e.selectionStart,e.selectionEnd):String(getSelection()||'')}})()`, &result)
+		err := v.conn.readOnlyJSON(ctx, v.target, `(()=>{const e=document.activeElement;return {text:e&&e.type==='password'?'':e&&typeof e.selectionStart==='number'?e.value.slice(e.selectionStart,e.selectionEnd):String(getSelection()||'')}})()`, &result)
 		if err == nil && in.Kind == "cut" && result.Text != "" {
 			err = v.conn.EvalJSON(ctx, v.target, `document.execCommand('delete')`, nil)
 		}

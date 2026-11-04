@@ -278,6 +278,9 @@ type App struct {
 	updateMirror       string
 	updateNotice       string
 	updateNotes        string
+	updateDetailsOpen  bool
+	updateNotesOpen    bool
+	updateHidden       bool
 	updateErr          string
 	updateDeferred     bool
 	updatePending      bool
@@ -734,6 +737,7 @@ func (a *App) captchaConfig() captcha.Config {
 func (a *App) view(c *ui.Context) {
 	a.flushUIUpdates()
 	a.look = applyWorkbenchTheme(c)
+	a.updateBanner(c)
 	if a.wizardOn {
 		ui.Column(c.Key("screen-wizard")).Fill().Transition(screenMotion()).Children(func() {
 			a.wizardView(c)
@@ -743,11 +747,6 @@ func (a *App) view(c *ui.Context) {
 	a.noteTab()
 	a.syncPage()
 	ui.Column(c.Key("screen-main")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
-		slot := ui.Column(c.Key("update-slot"))
-		if a.updateNotice != "" {
-			slot.Padding(8, pagePadX, 0, pagePadX)
-		}
-		slot.Children(func() { a.updateBanner(c) })
 		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 			a.navRail(c)
 			pageKey := a.tab

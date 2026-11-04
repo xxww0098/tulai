@@ -78,7 +78,7 @@ func (a *App) openBrowserDrawer(row store.Browser) {
 		if a.store != nil {
 			a.store.SetRunning(row.ID, true)
 		}
-		connectCtx, stop := context.WithTimeout(ctx, 8*time.Second)
+		connectCtx, stop := context.WithTimeout(ctx, 75*time.Second)
 		// 浏览器关闭了最后一页时进程和扩展仍可能在运行；补回平台页，已有会话则直接复用。
 		err = cdp.OpenURLBackground(connectCtx, ws, accountHomeURL(row))
 		var page *cdp.PageView
@@ -161,7 +161,7 @@ func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page 
 				a.browserDrawerUpdate(s, func() { s.copyText, s.copyReady = text, true })
 			}
 		case <-tick.C:
-			frameCtx, stop := context.WithTimeout(ctx, 4*time.Second)
+			frameCtx, stop := context.WithTimeout(ctx, 20*time.Second)
 			frame, err := page.Frame(frameCtx)
 			var bmp image.Image
 			if err == nil {

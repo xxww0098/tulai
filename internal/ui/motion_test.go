@@ -184,32 +184,24 @@ func TestThumbnailsSlideIntoPlace(t *testing.T) {
 	}
 }
 
-func TestUpdateBannerSlidesDownAndStaysClickable(t *testing.T) {
+func TestUpdateNoticeStaysClickable(t *testing.T) {
 	a := &App{}
 	tt := ui.NewTester(a.view, 1280, 840)
 	a.updateNotice = "9.9.9"
 	tt.Frame()
-	early, ok := tt.Find("发现新版本 9.9.9")
-	if !ok {
+	if !tt.HasText("发现新版本 9.9.9") {
 		t.Fatal("banner missing")
 	}
-	// 刚出现的那一帧还停在起点。过一小段时间再点，和人眼看到按钮再去点一样。
-	tt.Advance(80 * time.Millisecond)
 	if err := tt.Click("稍后"); err != nil {
 		t.Fatal(err)
 	}
 	if a.updateNotice != "" {
-		t.Fatal("banner could not be dismissed while it was moving")
+		t.Fatal("notice could not be dismissed")
 	}
 	a.updateNotice = "9.9.9"
 	tt.Frame()
-	tt.Advance(motionUI + 40*time.Millisecond)
-	late, ok := tt.Find("发现新版本 9.9.9")
-	if !ok {
-		t.Fatal("banner missing after the slide")
-	}
-	if early.Y > late.Y-4 {
-		t.Fatalf("banner should drop in from above: early=%v late=%v", early.Y, late.Y)
+	if !tt.HasText("发现新版本 9.9.9") {
+		t.Fatal("notice missing when shown again")
 	}
 }
 

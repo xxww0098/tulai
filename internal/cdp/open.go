@@ -190,6 +190,17 @@ func navigateVisible(ctx context.Context, endpoint, want string) error {
 		return fmt.Errorf("%w：%v", ErrDebugUnavailable, err)
 	}
 	defer conn.Close()
+	if stayBack(ctx) {
+		targets, err := conn.targets(ctx)
+		if err != nil {
+			return err
+		}
+		for _, target := range targets {
+			if target.Type == "page" && landed(target.URL, want) {
+				return nil
+			}
+		}
+	}
 	hits, err := conn.pageHits(ctx)
 	if err != nil {
 		return err
@@ -415,11 +426,14 @@ func (c *SliderConn) pageHits(ctx context.Context) ([]pageHit, error) {
 			Href string `json:"href"`
 			Vis  string `json:"vis"`
 		}
-		if err := c.EvalJSON(ctx, item.ID, `({href:location.href, vis:document.visibilityState})`, &snap); err == nil {
+		if err := c.readOnlyJSON(ctx, item.ID, `({href:location.href, vis:document.visibilityState})`, &snap); err == nil {
 			if snap.Href != "" {
 				hit.URL = snap.Href
 			}
 			hit.Vis = snap.Vis
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		hits = append(hits, hit)
 	}

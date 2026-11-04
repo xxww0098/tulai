@@ -443,9 +443,14 @@ func TestLiveLatestRelease(t *testing.T) {
 	if cmp, err = Compare(version, "0.1.4"); err != nil || cmp < 0 {
 		return
 	}
-	for _, kind := range []Kind{KindLinuxTar, KindLinuxDeb, KindWindowsExe, KindWindowsSetup, KindMacDMG} {
-		if _, err := Select(rel.Assets, kind, version, "amd64"); err != nil {
-			t.Fatalf("live asset %s: %v", kind, err)
+	var required []string
+	for _, kind := range []Kind{KindWindowsExe, KindWindowsSetup} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			asset, err := Select(rel.Assets, kind, version, arch)
+			if err != nil {
+				t.Fatalf("live asset %s %s: %v", kind, arch, err)
+			}
+			required = append(required, asset.Name)
 		}
 	}
 	var ext Asset
@@ -461,12 +466,7 @@ func TestLiveLatestRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{
-		"tulai." + version + ".dmg",
-		"tulai.Setup." + version + ".amd64.exe",
-		"tulai-" + version + "-linux-amd64.tar.gz",
-		ext.Name,
-	} {
+	for _, name := range append(required, ext.Name) {
 		if len(sums[NormalizeAssetName(name)]) != 64 {
 			t.Fatalf("SHA256SUMS missing %s: %v", name, sums)
 		}

@@ -33,9 +33,9 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 `go.mod` 把 MyGo 工具固定在 **v0.7.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.10**。三个系统的安装包由 GitHub Actions 在标签 `v0.1.10` 上发布，页面桥扩展是 **0.3.13**。步骤见下文「发布 0.1.10」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.11**。标签 `v0.1.10` 的历史发布包含三个系统的安装包；新流水线只发布 Windows。页面桥扩展是 **0.3.13**。步骤见下文「发布 0.1.11」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
-已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。正在进行的任务结束后才安装。也可以用菜单 **帮助 → 检查更新…**、左侧导航、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。检查使用公开的 GitHub Releases，不附带 token，连接失败时尝试可配置的镜像。新发布的 macOS 应用、Windows 安装版和 Linux 用户目录版使用 MyGo 验证更新签名；免安装程序、系统包及旧版继续使用原有的 SHA256SUMS 流程。macOS 没有公证，Windows 没有代码签名。页面桥扩展单独更新。签名发布及安装方式见 [`docs/RELEASING.md`](docs/RELEASING.md)。
+已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。正在进行的任务结束后才安装。也可以用菜单 **帮助 → 检查更新…**、左侧导航、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。检查使用公开的 GitHub Releases，不附带 token，连接失败时尝试可配置的镜像。Windows 安装版使用 MyGo 验证更新签名；免安装程序及旧版继续使用 SHA256SUMS。旧 macOS 和 Linux 客户端可能检查到仅供 Windows 的新版本，并提示缺少对应更新文件，可关闭自动检查。Windows 没有代码签名。页面桥扩展单独更新。签名发布及安装方式见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 应用图标是仓库根目录的 `resources/icon.png`（1024×1024）。`mygo.json` 的 `icon` 指向它。`mygo build` 会把它做成 macOS `.icns`（Dock）、Windows 可执行文件图标和 NSIS 安装器图标，以及 Linux 桌面项图标。应用没有托盘菜单，因此不另做托盘图；启动时同一张 PNG 也会设到窗口（Windows / Linux）和 Dock（macOS）。
 
@@ -265,19 +265,19 @@ go run ./cmd/tulai-camoufox-smoke   # Camoufox 安装与页面控制冒烟
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
-## 发布 0.1.10
+## 发布 0.1.11
 
-桌面端产品版本是 **0.1.10**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.13**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+桌面端产品版本是 **0.1.11**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.13**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
 
 0.1.9 改用 Camoufox 账号环境，增加图片下载和批量工具，并接入 MyGo 签名更新。旧浏览器资料会保留，账号需要重新登录。完整说明见 [`CHANGELOG.md`](CHANGELOG.md) 和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
-`.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet`，并上传 macOS、Windows、Linux 的安装包。合并进 `main` 之后，推送和 `mygo.json` 一致的标签，用 `GITHUB_TOKEN` 创建 GitHub Release。没有配置 Apple 公证或 Windows 代码签名。
+`.github/workflows/ci.yml` 在 pull request 和 `main` 上跑短测试、`go tool mygo vet` 并构建 Windows 安装包。`main` 的浏览器测试覆盖 Windows，pull request 额外覆盖 macOS。对应提交通过 `main` CI 后，推送和 `mygo.json` 一致的标签即可创建 Windows Release。Windows 程序没有代码签名。
 
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.10
-git push origin v0.1.10
+git tag v0.1.11
+git push origin v0.1.11
 ```
 
 附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。

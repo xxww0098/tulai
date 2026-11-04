@@ -287,10 +287,15 @@ func (c *SliderConn) Play(ctx context.Context, targetID string, events []SliderE
 
 // EvalJSON 在目标页主世界执行 expression，把返回值解到 dest。
 func (c *SliderConn) EvalJSON(ctx context.Context, targetID, expression string, dest any) error {
-	return c.evalJSON(ctx, targetID, expression, dest, false)
+	return c.evalJSON(ctx, targetID, expression, dest, false, false)
 }
 
-func (c *SliderConn) evalJSON(ctx context.Context, targetID, expression string, dest any, await bool) error {
+// readOnlyJSON is for observation scripts that must not close the task page on timeout.
+func (c *SliderConn) readOnlyJSON(ctx context.Context, targetID, expression string, dest any) error {
+	return c.evalJSON(ctx, targetID, expression, dest, false, true)
+}
+
+func (c *SliderConn) evalJSON(ctx context.Context, targetID, expression string, dest any, await, readOnly bool) error {
 	session, err := c.session(ctx, targetID)
 	if err != nil {
 		return err
@@ -308,6 +313,9 @@ func (c *SliderConn) evalJSON(ctx context.Context, targetID, expression string, 
 	}
 	if await {
 		params["awaitPromise"] = true
+	}
+	if readOnly {
+		params["readOnly"] = true
 	}
 	if err := c.call(ctx, session, "Runtime.evaluate", params, &eval); err != nil {
 		return err

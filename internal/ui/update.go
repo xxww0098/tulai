@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
 	"strings"
 	"time"
@@ -62,39 +63,95 @@ func (a *App) updateBanner(c *ui.Context) {
 	if a.updateNotice == "" {
 		return
 	}
-	ui.Column(c.Key("update-banner")).FillWidth().Padding(10, 12).Gap(6).Radius(10).Background(c.Theme().Surface).Border(1, c.Theme().Border).Transition(motionBanner()).Children(func() {
-		ui.Text(c, "发现新版本 "+a.updateNotice).FontSize(14).Bold()
-		if a.updateNotes != "" {
-			ui.Text(c, a.updateNotes).FontSize(12).TextColor(c.Theme().TextMuted)
-		}
-		if a.updateDeferred {
-			ui.Text(c, update.DeferMessage).FontSize(12).TextColor(c.Theme().Warning)
-		}
-		if a.updateErr != "" {
-			ui.Text(c, a.updateErr).FontSize(12).TextColor(c.Theme().Danger)
-		}
-		if a.updateDownloading {
-			installing := strings.Contains(a.updateProgressText, "正在安装")
-			motionProgress(c, "update-progress", a.updateFraction, installing || a.updateFraction <= 0)
-			if a.updateProgressText != "" {
-				ui.Text(c, a.updateProgressText).FontSize(12).TextColor(c.Theme().TextMuted)
+	if a.updateHidden && a.updateDownloading {
+		return
+	}
+	a.updateHidden = false
+	tok := a.look
+	w, h := c.Size()
+	bottom := float32(16)
+	if a.wizardOn {
+		bottom = 80
+	}
+	ui.Overlay(c, func() {
+		ui.Column(c.Key("update-banner")).Absolute().Right(16).Bottom(bottom).Width(min(320, max(0, w-32))).
+			Padding(10, 12).Gap(8).Radius(10).Background(tok.card).Border(1, tok.border).
+			Shadow(0, 4, 16, 0, tok.shadow).Role(ui.RoleStatus).Label("更新提示").Children(func() {
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "发现新版本 "+a.updateNotice).FontSize(13).Bold().Grow(1).MinWidth(0).SingleLine()
+				label, accessible := "详情", "查看更新详情"
+				if a.updateDetailsOpen {
+					label, accessible = "收起", "收起更新详情"
+				}
+				ui.Button(c.Key("update-details"), label).Label(accessible).FontSize(12).Padding(4, 8).Shrink(0).
+					OnClick(func() { a.updateDetailsOpen = !a.updateDetailsOpen })
+				if a.updateDownloading {
+					ui.Button(c, "隐藏").Label("隐藏更新提示").FontSize(12).Padding(4, 8).Shrink(0).
+						OnClick(func() { a.updateHidden = true })
+				} else {
+					ui.Button(c, "稍后").FontSize(12).Padding(4, 8).Shrink(0).OnClick(func() { a.dismissUpdate() })
+				}
+			})
+			if a.updateDeferred {
+				ui.Text(c, update.DeferMessage).FontSize(12).TextColor(tok.warning).SingleLine().Tooltip(update.DeferMessage)
 			}
-		}
-		if a.updateSigned != nil {
-			ui.Text(c, "更新包由 MyGo 验证开发者签名。").FontSize(11).TextColor(c.Theme().TextMuted)
-		} else {
-			ui.Text(c, "安装包未签名，下载后会用 SHA256SUMS 校验。").FontSize(11).TextColor(c.Theme().TextMuted)
-		}
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Button(c, "立即更新").Disabled(a.updateBusy || a.updateDownloading).OnClick(func() { a.applyUpdate() })
-			ui.Button(c, "稍后").Disabled(a.updateDownloading).OnClick(func() { a.dismissUpdate() })
-			ui.Button(c, "跳过此版本").Disabled(a.updateDownloading).OnClick(func() { a.skipUpdate() })
+			if a.updateErr != "" {
+				ui.Text(c, a.updateErr).FontSize(12).TextColor(tok.danger).SingleLine().Tooltip(a.updateErr)
+			}
+			if a.updateDownloading {
+				installing := strings.Contains(a.updateProgressText, "正在安装")
+				ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, a.updateProgressText).FontSize(12).TextColor(tok.muted).Grow(1).MinWidth(0).SingleLine().Tooltip(a.updateProgressText)
+					if !installing && a.updateFraction > 0 {
+						ui.Text(c, fmt.Sprintf("%.0f%%", min(a.updateFraction, 1)*100)).FontSize(12).TextColor(tok.muted)
+					}
+				})
+				motionProgress(c, "update-progress", a.updateFraction, installing || a.updateFraction <= 0)
+			}
+			if a.updateDetailsOpen {
+				verification := "安装包未签名，下载后会用 SHA256SUMS 校验。"
+				if a.updateSigned != nil {
+					verification = "更新包由 MyGo 验证开发者签名。"
+				}
+				ui.Text(c, verification).FontSize(12).TextColor(tok.muted).SingleLine().Tooltip(verification)
+				a.updateBannerActions(c)
+				if a.updateNotes != "" && a.updateNotesOpen {
+					ui.Scroll(c.Key("update-notes")).FillWidth().MaxHeight(min(120, max(40, h-bottom-180))).Label("更新说明").Children(func() {
+						ui.Column(c).FillWidth().Shrink(0).Children(func() {
+							for _, line := range splitLines(a.updateNotes) {
+								ui.Text(c, line).FontSize(12).TextColor(tok.muted).Shrink(0)
+							}
+						})
+					})
+				}
+			}
 		})
+	})
+}
+
+func (a *App) updateBannerActions(c *ui.Context) {
+	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
+		if a.updateNotes != "" {
+			label := "查看更新说明"
+			if a.updateNotesOpen {
+				label = "收起更新说明"
+			}
+			ui.Button(c, label).FontSize(12).Shrink(0).OnClick(func() { a.updateNotesOpen = !a.updateNotesOpen })
+		}
+		if !a.updateDownloading {
+			ui.Button(c, "跳过此版本").FontSize(12).Shrink(0).OnClick(func() { a.skipUpdate() })
+			ui.Button(c, "立即更新").FontSize(12).Shrink(0).Background(a.look.accent.Alpha(0.1)).TextColor(a.look.accent).
+				Disabled(a.updateBusy).OnClick(func() { a.applyUpdate() })
+		}
 	})
 }
 
 // checkForUpdates is the manual entry from the menu, the title bar, and settings.
 func (a *App) checkForUpdates() {
+	if a.updateHidden && a.updateDownloading {
+		a.updateHidden = false
+		return
+	}
 	if a.updateBusy {
 		return
 	}
@@ -240,6 +297,11 @@ func (a *App) runUpdateCheck(manual bool) {
 		a.updateRel = rel
 		a.updateSigned = signed
 		a.updateSignedClient = client
+		if a.updateNotice != latest {
+			a.updateDetailsOpen = false
+			a.updateNotesOpen = false
+			a.updateHidden = false
+		}
 		a.updateNotice = latest
 		a.updateNotes = notes
 		a.updateErr = ""
@@ -488,6 +550,9 @@ func (a *App) failUpdate(err error) {
 func (a *App) dismissUpdate() {
 	a.updateNotice = ""
 	a.updateNotes = ""
+	a.updateDetailsOpen = false
+	a.updateNotesOpen = false
+	a.updateHidden = false
 	a.updateErr = ""
 	a.updatePending = false
 	a.updateDeferred = false

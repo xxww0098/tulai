@@ -3,6 +3,7 @@ package cdp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -11,8 +12,99 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/camoufoxtest"
 )
+
+func TestPageViewKeepsBusyTaskPage(t *testing.T) {
+	started, finished := make(chan struct{}, 1), make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/started":
+			started <- struct{}{}
+		case "/finished":
+			finished <- struct{}{}
+		default:
+			fmt.Fprint(w, `<!doctype html><title>busy task</title>`)
+		}
+	}))
+	defer server.Close()
+	proc, endpoint := camoufoxtest.Start(t, server.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	view, err := AttachPageView(ctx, endpoint, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if view != nil {
+			view.Close()
+		}
+	}()
+	closed := make(chan struct{}, 1)
+	unsubscribe := proc.Subscribe(func(event camoufox.Event) {
+		if event.Event == "closed" && event.Target == proc.Page {
+			closed <- struct{}{}
+		}
+	})
+	defer unsubscribe()
+	if err := proc.Call(ctx, proc.Page, "Runtime.evaluate", map[string]any{"expression": `(setTimeout(()=>{fetch('/started');const end=Date.now()+10000;while(Date.now()<end){};fetch('/finished')},100),true)`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("task page did not become busy")
+	}
+	connectCtx, stop := context.WithTimeout(ctx, 3*time.Second)
+	err = OpenURLBackground(connectCtx, endpoint, server.URL)
+	connectErr := connectCtx.Err()
+	stop()
+	if err != nil || connectErr != nil {
+		t.Fatalf("connecting to an existing busy task page: %v, context: %v", err, connectErr)
+	}
+	frameCtx, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, err = view.Frame(frameCtx)
+	stop()
+	if err == nil {
+		t.Fatal("busy page unexpectedly produced a frame")
+	}
+	probeCtx, cancelProbe := context.WithCancel(ctx)
+	probeDone := make(chan error, 1)
+	go func() {
+		_, err := view.conn.pageHits(probeCtx)
+		probeDone <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+	cancelProbe()
+	if err := <-probeDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled page probe: %v", err)
+	}
+	loginCtx, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, err = view.LoginState(loginCtx)
+	stop()
+	if err == nil {
+		t.Fatal("busy page unexpectedly returned login state")
+	}
+	view.Close()
+	view = nil
+	select {
+	case <-finished:
+	case <-closed:
+		t.Fatal("viewer closed the busy task page")
+	case <-time.After(15 * time.Second):
+		t.Fatal("task page did not finish")
+	}
+	conn, err := DialSlider(ctx, endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	pages, err := conn.targets(ctx)
+	if err != nil || len(pages) != 1 || pages[0].ID != proc.Page {
+		t.Fatalf("task page was replaced: %+v, %v", pages, err)
+	}
+}
 
 func TestPageViewControlsExistingPageAndDetaches(t *testing.T) {
 	if testing.Short() {

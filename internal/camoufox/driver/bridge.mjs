@@ -566,7 +566,8 @@ input.on('line', line => {
   const timer = setTimeout(() => controller.abort(), Math.max(1, request.timeout || 60000));
   const aborted = new Promise((_, reject) => controller.signal.addEventListener('abort', () => {
     // Playwright promises alone are not cancellable; close this page to stop late input or script effects.
-    if (['Runtime.evaluate','Page.navigate','Page.reload','upload'].includes(request.method) || request.method.startsWith('Input.')) {
+    if ((request.method === 'Runtime.evaluate' && !request.params?.readOnly) ||
+        ['Page.navigate','Page.reload','upload'].includes(request.method) || request.method.startsWith('Input.')) {
       pages.get(String(request.target))?.close().catch(() => {});
     }
     reject(new Error('操作已取消或超时'));

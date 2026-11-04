@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.10
+# 发布 tulai 0.1.11
 
-当前桌面端版本是 **0.1.10**，标签 **`v0.1.10`**。页面桥扩展是 **0.3.13**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.11**，标签 **`v0.1.11`**。页面桥扩展是 **0.3.13**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.11
+
+更新提示改为右下角浮窗，改进繁忙账号页面的复用和观察。本版只发布 Windows 安装包。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.10
 
@@ -64,8 +68,8 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.10` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.10` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.10` 之后，模块版本就是这个标签。 |
+| 桌面端 | `0.1.11` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.11` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.11` 之后，模块版本就是这个标签。 |
 | 页面桥扩展 | `0.3.13` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
@@ -75,16 +79,16 @@
 
 `.github/workflows/ci.yml`：
 
-- pull request 和 `main`：跑 `go test ./... -short`、`go tool mygo vet`、扩展的 node 测试，并打出三个系统的安装包。产物在 Actions 的 artifacts 里，保留 14 天：`tulai-linux`、`tulai-windows`、`tulai-macos`、`tulai-extension`。
-- 标签 `v*`：标签必须等于 `v` 加上 `mygo.json` 的版本。使用仓库 Actions secret `MYGO_UPDATER_PRIVATE_KEY` 构建签名更新包，并用 `GITHUB_TOKEN` 上传安装包、各平台更新清单、扩展 zip 和 `SHA256SUMS`。缺少签名密钥或任一平台的清单、压缩包时发布失败。
+- pull request 和 `main`：运行 Go、扩展及浏览器测试，并打出 Windows 安装包。浏览器基础测试与策略测试分开并行；`main` 测试 Windows，pull request 额外测试 macOS。产物在 Actions 的 artifacts 里保留 14 天。
+- 标签 `v*`：版本必须与 `mygo.json` 一致，且标签指向的提交必须有通过的 `main` CI。标签流水线复用这次测试结果，只重新打包并签名，再上传 Windows 安装包、Windows 更新清单、扩展 zip 和 `SHA256SUMS`。缺少签名密钥或必需附件时发布失败。
 
 `mygo.json` 的 `updates.github` 指向 `xxww0098/tulai`，`updates.publicKey` 是更新验签公钥。私钥只放在安全备份和 GitHub Actions secret `MYGO_UPDATER_PRIVATE_KEY`，不能提交到仓库或写入日志。更换或丢失私钥会使已安装版本无法验证新更新，应先安全备份。签名更新不等于 Apple 公证或 Windows 代码签名。Release 仍由现有的 `gh release create` 上传，以兼容旧版附件名。
 
-macOS 包在 `macos-latest` 上构建，才能做出磁盘映像并做 ad-hoc 签名。Windows 安装器在 Ubuntu 上用 NSIS 交叉制作。Linux 同时打 amd64 和 arm64。这些都是 `CGO_ENABLED=0` 的 `go tool mygo build`，和本机的 `./build.sh` 同一条命令。
+Windows 安装器在 Ubuntu 上用 NSIS 交叉制作，同时提供 amd64 和 arm64。构建使用 `CGO_ENABLED=0 go tool mygo build`。macOS 和 Linux 源码仍可自行构建，但新 Release 不再提供对应安装包。
 
 ## 发布新版本
 
-等这套流水线在 `main` 上是绿的，并且 `mygo.json` 与 `ProductVersion` 都改为相同的新版本、`CHANGELOG.md` 有对应版本说明，再推送对应标签。MyGo 更新清单和 GitHub Release 共用这段说明：
+等要发布的提交在 `main` 上通过 CI，并确认 `mygo.json` 与 `ProductVersion` 的版本一致、`CHANGELOG.md` 有对应说明，再推送标签。若提前推送标签，等 `main` 通过后重新运行标签流水线。MyGo 更新清单和 GitHub Release 共用这段说明：
 
 ```sh
 git checkout main
@@ -99,29 +103,28 @@ git push origin vX.Y.Z
 
 ## 附件
 
-以桌面版本 `0.1.10` 为例，附件命名如下：
+新流水线只发布 Windows。以下以桌面版本 `0.1.11` 为例展示命名；此前发布的 0.1.10 仍保留原有的 macOS 和 Linux 附件。
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| macOS | `tulai 0.1.10.dmg` | 通用二进制（Apple 芯片和 Intel）。打开后把 `tulai.app` 拖进「应用程序」。 |
-| Windows | `tulai Setup 0.1.10 amd64.exe`、`tulai Setup 0.1.10 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.10-windows-amd64.exe` 和 `tulai-0.1.10-windows-arm64.exe`。 |
-| Linux | `tulai_0.1.10_amd64.deb`、`tulai_0.1.10_arm64.deb` | `sudo dpkg -i`。包依赖 GTK 3 和 glibc，不依赖 WebKitGTK。 |
-| Linux | `tulai-0.1.10-linux-amd64.tar.gz`、`tulai-0.1.10-linux-arm64.tar.gz`、`install.sh` | 执行 `sh install.sh`，脚本从 GitHub 下载并校验签名。装到 `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。 |
+| Windows | `tulai Setup 0.1.11 amd64.exe`、`tulai Setup 0.1.11 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.11-windows-amd64.exe` 和 `tulai-0.1.11-windows-arm64.exe`。 |
 | 扩展 | `tulai-extension-0.3.13.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
-新版本还包含 `update-<系统>-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，名字用上传前的原名（磁盘映像和 Windows 安装器带空格）。每个 Actions artifact 另有本系统的 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。
+新版本还包含 `update-windows-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。
 
 `dpkg` 把程序装到 `/opt/tulai`，并在 `/usr/bin/tulai` 放命令。配置库位置见 README 的「运行」和「Windows 支持」。
 
 ## 签名限制
 
-- **macOS**：ad-hoc 签名，没有公证。本机打出来的包可以在那台 Mac 上跑；拷到别的 Mac，Gatekeeper 会拦。右键打开，或 `xattr -dr com.apple.quarantine /Applications/tulai.app`。要去掉这个限制，需要 Apple Developer ID 和公证配置，这次没有。
+- **macOS 历史包**：ad-hoc 签名，没有公证。本机打出来的包可以在那台 Mac 上跑；拷到别的 Mac，Gatekeeper 会拦。右键打开，或 `xattr -dr com.apple.quarantine /Applications/tulai.app`。要去掉这个限制，需要 Apple Developer ID 和公证配置。
 - **Windows**：没有证书。SmartScreen 会提示未知发布者。安装器仍然是当前用户安装。
-- **Linux**：deb 没有系统包签名；新发布的更新压缩包由 MyGo 清单提供验签。
+- **Linux 历史包**：deb 没有系统包签名；已有更新压缩包由 MyGo 清单提供验签。
 
 ## 从 GitHub 更新
 
 桌面端通过 GitHub Releases 检查正式版。使用本次修改构建的安装版通过 `mygo.Updater` 检查清单、下载更新并验证 `updates.publicKey` 对应的签名。公开仓库不需要 token，程序也不会读取 `GITHUB_TOKEN` 或 `GH_TOKEN`。
+
+Windows 专版成为最新正式版后，旧 macOS 和 Linux 客户端仍会检查该版本；它们可能提示发现更新或检查失败，但无法安装其中的 Windows 包。可在设置中关闭自动检查，并继续使用历史版本。
 
 检查地址是：
 
@@ -153,7 +156,7 @@ MyGo 在安装时验证 Ed25519 签名；验证失败或缺少签名清单会报
 
 版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.13.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
-以下是旧更新器选择的附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
+以下是各平台旧更新器选择附件的规则；新发布仅包含 Windows 附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 
 | 系统 | 怎么判断 | 下载 | 装到哪里 |
 |---|---|---|---|

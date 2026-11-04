@@ -78,7 +78,11 @@ func (a *App) navRail(c *ui.Context) {
 		ui.Spacer(c)
 		ui.Box(c).Width(18).Height(1).Margin(6, 0).Background(tok.border)
 		a.railButton(c, "nav-wizard", "设置向导", iconCompass, a.running, false, func() { a.openWizard() })
-		a.railButton(c, "nav-update", "检查更新", iconRefresh, a.updateBusy, a.updateNotice != "", func() { a.checkForUpdates() })
+		updateLabel := "检查更新"
+		if a.updateHidden && a.updateDownloading {
+			updateLabel = "显示更新进度"
+		}
+		a.railButton(c, "nav-update", updateLabel, iconRefresh, a.updateBusy && !(a.updateHidden && a.updateDownloading), a.updateNotice != "", func() { a.checkForUpdates() })
 	})
 }
 
