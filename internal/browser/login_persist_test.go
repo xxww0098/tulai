@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	extbundle "github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"github.com/xxww0098/tulai/internal/store"
@@ -147,14 +148,27 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	root := t.TempDir()
 	t.Cleanup(manager.StopAll)
 	b := store.Browser{ID: 1, Name: "account", Port: 49010, UserDataDir: filepath.Join(root, "account")}
-	if _, err := manager.Start(b, root, KindCamoufox, server.URL+"/login", true); err != nil {
+	addon, err := extbundle.InstallFirefoxBridge(filepath.Join(t.TempDir(), "addon"), "18965", "fixture-token", "tulai-bound-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.StartTaskWithAddon(b, root, server.URL+"/login", addon); err != nil {
 		t.Fatal(err)
 	}
 	firstPID := manager.pid(b.ID)
 	if !manager.IsHeadless(b.ID) {
 		t.Fatal("background account should be headless")
 	}
-	if _, err := manager.StartTask(b, root, KindCamoufox, server.URL+"/check"); err != nil {
+	if manager.StopLogin(b.ID) || !manager.IsRunning(b.ID) {
+		t.Fatal("login cleanup stopped a background task")
+	}
+	if _, err := manager.Start(b, root, KindCamoufox, server.URL+"/check", true); err != nil {
+		t.Fatal(err)
+	}
+	if manager.pid(b.ID) != firstPID {
+		t.Fatal("viewing an account with a page bridge must not restart the running task")
+	}
+	if _, err := manager.StartTaskWithAddon(b, root, server.URL+"/check", addon); err != nil {
 		t.Fatal(err)
 	}
 	if manager.pid(b.ID) != firstPID {
@@ -164,7 +178,7 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	manager.mu.Lock()
 	manager.quiet[b.ID] = false
 	manager.mu.Unlock()
-	ep, err := manager.StartTask(b, root, KindCamoufox, server.URL+"/check")
+	ep, err := manager.StartTaskWithAddon(b, root, server.URL+"/check", addon)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +189,7 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	var out struct{ Result struct{ Value string } }
 	if err := proc.Call(ctx, proc.Page, "Runtime.evaluate", map[string]any{"expression": "document.body.textContent"}, &out); err != nil {
@@ -183,6 +197,26 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	}
 	if out.Result.Value != "kept" {
 		t.Fatalf("login cookie was lost during restart: %q", out.Result.Value)
+	}
+	manager.mu.Lock()
+	manager.quiet[b.ID] = false
+	manager.mu.Unlock()
+	if !manager.StopLogin(b.ID) || manager.IsRunning(b.ID) {
+		t.Fatal("login cleanup did not stop the visible account")
+	}
+	ep, err = manager.StartTask(b, root, KindCamoufox, server.URL+"/check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err = camoufox.Find(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Call(ctx, proc.Page, "Runtime.evaluate", map[string]any{"expression": "document.body.textContent"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Result.Value != "kept" {
+		t.Fatalf("login cookie was lost after login cleanup: %q", out.Result.Value)
 	}
 }
 

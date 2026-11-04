@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 
@@ -17,10 +19,10 @@ func (a *App) downloadBrowserControls(c *ui.Context, tok tokens) {
 			if a.dlBrowserBusy {
 				label = "正在打开…"
 			} else if a.dlBrowser != nil && a.dlBrowser.Alive() {
-				label = "重新打开浏览器"
+				label = "打开填写的网址"
 			}
-			ui.Button(c.Key("dl-open-browser"), label).Disabled(a.dlBrowserBusy).OnClick(a.openDownloadBrowser)
-			ui.Text(c, "专用指纹环境 · 登录并加载页面后开始下载。").FontSize(12).TextColor(tok.muted)
+			ui.Button(c.Key("dl-open-browser"), label).Shrink(0).Disabled(a.dlBrowserBusy).OnClick(a.openDownloadBrowser)
+			ui.Text(c, "专用环境：可先登录，填写网址后打开并下载。").FontSize(12).TextColor(tok.muted).Grow(1).MinWidth(0)
 		})
 		if a.dlBrowserErr != "" {
 			ui.Text(c, a.dlBrowserErr).FontSize(12).TextColor(tok.danger)
@@ -60,8 +62,23 @@ func (a *App) openDownloadBrowser() {
 		return
 	}
 	urls := parseDownloadURLs(a.dlURLs)
-	if len(urls) != 1 {
+	if len(urls) != 1 && strings.TrimSpace(a.dlURLs) != "" {
 		a.dlBrowserErr = "浏览器模式每次需要一个网址"
+		return
+	}
+	target := ""
+	if len(urls) == 1 {
+		target = urls[0]
+	}
+	a.openDownloadBrowserURL(target)
+}
+
+func (a *App) openDownloadBrowserURL(target string) {
+	if a.dlBrowserBusy {
+		return
+	}
+	if hasQzoneCredentials(target) {
+		a.dlBrowserErr = "QQ 相册网址包含登录令牌，请移除令牌后再打开"
 		return
 	}
 	for _, task := range a.dlTasks {
@@ -73,6 +90,28 @@ func (a *App) openDownloadBrowser() {
 	proxy := browser.CurrentProxyServer()
 	if proxy != "" {
 		a.dlBrowserErr = "下载浏览器暂不支持代理，请先关闭全局或系统代理后重试"
+		return
+	}
+	if session := a.dlBrowser; session != nil && session.Alive() {
+		if target == "" {
+			a.dlBrowserErr = "浏览器已打开，请填写一个网址后点击打开"
+			return
+		}
+		a.dlBrowserBusy, a.dlBrowserErr, a.dlBrowserURL = true, "", ""
+		go func() {
+			err := session.OpenTarget(context.Background(), target)
+			a.postUI(func() {
+				if a.dlBrowser != session {
+					return
+				}
+				a.dlBrowserBusy = false
+				if err != nil {
+					a.dlBrowserErr = err.Error()
+					return
+				}
+				a.dlBrowserURL = target
+			})
+		}()
 		return
 	}
 	root := browser.ConfigDir()
@@ -92,7 +131,10 @@ func (a *App) openDownloadBrowser() {
 		if old != nil {
 			old.Close()
 		}
-		session, err := download.OpenRendered(ctx, filepath.Join(root, "DownloadBrowser"), urls[0], proxy, false)
+		session, err := download.OpenRenderedAssisted(ctx, filepath.Join(root, "DownloadBrowser"), target, proxy, false,
+			func(ctx context.Context, session *download.RenderedSession, rawURL, marker string) error {
+				return a.downloadBrowserRequest(ctx, session, rawURL, marker)
+			})
 		if session != nil {
 			context.AfterFunc(ctx, session.Close)
 			go func() {
@@ -101,6 +143,7 @@ func (a *App) openDownloadBrowser() {
 				a.postUI(func() {
 					if a.dlBrowser == session {
 						a.dlBrowser, a.dlBrowserURL = nil, ""
+						a.dlBrowserBusy = false
 						if a.dlBrowserCancel != nil {
 							a.dlBrowserCancel()
 							a.dlBrowserCancel = nil
@@ -130,7 +173,102 @@ func (a *App) openDownloadBrowser() {
 				cancel()
 				return
 			}
-			a.dlBrowser, a.dlBrowserURL = session, urls[0]
+			a.dlBrowser, a.dlBrowserURL = session, target
 		})
 	}()
+}
+
+func (a *App) downloadBrowserRequest(ctx context.Context, session downloadBrowser, rawURL, marker string) error {
+	result := make(chan error, 1)
+	a.postUI(func() {
+		if err := ctx.Err(); err != nil {
+			result <- err
+			return
+		}
+		if a.dlBrowser != session || !session.Alive() || a.dlBrowserBusy {
+			result <- errors.New("下载浏览器尚未就绪，请稍后重试")
+			return
+		}
+		var existing *downloadTask
+		for _, task := range a.dlTasks {
+			if task.Rendered && (task.Phase == dlActive || task.Phase == dlQueued) {
+				result <- errors.New("请等待当前浏览器下载结束或暂停")
+				return
+			}
+			if task.URL == rawURL {
+				if !task.Rendered || (!task.Phase.terminal() && task.Phase != dlPaused) {
+					result <- errors.New("该页面已有下载任务，请在 tulai 中查看")
+					return
+				}
+				existing = task
+			}
+		}
+		if err := a.downloadImageFilter().Validate(); err != nil {
+			result <- err
+			return
+		}
+		if !ensureDownloadDir(a.downloadDir()) {
+			result <- errors.New("无法创建保存目录")
+			return
+		}
+		a.dlBrowserBusy, a.dlBrowserURL, a.dlBrowserErr = true, "", ""
+		go func() {
+			err := session.BindCurrent(ctx, rawURL, marker)
+			a.postUI(func() {
+				if a.dlBrowser != session {
+					result <- errors.New("下载浏览器已关闭，请重新打开")
+					return
+				}
+				a.dlBrowserBusy = false
+				if err == nil {
+					err = ctx.Err()
+				}
+				if err != nil {
+					a.dlBrowserErr = err.Error()
+					result <- err
+					return
+				}
+				a.dlBrowserURL = rawURL
+				if existing != nil {
+					found := false
+					for _, task := range a.dlTasks {
+						if task == existing {
+							found = true
+						}
+						if task.Rendered && (task.Phase == dlActive || task.Phase == dlQueued) {
+							result <- errors.New("请等待当前浏览器下载结束或暂停")
+							return
+						}
+					}
+					if !found || (!existing.Phase.terminal() && existing.Phase != dlPaused) {
+						result <- errors.New("下载任务已变化，请重新点击")
+						return
+					}
+					a.dlFilter = dlFilterOpen
+					if existing.Phase == dlPaused {
+						a.resumeTask(existing)
+					} else {
+						a.requeueDownloadTask(existing, false)
+					}
+					result <- nil
+					return
+				}
+				oldMode := a.dlBrowserMode
+				a.dlBrowserMode = true
+				added, _ := a.addDownloadURLs(rawURL)
+				a.dlBrowserMode = oldMode
+				if added == 0 {
+					result <- errors.New("无法加入下载列表，请检查当前网址")
+					return
+				}
+				result <- nil
+			})
+		}()
+	})
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

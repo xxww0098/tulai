@@ -87,8 +87,8 @@ func helloBridge(t *testing.T, addr, token string) extbridge.Envelope {
 func TestUseExtensionForQianwenAndDoubao(t *testing.T) {
 	st := openTaskStore(t)
 	e := NewEngine(st, nil, nil, t.TempDir())
-	if e.useExtension("千问") || e.useExtension("豆包") {
-		t.Fatal("default backend must stay on ego")
+	if !e.useBoundExtension("千问") || !e.useBoundExtension("豆包") {
+		t.Fatal("default backend must use the bound Firefox bridge")
 	}
 	st.Set(extbridge.SettingBrowserBackend, "extension")
 	if !e.useExtension("千问") || !e.useExtension("豆包") {
@@ -455,6 +455,172 @@ func TestExtensionDoubaoHappyPath(t *testing.T) {
 	defer mu.Unlock()
 	if sawPlatform != extbridge.PlatformDoubao || uploads != 1 || sends != 1 || waits != 1 || downloads != 1 {
 		t.Fatalf("platform=%s uploads=%d sends=%d waits=%d downloads=%d", sawPlatform, uploads, sends, waits, downloads)
+	}
+}
+
+func TestExtensionWashSavesResultsForEachSource(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.Set("extBridgePort", port)
+	st.Set("extBridgeToken", "dev-token")
+	dir := t.TempDir()
+	sources := []string{filepath.Join(dir, "甲.png"), filepath.Join(dir, "乙.png"), filepath.Join(dir, "丙.png")}
+	inputs := [][]byte{resultPNG(t, 10), resultPNG(t, 11), resultPNG(t, 12)}
+	for i, path := range sources {
+		if err := os.WriteFile(path, inputs[i], 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 甲和丙得到同一张图；这张图也恰好与乙的源图相同。
+	outputs := map[string][]byte{"1": inputs[1], "2": resultPNG(t, 13), "3": inputs[1]}
+	var mu sync.Mutex
+	uploads := map[string][]byte{}
+	names := map[string]string{}
+	go serveFakeExt("127.0.0.1:"+port, "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdUpload:
+			var payload struct {
+				FileName   string `json:"fileName"`
+				DataBase64 string `json:"dataBase64"`
+			}
+			_ = json.Unmarshal(env.Payload, &payload)
+			data, _ := base64.StdEncoding.DecodeString(payload.DataBase64)
+			mu.Lock()
+			uploads[env.TaskID] = append(uploads[env.TaskID], data...)
+			names[env.TaskID] = payload.FileName
+			mu.Unlock()
+			return ackOK(env, nil)
+		case extbridge.CmdSetPrompt, extbridge.CmdCaptchaAssist, extbridge.CmdSend:
+			return ackOK(env, nil)
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{"images": []map[string]string{{"url": "https://cdn.example/" + env.TaskID + ".png"}}})
+		case extbridge.CmdDownload:
+			return chunkAck(env, outputs[env.TaskID], 0)
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	e := NewEngine(st, nil, nil, dir)
+	defer e.CloseSessions()
+	err := e.Run(context.Background(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources, Wash: true,
+		Concurrency: 1, WaitResult: true, WaitResultSeconds: 30, OutputPath: filepath.Join(dir, "out"),
+	}, func(Task) {}, func(Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := e.View().Snapshot()
+	if len(queue) != len(sources) {
+		t.Fatalf("queue=%+v", queue)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for i, task := range queue {
+		id := strconv.Itoa(i + 1)
+		if task.Status != StatusSuccess || len(task.Images) != 1 || task.Images[0] != sources[i] || len(task.Results) != 1 {
+			t.Fatalf("task %s does not match its source: %+v", id, task)
+		}
+		wantName := strings.TrimSuffix(filepath.Base(sources[i]), ".png") + "_01.png"
+		if filepath.Base(task.Results[0]) != wantName {
+			t.Fatalf("task %s result name = %s, want %s", id, task.Results[0], wantName)
+		}
+		if data, err := os.ReadFile(task.Results[0]); err != nil || !bytes.Equal(data, outputs[id]) {
+			t.Fatalf("task %s saved the wrong result: %v", id, err)
+		}
+		if names[id] != filepath.Base(sources[i]) || !bytes.Equal(uploads[id], inputs[i]) {
+			t.Fatalf("task %s uploaded a different source: name=%s bytes=%d", id, names[id], len(uploads[id]))
+		}
+	}
+}
+
+func TestExtensionWashRejectsSourceEcho(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.Set("extBridgePort", port)
+	st.Set("extBridgeToken", "dev-token")
+	dir := t.TempDir()
+	source := filepath.Join(dir, "源图.png")
+	data := resultPNG(t, 14)
+	if err := os.WriteFile(source, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go serveFakeExt("127.0.0.1:"+port, "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdUpload, extbridge.CmdSetPrompt, extbridge.CmdCaptchaAssist, extbridge.CmdSend:
+			return ackOK(env, nil)
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{"images": []map[string]string{{"url": "https://cdn.example/echo.png"}}})
+		case extbridge.CmdDownload:
+			return chunkAck(env, data, 0)
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	e := NewEngine(st, nil, nil, dir)
+	defer e.CloseSessions()
+	err := e.Run(context.Background(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: []string{source}, Wash: true,
+		Concurrency: 1, WaitResult: true, WaitResultSeconds: 30, OutputPath: filepath.Join(dir, "out"),
+	}, func(Task) {}, func(Progress) {})
+	queue := e.View().Snapshot()
+	if err != nil || len(queue) != 1 || queue[0].Status != StatusFailed || len(queue[0].Results) != 0 || !strings.Contains(queue[0].Error, "未保存到有效结果") {
+		t.Fatalf("source echo must fail instead of reporting success: err=%v queue=%+v", err, queue)
+	}
+}
+
+func TestExtensionRetryAcceptsItsAlreadySavedResult(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.Set("extBridgePort", port)
+	st.Set("extBridgeToken", "dev-token")
+	dir := t.TempDir()
+	source := filepath.Join(dir, "源图.png")
+	if err := os.WriteFile(source, resultPNG(t, 15), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := resultPNG(t, 16)
+	var mu sync.Mutex
+	var sends, waits int
+	go serveFakeExt("127.0.0.1:"+port, "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdUpload, extbridge.CmdSetPrompt, extbridge.CmdCaptchaAssist:
+			return ackOK(env, nil)
+		case extbridge.CmdSend:
+			mu.Lock()
+			sends++
+			mu.Unlock()
+			return ackOK(env, nil)
+		case extbridge.CmdWaitResult:
+			mu.Lock()
+			waits++
+			mu.Unlock()
+			return ackOK(env, map[string]any{"images": []map[string]string{{"url": "https://cdn.example/result.png"}}})
+		case extbridge.CmdDownload:
+			return chunkAck(env, result, 0)
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	e := NewEngine(st, nil, nil, dir)
+	defer e.CloseSessions()
+	e.opts = Options{Wash: true, WaitResult: true, WaitResultSeconds: 30, OutputPath: filepath.Join(dir, "out")}
+	task := &Task{Index: 1, Platform: "豆包", Prompt: "洗图", Images: []string{source}}
+	if err := e.attemptDoubaoExtension(context.Background(), task); err != nil || len(task.Results) != 1 {
+		t.Fatalf("first attempt: err=%v task=%+v", err, task)
+	}
+	if err := e.attemptDoubaoExtension(context.Background(), task); err != nil || len(task.Results) != 1 || !task.matchedSavedResult {
+		t.Fatalf("retry must recognize the saved result: err=%v task=%+v", err, task)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if sends != 1 || waits != 2 {
+		t.Fatalf("retry must only wait again: sends=%d waits=%d", sends, waits)
 	}
 }
 

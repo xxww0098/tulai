@@ -18,10 +18,6 @@ var (
 		<path d="M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2"/>
 		<circle cx="13" cy="7" r="1" fill="currentColor"/>
 		<rect x="8" y="2" width="14" height="14" rx="2"/>`)
-	iconWash = mustIcon(`
-		<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/>
-		<path d="M22 21H7"/>
-		<path d="m5 11 9 9"/>`)
 	iconDedup = mustIcon(`
 		<rect x="8" y="8" width="14" height="14" rx="2"/>
 		<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>

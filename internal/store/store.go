@@ -53,9 +53,7 @@ type Store struct {
 }
 
 // defaults 是新库的初始设置。除 browserBackend、extBridgePort、extBridgeToken、concurrency 外，键与原软件 settings 表实测默认值对应。
-// browserBackend 只接受 extension 或 ego，默认 ego。
-// extension 时千问和豆包走扩展桥，不要求本机浏览器实例。
-// ego 表示不走扩展，页面由 browser_backend（Chrome 或 Edge）打开。
+// browserBackend 默认使用绑定账号的 Firefox 页面桥，也可选择直接控制或手动扩展。
 // concurrency 为 0 时按当前可用账号数自动调度；正数是手动上限。
 var defaults = map[string]string{
 	"selected_platforms":      "豆包",
@@ -87,7 +85,7 @@ var defaults = map[string]string{
 	"captcha_ikunocr_track":   "dom2",
 	"minimize_browser":        "0",
 	"sent_count_total":        "0",
-	"browserBackend":          "camoufox",
+	"browserBackend":          "camoufox_extension",
 	"browser_backend":         "Camoufox",
 	"extBridgePort":           "18765",
 	"extBridgeToken":          "dev-token",

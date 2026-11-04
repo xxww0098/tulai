@@ -881,7 +881,8 @@ func TestSaveResultsUsesDownloadedDataWithoutFetching(t *testing.T) {
 			strat := &resultSequenceStrategy{onFetch: func(string) {
 				t.Fatal("已下载的结果不得再次抓取 URL")
 			}}
-			saved, err := e.saveResults(ctx, &Task{Images: []string{"source.png"}}, strat, nil, []strategy.Result{{URL: "https://example.test/result.png", Src: "download", Data: tc.data}})
+			task := &Task{Images: []string{"source.png"}}
+			saved, err := e.saveResults(ctx, task, strat, nil, []strategy.Result{{URL: "https://example.test/result.png", Src: "download", Data: tc.data}})
 			if tc.canceled {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("已取消的下载不得保存: %v", err)
@@ -904,7 +905,7 @@ func TestSaveResultsUsesDownloadedDataWithoutFetching(t *testing.T) {
 				if data, err := os.ReadFile(saved[0]); err != nil || !bytes.Equal(data, valid) {
 					t.Fatalf("应保存下载字节原样: %v", err)
 				}
-			} else if files, err := os.ReadDir(e.opts.OutputPath); err != nil || len(files) != 0 || len(e.seenHash) != 0 {
+			} else if files, err := os.ReadDir(e.opts.OutputPath); err != nil || len(files) != 0 || len(task.savedHashes) != 0 {
 				t.Fatalf("无效或取消的下载不得留下文件或去重占位: %v, %v", files, err)
 			}
 		})
@@ -919,7 +920,7 @@ func TestWaitAndSaveContinuesAfterInvalidCandidates(t *testing.T) {
 	}
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{OutputPath: t.TempDir(), WaitResultSeconds: 3}
-	e.srcHashes = map[string]bool{images.SHA256(source): true}
+	e.srcHashes = map[string]string{"source.png": images.SHA256(source)}
 	task := &Task{Index: 1, Images: []string{"source.png"}}
 	if err := e.waitAndSave(context.Background(), task, strat, nil); err != nil {
 		t.Fatal(err)
@@ -1028,8 +1029,8 @@ func TestWaitAndSaveCancellationDuringResultRead(t *testing.T) {
 				t.Fatalf("结果读取中取消应返回取消错误: %v", err)
 			}
 			files, err := os.ReadDir(e.opts.OutputPath)
-			if err != nil || len(files) != 0 || len(task.Results) != 0 || len(e.seenHash) != 0 {
-				t.Fatalf("取消后不应保存或保留去重占位: files=%v, results=%v, hashes=%v, err=%v", files, task.Results, e.seenHash, err)
+			if err != nil || len(files) != 0 || len(task.Results) != 0 || len(task.savedHashes) != 0 {
+				t.Fatalf("取消后不应保存或保留去重占位: files=%v, results=%v, hashes=%v, err=%v", files, task.Results, task.savedHashes, err)
 			}
 			if boundary == "wait" && fetches != 0 {
 				t.Fatalf("等待时已取消，不应继续抓取: %d", fetches)
@@ -1064,8 +1065,8 @@ func TestWaitAndSaveRetainsPartialResultsOnDiskError(t *testing.T) {
 	if data, err := os.ReadFile(blocker); err != nil || string(data) != "keep" {
 		t.Fatalf("已有文件不应覆盖: %v", err)
 	}
-	if !e.seenHash[images.SHA256(first)] || !e.seenHash[images.SHA256(second)] {
-		t.Fatalf("两张都应记下: %v", e.seenHash)
+	if !task.savedHashes[images.SHA256(first)] || !task.savedHashes[images.SHA256(second)] {
+		t.Fatalf("两张都应记在本任务中: %v", task.savedHashes)
 	}
 }
 
@@ -1087,9 +1088,10 @@ func TestSaveResultsRejectsIncompleteAndOversizedImages(t *testing.T) {
 			}
 			e := NewEngine(nil, nil, nil, "")
 			e.opts = Options{OutputPath: t.TempDir()}
-			saved, err := e.saveResults(context.Background(), &Task{Images: []string{"source.png"}}, resultBytesStrategy{data: tc.data}, nil, []strategy.Result{{URL: "invalid"}})
-			if err != nil || len(saved) != 0 || len(e.seenHash) != 0 {
-				t.Fatalf("不可完整解码或过大的图片不得计为成功: saved=%v, hashes=%v, err=%v", saved, e.seenHash, err)
+			task := &Task{Images: []string{"source.png"}}
+			saved, err := e.saveResults(context.Background(), task, resultBytesStrategy{data: tc.data}, nil, []strategy.Result{{URL: "invalid"}})
+			if err != nil || len(saved) != 0 || len(task.savedHashes) != 0 {
+				t.Fatalf("不可完整解码或过大的图片不得计为成功: saved=%v, hashes=%v, err=%v", saved, task.savedHashes, err)
 			}
 			files, err := os.ReadDir(e.opts.OutputPath)
 			if err != nil || len(files) != 0 {
@@ -1316,8 +1318,8 @@ func TestSaveResultsWatermarkCancellationRetainsOriginal(t *testing.T) {
 		t.Fatalf("取消不得删除已完成原图: %v", err)
 	}
 	files, err := os.ReadDir(e.opts.ResultDir(time.Now()))
-	if err != nil || len(files) != 1 || !e.seenHash[images.SHA256(data)] {
-		t.Fatalf("取消只保留原图和已完成去重状态: files=%v, hashes=%v, err=%v", files, e.seenHash, err)
+	if err != nil || len(files) != 1 || !task.savedHashes[images.SHA256(data)] {
+		t.Fatalf("取消只保留原图和已完成去重状态: files=%v, hashes=%v, err=%v", files, task.savedHashes, err)
 	}
 }
 
@@ -1567,6 +1569,125 @@ func TestSaveResultsWashUsesSourceNameInDayFolder(t *testing.T) {
 	more, err := again.saveResults(context.Background(), &Task{Prompt: "别的指令", Images: []string{"/in/海报 A.jpg"}}, nil, nil, []strategy.Result{{Data: resultPNG(t, 3)}})
 	if err != nil || len(more) != 1 || more[0] != filepath.Join(day, "海报 A_03.png") {
 		t.Fatalf("洗图同一天应继续编号: %v %v", more, err)
+	}
+}
+
+func TestWashConcurrentResultsMatchTheirSources(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set("browserBackend", "camoufox")
+	addNamed(t, st, "豆包", "甲")
+	addNamed(t, st, "豆包", "乙")
+	dir := t.TempDir()
+	sources := []string{filepath.Join(dir, "甲.png"), filepath.Join(dir, "乙.png"), filepath.Join(dir, "丙.png")}
+	inputs := [][]byte{resultPNG(t, 31), resultPNG(t, 32)}
+	inputs = append(inputs, inputs[0])
+	for i, path := range sources {
+		if err := os.WriteFile(path, inputs[i], 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outputs := map[string][]byte{sources[0]: inputs[1], sources[1]: resultPNG(t, 34), sources[2]: inputs[1]}
+	e := NewEngine(st, nil, nil, dir)
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	started := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	opts := Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources, Wash: true,
+		Concurrency: 2, WaitResult: true, WaitResultSeconds: 10, OutputPath: filepath.Join(dir, "out"),
+	}
+	for run := 1; run <= 2; run++ {
+		err := e.RunObserved(ctx, opts, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+			mu.Lock()
+			started++
+			if started == 2 {
+				close(gate)
+			}
+			mu.Unlock()
+			select {
+			case <-gate:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			strat := &resultSequenceStrategy{rounds: [][]strategy.Result{{{Data: outputs[task.Images[0]], WatermarkRemoved: true}}}}
+			return e.waitAndSave(ctx, task, strat, nil)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		queue := e.View().Snapshot()
+		if len(queue) != len(sources) {
+			t.Fatalf("queue=%+v", queue)
+		}
+		for i, task := range queue {
+			if task.Status != StatusSuccess || len(task.Images) != 1 || task.Images[0] != sources[i] || len(task.Results) != 1 {
+				t.Fatalf("run %d task %d does not match its source: %+v", run, i+1, task)
+			}
+			wantName := fmt.Sprintf("%s_%02d.png", strings.TrimSuffix(filepath.Base(sources[i]), ".png"), run)
+			if filepath.Base(task.Results[0]) != wantName {
+				t.Fatalf("task %d result name = %s, want %s", i+1, task.Results[0], wantName)
+			}
+			if data, err := os.ReadFile(task.Results[0]); err != nil || !bytes.Equal(data, outputs[sources[i]]) {
+				t.Fatalf("task %d saved the wrong result: %v", i+1, err)
+			}
+		}
+	}
+}
+
+func TestWashSameNameSourcesKeepTaskAssociation(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set("browserBackend", "camoufox")
+	addNamed(t, st, "豆包", "甲")
+	addNamed(t, st, "豆包", "乙")
+	dir := t.TempDir()
+	sources := []string{filepath.Join(dir, "a", "product.png"), filepath.Join(dir, "b", "product.png")}
+	outputs := map[string][]byte{sources[0]: resultPNG(t, 43), sources[1]: resultPNG(t, 44)}
+	for i, path := range sources {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, resultPNG(t, byte(41+i)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := NewEngine(st, nil, nil, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	started := 0
+	gate := make(chan struct{})
+	err := e.RunObserved(ctx, Options{
+		Platforms: []string{"豆包"}, Images: sources, Wash: true, Concurrency: 2,
+		WaitResult: true, WaitResultSeconds: 10, OutputPath: filepath.Join(dir, "out"),
+	}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+		mu.Lock()
+		started++
+		if started == 2 {
+			close(gate)
+		}
+		mu.Unlock()
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		strat := &resultSequenceStrategy{rounds: [][]strategy.Result{{{Data: outputs[task.Images[0]], WatermarkRemoved: true}}}}
+		return e.waitAndSave(ctx, task, strat, nil)
+	})
+	queue := e.View().Snapshot()
+	if err != nil || len(queue) != 2 {
+		t.Fatalf("run=%v queue=%+v", err, queue)
+	}
+	paths := map[string]bool{}
+	for i, task := range queue {
+		if task.Status != StatusSuccess || len(task.Images) != 1 || task.Images[0] != sources[i] || len(task.Results) != 1 || paths[task.Results[0]] {
+			t.Fatalf("same-name source lost its own output: %+v", task)
+		}
+		paths[task.Results[0]] = true
+		if data, err := os.ReadFile(task.Results[0]); err != nil || !bytes.Equal(data, outputs[sources[i]]) {
+			t.Fatalf("source %s got the wrong output: %v", sources[i], err)
+		}
 	}
 }
 

@@ -44,7 +44,7 @@ const loginProbeJS = `(function () {
       var el = nodes[i];
       if (!visible(el)) continue;
       var t = String(el.innerText || '').trim();
-      if (t === '登录' || t === '扫码登录' || t === '立即登录') return true;
+      if (t === '登录' || t === '扫码登录' || t === '立即登录' || t === '登录/注册') return true;
     }
     return false;
   }

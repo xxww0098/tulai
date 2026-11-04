@@ -31,19 +31,29 @@ type loginShot struct {
 }
 
 // applyWizardGate 在启动时决定要不要盖住主界面。
-// 已经有登录过且还能恢复的账号时写下完成标记并跳过。
+// 已有账号或完成标记的旧用户，以及已经展示过向导的用户，直接进入主界面。
 func (a *App) applyWizardGate() {
 	if a == nil || a.store == nil {
 		return
 	}
+	if a.store.GetBool(wizard.KeyShown) {
+		a.wizardOn = false
+		return
+	}
+	// 旧版正常退出时保存工作区状态，可用来识别没有向导标记的老用户。
+	// shortcut: 未保存过工作区的旧用户依赖账号和完成标记，若有其他历史记录再补迁移。
+	if a.store.Get("gen_stage_picked") != "" {
+		a.store.Set(wizard.KeyComplete, wizard.CompleteYes)
+	}
 	accounts := wizardAccounts(a.store)
-	if !wizard.ShouldShow(a.store.Get(wizard.KeyComplete), accounts, time.Now()) {
+	if !wizard.ShouldShow(a.store.Get(wizard.KeyComplete), accounts) {
 		if a.store.Get(wizard.KeyComplete) != wizard.CompleteYes {
 			a.store.Set(wizard.KeyComplete, wizard.CompleteYes)
 		}
 		a.wizardOn = false
 		return
 	}
+	a.store.SetInt(wizard.KeyShown, 1)
 	a.openWizard()
 }
 
@@ -64,7 +74,11 @@ func (a *App) openWizard() {
 	a.wizardName = ""
 	a.wizardNameFor = 0
 	a.wizardChoice = wizard.DefaultChoice(a.selectedPlatforms())
-	a.wizardFirst = wizard.ShouldShow("", wizardAccounts(a.store), time.Now())
+	complete := ""
+	if a.store != nil {
+		complete = a.store.Get(wizard.KeyComplete)
+	}
+	a.wizardFirst = wizard.ShouldShow(complete, wizardAccounts(a.store))
 	a.wizardAgy = wizardAgyState{watch: a.wizardAgy.watch}
 }
 
@@ -1005,13 +1019,13 @@ func (a *App) closeLoginWindow(b store.Browser) {
 	if viewing {
 		return
 	}
+	if a.manager != nil && !a.manager.StopLogin(b.ID) {
+		return
+	}
 	a.mu.Lock()
 	a.loginClosed = append(a.loginClosed, b.ID)
 	a.mu.Unlock()
 	cdp.ReleaseLoginFront(loginEndpoint(b))
-	if a.manager != nil {
-		a.manager.Stop(b.ID)
-	}
 	if a.store != nil {
 		a.store.SetRunning(b.ID, false)
 	}
@@ -1054,7 +1068,7 @@ func loginEndpoint(b store.Browser) string {
 	return camoufox.Endpoint(b.Port)
 }
 
-// watchLogin 只更新登录状态，保留手动打开的环境窗口。测试可换成 loginFollow。
+// watchLogin 在新账号登录后关闭窗口；手动打开的已有环境保持打开。
 func (a *App) watchLogin(b store.Browser, ws string) {
 	if a == nil || b.ID == 0 {
 		return
@@ -1097,10 +1111,14 @@ func (a *App) followLogin(b store.Browser, ws string) {
 				hint = "还没检测到登录，可以在打开的网页里完成后等自动识别"
 				state = wizard.ProbeOut
 			}
+			closeAfterLogin := state == wizard.ProbeIn && a.loginIsFresh(b.ID)
 			if !a.publishLogin(b.ID, gen, state, hint) {
 				return
 			}
 			if state == wizard.ProbeIn {
+				if closeAfterLogin && a.loginCurrent(b.ID, gen) {
+					a.closeLoginWindow(b)
+				}
 				return
 			}
 			if !a.loginSleep(b.ID, gen) {

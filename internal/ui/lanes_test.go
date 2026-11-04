@@ -24,7 +24,7 @@ func TestCaptchaLaneSaysNeedsHuman(t *testing.T) {
 		Health: store.HealthCooling, CoolUntil: time.Now().Add(time.Minute).Unix(),
 		LastError: "需要人工验证", IsLoggedIn: true,
 	}
-	if got := accountHealthLabel(b, false, true); got != "需要人工验证" {
+	if got := accountHealthLabel(b, false, true, time.Now()); got != "需要人工验证" {
 		t.Fatalf("account = %s", got)
 	}
 }
@@ -113,24 +113,32 @@ func TestDailyResultsFitAccountTable(t *testing.T) {
 func TestDailyResultsRefreshAtMidnight(t *testing.T) {
 	b := loggedLane(1, "豆包主力", "豆包")
 	b.DayCount, b.DaySuccess, b.DayFailed = 2, 1, 1
-	a := &App{}
-	var midnight time.Time
-	tt := ui.NewTester(func(c *ui.Context) {
-		now := c.Now()
-		if midnight.IsZero() {
-			midnight = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
-		}
-		board := tasks.Assemble([]store.Browser{b}, tasks.LaneLive{}, 100, now)
-		a.laneClock(c, board)
-		ln := board.Lanes[0]
-		ui.Text(c, fmt.Sprintf("%d/%d/%d", ln.UsedToday, ln.SuccessToday, ln.FailedToday))
-	}, 300, 80)
-	if !tt.HasText("2/1/1") || tt.FramePending() {
-		t.Fatalf("initial stats or idle frame: %v", tt.Texts())
+	a := &App{platformAuto: true, browserRows: []store.Browser{b}}
+	tt := ui.NewTester(a.view, 1280, 900)
+	if !tt.HasText("2/100") || !tt.HasText("今日成功 1") || !tt.HasText("今日失败 1") {
+		t.Fatalf("before midnight: %v", tt.Texts())
 	}
-	tt.Advance(time.Until(midnight) + time.Second)
-	if !tt.HasText("0/0/0") || tt.FramePending() {
-		t.Fatalf("stats did not refresh at midnight: %v", tt.Texts())
+	now := tt.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	tt.Advance(midnight.Sub(now))
+	if !tt.HasText("0/100") || !tt.HasText("今日成功 0") || !tt.HasText("今日失败 0") {
+		t.Fatalf("at midnight: %v", tt.Texts())
+	}
+}
+
+func TestAccountPanelRefreshesZeroUseQuotaAtMidnight(t *testing.T) {
+	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	b := loggedLane(1, "豆包主力", "豆包")
+	b.Health, b.CoolUntil, b.LastError = store.HealthExhausted, midnight.Unix(), "今日额度已用尽"
+	a := &App{platformAuto: true, browserRows: []store.Browser{b}}
+	tt := ui.NewTester(a.view, 1280, 900)
+	if !tt.HasText("今日已满") {
+		t.Fatalf("before midnight: %v", tt.Texts())
+	}
+	tt.Advance(midnight.Sub(tt.Now()))
+	if tt.HasText("今日已满") || !tt.HasText("空闲") {
+		t.Fatalf("at midnight: %v", tt.Texts())
 	}
 }
 

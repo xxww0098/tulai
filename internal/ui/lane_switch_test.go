@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -12,6 +13,89 @@ import (
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
+
+func TestConcurrencySwitchInAccountHeader(t *testing.T) {
+	for _, page := range []int{pageHome, pageWash} {
+		for _, width := range []int{760, 1024, 1280} {
+			t.Run(fmt.Sprintf("%s-%d", pageLabel(page), width), func(t *testing.T) {
+				a := &App{tab: page, statePage: page, platformAuto: true, concurrencyAuto: true,
+					browserRows: []store.Browser{loggedLane(1, "豆包1", "豆包")}}
+				tt := ui.NewTester(a.view, width, 900)
+				tt.Advance(400 * time.Millisecond)
+				header := assertVisible(t, tt, "1 个账号空闲", float32(width), 900)
+				label := assertVisible(t, tt, "并发", float32(width), 900)
+				switchRect := assertVisible(t, tt, "启用并发", float32(width), 900)
+				add := assertVisible(t, tt, "+ 添加账号", float32(width), 900)
+				tableHead := assertVisible(t, tt, "当前任务", float32(width), 900)
+				if header.X+header.W > label.X || label.X+label.W > switchRect.X ||
+					switchRect.X+switchRect.W > add.X || switchRect.Y+switchRect.H > tableHead.Y {
+					t.Fatalf("并发开关应位于账号表格标题和添加账号之间: header=%+v label=%+v switch=%+v add=%+v table=%+v", header, label, switchRect, add, tableHead)
+				}
+			})
+		}
+	}
+}
+
+func TestConcurrencySwitchPersistsAndIsShared(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, platform := range []string{"豆包", "千问", "Antigravity"} {
+		if _, err := st.AddBrowser(platform, platform+"账号", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &App{store: st, platformAuto: true, concurrencyAuto: true, stagePicked: true}
+	tt := ui.NewTester(a.view, 1280, 900)
+	tt.Advance(400 * time.Millisecond)
+	if err := tt.Click("启用并发"); err != nil {
+		t.Fatal(err)
+	}
+	if a.concurrencyAuto || st.GetInt("concurrency") != 1 || a.taskOptions(nil, nil, nil).Concurrency != 1 {
+		t.Fatal("关闭并发后应立即保存并使用串行模式")
+	}
+	reloaded := &App{store: st}
+	reloaded.loadSettings()
+	if reloaded.concurrencyAuto {
+		t.Fatal("关闭并发的状态没有恢复")
+	}
+	if err := tt.Click("千问"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(400 * time.Millisecond)
+	if err := tt.Click("启用并发"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.concurrencyAuto || st.GetInt("concurrency") != 0 || a.taskOptions(nil, nil, nil).Concurrency != 0 {
+		t.Fatal("在另一服务商启用并发后应保存自动并发模式")
+	}
+	if err := tt.Click("Antigravity"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(400 * time.Millisecond)
+	if err := tt.Click("启用并发"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeySpace)
+	if !a.concurrencyAuto || st.GetInt("concurrency") != 0 {
+		t.Fatal("应能使用键盘切换并发设置")
+	}
+	if err := tt.Click("批量洗图"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(400 * time.Millisecond)
+	assertVisible(t, tt, "启用并发", 1280, 900)
+	a.running = true
+	tt.Frame()
+	if err := tt.Click("启用并发"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.concurrencyAuto || st.GetInt("concurrency") != 0 {
+		t.Fatal("运行期间不应更改并发设置")
+	}
+}
 
 func TestLaneSwitchChangesAvailability(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))

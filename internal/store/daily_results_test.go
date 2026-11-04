@@ -45,7 +45,10 @@ func TestDailyResultsUpgradePersistAndRollOver(t *testing.T) {
 	if b.UsedToday(today) != 7 || success != 1 || failed != 1 {
 		t.Fatalf("restored: %+v success=%d failed=%d", b, success, failed)
 	}
-	tomorrow := today.AddDate(0, 0, 1)
+	tomorrow := time.Date(today.Year(), today.Month(), today.Day()+1, 0, 0, 0, 0, today.Location())
+	if success, failed := b.ResultsToday(tomorrow.Add(-time.Nanosecond)); b.UsedToday(tomorrow.Add(-time.Nanosecond)) != 7 || success != 1 || failed != 1 {
+		t.Fatalf("before midnight: %+v success=%d failed=%d", b, success, failed)
+	}
 	if success, failed := b.ResultsToday(tomorrow); b.UsedToday(tomorrow) != 0 || success != 0 || failed != 0 {
 		t.Fatalf("next day before write: %+v success=%d failed=%d", b, success, failed)
 	}

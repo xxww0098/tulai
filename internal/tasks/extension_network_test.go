@@ -108,3 +108,38 @@ func TestExtensionNetworkFaultAfterSubmitDoesNotResend(t *testing.T) {
 		t.Fatalf("submitted task must not be replayed: calls=%d task=%+v", calls, task)
 	}
 }
+
+func TestBoundExtensionNetworkFaultUsesOriginalAccount(t *testing.T) {
+	st := openRotateStore(t)
+	first := addNamed(t, st, "豆包", "甲")
+	second := addNamed(t, st, "豆包", "乙")
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	port := freePort(t)
+	st.Set(extbridge.SettingExtPort, port)
+	st.Set(extbridge.SettingExtToken, "test-token")
+	e := NewEngine(st, nil, nil, t.TempDir())
+	t.Cleanup(func() { e.CloseSessions() })
+	if _, err := e.extensionServer(); err != nil {
+		t.Fatal(err)
+	}
+	loggedIn := true
+	conn := dialExtensionHello(t, "127.0.0.1:"+port, "test-token", extbridge.PlatformDoubao, e.extensionAccountKey(first.ID), &loggedIn)
+	defer conn.Close()
+	raw, _ := json.Marshal(map[string]any{"name": "network", "status": 200, "kind": "quota"})
+	if err := writeClient(conn, extbridge.Envelope{V: extbridge.Version, ID: "quota", Type: extbridge.TypeEvent, TS: time.Now().UnixMilli(), Platform: extbridge.PlatformDoubao, Payload: raw}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		got, _ := e.browserByID(first.ID)
+		other, _ := e.browserByID(second.ID)
+		if got.Health == store.HealthExhausted {
+			if other.Health != store.HealthReady || len(st.Browsers()) != 2 {
+				t.Fatalf("other account changed or duplicate created: %+v", st.Browsers())
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("bound account was not marked exhausted: %+v", st.Browsers())
+}

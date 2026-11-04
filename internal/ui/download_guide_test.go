@@ -3,12 +3,16 @@ package ui
 import (
 	"fmt"
 	"image/png"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
+
+	"github.com/xxww0098/tulai/internal/browser"
 )
 
 func TestDownloadGuideDescribesSupportedPagesAndLimits(t *testing.T) {
@@ -17,6 +21,7 @@ func TestDownloadGuideDescribesSupportedPagesAndLimits(t *testing.T) {
 		{"ozon", "Ozon", "仅通过合成测试"},
 		{"Temu", "Temu", "下载浏览器"},
 		{"小红书", "小红书", "主页尚未实测"},
+		{"360.cn", "百度图片", "图片搜索结果"},
 		{"网易摄影", "网易摄影", "尚未提供"},
 	} {
 		var matched bool
@@ -36,6 +41,74 @@ func TestDownloadGuideDescribesSupportedPagesAndLimits(t *testing.T) {
 	}
 }
 
+func TestDownloadGuideOpensSitesInDedicatedBrowser(t *testing.T) {
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"} {
+		t.Setenv(key, "")
+	}
+	browser.SetProxy("")
+	t.Cleanup(func() { browser.SetProxy("") })
+	a, _ := newDownloadApp(t)
+	session := &fakeDownloadBrowser{}
+	a.dlBrowser, a.dlBrowserURL = session, "https://previous.test/"
+	a.dlComposerOn, a.dlGuideOn, a.dlGuideSearch = true, true, "百度图片"
+	a.dlURLs = "https://example.test/keep\nhttps://example.test/also-keep"
+	tt := ui.NewTester(a.view, 1024, 700)
+	for _, tc := range []struct{ label, target string }{
+		{"打开 baidu.com", "https://image.baidu.com/"},
+		{"打开 sogou.com", "https://pic.sogou.com/"},
+		{"打开 360.cn", "https://image.so.com/"},
+	} {
+		if err := tt.Click(tc.label); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for a.dlBrowserBusy && time.Now().Before(deadline) {
+			a.flushUIUpdates()
+			time.Sleep(time.Millisecond)
+		}
+		if a.dlBrowserBusy {
+			t.Fatal("打开网址超时")
+		}
+		if session.target != tc.target || a.dlBrowserURL != tc.target || a.dlBrowser != session {
+			t.Fatalf("%s 未在已有专用浏览器打开: target=%q browserURL=%q error=%q", tc.label, session.target, a.dlBrowserURL, a.dlBrowserErr)
+		}
+		if !a.dlBrowserMode || !a.dlGuideOn || a.dlURLs != "https://example.test/keep\nhttps://example.test/also-keep" {
+			t.Fatalf("打开网站后任务状态被改变: mode=%v guide=%v urls=%q", a.dlBrowserMode, a.dlGuideOn, a.dlURLs)
+		}
+		tt.Frame()
+	}
+	task := newDownloadTask(1, a.dlBrowserURL, t.TempDir())
+	task.Rendered, task.Phase = true, dlQueued
+	a.dlTasks = []*downloadTask{task}
+	if err := tt.Click("打开 baidu.com"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !strings.Contains(a.dlBrowserErr, "暂停") || !tt.HasText("请等当前浏览器下载结束或暂停后再打开其他网址") || session.target != "https://image.so.com/" {
+		t.Fatalf("排队任务未阻止切换网站: %q", a.dlBrowserErr)
+	}
+}
+
+func TestDownloadGuideShowsBrowserLaunchError(t *testing.T) {
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"} {
+		t.Setenv(key, "")
+	}
+	browser.SetProxy("")
+	t.Cleanup(func() { browser.SetProxy("") })
+	a, _ := newDownloadApp(t)
+	a.dlComposerOn, a.dlGuideOn, a.dlGuideSearch = true, true, "Ozon"
+	tt := ui.NewTester(a.view, 480, 500)
+	if err := tt.Click("打开 ozon.ru"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("无法打开下载浏览器") {
+		t.Fatalf("未显示浏览器启动错误: %v", tt.Texts())
+	}
+	assertVisible(t, tt, "无法打开下载浏览器", 480, 500)
+	assertVisible(t, tt, "返回新建任务", 480, 500)
+}
+
 func TestDownloadGuideSiteIcons(t *testing.T) {
 	files, err := downloadGuideIconFiles.ReadDir("assets/download-sites")
 	if err != nil || len(files) != len(downloadGuideIcons) {
@@ -49,7 +122,16 @@ func TestDownloadGuideSiteIcons(t *testing.T) {
 			}
 			for _, domain := range strings.Fields(entry.icons) {
 				used[domain] = true
+				target, err := url.Parse(downloadGuideURL(domain))
+				if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.User != nil {
+					t.Errorf("%s 的快捷入口无效: %q, %v", domain, downloadGuideURL(domain), err)
+				}
 			}
+		}
+	}
+	for host, want := range map[string]string{"bing.com": "https://www.bing.com/images", "google.com": "https://www.google.com/imghp"} {
+		if got := downloadGuideURL(host); got != want {
+			t.Errorf("%s 入口 = %q, want %q", host, got, want)
 		}
 	}
 	for domain := range downloadGuideIcons {

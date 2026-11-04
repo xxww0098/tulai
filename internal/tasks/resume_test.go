@@ -171,7 +171,7 @@ func TestResultRetryEmptyRoundDoesNotCompleteSavedPartial(t *testing.T) {
 }
 
 func TestResultRetryRejectsUnrelatedCandidates(t *testing.T) {
-	for _, kind := range []string{"source-echo", "other-task-duplicate", "failed-fetch", "invalid-candidate"} {
+	for _, kind := range []string{"source-echo", "failed-fetch", "invalid-candidate"} {
 		t.Run(kind, func(t *testing.T) {
 			partial, unrelated := resultPNG(t, 83), resultPNG(t, 84)
 			output := t.TempDir()
@@ -187,12 +187,7 @@ func TestResultRetryRejectsUnrelatedCandidates(t *testing.T) {
 				candidate := strategy.Result{Data: unrelated}
 				switch kind {
 				case "source-echo":
-					e.srcHashes = map[string]bool{images.SHA256(unrelated): true}
-				case "other-task-duplicate":
-					saved, err := e.saveResults(context.Background(), &Task{Images: []string{"other.png"}}, strat, nil, []strategy.Result{candidate})
-					if err != nil || len(saved) != 1 {
-						t.Fatalf("setup must save a different task's result: %v, %v", saved, err)
-					}
+					e.srcHashes = map[string]string{"source.png": images.SHA256(unrelated)}
 				case "failed-fetch":
 					candidate = strategy.Result{URL: "unavailable"}
 				case "invalid-candidate":
@@ -209,6 +204,32 @@ func TestResultRetryRejectsUnrelatedCandidates(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestResultRetrySavesAnotherTasksResult(t *testing.T) {
+	partial, shared := resultPNG(t, 83), resultPNG(t, 84)
+	output := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputPath: output, Wash: true, WaitResultSeconds: 1}
+		task := &Task{Images: []string{"a.png"}}
+		failure := errors.New("temporary download failure")
+		strat := &resultSequenceStrategy{rounds: [][]strategy.Result{{{Data: partial}}}, waitErr: failure}
+		if err := e.waitAndSave(context.Background(), task, strat, nil); !errors.Is(err, failure) || len(task.Results) != 1 {
+			t.Fatalf("setup must retain a saved partial: task=%+v err=%v", task, err)
+		}
+		other := &Task{Images: []string{"b.png"}}
+		if saved, err := e.saveResults(context.Background(), other, strat, nil, []strategy.Result{{Data: shared}}); err != nil || len(saved) != 1 {
+			t.Fatalf("other task must save its result: saved=%v err=%v", saved, err)
+		}
+		strat.rounds, strat.waitErr = [][]strategy.Result{{{Data: shared}}}, nil
+		if err := e.waitAndSave(context.Background(), task, strat, nil); err != nil || len(task.Results) != 2 {
+			t.Fatalf("retry must save the same result for its own source: task=%+v err=%v", task, err)
+		}
+		if saved, err := os.ReadFile(task.Results[1]); err != nil || !bytes.Equal(saved, shared) {
+			t.Fatalf("retried result must match the returned image: %v", err)
+		}
+	})
 }
 
 func TestResultRetryAfterDiskFailureDoesNotResend(t *testing.T) {

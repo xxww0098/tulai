@@ -20,10 +20,11 @@ import (
 )
 
 type Options struct {
-	Profile    string `json:"profile"`
-	Proxy      string `json:"proxy,omitempty"`
-	Headless   bool   `json:"headless"`
-	Executable string `json:"executable,omitempty"`
+	Profile    string   `json:"profile"`
+	Proxy      string   `json:"proxy,omitempty"`
+	Headless   bool     `json:"headless"`
+	Executable string   `json:"executable,omitempty"`
+	Addons     []string `json:"addons,omitempty"`
 	// Local integration fixtures use a proxy with no public exit and a self-signed certificate.
 	GeoIP             *bool `json:"geoip,omitempty"`
 	IgnoreHTTPSErrors bool  `json:"ignoreHTTPSErrors,omitempty"`

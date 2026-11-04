@@ -49,7 +49,7 @@ func TestPlanWorkbenchPicksLoggedInPlatforms(t *testing.T) {
 		HasImages: true, WantQianwen: true, Now: now,
 		Accounts: []AccountSnap{{Platform: "豆包", LoggedIn: true, Health: store.HealthReady}},
 	})
-	if manual.Action != StartWizard || manual.Platforms != nil {
+	if manual.Action != StartNone || manual.Platforms != nil {
 		t.Fatalf("manual mismatch = %+v", manual)
 	}
 
@@ -68,7 +68,7 @@ func TestPlanWorkbenchPicksLoggedInPlatforms(t *testing.T) {
 			HasPrompts: true, AutoPlatform: true, ExtensionMode: true, Now: now,
 			Accounts: []AccountSnap{{Platform: platform, Extension: true, Health: store.HealthReady}},
 		})
-		if onlyConnected.Action != StartWizard {
+		if onlyConnected.Action != StartNone {
 			t.Fatalf("%s extension without login = %+v", platform, onlyConnected)
 		}
 	}
@@ -122,8 +122,8 @@ func TestPlanWorkbenchStartButton(t *testing.T) {
 		{"empty", WorkbenchInput{AutoPlatform: true, Accounts: ready, Now: now}, StartNone},
 		{"prompt only", WorkbenchInput{HasPrompts: true, AutoPlatform: true, Accounts: ready, Now: now}, StartGenerate},
 		{"image only", WorkbenchInput{HasImages: true, AutoPlatform: true, Accounts: ready, Now: now}, StartGenerate},
-		{"no account", WorkbenchInput{HasImages: true, HasPrompts: true, AutoPlatform: true, Now: now}, StartWizard},
-		{"signed out", WorkbenchInput{HasPrompts: true, AutoPlatform: true, Now: now, Accounts: []AccountSnap{{Platform: "豆包", Health: store.HealthReady}}}, StartWizard},
+		{"no account", WorkbenchInput{HasImages: true, HasPrompts: true, AutoPlatform: true, Now: now}, StartNone},
+		{"signed out", WorkbenchInput{HasPrompts: true, AutoPlatform: true, Now: now, Accounts: []AccountSnap{{Platform: "豆包", Health: store.HealthReady}}}, StartNone},
 	}
 	for _, tc := range cases {
 		got := PlanWorkbench(tc.in)
@@ -155,13 +155,13 @@ func TestDefaultOutputDir(t *testing.T) {
 }
 
 func TestConcurrencyCaption(t *testing.T) {
-	if got := ConcurrencyCaption(true, 3); got != "自动（当前 3 个账号同时出图）" {
+	if got := ConcurrencyCaption(true, 3); got != "按可用账号自动并发（当前 3 个账号可用）" {
 		t.Fatalf("auto caption = %q", got)
 	}
-	if got := ConcurrencyCaption(false, 3); got != "手动上限（当前 3 个账号可用）" {
-		t.Fatalf("manual caption = %q", got)
+	if got := ConcurrencyCaption(false, 3); got != "并发已关闭，一次运行 1 批任务" {
+		t.Fatalf("serial caption = %q", got)
 	}
-	if got := ConcurrencyCaption(true, 0); got != "自动（当前 0 个账号同时出图）" {
+	if got := ConcurrencyCaption(true, 0); got != "按可用账号自动并发（当前 0 个账号可用）" {
 		t.Fatalf("empty caption = %q", got)
 	}
 }
@@ -177,7 +177,7 @@ func TestConcurrencyDefaultsToAuto(t *testing.T) {
 	if !a.concurrencyAuto || a.taskConcurrency() != 0 {
 		t.Fatal("concurrency should default to auto")
 	}
-	if got := ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots()); got != "自动（当前 0 个账号同时出图）" {
+	if got := ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots()); got != "按可用账号自动并发（当前 0 个账号可用）" {
 		t.Fatalf("caption = %q", got)
 	}
 	if _, err := st.UpsertExtensionAccount("千问", "profile-a", "甲"); err != nil {
@@ -199,12 +199,22 @@ func TestConcurrencyDefaultsToAuto(t *testing.T) {
 		t.Fatalf("qianwen tab counts its own accounts: %d", slots)
 	}
 	a.concurrencyAuto = false
-	a.concurrency = 4
 	a.saveSettings()
 	again := &App{store: st}
 	again.loadSettings()
-	if again.concurrencyAuto || again.taskConcurrency() != 4 {
-		t.Fatalf("manual cap was not restored: auto=%v n=%v", again.concurrencyAuto, again.taskConcurrency())
+	if again.concurrencyAuto || again.taskConcurrency() != 1 || again.taskOptions(nil, nil, nil).Concurrency != 1 {
+		t.Fatalf("serial setting was not restored: auto=%v n=%v", again.concurrencyAuto, again.taskConcurrency())
+	}
+	again.concurrencyAuto = true
+	again.saveSettings()
+	again.loadSettings()
+	if !again.concurrencyAuto || again.taskOptions(nil, nil, nil).Concurrency != 0 {
+		t.Fatal("automatic concurrency was not restored")
+	}
+	st.SetInt("concurrency", 4)
+	again.loadSettings()
+	if !again.concurrencyAuto || again.taskConcurrency() != 0 {
+		t.Fatal("legacy parallel setting should enable automatic concurrency")
 	}
 }
 
@@ -233,6 +243,32 @@ func TestPlatformAutoDefaultsOn(t *testing.T) {
 	}
 	if int(again.dailyCap) != 12 || again.riskyWords != "血腥,武器" {
 		t.Fatalf("cap/words not restored: %v %q", again.dailyCap, again.riskyWords)
+	}
+}
+
+func TestBoundFirefoxBridgeSetting(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	tt := ui.NewTester(a.accountSettings, 1200, 900)
+	if got := st.Get(extbridge.SettingBrowserBackend); got != "camoufox_extension" {
+		t.Fatalf("default mode=%q", got)
+	}
+	if err := tt.Click("绑定账号使用 Firefox 页面桥"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Get(extbridge.SettingBrowserBackend); got != "camoufox" {
+		t.Fatalf("mode=%q", got)
+	}
+	tt.Frame()
+	if err := tt.Click("绑定账号使用 Firefox 页面桥"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Get(extbridge.SettingBrowserBackend); got != "camoufox_extension" {
+		t.Fatalf("mode=%q", got)
 	}
 }
 
@@ -295,7 +331,7 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if got := LaneHeader(3, done, len(running)); got != "3 个账号同时出图 · 完成 0 / 共 3" {
 		t.Fatal(got)
 	}
-	if got := FormatProgressTally(done, gen, queued, failedN, needs, 0, 3); got != "完成 0 · 进行中 3 · 排队 0 · 失败 0 · 3/3 并发" {
+	if got := FormatProgressTally(done, gen, queued, failedN, needs, 0, 3, 3); got != "完成 0 · 进行中 3 · 排队 0 · 失败 0 · 3/3 并发" {
 		t.Fatal(got)
 	}
 	finished := ProgressCards([]tasks.Task{
@@ -331,11 +367,21 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	failed := FailedTasks([]tasks.Task{
 		{Status: tasks.StatusSuccess},
 		{Status: tasks.StatusFailed},
+		{Status: tasks.StatusFailed, Error: "来源不明；2 张未匹配结果保存在 /tmp/待核对"},
 		{Status: tasks.StatusNeedsUser},
 		{Status: tasks.StatusSkipped},
 	})
 	if len(failed) != 2 || failed[0].Status != tasks.StatusFailed || failed[1].Status != tasks.StatusSkipped {
 		t.Fatalf("failed = %+v", failed)
+	}
+	reason, action, retry := tileFailure(tasks.Task{Status: tasks.StatusFailed, Error: "来源不明；2 张未匹配结果保存在 " + filepath.Join(t.TempDir(), "missing")})
+	if reason != "结果已放入待核对，请检查" || action != "查看待核对" || len(retry) != 1 {
+		t.Fatalf("unmatched result card = %q, %q, %+v", reason, action, retry)
+	}
+	a := &App{}
+	a.failAction(ProgressCard{Action: action, Retry: retry})
+	if a.outputNote != "无法打开待核对文件夹" {
+		t.Fatalf("missing review directory note = %q", a.outputNote)
 	}
 }
 
@@ -497,7 +543,7 @@ func TestStopTurnsQueuedItemsIntoStopped(t *testing.T) {
 	}
 	tally := TallyTasks(tasksForPlatform(a.queueItems(), a.stagePlatform()))
 	if tally.Queued != 0 || tally.Stopped != 2 {
-		t.Fatalf("tally %+v header %q", tally, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.liveParallel()))
+		t.Fatalf("tally %+v header %q", tally, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.runningOn(a.stagePlatform()), a.liveParallel()))
 	}
 }
 
@@ -511,7 +557,7 @@ func TestTimeoutAndStoppedShareOneTally(t *testing.T) {
 		t.Fatalf("tally %+v", tally)
 	}
 	summary := taskResultSummary(queue)
-	header := FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, 0)
+	header := FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, 0, 0)
 	if summary != "成功 0 · 失败 1 · 待验证 0 · 未完成 1" || header != "完成 0 · 进行中 0 · 排队 0 · 失败 1 · 未完成 1" {
 		t.Fatalf("summary %q header %q", summary, header)
 	}
@@ -606,10 +652,10 @@ func TestLayoutFlow(t *testing.T) {
 	if skip.Images.Open || skip.Images.State != stepDone || !skip.Prompt.Open || skip.Prompt.State != stepCurrent {
 		t.Fatalf("skip %+v", skip)
 	}
-	if got := FormatProgressTally(1, 1, 1, 1, 0, 0, 1); got != "完成 1 · 进行中 1 · 排队 1 · 失败 1 · 1/1 并发" {
+	if got := FormatProgressTally(1, 1, 1, 1, 0, 0, 1, 1); got != "完成 1 · 进行中 1 · 排队 1 · 失败 1 · 1/1 并发" {
 		t.Fatalf("tally %q", got)
 	}
-	if got := FormatProgressTally(0, 0, 0, 0, 1, 0, 0); got != "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1" {
+	if got := FormatProgressTally(0, 0, 0, 0, 1, 0, 0, 0); got != "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1" {
 		t.Fatalf("needs tally %q", got)
 	}
 }

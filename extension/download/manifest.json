@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "tulai 下载助手",
+  "version": "0.1.0",
+  "description": "在专用浏览器中把当前图片页面交给 tulai 下载。",
+  "browser_specific_settings": { "gecko": { "id": "download@tulai.local" } },
+  "permissions": ["tabs", "http://127.0.0.1/*"],
+  "background": { "scripts": ["settings.js", "background.js"] },
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["temu.js", "content.js"],
+    "run_at": "document_idle",
+    "all_frames": false
+  }]
+}

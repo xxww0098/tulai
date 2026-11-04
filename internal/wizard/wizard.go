@@ -10,10 +10,13 @@ import (
 	"github.com/xxww0098/tulai/internal/browser"
 )
 
-// KeyComplete 写在配置库 settings 表里。值为 CompleteYes 表示向导走完过。
+// KeyComplete 记录向导已完成，或已识别出旧版用户。
 const KeyComplete = "wizard_complete"
 
-// CompleteYes 是向导已完成。
+// KeyShown 记录首次启动时已经展示过向导。
+const KeyShown = "wizard_shown"
+
+// CompleteYes 表示已经完成首次设置或是旧版用户。
 const CompleteYes = "1"
 
 // 登录探测结果。in 表示已经登录。页面上还有「登录」或扫码层时是 out，即使聊天框还在。
@@ -125,12 +128,13 @@ func KeepsClosed(a Account, now time.Time) bool {
 	}
 }
 
-// ShouldShow 在第一次打开，或已经没有可用账号时为真。
-// 有一个还能用的账号就跳过，哪怕完成标记还没写上。
-// 标记写过、但账号都没了或不健康，向导会再出现。
-func ShouldShow(complete string, accounts []Account, now time.Time) bool {
+// ShouldShow 只在尚未完成设置且没有旧账号时为真。
+func ShouldShow(complete string, accounts []Account) bool {
+	if complete == CompleteYes {
+		return false
+	}
 	for _, account := range accounts {
-		if KeepsClosed(account, now) {
+		if strings.TrimSpace(account.Platform) != "" {
 			return false
 		}
 	}

@@ -19,9 +19,9 @@ const Version = 1
 // DefaultAddr 只监听本机回环地址。
 const DefaultAddr = "127.0.0.1:18765"
 
-// SettingBrowserBackend 是配置库里的控制面开关，取值 extension 或 camoufox。
+// SettingBrowserBackend 是配置库里的控制面开关，取值 extension、camoufox 或 camoufox_extension。
 // 它和 browser_backend（Camoufox 账号环境）不是同一个键。
-// 任务引擎在千问或豆包且该值为 extension 时兼容旧手动扩展；否则打开 Camoufox。
+// extension 使用旧手动扩展；camoufox_extension 在绑定的 Camoufox 账号中加载页面桥。
 const SettingBrowserBackend = "browserBackend"
 
 // 页面桥令牌和端口。扩展弹出页必须填写同一组值。
@@ -90,6 +90,7 @@ const (
 	CmdWaitResult    = "waitResult"
 	CmdDownload      = "download"
 	CmdCaptchaAssist = "captchaAssist"
+	CmdWashChat      = "washChat"
 	CmdCancel        = "cancel"
 	CmdStatus        = "status"
 	CmdReload        = "reload"
@@ -175,7 +176,7 @@ func NormalizeBrowserBackend(v string) string {
 func Commands() []string {
 	return []string{
 		CmdPing, CmdHelloAck, CmdUpload, CmdSetPrompt, CmdSend,
-		CmdWaitResult, CmdDownload, CmdCaptchaAssist, CmdCancel, CmdStatus, CmdReload,
+		CmdWaitResult, CmdDownload, CmdCaptchaAssist, CmdWashChat, CmdCancel, CmdStatus, CmdReload,
 	}
 }
 

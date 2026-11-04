@@ -121,7 +121,7 @@ func TestWashPageRestoresSourcesAndResults(t *testing.T) {
 			t.Fatalf("洗图页缺少 %q，看到 %v", label, tt.Texts())
 		}
 	}
-	if err := tt.Click("生图"); err != nil {
+	if err := tt.Click("自由生图"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

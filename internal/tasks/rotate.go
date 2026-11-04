@@ -164,7 +164,7 @@ func (e *Engine) accountsFor(platform string) []store.Browser {
 	if e == nil || e.store == nil {
 		return nil
 	}
-	extension := e.useExtension(platform)
+	extension := e.useExtension(platform) && !e.useBoundExtension(platform)
 	var out []store.Browser
 	for _, b := range e.store.Browsers() {
 		if b.Platform != platform {

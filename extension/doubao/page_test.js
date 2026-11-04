@@ -52,6 +52,13 @@ class El {
     return matchSelector(this, sel)
   }
 
+  closest(sel) {
+    for (let node = this; node; node = node.parentElement) {
+      if (node.matches && node.matches(sel)) return node
+    }
+    return null
+  }
+
   querySelectorAll(sel) {
     return descendants(this).filter((el) => matchSelector(el, sel))
   }
@@ -210,6 +217,15 @@ function message(doc, role, text) {
   const el = doc.body.append(new El('div', { 'data-role': role }))
   if (text) el.addText(text)
   return el
+}
+
+{
+  const { doc } = surface()
+  const login = doc.body.append(new El('button', { 'data-testid': 'to_login_button' }))
+  login.addText('登录')
+  assert.strictEqual(Page.loginWall(doc), true, '未登录时即使有输入框，也不能当作已登录')
+  login.display = 'none'
+  assert.strictEqual(Page.loginWall(doc), false, '隐藏的登录按钮不应影响已登录页面')
 }
 
 {
@@ -513,13 +529,20 @@ console.log('doubao page.js anchors ok')
   const entry = wrap.append(new El('button', { 'data-testid': 'upload_file_button' }))
   const baseline = new Set()
   assert.strictEqual(Page.freshAttachment(doc, baseline), false)
-  const card = wrap.append(new El('div', { 'data-testid': 'attachment-image-card' }))
+  const card = wrap.append(new El('div', { 'data-testid': 'attachment-image-card', 'aria-label': '01-first.png' }))
   const pending = card.append(new El('img'))
   pending.complete = false
   pending.naturalWidth = 0
   pending.src = 'blob:https://www.doubao.com/pending'
   pending.currentSrc = pending.src
   assert.strictEqual(Page.freshAttachment(doc, baseline), true)
+  baseline.add(card)
+  baseline.add(pending)
+  assert.strictEqual(Page.freshAttachment(doc, baseline), false, '已有附件不能当作新上传')
+  const second = wrap.append(new El('div', { 'data-testid': 'attachment-image-card', 'aria-label': '02-second.png' }))
+  assert.strictEqual(Page.freshAttachment(doc, baseline), true)
+  assert.deepStrictEqual(Array.from(Page.attachmentNames(doc)), ['01-first.png', '02-second.png'])
+  void second
   void entry
 }
 
@@ -600,4 +623,49 @@ console.log('doubao page.js anchors ok')
   img.src = 'https://cdn.example/g0.png'
   img.currentSrc = img.src
   assert.strictEqual(Page.replyDone(counted, mark2).done, true, '没有声明张数时，一张实图也算候选')
+}
+
+// 同一对话里重复洗图指令，旧消息重绘后也不能归到下一张源图。
+{
+  const doc = makeDoc('www.doubao.com')
+  doc.readyState = 'complete'
+  doc.addEventListener = () => {}
+  const oldUser = message(doc, 'user', '洗图指令')
+  const oldReply = message(doc, 'assistant', '')
+  oldReply.attrs['data-finished'] = 'true'
+  const oldCard = oldReply.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  rasterImg(oldCard, 'https://cdn.example/old.png', 1024).naturalHeight = 1024
+  const context = vm.createContext({
+    document: doc,
+    location: { hostname: 'www.doubao.com', href: 'https://www.doubao.com/chat/test' },
+    URL,
+    XMLHttpRequest: class { open() {} send() {} },
+    MutationObserver: class { observe() {} },
+  })
+  context.window = context
+  context.__tulaiWashPage = Page
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '..', 'internal', 'strategy', 'js', 'hook.js'), 'utf8'), context)
+  context.__tulaiMarkTask()
+  assert.strictEqual(context.__tulaiMarkDoubaoTurn('洗图指令'), true)
+  assert.strictEqual(context.__tulaiLiveImages().images.length, 0)
+
+  oldUser.isConnected = false
+  oldReply.isConnected = false
+  doc.body.children = []
+  doc.body.childNodes = []
+  message(doc, 'user', '洗图指令')
+  const redrawn = message(doc, 'assistant', '')
+  redrawn.attrs['data-finished'] = 'true'
+  const redrawnCard = redrawn.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  rasterImg(redrawnCard, 'https://cdn.example/old.png', 1024).naturalHeight = 1024
+  assert.strictEqual(context.__tulaiLiveImages().images.length, 0, '旧消息重绘不能算作本次结果')
+
+  message(doc, 'user', '洗图指令')
+  const answer = message(doc, 'assistant', '')
+  answer.attrs['data-finished'] = 'true'
+  const card = answer.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  rasterImg(card, 'https://cdn.example/new.png', 1024).naturalHeight = 1024
+  const live = context.__tulaiLiveImages()
+  assert.strictEqual(live.done, true)
+  assert.deepStrictEqual(Array.from(live.images, (image) => image.url), ['https://cdn.example/new.png'])
 }

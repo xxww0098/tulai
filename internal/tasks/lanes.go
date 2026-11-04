@@ -490,7 +490,7 @@ func (e *Engine) laneRows() []store.Browser {
 	if e == nil || e.store == nil {
 		return nil
 	}
-	wantExt := e.useExtension("豆包")
+	wantExt := e.useExtension("豆包") && !e.useBoundExtension("豆包")
 	var out []store.Browser
 	for _, b := range e.store.Browsers() {
 		if b.Platform == agy.Platform {

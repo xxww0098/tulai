@@ -73,7 +73,24 @@ func (a *App) workspaceBar(c *ui.Context) {
 	tok := a.look
 	w, _ := c.Size()
 	ui.Row(c.Key("workspace-bar")).FillWidth().Height(workspaceBarH).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, pageLabel(a.statePage)).FontSize(tok.title).Bold().Shrink(0)
+		ui.Text(c, "图片生成").FontSize(tok.title).Bold().Shrink(0)
+		labels := []string{"自由生图", "批量洗图"}
+		tabs := ui.TabsBase(c.Key("workspace-modes"), &a.tab, len(labels))
+		tabs.List.Row().Height(32).Padding(2).Radius(8).Background(tok.sunken).
+			AlignItems(ui.Stretch).Disabled(a.running).Children(func() {
+			for i, label := range labels {
+				tab := tabs.Tab(i).Padding(0, 10).Radius(6).Center().Label(label).Disabled(a.running)
+				if i == a.tab {
+					tab.Background(tok.card).TextColor(tok.text)
+				} else {
+					tab.TextColor(tok.muted)
+				}
+				if !a.running {
+					tab.Cursor(ui.CursorPointer)
+				}
+				tab.Children(func() { ui.Text(c, label).FontSize(tok.caption).SingleLine() })
+			}
+		})
 		if homeSplit(w) {
 			ui.Row(c).Grow(1).MinWidth(0).Margin(0, 0, 0, 8).AlignItems(ui.Center).Children(func() { a.platformPicker(c) })
 		} else {

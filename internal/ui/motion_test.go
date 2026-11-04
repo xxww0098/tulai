@@ -63,36 +63,28 @@ func TestWizardStepStaysPutWhenMotionIsReduced(t *testing.T) {
 	}
 }
 
-func TestPageSwitchStartsVisibleAndFollowsSidebar(t *testing.T) {
+func TestWorkspaceModeSwitchStartsVisible(t *testing.T) {
 	a := &App{platformAuto: true}
 	tt := ui.NewTester(a.view, 1024, 700)
 	tt.Advance(motionUI + 40*time.Millisecond)
-	if err := tt.Click("洗图"); err != nil {
+	if err := tt.Click("批量洗图"); err != nil {
 		t.Fatal(err)
 	}
-	early, ok := tt.Find("洗图指令")
-	if !ok {
+	if !tt.HasText("洗图指令") {
 		t.Fatal("洗图页面没有出现")
 	}
 	if darkPixels(tt, 80, 80, 400, 440) < 100 {
 		t.Fatal("切换后的第一帧不应显示空白页面")
 	}
 	tt.Advance(motionUI + 40*time.Millisecond)
-	late, ok := tt.Find("洗图指令")
-	if !ok || early.Y <= late.Y+1 || early.Y > late.Y+7 || early.X < late.X-1 || early.X > late.X+1 {
-		t.Fatalf("向下切换应以短距离纵向进入: early=%+v late=%+v", early, late)
-	}
-	if err := tt.Click("生图"); err != nil {
+	if err := tt.Click("自由生图"); err != nil {
 		t.Fatal(err)
 	}
-	early, ok = tt.Find("提示词内容")
-	if !ok {
+	if !tt.HasText("提示词内容") {
 		t.Fatal("生图页面没有出现")
 	}
-	tt.Advance(motionUI + 40*time.Millisecond)
-	late, ok = tt.Find("提示词内容")
-	if !ok || early.Y >= late.Y-1 || early.Y < late.Y-7 || early.X < late.X-1 || early.X > late.X+1 {
-		t.Fatalf("向上切换应以短距离纵向进入: early=%+v late=%+v", early, late)
+	if darkPixels(tt, 80, 80, 400, 440) < 100 {
+		t.Fatal("切回生图的第一帧不应显示空白页面")
 	}
 }
 
@@ -132,7 +124,7 @@ func TestPageSwitchReducedMotionAndRapidNavigation(t *testing.T) {
 			tt := ui.NewTester(a.view, 1024, 700)
 			tt.SetPreferences(ui.Preferences{ReduceMotion: reduced, TextScale: 1})
 			tt.Advance(motionUI + 40*time.Millisecond)
-			if err := tt.Click("洗图"); err != nil {
+			if err := tt.Click("批量洗图"); err != nil {
 				t.Fatal(err)
 			}
 			early, ok := tt.Find("洗图指令")
@@ -146,7 +138,7 @@ func TestPageSwitchReducedMotionAndRapidNavigation(t *testing.T) {
 					t.Fatalf("减少动态效果时页面仍在移动: early=%+v later=%+v", early, later)
 				}
 			}
-			for _, page := range []string{"浏览器", "生图"} {
+			for _, page := range []string{"浏览器", "图片生成", "自由生图"} {
 				if err := tt.Click(page); err != nil {
 					t.Fatal(err)
 				}
@@ -224,10 +216,10 @@ func TestUpdateBannerSlidesDownAndStaysClickable(t *testing.T) {
 func TestPromptSelectChoosesWhileOpening(t *testing.T) {
 	a := &App{tab: pagePrompts}
 	tt := ui.NewTester(a.view, 1280, 840)
-	if err := tt.Click("编辑 数字油画"); err != nil {
+	if err := tt.Click("编辑 默认洗图"); err != nil {
 		t.Fatal(err)
 	}
-	if a.promptEditChoice != "数字油画" || a.promptEditPick == "" {
+	if a.promptEditChoice != "默认洗图" || a.promptEditPick == "" {
 		t.Fatalf("choice=%q pick=%q", a.promptEditChoice, a.promptEditPick)
 	}
 }
@@ -317,7 +309,7 @@ func TestExportMotionFrames(t *testing.T) {
 	work.tab = pagePrompts
 	wt.Frame()
 	wt.Advance(motionUI)
-	if err := wt.Click("编辑 数字油画"); err != nil {
+	if err := wt.Click("编辑 默认洗图"); err != nil {
 		t.Fatal(err)
 	}
 	wt.Advance(80 * time.Millisecond)
@@ -347,7 +339,7 @@ func TestExportMotionFrames(t *testing.T) {
 	pages := &App{platformAuto: true}
 	pt := ui.NewTester(pages.view, 1280, 900)
 	pt.Advance(300 * time.Millisecond)
-	if err := pt.Click("洗图"); err != nil {
+	if err := pt.Click("批量洗图"); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i <= 8; i++ {

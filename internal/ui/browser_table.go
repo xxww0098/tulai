@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 )
 
 func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
+	refreshAtMidnight(c)
 	palette := c.Theme()
 	tableTheme := *palette
 	tableTheme.Accent = palette.Accent.Mix(palette.Background, 0.90)
@@ -66,7 +66,7 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 					ui.Text(c, b.Platform).FontSize(12).SingleLine()
 				})
 			case "status":
-				state := accountHealthLabel(b, active[b.ID], accountSignedIn(b, a.loginShot(b.ID)))
+				state := accountHealthLabel(b, active[b.ID], accountSignedIn(b, a.loginShot(b.ID)), c.Now())
 				ink := tableTheme.Warning
 				switch state {
 				case "就绪":
@@ -88,7 +88,7 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 				}
 				ui.Column(c).Gap(3).Children(func() {
 					ui.Text(c, state).FontSize(12).TextColor(ink).SingleLine()
-					if b.LastError != "" && !b.Usable(time.Now()) && !staleLoginCopy(b, accountSignedIn(b, a.loginShot(b.ID))) {
+					if b.LastError != "" && !b.Usable(c.Now()) && !staleLoginCopy(b, accountSignedIn(b, a.loginShot(b.ID))) {
 						ui.Text(c, b.LastError).FontSize(12).TextColor(palette.TextMuted).SingleLine().Tooltip(b.LastError)
 					}
 				})
@@ -102,7 +102,7 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 					ui.Text(c, protocol).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
 				})
 			case "usage":
-				ui.Text(c, fmt.Sprintf("%d / %d", b.UsedToday(time.Now()), a.shownDailyCap())).FontSize(12).FontFeatures("tnum").SingleLine()
+				ui.Text(c, fmt.Sprintf("%d / %d", b.UsedToday(c.Now()), a.shownDailyCap())).FontSize(12).FontFeatures("tnum").SingleLine()
 			case "actions":
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					label := "启动"

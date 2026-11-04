@@ -16,7 +16,105 @@ import (
 
 	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+
+	"github.com/xxww0098/tulai/internal/camoufox"
 )
+
+func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
+	runtimeDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")
+	if runtimeDir == "" {
+		t.Skip("set TULAI_CAMOUFOX_TEST_DATA to an isolated Camoufox runtime")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	var imageData bytes.Buffer
+	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 3, 3))); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/image.png" {
+			cookie, err := r.Cookie("session")
+			if err != nil || cookie.Value != "synthetic" {
+				http.Error(w, "sign in", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(imageData.Bytes())
+			return
+		}
+		if r.URL.Path == "/login" {
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "synthetic", Path: "/"})
+		}
+		_, _ = io.WriteString(w, `<title>Gallery</title><img src="/image.png">`)
+	}))
+	defer server.Close()
+	targetURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+
+	session, err := openRendered(ctx, filepath.Join(t.TempDir(), "profile"), "", "", true, runtimeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if !session.Alive() {
+		t.Fatal("空白专用浏览器未运行")
+	}
+	if _, err := session.Capture(ctx); err == nil {
+		t.Fatal("未指定目标网址时不应采集")
+	}
+	for _, target := range []string{"file:///tmp/private", "https://user:pass@example.test"} {
+		if err := session.OpenTarget(ctx, target); err == nil {
+			t.Fatalf("无效目标被接受: %s", target)
+		}
+	}
+	canceled, stop := context.WithCancel(context.Background())
+	stop()
+	if err := session.OpenTarget(canceled, targetURL); err == nil {
+		t.Fatal("取消的目标导航未返回错误")
+	}
+	if err := session.run(ctx, camoufox.Navigate(targetURL+"/login")); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.OpenTarget(ctx, targetURL+"/gallery"); err != nil {
+		t.Fatal(err)
+	}
+	var cookie string
+	if err := session.run(ctx, chromedp.Evaluate(`document.cookie`, &cookie)); err != nil || !strings.Contains(cookie, "session=synthetic") {
+		t.Fatalf("打开目标网址后登录态丢失: %q, %v", cookie, err)
+	}
+	page, err := session.Capture(ctx)
+	if err != nil || len(page.Items) != 1 || page.Items[0].URL != targetURL+"/image.png" {
+		t.Fatalf("采集目标网页: %+v %v", page.Items, err)
+	}
+	item := page.Items[0]
+	item.Filename = "image.png"
+	dir := t.TempDir()
+	if err := New(Options{Getter: session.Getter()}).Download(ctx, Job{Directory: dir}, item, nil); err != nil {
+		t.Fatalf("使用登录态下载图片: %v", err)
+	}
+	if saved, err := os.ReadFile(filepath.Join(dir, "image.png")); err != nil || !bytes.Equal(saved, imageData.Bytes()) {
+		t.Fatalf("图片保存不正确: %v", err)
+	}
+	if err := session.OpenTarget(ctx, targetURL+"/other"); err != nil {
+		t.Fatalf("在同一浏览器切换目标: %v", err)
+	}
+	if _, err := session.Getter().Get(ctx, targetURL+"/image.png", nil); err == nil {
+		t.Fatal("切换目标后不应使用旧页面的下载权限")
+	}
+	if err := session.run(ctx, chromedp.Evaluate(`document.cookie`, &cookie)); err != nil || !strings.Contains(cookie, "session=synthetic") {
+		t.Fatalf("切换目标后登录态丢失: %q, %v", cookie, err)
+	}
+	if page, err := session.Capture(ctx); err != nil || len(page.Items) != 1 {
+		t.Fatalf("切换目标后无法采集: %+v %v", page.Items, err)
+	}
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "other") }))
+	defer other.Close()
+	if err := session.run(ctx, camoufox.Navigate(other.URL)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Capture(ctx); err == nil {
+		t.Fatal("离开目标站点后不应采集")
+	}
+}
 
 func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 	runtimeDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")

@@ -3,6 +3,7 @@ package tasks
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -43,12 +44,18 @@ type QianwenJob struct {
 	Images            []string
 	Wait              time.Duration
 	SkipSubmit        bool
+	VerifyAttachments bool
 }
 
 // QianwenRun 是扩展跑完一轮后的结果。Submitted 为真表示发送已被页面确认。
 type QianwenRun struct {
-	Results   []strategy.Result
-	Submitted bool
+	Results       []strategy.Result
+	Submitted     bool
+	SubmittedAt   time.Time
+	Conversation  string
+	TabID         int
+	sendAttempted bool
+	sourceIndices []int
 }
 
 type extAck struct {
@@ -61,21 +68,31 @@ type extAck struct {
 	Baxia          bool   `json:"baxia"`
 	Crop           string `json:"crop"`
 	Images         []struct {
-		URL    string `json:"url"`
-		RawURL string `json:"rawUrl"`
+		URL         string `json:"url"`
+		RawURL      string `json:"rawUrl"`
+		SourceIndex int    `json:"sourceIndex"`
 	} `json:"images"`
-	DataBase64 string `json:"dataBase64"`
-	Total      int    `json:"total"`
-	Offset     int    `json:"offset"`
-	Done       bool   `json:"done"`
-	Path       string `json:"path"`
+	DataBase64   string   `json:"dataBase64"`
+	Total        int      `json:"total"`
+	Offset       int      `json:"offset"`
+	Done         bool     `json:"done"`
+	Path         string   `json:"path"`
+	Conversation string   `json:"conversation"`
+	TabID        int      `json:"tabId"`
+	Ready        bool     `json:"ready"`
+	Reusable     bool     `json:"reusable"`
+	Attachments  []string `json:"attachments"`
 }
 
 func (e *Engine) useExtension(platform string) bool {
 	if e == nil || e.store == nil || (platform != "千问" && platform != "豆包") {
 		return false
 	}
-	return extbridge.NormalizeBrowserBackend(e.store.Get(extbridge.SettingBrowserBackend)) == "extension"
+	return e.useBoundExtension(platform) || extbridge.NormalizeBrowserBackend(e.store.Get(extbridge.SettingBrowserBackend)) == "extension"
+}
+
+func (e *Engine) useBoundExtension(platform string) bool {
+	return e != nil && e.store != nil && (platform == "豆包" || platform == "千问") && e.store.Get(extbridge.SettingBrowserBackend) == "camoufox_extension"
 }
 
 func (e *Engine) rotateExtBatch() {
@@ -94,6 +111,8 @@ func (e *Engine) currentExtBatch() string {
 }
 
 func (e *Engine) closeExtensionBridge() {
+	e.extStartMu.Lock()
+	defer e.extStartMu.Unlock()
 	e.extMu.Lock()
 	srv := e.extSrv
 	pair := e.pair
@@ -184,6 +203,8 @@ func (e *Engine) BridgeStatus() BridgeStatus {
 }
 
 func (e *Engine) extensionServer() (*extbridge.Server, error) {
+	e.extStartMu.Lock()
+	defer e.extStartMu.Unlock()
 	token := extbridge.DefaultExtToken
 	port := extbridge.DefaultExtPort
 	if e.store != nil {
@@ -297,7 +318,15 @@ func (e *Engine) noteExtensionEvent(sess *extbridge.Session, env extbridge.Envel
 		}
 	}
 	if sess != nil && (body.Kind == "quota" || body.Kind == "rate") {
-		if row, ok := loggedInExtension(e.store, extensionPlatformLabel(sess.Platform()), sess.Account()); ok {
+		row, ok := loggedInExtension(e.store, extensionPlatformLabel(sess.Platform()), sess.Account())
+		if !ok && e.useBoundExtension(extensionPlatformLabel(sess.Platform())) {
+			id, err := strconv.ParseInt(strings.TrimPrefix(sess.Account(), "tulai-bound-"), 10, 64)
+			if err == nil && sess.Account() == "tulai-bound-"+strconv.FormatInt(id, 10) {
+				row, ok = e.browserByID(id)
+				ok = ok && row.ExtAccount == "" && row.Platform == extensionPlatformLabel(sess.Platform())
+			}
+		}
+		if ok {
 			kind := faultQuota
 			if body.Kind == "rate" {
 				kind = faultRate
@@ -351,6 +380,9 @@ func (e *Engine) applyExtensionLogin(platform, account, name string, loggedIn bo
 	if platform == "" || account == "" {
 		return
 	}
+	if e.useBoundExtension(platform) {
+		return
+	}
 	// 扩展账号只在 browserBackend=extension 时参与调度。其它方式下页面桥照常对接，
 	// 但 tulai 自己启动的浏览器已经有一条本机账号，再登记一条会在列表里重复，
 	// 还会让向导以为已有可用账号。
@@ -387,6 +419,9 @@ func loggedInExtension(st *store.Store, platform, account string) (store.Browser
 
 func (e *Engine) noteExtensionTaskLogin(platform string, sess *extbridge.Session, err error) {
 	if e == nil || e.store == nil || sess == nil || sess.Account() == "" {
+		return
+	}
+	if e.useBoundExtension(platform) {
 		return
 	}
 	if errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) || extbridge.CodeOf(err) == extbridge.ENotLoggedIn {
@@ -496,6 +531,9 @@ func (e *Engine) extensionAccountKey(id int64) string {
 	}
 	for _, b := range e.store.Browsers() {
 		if b.ID == id {
+			if b.ExtAccount == "" && e.useBoundExtension(b.Platform) {
+				return "tulai-bound-" + strconv.FormatInt(id, 10)
+			}
 			return b.ExtAccount
 		}
 	}
@@ -508,6 +546,22 @@ func (e *Engine) extensionSession(ctx context.Context, platform, account string)
 		return nil, err
 	}
 	if account != "" {
+		if strings.HasPrefix(account, "tulai-bound-") {
+			wait, cancel := context.WithTimeout(ctx, extHelloWait)
+			defer cancel()
+			tick := time.NewTicker(200 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				if sess := srv.SessionByAccount(platform, account); sess != nil {
+					return sess, nil
+				}
+				select {
+				case <-wait.Done():
+					return nil, fmt.Errorf("等待绑定账号的页面桥连接: %w", wait.Err())
+				case <-tick.C:
+				}
+			}
+		}
 		if sess := srv.SessionByAccount(platform, account); sess != nil {
 			return sess, nil
 		}
@@ -571,11 +625,19 @@ func (e *Engine) attemptDoubaoExtension(ctx context.Context, t *Task) error {
 }
 
 func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocolPlatform, label string) error {
+	if e.useBoundExtension(t.Platform) && t.Platform == "豆包" && e.opts.Wash && e.opts.WaitResult {
+		t.noUse = !t.submitted
+	}
 	if !t.submitted && e.opts.WaitBeforeSend > 0 {
 		select {
 		case <-time.After(time.Duration(e.opts.WaitBeforeSend) * time.Second):
 		case <-ctx.Done():
 			return fmt.Errorf("已停止")
+		}
+	}
+	if e.useBoundExtension(t.Platform) {
+		if err := e.startBoundExtension(ctx, t); err != nil {
+			return err
 		}
 	}
 	account := ""
@@ -585,6 +647,23 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 	sess, err := e.extensionSession(ctx, protocolPlatform, account)
 	if err != nil {
 		return err
+	}
+	if e.useBoundExtension(t.Platform) {
+		if err := waitBoundPage(ctx, sess, strconv.Itoa(t.Index), label); err != nil {
+			return err
+		}
+	}
+	boundWash := e.useBoundExtension(t.Platform) && t.Platform == "豆包" && e.opts.Wash && e.opts.WaitResult && len(t.Images) > 0 && strings.TrimSpace(t.Prompt) != ""
+	var wash extensionWashChat
+	if boundWash {
+		if t.submitted {
+			e.clearExtensionWash(t.BrowserID)
+		} else {
+			wash, err = e.prepareExtensionWash(ctx, sess, t)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if sess != nil && sess.Account() != "" && e.store != nil {
 		if row, ok := loggedInExtension(e.store, label, sess.Account()); ok {
@@ -607,26 +686,114 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		}
 		wait = time.Duration(secs) * time.Second
 	}
+	prompt := e.opts.OutputSize.prompt(t.Platform, t.Prompt)
+	if len(t.batch) > 1 {
+		prompt += fmt.Sprintf("\n请将以上 %d 张图片分别进行洗图，严格按照附件顺序依次生成 %d 张独立结果图，每张结果只对应同位置的原图。不要拼图、合并或遗漏。", len(t.batch), len(t.batch))
+	}
 	out, err := runExtension(ctx, sess, QianwenJob{
 		TaskID:            strconv.Itoa(t.Index),
 		IdempotencyPrefix: e.currentExtBatch() + ":" + strconv.Itoa(t.Index),
-		Prompt:            t.Prompt,
+		Prompt:            prompt,
 		Images:            t.Images,
 		Wait:              wait,
 		SkipSubmit:        t.submitted,
+		VerifyAttachments: boundWash,
 	}, label)
+	if boundWash && out.sendAttempted {
+		t.noUse = false
+	}
 	e.noteExtensionTaskLogin(label, sess, err)
 	if out.Submitted {
 		t.submitted = true
+		t.sentAt = out.SubmittedAt
 		logging.Log.Info("#%d 已发送提示词（%.20s…）", t.Index, t.Prompt)
 	}
+	if boundWash {
+		resultErr := e.saveExtensionWash(ctx, t, out.Results, out.sourceIndices, err)
+		if t.submitted {
+			e.finishExtensionWash(t, wash, out, resultErr == nil && ctx.Err() == nil)
+		} else {
+			e.clearExtensionWash(t.BrowserID)
+		}
+		return resultErr
+	}
+	var saved []string
 	var saveErr error
+	t.matchedSavedResult = false
 	if len(out.Results) > 0 {
-		var saved []string
 		saved, saveErr = e.saveResults(ctx, t, strategy.Factory(t.Platform), nil, out.Results)
 		t.Results = append(t.Results, saved...)
 	}
-	return errors.Join(err, saveErr)
+	if err == nil && saveErr == nil && e.opts.WaitResult && len(saved) == 0 && !t.matchedSavedResult {
+		saveErr = fmt.Errorf("未保存到有效结果图片")
+	}
+	resultErr := errors.Join(err, saveErr)
+	return resultErr
+}
+
+func waitBoundPage(ctx context.Context, sess *extbridge.Session, taskID, platform string) error {
+	wait, cancel := context.WithTimeout(ctx, extHelloWait)
+	defer cancel()
+	for {
+		_, err := extCall(wait, sess, extbridge.CmdCaptchaAssist, taskID, "", nil, 3*time.Second, platform)
+		if extbridge.CodeOf(err) != extbridge.ENoTab {
+			return err
+		}
+		select {
+		case <-wait.Done():
+			return fmt.Errorf("等待绑定账号页面就绪: %w", wait.Err())
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+}
+
+func (e *Engine) startBoundExtension(ctx context.Context, t *Task) error {
+	if e.browsers == nil || e.store == nil {
+		return fmt.Errorf("没有可用的指纹浏览器")
+	}
+	row, ok := e.browserByID(t.BrowserID)
+	if !ok || row.ExtAccount != "" {
+		return fmt.Errorf("绑定账号不存在")
+	}
+	if _, err := e.extensionServer(); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	dir := e.firefoxAddons[row.ID]
+	if dir == "" {
+		var err error
+		dir, err = os.MkdirTemp("", "tulai-firefox-bridge-")
+		if err == nil {
+			info := e.pairInfo()
+			_, err = extbundle.InstallFirefoxBridge(dir, info.Port, info.Token, "tulai-bound-"+strconv.FormatInt(row.ID, 10))
+		}
+		if err != nil {
+			if dir != "" {
+				_ = os.RemoveAll(dir)
+			}
+			e.mu.Unlock()
+			return fmt.Errorf("准备 Firefox 页面桥: %w", err)
+		}
+		if e.firefoxAddons == nil {
+			e.firefoxAddons = map[int64]string{}
+		}
+		e.firefoxAddons[row.ID] = dir
+	}
+	e.mu.Unlock()
+	strat := strategy.Factory(t.Platform)
+	if strat == nil {
+		return fmt.Errorf("不支持的平台 %s", t.Platform)
+	}
+	if _, err := e.browsers.StartTaskWithAddon(row, e.dataRoot, strat.HomeURL(), dir); err != nil {
+		return fmt.Errorf("启动浏览器[%s]: %w", row.Name, err)
+	}
+	e.mu.Lock()
+	if e.runBrowsers != nil {
+		e.runBrowsers[row.ID] = struct{}{}
+	}
+	e.mu.Unlock()
+	e.store.SetRunning(row.ID, true)
+	return ctx.Err()
 }
 
 // RunQianwenExtension 通过已握手的千问扩展会话跑通上传、填词、发送、等待和下载。
@@ -641,7 +808,7 @@ func RunDoubaoExtension(ctx context.Context, sess *extbridge.Session, job Qianwe
 }
 
 func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, platform string) (QianwenRun, error) {
-	var out QianwenRun
+	out := QianwenRun{sendAttempted: job.SkipSubmit}
 	if sess == nil {
 		return out, &extbridge.ProtoError{Code: extbridge.ENotConnected, Message: "扩展未连接"}
 	}
@@ -670,6 +837,7 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		}
 		// 键放在信封上：成功和 E_SEND_UNCERTAIN 会被桥缓存，同一次任务不会再把 send 发到扩展。
 		// 超时不进缓存。内容脚本还会按这个键拒绝第二次点击。
+		out.sendAttempted = true
 		if _, err := extCall(ctx, sess, extbridge.CmdSend, job.TaskID, job.IdempotencyPrefix+":send", map[string]any{
 			"prompt":    job.Prompt,
 			"timeoutMs": 15000,
@@ -677,20 +845,31 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 			return out, err
 		}
 		out.Submitted = true
+		out.SubmittedAt = time.Now()
 	}
 	if job.Wait <= 0 {
 		return out, nil
 	}
-	body, err := extCall(ctx, sess, extbridge.CmdWaitResult, job.TaskID, "", map[string]any{
+	waitPayload := map[string]any{
 		"prompt":    job.Prompt,
 		"timeoutMs": job.Wait.Milliseconds(),
-	}, job.Wait+20*time.Second, platform)
+	}
+	if platform == "豆包" && job.VerifyAttachments && len(job.Images) > 1 {
+		names := make([]string, len(job.Images))
+		for i := range job.Images {
+			names[i] = extUploadName(job, i)
+		}
+		waitPayload["expectedAttachments"] = names
+	}
+	body, err := extCall(ctx, sess, extbridge.CmdWaitResult, job.TaskID, "", waitPayload, job.Wait+20*time.Second, platform)
 	if err != nil {
 		return out, err
 	}
 	if len(body.Images) == 0 {
 		return out, fmt.Errorf("等待生成结果超时：未得到有效的新图片")
 	}
+	out.Conversation = body.Conversation
+	out.TabID = body.TabID
 	var dlErr error
 	for _, item := range body.Images {
 		var data []byte
@@ -701,6 +880,7 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 			data, err = extDownloadURL(ctx, sess, job.TaskID, item.RawURL, platform)
 			if err == nil && validRawResult(data) {
 				usedURL, removed = item.RawURL, true
+				logging.Log.Info("扩展任务 %s 已取得豆包原图", job.TaskID)
 			} else {
 				data = nil
 			}
@@ -726,11 +906,26 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 			Data:             data,
 			WatermarkRemoved: removed,
 		})
+		out.sourceIndices = append(out.sourceIndices, item.SourceIndex)
 	}
 	return out, dlErr
 }
 
+func extUploadName(job QianwenJob, index int) string {
+	path := job.Images[index]
+	if len(job.Images) > 1 && job.VerifyAttachments {
+		sum := sha256.Sum256([]byte(job.IdempotencyPrefix))
+		return fmt.Sprintf("tulai-%x-%02d%s", sum[:8], index+1, filepath.Ext(path))
+	}
+	if len(job.Images) > 1 {
+		return fmt.Sprintf("%02d-%s", index+1, filepath.Base(path))
+	}
+	return filepath.Base(path)
+}
+
 func extUpload(ctx context.Context, sess *extbridge.Session, job QianwenJob, platform string) error {
+	verifyOrder := platform == "豆包" && (job.VerifyAttachments || len(job.Images) > 1)
+	var expected []string
 	for i, path := range job.Images {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -740,24 +935,41 @@ func extUpload(ctx context.Context, sess *extbridge.Session, job QianwenJob, pla
 			return fmt.Errorf("源图是空文件")
 		}
 		uploadID := job.IdempotencyPrefix + ":upload:" + strconv.Itoa(i)
+		name := filepath.Base(path)
+		if verifyOrder {
+			name = extUploadName(job, i)
+		}
 		for offset := 0; offset < len(data); {
 			end := offset + extChunkRaw
 			if end > len(data) {
 				end = len(data)
 			}
-			_, err := extCall(ctx, sess, extbridge.CmdUpload, job.TaskID, "", map[string]any{
-				"uploadId":   uploadID,
-				"fileName":   filepath.Base(path),
-				"mime":       imageMIME(path),
-				"total":      len(data),
-				"offset":     offset,
-				"dataBase64": base64.StdEncoding.EncodeToString(data[offset:end]),
-				"finish":     end == len(data),
-				"clean":      i == 0 && offset == 0,
-				"timeoutMs":  30000,
-			}, 45*time.Second, platform)
+			body, err := extCall(ctx, sess, extbridge.CmdUpload, job.TaskID, "", map[string]any{
+				"uploadId":            uploadID,
+				"fileName":            name,
+				"mime":                imageMIME(path),
+				"total":               len(data),
+				"offset":              offset,
+				"dataBase64":          base64.StdEncoding.EncodeToString(data[offset:end]),
+				"finish":              end == len(data),
+				"clean":               i == 0 && offset == 0,
+				"verifyOrder":         verifyOrder,
+				"expectedAttachments": append(append([]string(nil), expected...), name),
+				"timeoutMs":           30000,
+			}, 60*time.Second, platform)
 			if err != nil {
 				return fmt.Errorf("上传: %w", err)
+			}
+			if verifyOrder && end == len(data) {
+				expected = append(expected, name)
+				if len(body.Attachments) != len(expected) {
+					return fmt.Errorf("豆包附件数量未确认，未发送本批图片")
+				}
+				for j := range expected {
+					if body.Attachments[j] != expected[j] {
+						return fmt.Errorf("豆包附件顺序未确认，未发送本批图片")
+					}
+				}
 			}
 			offset = end
 		}

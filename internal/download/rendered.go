@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
@@ -30,32 +31,51 @@ import (
 // retained so a user can sign in once and use that login in subsequent tasks.
 type RenderedSession struct {
 	process        *camoufox.Process
+	life           context.Context
 	tab            context.Context
+	target         string
 	closeTab       context.CancelFunc
 	closeAllocator context.CancelFunc
 	releaseProfile func()
 	getter         *HTTPGetter
 	start          *url.URL
+	assistant      *downloadAssistant
 
-	mu       sync.RWMutex
-	pageURL  *url.URL
-	pageIP   netip.Addr
-	docURL   *url.URL
-	docIP    netip.Addr
-	startIP  netip.Addr
-	frozen   bool
-	closed   sync.Once
-	done     chan struct{}
-	doneOnce sync.Once
+	mu        sync.RWMutex
+	pageURL   *url.URL
+	pageIP    netip.Addr
+	docURL    *url.URL
+	docIP     netip.Addr
+	documents map[string]renderedDocument
+	startIP   netip.Addr
+	frozen    bool
+	expected  string
+	closed    sync.Once
+	done      chan struct{}
+	doneOnce  sync.Once
 }
 
-// OpenRendered opens rawURL in a newly owned browser process using profileDir.
+type renderedDocument struct {
+	url *url.URL
+	ip  netip.Addr
+}
+
+// OpenRendered opens rawURL, or a blank page if it is empty, in a dedicated browser.
 // ctx bounds startup; the caller must close the returned session.
 func OpenRendered(ctx context.Context, profileDir, rawURL, proxy string, headless bool) (*RenderedSession, error) {
 	return openRendered(ctx, profileDir, rawURL, proxy, headless, browser.ConfigDir())
 }
 
+// OpenRenderedAssisted enables the download button in the dedicated browser.
+func OpenRenderedAssisted(ctx context.Context, profileDir, rawURL, proxy string, headless bool, handler DownloadRequest) (*RenderedSession, error) {
+	return openRenderedWithAssistant(ctx, profileDir, rawURL, proxy, headless, browser.ConfigDir(), handler)
+}
+
 func openRendered(ctx context.Context, profileDir, rawURL, proxy string, headless bool, runtimeDir string) (*RenderedSession, error) {
+	return openRenderedWithAssistant(ctx, profileDir, rawURL, proxy, headless, runtimeDir, nil)
+}
+
+func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy string, headless bool, runtimeDir string, handler DownloadRequest) (*RenderedSession, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -65,9 +85,13 @@ func openRendered(ctx context.Context, profileDir, rawURL, proxy string, headles
 	if strings.TrimSpace(proxy) != "" {
 		return nil, errors.New("浏览器下载暂不支持代理，无法安全校验代理解析的目标地址")
 	}
-	start, err := crawlInputURL(rawURL)
-	if err != nil || start.User != nil {
-		return nil, errors.New("浏览器地址必须是不含账号密码的 HTTP / HTTPS 地址")
+	var start *url.URL
+	var err error
+	if strings.TrimSpace(rawURL) != "" {
+		start, err = crawlInputURL(rawURL)
+		if err != nil || start.User != nil {
+			return nil, errors.New("浏览器地址必须是不含账号密码的 HTTP / HTTPS 地址")
+		}
 	}
 	if !filepath.IsAbs(profileDir) {
 		return nil, errors.New("下载浏览器目录必须是绝对路径")
@@ -83,8 +107,20 @@ func openRendered(ctx context.Context, profileDir, rawURL, proxy string, headles
 	if err != nil {
 		return nil, err
 	}
-	process, err := camoufox.Start(ctx, runtimeDir, camoufox.Options{Profile: profileDir, Headless: headless}, nil)
+	options := camoufox.Options{Profile: profileDir, Headless: headless}
+	var assistant *downloadAssistant
+	if handler != nil {
+		var addon string
+		assistant, addon, err = startDownloadAssistant(profileDir, handler)
+		if err != nil {
+			release()
+			return nil, fmt.Errorf("准备下载助手: %w", err)
+		}
+		options.Addons = []string{addon}
+	}
+	process, err := camoufox.Start(ctx, runtimeDir, options, nil)
 	if err != nil {
+		assistant.close()
 		release()
 		return nil, err
 	}
@@ -96,16 +132,31 @@ func openRendered(ctx context.Context, profileDir, rawURL, proxy string, headles
 	transport := getter.client.Transport.(*http.Transport)
 	transport.DialContext = safeDownloadDial
 	transport.DisableKeepAlives = true
-	s := &RenderedSession{process: process, tab: tab, closeTab: closeTab, closeAllocator: closeAlloc, releaseProfile: release, getter: getter, start: start, done: make(chan struct{})}
-	if literal, parseErr := netip.ParseAddr(start.Hostname()); parseErr == nil {
-		s.startIP = literal.Unmap()
+	s := &RenderedSession{
+		process: process, life: life, tab: tab, target: process.Page,
+		closeTab: closeTab, closeAllocator: closeAlloc, releaseProfile: release,
+		getter: getter, start: start, assistant: assistant,
+		documents: map[string]renderedDocument{}, done: make(chan struct{}),
+	}
+	if assistant != nil {
+		assistant.mu.Lock()
+		assistant.session = s
+		assistant.mu.Unlock()
+	}
+	if start != nil {
+		if literal, parseErr := netip.ParseAddr(start.Hostname()); parseErr == nil {
+			s.startIP = literal.Unmap()
+		}
 	}
 	unsubscribe := process.Subscribe(func(event camoufox.Event) {
-		if event.Target != process.Page {
-			return
-		}
 		if event.Event == "closed" {
-			s.markClosed()
+			s.mu.Lock()
+			delete(s.documents, event.Target)
+			active := event.Target == s.target
+			s.mu.Unlock()
+			if active {
+				s.markClosed()
+			}
 			return
 		}
 		if event.Event != "document" {
@@ -124,15 +175,22 @@ func openRendered(ctx context.Context, profileDir, rawURL, proxy string, headles
 			ip = netip.Addr{}
 		}
 		s.mu.Lock()
-		s.docURL, s.docIP = u, ip.Unmap()
-		if !s.frozen && !s.startIP.IsValid() && u != nil && sameOrigin(start, u) {
-			s.startIP = ip.Unmap()
+		s.documents[event.Target] = renderedDocument{url: u, ip: ip.Unmap()}
+		if event.Target == s.target {
+			s.docURL, s.docIP = u, ip.Unmap()
+			if !s.frozen && !s.startIP.IsValid() && u != nil && sameOrigin(s.start, u) {
+				s.startIP = ip.Unmap()
+			}
 		}
 		s.mu.Unlock()
 	})
 	context.AfterFunc(tab, unsubscribe)
 	context.AfterFunc(process.Context(), s.markClosed)
-	err = s.run(ctx, camoufox.Navigate(start.String()))
+	target := "about:blank"
+	if start != nil {
+		target = start.String()
+	}
+	err = s.run(ctx, camoufox.Navigate(target))
 	s.mu.Lock()
 	s.frozen = true
 	s.mu.Unlock()
@@ -142,6 +200,94 @@ func openRendered(ctx context.Context, profileDir, rawURL, proxy string, headles
 		return nil, fmt.Errorf("打开下载浏览器: %w", err)
 	}
 	return s, nil
+}
+
+// OpenTarget changes the target while no capture or download is running.
+func (s *RenderedSession) OpenTarget(ctx context.Context, rawURL string) error {
+	if QzoneURLHasCredentials(strings.TrimSpace(rawURL)) {
+		return errors.New("QQ 相册网址包含登录令牌，请移除后重试")
+	}
+	start, err := crawlInputURL(rawURL)
+	if err != nil || start.User != nil {
+		return errors.New("浏览器地址必须是不含账号密码的 HTTP / HTTPS 地址")
+	}
+	s.mu.Lock()
+	s.pageURL, s.pageIP = nil, netip.Addr{}
+	s.expected = ""
+	s.start, s.docURL, s.docIP, s.startIP, s.frozen = start, nil, netip.Addr{}, netip.Addr{}, false
+	if literal, parseErr := netip.ParseAddr(start.Hostname()); parseErr == nil {
+		s.startIP = literal.Unmap()
+	}
+	s.mu.Unlock()
+	err = s.run(ctx, page.BringToFront(), camoufox.Navigate(start.String()))
+	s.mu.Lock()
+	s.frozen = true
+	if err != nil {
+		s.start, s.docURL, s.docIP, s.startIP = nil, nil, netip.Addr{}, netip.Addr{}
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("打开下载网址: %w", err)
+	}
+	return nil
+}
+
+// BindCurrent selects the tab whose download button was clicked without reloading it.
+func (s *RenderedSession) BindCurrent(ctx context.Context, rawURL, marker string) error {
+	start, err := crawlInputURL(rawURL)
+	if err != nil || start.User != nil || QzoneURLHasCredentials(rawURL) || !downloadRequestMarker.MatchString(marker) {
+		return errors.New("当前网址无效或包含登录令牌，请移除后重试")
+	}
+	if !s.Alive() {
+		return errors.New("下载浏览器已关闭，请重新打开")
+	}
+	var targets struct {
+		Infos []struct {
+			ID   string `json:"targetId"`
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"targetInfos"`
+	}
+	if err := s.process.Call(ctx, "", "Target.getTargets", nil, &targets); err != nil {
+		return err
+	}
+	var selected string
+	var selectedTab context.Context
+	for _, target := range targets.Infos {
+		if target.Type != "page" || target.URL != rawURL {
+			continue
+		}
+		tab := camoufox.PageContext(s.life, s.process, target.ID)
+		var state struct {
+			URL   string
+			Match bool
+		}
+		script := fmt.Sprintf(`({url:location.href,match:Array.from(document.querySelectorAll('[data-tulai-download-helper][data-tulai-download-request]')).some(el=>el.getAttribute('data-tulai-download-request')===%q)})`, marker)
+		err := runRendered(ctx, tab, chromedp.Evaluate(script, &state))
+		if err == nil && state.URL == rawURL && state.Match {
+			if selected != "" {
+				return errors.New("无法确定下载标签页，请重试")
+			}
+			selected, selectedTab = target.ID, tab
+		}
+	}
+	if selected == "" {
+		return errors.New("网页已切换或关闭，请在目标页面重新点击下载")
+	}
+	s.mu.Lock()
+	doc := s.documents[selected]
+	s.target, s.tab, s.start = selected, selectedTab, start
+	s.expected = rawURL
+	s.pageURL, s.pageIP = nil, netip.Addr{}
+	s.docURL, s.docIP, s.startIP, s.frozen = doc.url, doc.ip, netip.Addr{}, true
+	if doc.url != nil && sameOrigin(start, doc.url) {
+		s.startIP = doc.ip
+	}
+	if literal, parseErr := netip.ParseAddr(start.Hostname()); parseErr == nil {
+		s.startIP = literal.Unmap()
+	}
+	s.mu.Unlock()
+	return nil
 }
 
 // Close stops only the browser process owned by this session and keeps its profile.
@@ -154,6 +300,7 @@ func (s *RenderedSession) Close() {
 		s.closeTab()
 		s.closeAllocator()
 		s.getter.client.CloseIdleConnections()
+		s.assistant.close()
 		s.releaseProfile()
 	})
 }
@@ -166,7 +313,13 @@ func (s *RenderedSession) markClosed() {
 
 // Alive reports whether the dedicated browser and its captured page are still open.
 func (s *RenderedSession) Alive() bool {
-	if s == nil || s.process == nil || !s.process.Alive() || s.tab == nil || s.tab.Err() != nil || s.done == nil {
+	if s == nil || s.process == nil || !s.process.Alive() || s.done == nil {
+		return false
+	}
+	s.mu.RLock()
+	tab := s.tab
+	s.mu.RUnlock()
+	if tab == nil || tab.Err() != nil {
 		return false
 	}
 	select {
@@ -194,10 +347,17 @@ func (s *RenderedSession) PageURL() string {
 func (s *RenderedSession) Getter() Getter { return s }
 
 func (s *RenderedSession) run(ctx context.Context, actions ...camoufox.Action) error {
+	s.mu.RLock()
+	tab := s.tab
+	s.mu.RUnlock()
+	return runRendered(ctx, tab, actions...)
+}
+
+func runRendered(ctx, tab context.Context, actions ...camoufox.Action) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	op, cancel := context.WithTimeout(s.tab, 45*time.Second)
+	op, cancel := context.WithTimeout(tab, 45*time.Second)
 	stop := context.AfterFunc(ctx, cancel)
 	defer func() { stop(); cancel() }()
 	err := camoufox.Run(op, actions...)
@@ -254,6 +414,7 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 	s.mu.Lock()
 	s.pageURL = nil
 	s.pageIP = netip.Addr{}
+	expected := s.expected
 	s.mu.Unlock()
 	if err := Wait(ctx, 400*time.Millisecond); err != nil {
 		return result, err
@@ -274,6 +435,9 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 		var snapshot renderedSnapshot
 		if err := s.run(ctx, chromedp.Evaluate(renderedSnapshotScript, &snapshot)); err != nil {
 			return result, err
+		}
+		if expected != "" && snapshot.URL != expected {
+			return result, errors.New("浏览器页面已变化，请返回目标页面后重新下载")
 		}
 		page, err := crawlInputURL(snapshot.URL)
 		if err != nil || !sameRenderedSite(s.start, page) {
@@ -1289,7 +1453,7 @@ func isPublicDownloadIP(ip netip.Addr) bool {
 
 func safeDownloadDial(ctx context.Context, networkName, address string) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}
-	return safeDownloadDialWith(ctx, networkName, address, net.DefaultResolver.LookupNetIP, dialer.DialContext)
+	return safeDownloadDialWith(ctx, networkName, address, lookupTemuImageIPs, dialer.DialContext)
 }
 
 func safeDownloadDialWith(ctx context.Context, networkName, address string,

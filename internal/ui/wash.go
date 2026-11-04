@@ -159,7 +159,7 @@ func (a *App) addFolder() {
 
 func (a *App) addLoaded(page int, loaded []sourceImage) {
 	a.onPage(page, func() {
-		if n := a.appendSources(loaded); n > 0 {
+		if n := a.appendSources(loaded, page == pageWash); n > 0 {
 			logging.Log.Info("%s添加 %d 张图片", pageLabel(page), n)
 		}
 	})
@@ -186,7 +186,14 @@ func (a *App) washPromptCard(c *ui.Context) {
 			a.washReset(c)
 		})
 		ui.TextArea(c, &a.prompts).Height(84).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
-		ui.Text(c, "每张图单独发一次，结果存成「原文件名_01.png」").FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip("每张图单独发一次，结果存成「原文件名_01.png」")
+		hint := "每张图单独发一次，结果存成「原文件名_01.png」"
+		if a.store != nil && a.store.Get("browserBackend") == "camoufox_extension" && a.waitResult && a.stagePlatform() == "豆包" {
+			hint = "每批最多 10 张一起发送，结果按源文件名保存"
+		}
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0).SingleLine().Tooltip(hint)
+			a.promptPartsButton(c)
+		})
 	})
 }
 

@@ -67,7 +67,7 @@ func main() {
 }
 
 func packagedDataDir(goos, executable string) (string, error) {
-	if goos != "windows" {
+	if goos != "windows" && goos != "darwin" {
 		macosDir := filepath.Dir(executable)
 		contentsDir := filepath.Dir(macosDir)
 		bundleDir := filepath.Dir(contentsDir)

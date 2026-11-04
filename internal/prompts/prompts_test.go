@@ -3,47 +3,18 @@ package prompts
 import (
 	"strings"
 	"testing"
-	"unicode"
 )
 
-func TestBuiltinsKeepFullTextAfterLeadingTrim(t *testing.T) {
-	oil, ok := Builtin(IDOil)
-	if !ok || oil.Label != "数字油画" || !strings.HasPrefix(oil.Body, "每张图") {
-		t.Fatalf("oil: %+v", oil)
+func TestBuiltinsContainOnlyWash(t *testing.T) {
+	items := Builtins()
+	if len(items) != 1 || items[0].ID != IDWash || items[0].Label != "默认洗图" || items[0].Kind != KindWash || !items[0].Builtin || items[0].Body != DefaultWashPrompt {
+		t.Fatalf("builtins: %+v", items)
 	}
-	if !strings.Contains(oil.Body, "反向提示词：") || !strings.Contains(oil.Body, "\n") {
-		t.Fatal("oil lost the reverse prompt or the line break")
-	}
-	if strings.HasSuffix(strings.TrimRight(oil.Body, "\r\n"), "局部残缺") == false {
-		t.Fatal("oil lost its ending")
-	}
-	art, ok := Builtin(IDArt)
-	if !ok || art.Label != "数字画" || !strings.HasPrefix(art.Body, "反推图生文要求：") {
-		t.Fatalf("art: %+v", art)
-	}
-	if !strings.Contains(art.Body, "重绘强度：0.8") {
-		t.Fatal("art lost its ending")
-	}
-	circle, ok := Builtin(IDCircle)
-	if !ok || circle.Label != "圆形印花" || !strings.HasPrefix(circle.Body, "每张图") {
-		t.Fatalf("circle: %+v", circle)
-	}
-	if !strings.Contains(circle.Body, "1:1完美正圆形构图") || !strings.Contains(circle.Body, "重绘强度0.8") {
-		t.Fatal("circle lost its instructions")
-	}
-	for _, item := range Builtins() {
-		if item.Body == "" || strings.Contains(item.Body, "\uFEFF") {
-			t.Fatalf("empty or BOM body: %s", item.ID)
-		}
-		r, _ := utf8DecodeFirst(item.Body)
-		if unicode.IsSpace(r) {
-			t.Fatalf("%s still starts with space %q", item.ID, r)
+	for _, id := range []string{"oil", "art", "circle"} {
+		if _, ok := Builtin(id); ok {
+			t.Fatalf("retired builtin %q is still available", id)
 		}
 	}
-}
-
-func utf8DecodeFirst(s string) (rune, int) {
-	return []rune(s)[0], 1
 }
 
 func TestImportTextKeepsLinesAndBlankParagraphs(t *testing.T) {
@@ -66,40 +37,40 @@ func TestImportTextKeepsLinesAndBlankParagraphs(t *testing.T) {
 }
 
 func TestTemplateIsOnePromptAndLinesStaySplit(t *testing.T) {
-	oil, _ := Builtin(IDOil)
-	got := TaskPrompts(IDOil, oil.Body)
-	if len(got) != 1 || !strings.Contains(got[0], "反向提示词：") || strings.Contains(got[0], "\n") == false {
+	wash, _ := Builtin(IDWash)
+	got := TaskPrompts(IDWash, wash.Body)
+	if len(got) != 1 || got[0] != wash.Body || !strings.Contains(got[0], "\n") {
 		t.Fatalf("builtin was split: %#v", got)
 	}
 	lines := TaskPrompts("", "画一只猫\n\n画一条鱼")
 	if len(lines) != 2 || lines[0] != "画一只猫" || lines[1] != "画一条鱼" {
 		t.Fatalf("line mode: %#v", lines)
 	}
-	if TaskPrompts(IDArt, "  \n") != nil {
+	if TaskPrompts(IDWash, "  \n") != nil {
 		t.Fatal("blank template should not send")
 	}
 }
 
 func TestUserCopyDoesNotReplaceBuiltin(t *testing.T) {
 	users := []UserPrompt{{
-		ID: "u1", Label: UniqueLabel("数字油画", nil), Body: BuiltinBody(IDOil) + "\n加一句", From: IDOil,
+		ID: "u1", Label: UniqueLabel("默认洗图", nil), Body: DefaultWashPrompt + "\n加一句", From: IDWash,
 	}}
-	if users[0].Label != "数字油画 副本" {
+	if users[0].Label != "默认洗图 副本" {
 		t.Fatalf("label %q", users[0].Label)
 	}
-	oil, _ := Builtin(IDOil)
-	if strings.Contains(oil.Body, "加一句") {
+	wash, _ := Builtin(IDWash)
+	if strings.Contains(wash.Body, "加一句") {
 		t.Fatal("builtin was overwritten")
 	}
 	if NormalizePick("u1", users) != "u1" || NormalizePick("missing", users) != "" {
 		t.Fatal("pick normalization")
 	}
-	if LabelFor("u1", users) != "数字油画 副本" {
+	if LabelFor("u1", users) != "默认洗图 副本" {
 		t.Fatalf("label for user: %q", LabelFor("u1", users))
 	}
 	raw := FormatUser(users)
 	again := ParseUser(raw)
-	if len(again) != 1 || again[0].Body != users[0].Body || again[0].From != IDOil {
+	if len(again) != 1 || again[0].Body != users[0].Body || again[0].From != IDWash {
 		t.Fatalf("round trip: %+v", again)
 	}
 	if ParseUser("{") != nil {
@@ -123,27 +94,22 @@ func TestPromptKindsKeepLegacyEntriesShared(t *testing.T) {
 	}
 }
 
-func BuiltinBody(id string) string {
-	item, _ := Builtin(id)
-	return item.Body
-}
-
 func TestDuplicateUserLabelGetsID(t *testing.T) {
-	users := []UserPrompt{{ID: "u1", Label: "数字油画", Body: "自定义"}}
+	users := []UserPrompt{{ID: "u1", Label: "默认洗图", Body: "自定义"}}
 	labels := Labels(users)
-	if labels[0] != LabelCustom || labels[1] != "数字油画" {
+	if labels[0] != LabelCustom || labels[1] != "默认洗图" {
 		t.Fatalf("labels: %#v", labels)
 	}
 	found := false
 	for _, label := range labels {
-		if label == "数字油画（u1）" {
+		if label == "默认洗图（u1）" {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("user label not disambiguated: %#v", labels)
 	}
-	if IDForLabel("数字油画（u1）", users) != "u1" || IDForLabel("没有", users) != "" {
+	if IDForLabel("默认洗图（u1）", users) != "u1" || IDForLabel("没有", users) != "" {
 		t.Fatal("id for label")
 	}
 }

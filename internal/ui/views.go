@@ -124,7 +124,7 @@ func (a *App) browserInstances(c *ui.Context) {
 				a.accountProxySettings(c, selected)
 			}
 		})
-		ui.Text(c, "勾选环境可批量启停；配置仅作用于当前环境。登录成功后窗口保持打开。").FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+		ui.Text(c, "勾选环境可批量启停；新账号登录后窗口自动关闭，手动启动的环境保持打开。").FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
 	})
 }
 
@@ -541,7 +541,7 @@ func (a *App) createBrowser(platform, name string) {
 		return
 	}
 	a.markFreshLogin(row.ID)
-	logging.Log.Info("正在打开 %s（%s），请在网页里登录，成功后窗口保持打开", name, platform)
+	logging.Log.Info("正在打开 %s（%s），请在网页里登录，成功后窗口自动关闭", name, platform)
 	a.refreshBrowsers()
 	for i := range a.browserRows {
 		if a.browserRows[i].ID == row.ID {
@@ -860,11 +860,11 @@ func (a *App) bridgePairLabel() string {
 	return "等待扩展自动对接，也可复制令牌手动填写"
 }
 
-func accountHealthLabel(b store.Browser, active, signedIn bool) string {
+func accountHealthLabel(b store.Browser, active, signedIn bool, now time.Time) string {
 	if b.Disabled && !active {
 		return "已禁用"
 	}
-	if !b.Usable(time.Now()) {
+	if !b.Usable(now) {
 		if b.Health == store.HealthCooling {
 			if strings.Contains(b.LastError, "验证") {
 				return "需要人工验证"

@@ -3,6 +3,7 @@ package download
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -55,6 +56,7 @@ func TestTemuSearchRoutesAndIdentity(t *testing.T) {
 		same bool
 	}{
 		{"https://temu.com/search_result.html?filter=black&search_key=lamp&refer_page_id=synthetic", true},
+		{"https://temu.com/search_result.html?filter=black&search_key=lamp&is_back=1", true},
 		{"https://www.temu.com/search_result.html?filter=black&search_key=desk", false},
 		{"https://www.temu.com/search_result.html?filter=red&search_key=lamp", false},
 		{"https://www.temu.com/search_result.html?search_key=lamp", false},
@@ -80,7 +82,7 @@ func TestTemuSearchCollectBoundRows(t *testing.T) {
 		{ID: "601099513224346", Title: "Wrong link host", Image: row.Image, Link: "https://evil.temu.com/item-g-601099513224346.html"},
 	}}
 	got, err := temuSearchCollect(context.Background(), page, snapshot)
-	if len(got.Items) != 1 || err == nil || !strings.Contains(err.Error(), "手动加载") || !strings.Contains(err.Error(), "无法确认") {
+	if len(got.Items) != 1 || err == nil || !strings.Contains(err.Error(), "无法确认") {
 		t.Fatalf("items=%+v err=%v", got.Items, err)
 	}
 	item := got.Items[0]
@@ -88,6 +90,9 @@ func TestTemuSearchCollectBoundRows(t *testing.T) {
 		!item.RequireImage || !item.PublicOnly || item.Metadata["album_id"] != row.ID || item.Metadata["album_title"] != "Lamp" ||
 		item.Headers["Referer"] != "https://www.temu.com/" {
 		t.Fatalf("item=%+v", item)
+	}
+	if got, err := temuSearchCollect(context.Background(), page, temuSearchSnapshot{URL: temuSearchTestPage, Rows: []temuSearchRow{row}}); err != nil || len(got.Items) != 1 {
+		t.Fatalf("loaded search items=%+v err=%v", got.Items, err)
 	}
 	for _, test := range []struct {
 		name string
@@ -142,6 +147,8 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 <div class="EKDT7a3v" style="display:none"><div id="goodName-601099513224344" title="Hidden"><a href="https://www.temu.com/item-g-601099513224344.html">Hidden</a></div><img class="goods-img-external" width="20" height="20" src="https://img.kwcdn.com/product/hidden.gif"></div>
 <div class="EKDT7a3v"><div id="goodName-601099513224345" title="Mismatch"><a href="https://www.temu.com/item-g-601099513224346.html">Wrong</a></div><img class="goods-img-external" width="20" height="20" src="https://img.kwcdn.com/product/wrong.gif"></div>
 <div class="EKDT7a3v"><div id="goodName-601099513224347" title="Unloaded"><a href="https://www.temu.com/item-g-601099513224347.html">Unloaded</a></div><img class="goods-img-external" width="20" height="20" src="https://img.kwcdn.com/product/missing.gif"></div>
+<div class="EKDT7a3v"><div data-tooltip="goodName-601099513224348" data-tooltip-title="Modern lamp"><a href="https://www.temu.com/item-g-601099513224348.html">Modern lamp</a></div><img class="goods-img-external" width="20" height="20" src="https://img.kwcdn.com/product/modern.gif"></div>
+<div class="EKDT7a3v"><div data-tooltip="goodName-601099513224349" data-tooltip-title="Lazy lamp"><a href="https://www.temu.com/item-g-601099513224349.html">Lazy lamp</a></div><img class="goods-img-external" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" data-src="https://img.kwcdn.com/product/lazy.gif"></div>
 </div><img src="https://img.kwcdn.com/product/not-result.gif"></body></html>`
 	interceptErrors := make(chan error, 8)
 	camoufox.ListenTarget(session.tab, func(event any) {
@@ -182,8 +189,33 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	got, err := session.Capture(ctx)
-	if len(got.Items) != 1 || err == nil || !strings.Contains(err.Error(), "手动加载") || got.Items[0].Metadata["album_id"] != temuTestID {
+	if len(got.Items) != 3 || err == nil || !strings.Contains(err.Error(), "无法确认") || got.Items[0].Metadata["album_id"] != temuTestID || got.Items[1].Metadata["album_title"] != "Modern lamp" || got.Items[2].Metadata["album_title"] != "Lazy lamp" {
 		t.Fatalf("capture=%+v err=%v", got.Items, err)
+	}
+	prior := temuSearchSnapshot{URL: temuSearchTestPage, Rows: []temuSearchRow{{
+		ID: "601099513224350", Title: "Removed card", Link: "https://www.temu.com/item-g-601099513224350.html", Image: "https://img.kwcdn.com/product/removed.gif",
+	}}}
+	cache, err := json.Marshal(prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`(() => { const h = document.createElement('div'); h.dataset.tulaiDownloadHelper = ''; h.dataset.tulaiTemuSnapshot = %q; document.documentElement.append(h); })()`, string(cache)), nil)); err != nil {
+		t.Fatal(err)
+	}
+	got, err = session.Capture(ctx)
+	if len(got.Items) != 4 || err == nil || got.Items[0].Metadata["album_title"] != "Removed card" {
+		t.Fatalf("removed card not retained: items=%+v err=%v", got.Items, err)
+	}
+	prior.URL = "https://www.temu.com/search_result.html?search_key=other&filter=black"
+	cache, _ = json.Marshal(prior)
+	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector('[data-tulai-download-helper]').dataset.tulaiTemuSnapshot = %q`, string(cache)), nil)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := session.Capture(ctx); err == nil || len(got.Items) != 0 || !strings.Contains(err.Error(), "条件已改变") {
+		t.Fatalf("different cached search=%+v err=%v", got.Items, err)
+	}
+	if err := session.run(ctx, chromedp.Evaluate(`document.querySelector('[data-tulai-download-helper]').remove()`, nil)); err != nil {
+		t.Fatal(err)
 	}
 	wrongStart := temuSearchTestURL(t, "https://www.temu.com/search_result.html?search_key=other&filter=black")
 	session.start = wrongStart

@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"math"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -116,10 +117,15 @@ func resizeImage(src *image.NRGBA, w, h int) *image.NRGBA {
 }
 
 // containImage 等比缩进目标画布并居中，空出来的地方铺白色。
-func containImage(src *image.NRGBA, w, h int) *image.NRGBA {
+func containImage(src *image.NRGBA, w, h int, upscale bool) *image.NRGBA {
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
 	fillNRGBA(dst, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
 	nw, nh := containedSize(src.Bounds().Dx(), src.Bounds().Dy(), w, h)
+	if upscale {
+		scale := min(float64(w)/float64(src.Bounds().Dx()), float64(h)/float64(src.Bounds().Dy()))
+		nw = max(1, int(math.Round(float64(src.Bounds().Dx())*scale)))
+		nh = max(1, int(math.Round(float64(src.Bounds().Dy())*scale)))
+	}
 	x := (w - nw) / 2
 	y := (h - nh) / 2
 	xdraw.BiLinear.Scale(dst, image.Rect(x, y, x+nw, y+nh), src, src.Bounds(), xdraw.Src, nil)

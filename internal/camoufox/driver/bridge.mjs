@@ -256,6 +256,7 @@ async function start(params) {
     const options = await launchOptions({
       os: hostOS, headless: Boolean(params.headless), main_world_eval: true,
       config: identityConfig, i_know_what_im_doing: Boolean(saved),
+      addons: params.addons || undefined,
       proxy: proxyOptions(params.proxy),
       geoip: params.proxy ? params.geoip !== false : undefined,
       executable_path: params.executable || undefined,

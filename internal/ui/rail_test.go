@@ -22,20 +22,11 @@ func TestRailIconsHaveTooltipsAndActions(t *testing.T) {
 		done func()
 	}{
 		{
-			tip:  "生图",
+			tip:  "图片生成",
 			prep: func() { a.tab = pageSettings; tt.Frame() },
 			done: func() {
 				if a.tab != pageHome {
 					t.Fatalf("生图 tab=%d", a.tab)
-				}
-			},
-		},
-		{
-			tip:  "洗图",
-			prep: func() { a.tab = pageHome; tt.Frame() },
-			done: func() {
-				if a.tab != pageWash {
-					t.Fatalf("洗图 tab=%d", a.tab)
 				}
 			},
 		},

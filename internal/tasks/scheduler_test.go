@@ -102,6 +102,52 @@ func TestRunSendWaitPerResourceWithoutTrailingDelay(t *testing.T) {
 	}
 }
 
+func TestWashSendGapIncludesGenerationTime(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		wash      bool
+		confirmed bool
+		work      time.Duration
+		want      time.Duration
+	}{
+		{"generation exceeds gap", true, true, 12 * time.Second, 12 * time.Second},
+		{"generation shorter than gap", true, true, 3 * time.Second, 10 * time.Second},
+		{"unconfirmed send keeps gap", true, false, 3 * time.Second, 13 * time.Second},
+		{"image generation unchanged", false, true, 3 * time.Second, 13 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			if _, err := st.AddBrowser("豆包", "test", ""); err != nil {
+				t.Fatal(err)
+			}
+			synctest.Test(t, func(t *testing.T) {
+				e := NewEngine(st, nil, nil, "")
+				e.gap = func(d time.Duration) time.Duration { return d }
+				start := time.Now()
+				var starts []time.Duration
+				opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Wash: tc.wash, SendWait: 10}
+				err := e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+					starts = append(starts, time.Since(start))
+					if task.Index == 1 {
+						if tc.confirmed {
+							task.sentAt = time.Now()
+						}
+						time.Sleep(tc.work)
+					}
+					return nil
+				})
+				if err != nil || len(starts) != 2 || starts[1] != tc.want {
+					t.Fatalf("starts=%v, want second task at %v, err=%v", starts, tc.want, err)
+				}
+			})
+		})
+	}
+}
+
 func TestRunCoolingBrowserDoesNotOccupyWorker(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
@@ -407,6 +453,43 @@ func TestManualConcurrencyCapsBelowAccountCount(t *testing.T) {
 	})
 	if len(got) != 2 {
 		t.Fatalf("手动上限 2 时应只跑 2 条: %v", got)
+	}
+}
+
+func TestManualConcurrencyOneAcrossPlatforms(t *testing.T) {
+	st := openRotateStore(t)
+	addNamed(t, st, "豆包", "甲")
+	addNamed(t, st, "千问", "乙")
+	got := overlapStarted(t, st, Options{
+		Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"}, Concurrency: 1,
+	})
+	if len(got) != 1 {
+		t.Fatalf("手动上限 1 时所有平台合计只能执行一个任务: %v", got)
+	}
+}
+
+func TestSlotReleaseWakesAllWaitingPlatforms(t *testing.T) {
+	sched := &slotSched{notify: make(chan struct{})}
+	now := time.Now()
+	if !sched.claim(1, now, 1) || sched.claim(2, now, 1) {
+		t.Fatal("the global limit must reserve the only slot")
+	}
+	first, second := sched.watch(), sched.watch()
+	sched.finish(1, 1, time.Time{})
+	for _, waiting := range []<-chan struct{}{first, second} {
+		select {
+		case <-waiting:
+		default:
+			t.Fatal("every waiting platform must be notified")
+		}
+	}
+	if !sched.claim(2, now, 1) {
+		t.Fatal("the released slot must be reusable")
+	}
+	select {
+	case <-sched.watch():
+		t.Fatal("future waits must not consume an old notification")
+	default:
 	}
 }
 

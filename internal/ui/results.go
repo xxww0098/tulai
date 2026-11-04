@@ -102,7 +102,7 @@ func (a *App) resultsHead(c *ui.Context) {
 				ui.Text(c, "当前服务商："+a.stagePlatform()).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine()
 			})
 			if len(items) > 0 {
-				ui.Text(c, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+				ui.Text(c, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.runningOn(a.stagePlatform()), a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 			}
 		})
 		if len(failed) > 0 {
@@ -158,6 +158,19 @@ func (a *App) buildResultRows(windowW float32) ([]resultRow, float32) {
 		}
 	}
 	var rows []resultRow
+	if a.washing() {
+		var tiles []resultTile
+		for _, key := range order {
+			tiles = append(tiles, groups[key].tiles...)
+		}
+		for i := 0; i < len(tiles); i += cols {
+			rows = append(rows, resultRow{
+				key:   fmt.Sprintf("wash:%d", i),
+				tiles: tiles[i:min(i+cols, len(tiles))],
+			})
+		}
+		return rows, tileW
+	}
 	for _, key := range order {
 		g := groups[key]
 		rows = append(rows, resultRow{key: "h:" + key, header: true, title: g.title})
@@ -242,6 +255,14 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 	task := tile.task
 	title := tileTitle(tile)
 	ui.Column(c.Key(tile.key)).Width(tileW).Shrink(0).Gap(4).Label("结果卡" + title).Children(func() {
+		if a.washing() {
+			_, source := a.resultGroup(task)
+			tip := taskSource(task)
+			if tip == "" {
+				tip = source
+			}
+			ui.Text(c.Key("source"), source).FillWidth().FontSize(tok.body).Bold().SingleLine().Tooltip(tip)
+		}
 		a.resultFrame(c, tile, tileW)
 		ui.Row(c.Key("name")).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, title).FontSize(tok.caption).SingleLine().MinWidth(0).Grow(1).Tooltip(title)

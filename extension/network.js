@@ -4,6 +4,8 @@
   const pending = new Map()
   // shortcut: 超过 128 KiB 的响应不解析正文，需要长流诊断时再支持分块读取。
   const maxBody = 128 * 1024
+  const maxEvent = 2 * 1024 * 1024
+  const firefox = !chrome.debugger && !!(chrome.webRequest && chrome.webRequest.filterResponseData)
   const quota = /额度不足|额度已用尽|额度已用完|额度用尽|次数已用完|次数已用尽|(?:今日|当日).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|达到上限|已达上限)|free.{0,20}quota.{0,20}(?:exhausted|used up)/i
   const rate = /过于频繁|操作频繁|请求过于频繁|访问太频繁|rate limit|too many requests/i
 
@@ -88,7 +90,11 @@
     sessions.delete(tabId)
     clearTimeout(state.timer)
     await state.ready
-    if (state.attached) {
+    if (state.filter) {
+      try { state.filter.disconnect() } catch (err) {}
+      state.filter = null
+    }
+    if (state.attached && !state.firefox) {
       state.attached = false
       try { await chrome.debugger.detach({ tabId }) } catch (err) {}
     }
@@ -98,13 +104,14 @@
     return serial(tabId, () => stopCurrent(tabId, taskId))
   }
 
-  function start(tabId, platform, taskId, report) {
+  function start(tabId, platform, taskId, report, rawImages) {
     return serial(tabId, async () => {
       await stopCurrent(tabId)
-      if (!taskId || !chrome.debugger) return false
-      const state = { tabId, platform, taskId, report, armed: false, requestId: '', status: 0, attached: false, timer: null }
+      if (!taskId || (!chrome.debugger && !firefox)) return false
+      const state = { tabId, platform, taskId, report, rawImages, firefox, armed: false, requestId: '', status: 0, attached: false, timer: null, filter: null }
       sessions.set(tabId, state)
       state.ready = (async () => {
+        if (firefox) { state.attached = true; return true }
         try {
           await chrome.debugger.attach({ tabId }, '1.3')
           state.attached = true
@@ -135,6 +142,124 @@
     const state = sessions.get(tabId)
     if (!state || state.taskId !== taskId) return
     armTimeout(state, Math.min(Math.max(Number(ms) || 120000, 1000) + 10000, 900000))
+  }
+
+  function rawPairs(value) {
+    const pairs = []
+    const queue = [value]
+    let visited = 0
+    function key(raw) {
+      try {
+        const u = new URL(raw)
+        return u.protocol === 'https:' && /(^|\.)byteimg\.com$/i.test(u.hostname) ? u.pathname.split('~tplv-')[0] : ''
+      } catch (err) { return '' }
+    }
+    while (queue.length && visited++ < 10000 && pairs.length < 2048) {
+      let item = queue.pop()
+      if (typeof item === 'string') {
+        if (!item.includes('image_ori_raw') || !/^[\s]*[\[{]/.test(item)) continue
+        try { item = JSON.parse(item) } catch (err) { continue }
+      }
+      if (!item || typeof item !== 'object') continue
+      const raw = item.image_ori_raw && item.image_ori_raw.url
+      const rawKey = key(raw)
+      if (rawKey) {
+        for (const name of ['image_ori_raw', 'image_ori', 'image_preview', 'image_thumb']) {
+          const source = item[name] && item[name].url
+          if (key(source) === rawKey) pairs.push({ source, raw })
+        }
+      }
+      for (const child of Object.values(item)) {
+        if (child && (typeof child === 'object' || typeof child === 'string')) queue.push(child)
+      }
+    }
+    return pairs
+  }
+
+  function processEvent(state, text) {
+    if (sessions.get(state.tabId) !== state || !text) return
+    const info = inspect(text, state.status)
+    const signature = info.code + ':' + info.kind
+    if ((info.code || info.kind) && signature !== state.lastInfo) {
+      state.lastInfo = signature
+      state.report({ status: state.status, code: info.code, kind: info.kind })
+    }
+    if (state.platform !== 'doubao' || !state.rawImages || !text.includes('image_ori_raw')) return
+    try {
+      const pairs = rawPairs(JSON.parse(text))
+      if (pairs.length) state.rawImages(pairs)
+    } catch (err) {}
+  }
+
+  if (firefox) {
+    const filter = { urls: ['https://*.doubao.com/*', 'https://doubao.com/*', 'https://*.qianwen.com/*', 'https://qianwen.com/*', 'https://*.qwen.ai/*', 'https://qwen.ai/*', 'https://*.aliyun.com/*'] }
+    chrome.webRequest.onBeforeRequest.addListener((details) => {
+      const state = sessions.get(details.tabId)
+      if (!state || !state.armed || !state.attached || state.requestId || !target(state.platform, details.method, details.url)) return
+      state.requestId = details.requestId
+      let stream
+      try { stream = chrome.webRequest.filterResponseData(details.requestId) } catch (err) { state.report({ unavailable: true }); return }
+      state.filter = stream
+      const decoder = new TextDecoder()
+      let pendingText = ''
+      let eventText = ''
+      let eventKind = ''
+      let oversized = false
+      function line(value) {
+        if (value.endsWith('\r')) value = value.slice(0, -1)
+        if (!value) {
+          if (!oversized) processEvent(state, eventText.trim())
+          eventText = ''
+          eventKind = ''
+          oversized = false
+          return
+        }
+        if (value.startsWith('data:') || value === 'data') {
+          eventKind = 'sse'
+          value = value === 'data' ? '' : value.slice(5).replace(/^ /, '')
+        } else if (eventKind === 'json' || (!eventKind && /^[\s]*[\[{]/.test(value))) {
+          eventKind = 'json'
+        } else {
+          return
+        }
+        if (oversized) return
+        if (eventText.length + value.length > maxEvent) { eventText = ''; oversized = true; return }
+        eventText += value + '\n'
+      }
+      stream.ondata = (event) => {
+        try { stream.write(event.data) } catch (err) { try { stream.disconnect() } catch (ignored) {}; return }
+        if (sessions.get(state.tabId) !== state) return
+        pendingText += decoder.decode(event.data, { stream: true })
+        let end
+        while ((end = pendingText.indexOf('\n')) >= 0) {
+          line(pendingText.slice(0, end))
+          pendingText = pendingText.slice(end + 1)
+        }
+        if (pendingText.length > maxEvent) { pendingText = ''; oversized = true }
+      }
+      stream.onstop = () => {
+        try {
+          pendingText += decoder.decode()
+          if (pendingText) line(pendingText)
+          if (!oversized) processEvent(state, eventText.trim())
+        } finally {
+          if (state.filter === stream) state.filter = null
+          try { stream.close() } catch (err) {}
+        }
+      }
+      stream.onerror = () => { if (state.filter === stream) state.filter = null; try { stream.disconnect() } catch (err) {} }
+      return {}
+    }, filter, ['blocking'])
+    chrome.webRequest.onHeadersReceived.addListener((details) => {
+      const state = sessions.get(details.tabId)
+      if (!state || details.requestId !== state.requestId) return
+      state.status = Number(details.statusCode) || 0
+      if (state.status >= 100 && state.status <= 599) state.report({ status: state.status })
+    }, filter)
+    chrome.webRequest.onErrorOccurred.addListener((details) => {
+      const state = sessions.get(details.tabId)
+      if (state && details.requestId === state.requestId) state.report({ failed: true })
+    }, filter)
   }
 
   if (chrome.debugger) {

@@ -86,6 +86,7 @@ export function prepareIdentity(saved, firefoxVersion, hasProxy) {
     throw new Error('账号指纹文件不完整，请恢复原文件后重试');
   }
   const config = {...saved};
+  delete config.addons;
   for (const key of ['navigator.userAgent', 'navigator.appVersion', 'headers.User-Agent']) {
     if (typeof config[key] === 'string') {
       config[key] = config[key].replace(/(Firefox\/|rv:)\d+(?:\.\d+)*/g, `$1${firefoxVersion}.0`);

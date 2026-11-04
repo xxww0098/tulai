@@ -6,18 +6,19 @@ const vm = require('vm')
 
 const GRAY = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
-function load(page) {
+function load(page, where) {
   const listeners = []
   const context = vm.createContext({
     console,
     setTimeout,
     clearTimeout,
     URL,
+    File: class File { constructor(parts, name) { this.name = name } },
     Uint8Array,
     atob,
     btoa,
-    location: { href: 'https://www.example.test/chat', hostname: 'www.example.test' },
-    document: {},
+    location: where || { href: 'https://www.example.test/chat', hostname: 'www.example.test' },
+    document: { readyState: 'complete', querySelectorAll() { return [] } },
     chrome: {
       runtime: {
         onMessage: { addListener(fn) { listeners.push(fn) } },
@@ -26,9 +27,11 @@ function load(page) {
     },
     TULAIPage: page,
   })
+  if (page.resolveSources) context.TULAIDoubaoSourceMap = { fromConversation: page.resolveSources }
   context.globalThis = context
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'protocol.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'refuse.js'), 'utf8'), context)
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'quota.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8'), context)
   assert.strictEqual(listeners.length, 1)
   function command(payload, options = {}) {
@@ -50,6 +53,7 @@ function load(page) {
       })
     })
   }
+  command.locateFileInput = function () { return vm.runInContext('locateFileInput()', context) }
   return command
 }
 
@@ -120,6 +124,21 @@ async function main() {
   assert.strictEqual(doubaoResult.waited.payload.images[0].rawUrl, 'https://p3.byteimg.com/raw.png?signature=123')
   assert.ok(doubaoResult.elapsed >= 350, '豆包仍要两次稳定取样，用时 ' + doubaoResult.elapsed)
 
+  const reordered = composerPage({
+    resultImages() { return [{ url: 'https://p1.byteimg.com/out-b' }, { url: 'https://p1.byteimg.com/out-a' }] },
+    resultsBusy() { return false },
+    replyDone() { return { done: true } },
+    resolveSources(conversation, names) {
+      assert.strictEqual(conversation, 'https://www.doubao.com/chat/reordered')
+      assert.deepStrictEqual(names, ['a.png', 'b.png'])
+      return Promise.resolve([2, 1])
+    },
+  })
+  const reorderedCall = load(reordered, { href: 'https://www.doubao.com/chat/reordered', hostname: 'www.doubao.com' })
+  assert.strictEqual((await reorderedCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  const reorderedAck = await reorderedCall({ name: 'waitResult', timeoutMs: 6000, expectedAttachments: ['a.png', 'b.png'] })
+  assert.deepStrictEqual(reorderedAck.payload.images.map(item => item.sourceIndex), [2, 1])
+
   const blocked = composerPage({
     detectCaptcha() { return { blocked: true, kind: 'slider', baxia: true, root: {} } },
     captchaCrop() { return '' },
@@ -145,6 +164,38 @@ async function main() {
   assert.strictEqual(refusedWait.payload.code, 'E_MODERATION')
   assert.match(refusedWait.payload.message, /审核不通过/)
   assert.ok(Date.now() - started < 1000, '审核失败应马上返回，用时 ' + (Date.now() - started))
+
+  const quotaPage = composerPage({
+    assistantText() { return '今日图片生成免费额度已用完。开通订阅畅享更多额度。' },
+    resultImages() { return [] },
+    resultsBusy() { return false },
+  })
+  const quotaCall = load(quotaPage, { href: 'https://www.doubao.com/chat/new', hostname: 'www.doubao.com' })
+  assert.strictEqual((await quotaCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  const quotaWait = await quotaCall({ name: 'waitResult', timeoutMs: 3000 })
+  assert.strictEqual(quotaWait.payload.code, 'E_QUOTA')
+  assert.match(quotaWait.payload.message, /今日图片生成免费额度已用完/)
+
+  let attachmentChecks = 0
+  const uploadPage = composerPage({
+    readComposer() { return '' },
+    removeButtons() { return [] },
+    unsentBlocksUpload() { return '' },
+    fileInput() { return {} },
+    assignFiles() { return true },
+    base64ToBytes() { return new Uint8Array([1]) },
+    freshAttachment() { return true },
+    attachmentNames() { return ++attachmentChecks < 3 ? [] : ['one.png'] },
+  })
+  const uploadCall = load(uploadPage, { href: 'https://www.doubao.com/chat/', hostname: 'www.doubao.com' })
+  const uploadAck = await uploadCall({ name: 'upload', uploadId: 'one', fileName: 'one.png', total: 1, dataBase64: 'AQ==', finish: true, verifyOrder: true, expectedAttachments: ['one.png'], timeoutMs: 2000 })
+  assert.strictEqual(uploadAck.payload.ok, true, '等待附件名称出现后才确认上传')
+  assert.ok(attachmentChecks >= 3)
+  assert.strictEqual((await uploadCall({ name: 'washChat', mode: 'ready' })).payload.ready, false, '带有未发送附件的输入区不能作为新会话')
+
+  uploadPage.attachmentNames = () => ['stale.png', 'one.png']
+  const staleAck = await uploadCall({ name: 'upload', uploadId: 'two', fileName: 'one.png', total: 1, dataBase64: 'AQ==', finish: true, verifyOrder: true, expectedAttachments: ['one.png'], timeoutMs: 500 })
+  assert.strictEqual(staleAck.payload.code, 'E_UPLOAD_FAIL', '残留附件必须阻止发送')
 
   const networkPage = composerPage({
     setComposer(box, value) { box.value = value; return true },
@@ -187,6 +238,31 @@ async function main() {
   assert.strictEqual((await signed.ask({ type: 'LOGIN_STATE' })).loggedIn, true)
   const signedOut = load(composerPage({ loginWall() { return true } }))
   assert.strictEqual((await signedOut.ask({ type: 'LOGIN_STATE' })).loggedIn, false)
+  for (const name of ['upload', 'setPrompt', 'send']) {
+    const attempt = await signedOut({ name, prompt: '水彩风格' })
+    assert.strictEqual(attempt.payload.code, 'E_NOT_LOGGED_IN', '未登录时不能操作输入框：' + name)
+  }
+  let entryChecks = 0
+  let opened = false
+  const fileInput = {}
+  const slowPage = composerPage({
+    fileInput() { return opened ? fileInput : null },
+    uploadImageItem() { return null },
+    uploadEntry() {
+      entryChecks++
+      return entryChecks >= 3 ? { click() { opened = true } } : null
+    },
+  })
+  const located = await load(slowPage).locateFileInput()
+  assert.strictEqual(located.input, fileInput, '等待延迟出现的上传入口，再选择文件')
+  assert.strictEqual(entryChecks, 3)
+  const chatPage = composerPage({ replyDone() { return { done: true } }, resultsBusy() { return false } })
+  const chat = load(chatPage, { href: 'https://www.doubao.com/chat/group-1?private=1', hostname: 'www.doubao.com' })
+  assert.strictEqual((await chat({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  const checked = await chat({ name: 'washChat', mode: 'check', expected: 'https://www.doubao.com/chat/group-1' })
+  assert.strictEqual(checked.payload.reusable, true)
+  assert.strictEqual(checked.payload.conversation, 'https://www.doubao.com/chat/group-1')
+  assert.strictEqual((await chat({ name: 'washChat', mode: 'check', expected: 'https://www.doubao.com/chat/other' })).payload.reusable, false)
   const proto = vm.createContext({ globalThis: {} })
   proto.globalThis = proto
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'protocol.js'), 'utf8'), proto)

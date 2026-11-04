@@ -112,21 +112,22 @@ func (a *App) accountPanel(c *ui.Context) {
 		})
 		return
 	}
+	refreshAtMidnight(c)
 	a.laneClock(c, board)
 	a.laneTable(c, board)
 }
 
-// laneClock 更新倒计时，并在换日时刷新有统计的账号。
+func refreshAtMidnight(c *ui.Context) {
+	now := c.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	c.After(midnight.Sub(now))
+}
+
+// laneClock 更新倒计时。
 func (a *App) laneClock(c *ui.Context, board tasks.Board) {
 	now := c.Now()
 	var wait time.Duration
 	for _, ln := range board.Lanes {
-		if ln.UsedToday > 0 || ln.SuccessToday > 0 || ln.FailedToday > 0 {
-			midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
-			if left := midnight.Sub(now); wait == 0 || left < wait {
-				wait = left
-			}
-		}
 		var left time.Duration
 		switch ln.State {
 		case tasks.LaneGap:
@@ -205,6 +206,14 @@ func (a *App) laneHeader(c *ui.Context) {
 	row.Children(func() {
 		ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).Grow(1).MinWidth(0).
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
+		ui.Text(c, "并发").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
+		ui.Switch(c.Key("concurrency"), &a.concurrencyAuto).Size(32, 18).Radius(9).
+			Label("启用并发").Tooltip("此设置对所有服务商生效。" + ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots())).
+			Disabled(a.running).OnChange(func() {
+			if a.store != nil {
+				a.store.SetInt("concurrency", a.taskConcurrency())
+			}
+		})
 		a.addAccountButton(c)
 	})
 }

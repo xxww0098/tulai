@@ -50,6 +50,7 @@ type dedupState struct {
 	report      dedup.Report
 	note        string
 	err         string
+	folderErr   string
 }
 
 // dedupThreshold 当前档位对应的汉明距离上限。
@@ -221,7 +222,7 @@ func (a *App) dedupGoCard(c *ui.Context) {
 	card.Children(func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "去重力度").FontSize(tok.body).Shrink(0)
-			ui.Tabs(c, &a.dedup.level, "严格", "标准", "宽松").Disabled(busy).Shrink(0)
+			a.dedupLevelTabs(c)
 			ui.Row(c).Grow(1).MinWidth(0)
 			a.dedupGoButton(c, th, busy)
 		})
@@ -230,10 +231,17 @@ func (a *App) dedupGoCard(c *ui.Context) {
 			paintFolder(c, tok.muted)
 			ui.Text(c, "存到").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
 			out := a.dedupOutDir()
-			ui.Text(c, out).FontSize(tok.caption).TextColor(tok.accent).Grow(1).MinWidth(0).
-				SingleLine().Tooltip(out)
+			ui.Link(c.Key("dedup-output-link"), out, "").FontSize(tok.caption).TextColor(tok.accent).
+				Grow(1).MinWidth(0).SingleLine().Label("打开文件夹：" + out).Tooltip(out).
+				OnClick(func() {
+					a.openResultFolder(out)
+					a.dedup.folderErr = a.outputNote
+				})
 			a.dedupQuiet(c, "改", busy, func() { a.dedupPickOut() })
 		})
+		if a.dedup.folderErr != "" {
+			ui.Text(c, a.dedup.folderErr).FontSize(tok.caption).TextColor(tok.danger)
+		}
 		ui.Collapsible(c, "更多设置", &a.dedup.more, func() {
 			ui.Checkbox(c, &a.dedup.flatColorOK, "纯色底也算重复").Disabled(busy)
 			flatHint := "纯白底和纯黑底的主图默认不互判重复。"
@@ -247,6 +255,41 @@ func (a *App) dedupGoCard(c *ui.Context) {
 		}
 		if lead := a.dedupLead(); lead != "" {
 			ui.Text(c, lead).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(lead)
+		}
+	})
+}
+
+func (a *App) dedupLevelTabs(c *ui.Context) {
+	tok := a.look
+	labels := []string{"严格", "标准", "宽松"}
+	tabs := ui.TabsBase(c.Key("dedup-level"), &a.dedup.level, len(labels))
+	bar := tabs.List.Row().Width(180).Height(36).Padding(3).Radius(18).
+		Background(tok.sunken).AlignItems(ui.Stretch).Disabled(a.dedup.busy)
+	position := bar.AnimateTo("selected", float32(a.dedup.level), motionEaseOut)
+	selected := tok.card
+	if tok.dark {
+		selected = tok.sunkenHi
+	}
+	bar.Draw(func(p *ui.Painter, r ui.Rect) {
+		width := (r.W - 6) / float32(len(labels))
+		p.Fill(ui.Rect{X: r.X + 3 + width*position, Y: r.Y + 3, W: width, H: r.H - 6}, selected, 15)
+	})
+	bar.Children(func() {
+		for i, label := range labels {
+			tab := tabs.Tab(i).Grow(1).Basis(0).MinWidth(0).Center().Radius(15).
+				Label(label).TextColor(tok.muted)
+			if i == a.dedup.level || (!a.dedup.busy && tab.Hovered()) {
+				tab.TextColor(tok.text)
+			}
+			if !a.dedup.busy {
+				tab.Cursor(ui.CursorPointer)
+			}
+			tab.Children(func() {
+				text := ui.Text(c, label).FontSize(tok.body).SingleLine()
+				if i == a.dedup.level {
+					text.Bold()
+				}
+			})
 		}
 	})
 }
@@ -525,7 +568,10 @@ func (a *App) dedupPickOut() {
 		if len(paths) == 0 {
 			return
 		}
-		apply := func() { a.dedup.outDir = paths[0] }
+		apply := func() {
+			a.dedup.outDir = paths[0]
+			a.dedup.folderErr = ""
+		}
 		if window != nil {
 			window.Update(apply)
 			return

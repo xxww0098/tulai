@@ -15,6 +15,11 @@ let networkFault = ''
 let networkAccepted = false
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'NETWORK_RAW_IMAGES') {
+    if (msg.taskId && msg.taskId === networkTask && Page.acceptRawImages) Page.acceptRawImages(msg.pairs)
+    sendResponse({ ok: true })
+    return true
+  }
   if (msg && msg.type === 'NETWORK_FAULT') {
     if (msg.taskId && msg.taskId === networkTask && (msg.kind === 'quota' || msg.kind === 'rate')) networkFault = msg.kind
     sendResponse({ ok: true })
@@ -62,9 +67,41 @@ async function handleCommand(env) {
       return download(env, payload)
     case TULAI.commands.captchaAssist:
       return captchaAssist(env)
+    case TULAI.commands.washChat:
+      return washChat(env, payload)
     default:
       return TULAI.fail(env, TULAI.errors.E_PROTOCOL, '内容脚本未实现命令 ' + name)
   }
+}
+
+function doubaoConversation() {
+  try {
+    const u = new URL(location.href)
+    if (u.protocol === 'https:' && /(^|\.)doubao\.com$/i.test(u.hostname) && /^\/chat\/[^/]+\/?$/.test(u.pathname)) {
+      return u.origin + u.pathname.replace(/\/$/, '')
+    }
+  } catch (err) {}
+  return ''
+}
+
+function washChat(env, payload) {
+  const captcha = Page.detectCaptcha(document)
+  if (captcha.blocked) return captchaAck(env, captcha)
+  if (Page.loginWall(document)) return TULAI.fail(env, TULAI.errors.E_NOT_LOGGED_IN, '请先登录平台账号')
+  const conversation = doubaoConversation()
+  if (payload.mode === 'check') {
+    const done = pageMark && Page.replyDone(document, pageMark)
+    return TULAI.ack(env, { name: payload.name, ok: true, conversation,
+      reusable: !!(conversation && conversation === payload.expected && done && done.done && !Page.resultsBusy(document, pageMark)) })
+  }
+  if (payload.mode === 'ready') {
+    const comp = Page.composer(document)
+    const attachments = typeof Page.attachmentNames === 'function' ? Page.attachmentNames(document) : []
+    const clean = comp && !Page.readComposer(comp).trim() && !attachments.length && !document.querySelectorAll(Page.USER_Q + ',' + Page.ASSISTANT_Q).length
+    return TULAI.ack(env, { name: payload.name, ok: true, conversation,
+      ready: !!(document.readyState !== 'loading' && /^\/chat\/?$/.test(new URL(location.href).pathname) && clean) })
+  }
+  return TULAI.fail(env, TULAI.errors.E_PROTOCOL, '未知洗图会话操作')
 }
 
 function delay(ms) {
@@ -113,16 +150,16 @@ function accountBlocked(env) {
 
 function loginOrMiss(env, name, message) {
   if (Page.loginWall(document)) {
-    return TULAI.fail(env, TULAI.errors.E_NOT_LOGGED_IN, '页面没有输入框，看起来还未登录')
+    return TULAI.fail(env, TULAI.errors.E_NOT_LOGGED_IN, '请先登录平台账号')
   }
   return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, message)
 }
 
 async function readyComposer(timeout) {
   return waitFor(function () {
+    if (Page.loginWall(document)) return 'login'
     const comp = Page.composer(document)
     if (comp) return comp
-    if (Page.loginWall(document)) return 'login'
     return null
   }, timeout || 8000)
 }
@@ -150,7 +187,9 @@ async function upload(env, payload) {
   }
   const uploadId = String(payload.uploadId || '')
   if (uploadApplied.get(uploadId)) {
-    return TULAI.ack(env, { name: payload.name, ok: true, deduped: true, message: '这张源图已经交给输入区' })
+    const result = { name: payload.name, ok: true, deduped: true, message: '这张源图已经交给输入区' }
+    if (payload.verifyOrder && typeof Page.attachmentNames === 'function') result.attachments = Page.attachmentNames(document)
+    return TULAI.ack(env, result)
   }
   const total = Number(payload.total) || 0
   const offset = Number(payload.offset) || 0
@@ -181,7 +220,7 @@ async function upload(env, payload) {
     } catch (err) {
       return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '无法构造上传文件')
     }
-    part.baseline = new Set(Array.from(document.querySelectorAll('img')))
+    part.baseline = new Set(Array.from(document.querySelectorAll('img, [data-testid="attachment-image-card"]')))
     // 千问 page.js 提供 attachLocalImage：有 file input 就赋值，没有则点「上传图片」走主世界桥。
     // 豆包没有这个函数，仍只给已有 input 赋值，不点菜单项。
     const located = typeof Page.attachLocalImage === 'function'
@@ -196,18 +235,30 @@ async function upload(env, payload) {
   }
   const attached = await waitUntil(Number(payload.timeoutMs) || 30000, function () {
     if (typeof Page.attachmentRejected === 'function' && Page.attachmentRejected(document)) return 'rejected'
-    return Page.freshAttachment(document, part.baseline)
+    if (!Page.freshAttachment(document, part.baseline)) return false
+    if (!payload.verifyOrder) return true
+    if (typeof Page.attachmentNames !== 'function' || !Array.isArray(payload.expectedAttachments)) return false
+    const names = Page.attachmentNames(document)
+    return names.length === payload.expectedAttachments.length && names.every(function (name, i) { return name === payload.expectedAttachments[i] })
   }, 2)
   if (attached === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '上传等待已取消')
   if (attached === 'rejected') {
     return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '输入区显示上传失败或加载失败，源图未就绪')
   }
   if (attached !== true) {
+    if (payload.verifyOrder) {
+      const names = typeof Page.attachmentNames === 'function' ? Page.attachmentNames(document) : []
+      return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '输入区附件数量或顺序未确认（期望 ' + (payload.expectedAttachments || []).length + '，看到 ' + names.length + '），未发送')
+    }
     return TULAI.fail(env, TULAI.errors.E_UPLOAD_FAIL, '未确认当前输入区源图附件已就绪')
   }
   uploadApplied.set(uploadId, true)
   uploadParts.delete(uploadId)
-  return TULAI.ack(env, { name: payload.name, ok: true })
+  const result = { name: payload.name, ok: true }
+  if (payload.verifyOrder && typeof Page.attachmentNames === 'function') {
+    result.attachments = Page.attachmentNames(document)
+  }
+  return TULAI.ack(env, result)
 }
 
 function concatChunks(part) {
@@ -238,18 +289,22 @@ async function assignExistingInput(file) {
 // 避免再点一次入口把菜单关掉。没有 input 时才点入口（千问「添加附件」，豆包 upload_file_button）。
 // 不点击单独的「上传图片」或「上传文件或图片」菜单项，否则会弹出系统文件框，扩展填不进去。
 async function locateFileInput() {
-  const comp = Page.composer(document)
-  let input = Page.fileInput(document, comp)
-  if (input) return { input }
-  const nestedNow = nestedUploadInput()
-  if (nestedNow) return { input: nestedNow }
-  const entry = Page.uploadEntry(document, comp)
-  if (!entry) return { error: '未找到当前输入区上传入口', code: TULAI.errors.E_SELECTOR_MISS }
-  try { entry.click() } catch (e) {}
+  const ready = await waitFor(function () {
+    if (Page.loginWall(document)) return { error: '请先登录平台账号', code: TULAI.errors.E_NOT_LOGGED_IN }
+    const comp = Page.composer(document)
+    const input = Page.fileInput(document, comp) || nestedUploadInput()
+    if (input) return { input }
+    const entry = Page.uploadEntry(document, comp)
+    return entry ? { entry } : null
+  }, 8000)
+  if (ready === 'cancel') return { error: '上传已取消', code: TULAI.errors.E_CANCELLED }
+  if (!ready) return { error: '未找到当前输入区上传入口', code: TULAI.errors.E_SELECTOR_MISS }
+  if (ready.input || ready.error) return ready
+  try { ready.entry.click() } catch (e) {}
   const deadline = Date.now() + 2000
   while (Date.now() < deadline) {
     if (cancelRequested) return { error: '上传已取消', code: TULAI.errors.E_CANCELLED }
-    input = Page.fileInput(document, Page.composer(document))
+    const input = Page.fileInput(document, Page.composer(document))
     if (input) return { input }
     const nested = nestedUploadInput()
     if (nested) return { input: nested }
@@ -467,6 +522,20 @@ async function confirmSend(env, payload, button, rec) {
   return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, rec.message)
 }
 
+async function resultAck(env, payload, images) {
+  const conversation = doubaoConversation()
+  let indices = null
+  if (Array.isArray(payload.expectedAttachments) && payload.expectedAttachments.length > 1 && payload.expectedAttachments.length === images.length && globalThis.TULAIDoubaoSourceMap) {
+    indices = await TULAIDoubaoSourceMap.fromConversation(conversation, payload.expectedAttachments, images)
+  }
+  return TULAI.ack(env, {
+    name: payload.name,
+    ok: true,
+    conversation,
+    images: images.map(function (item, i) { return { url: item.url, rawUrl: item.rawUrl || undefined, sourceIndex: indices ? indices[i] : undefined } }),
+  })
+}
+
 async function waitResult(env, payload) {
   if (!pageMark) return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '还没有本轮发送标记，不能收集结果')
   const timeout = Number(payload.timeoutMs) || 120000
@@ -486,11 +555,15 @@ async function waitResult(env, payload) {
     const images = Page.resultImages(document, pageMark).filter(function (item) {
       return item && item.url && !(typeof Page.isPlaceholderURL === 'function' && Page.isPlaceholderURL(item.url))
     })
+    const busy = Page.resultsBusy(document, pageMark)
     if (!images.length) {
+      if (!busy && /(^|\.)doubao\.com$/i.test(location.hostname) && globalThis.TULAIQuota && typeof Page.assistantText === 'function') {
+        const quota = TULAIQuota.imageReplyBlock(Page.assistantText(document, pageMark))
+        if (quota) return TULAI.fail(env, TULAI.errors.E_QUOTA, quota.message)
+      }
       const refused = moderationBlocked(env)
       if (refused) return refused
     }
-    const busy = Page.resultsBusy(document, pageMark)
     const urls = images.map(function (item) { return item.url }).join('\n')
     // 豆包：实图还在、生成指示没了，同一组地址再稳约 3 秒。不看重新生成按钮。
     if (typeof Page.replyDone === 'function') {
@@ -502,11 +575,7 @@ async function waitResult(env, payload) {
           pageMark.stableAt = now
         }
         if (now - pageMark.stableAt >= 3000) {
-          return TULAI.ack(env, {
-            name: payload.name,
-            ok: true,
-            images: images.map(function (item) { return { url: item.url, rawUrl: item.rawUrl || undefined } }),
-          })
+          return resultAck(env, payload, images)
         }
       } else {
         pageMark.stableAt = 0
@@ -516,11 +585,7 @@ async function waitResult(env, payload) {
       stable = urls === lastURLs ? stable + 1 : 1
       lastURLs = urls
       if (stable >= 2) {
-        return TULAI.ack(env, {
-          name: payload.name,
-          ok: true,
-          images: images.map(function (item) { return { url: item.url, rawUrl: item.rawUrl || undefined } }),
-        })
+        return resultAck(env, payload, images)
       }
     } else {
       stable = 0

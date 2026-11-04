@@ -37,9 +37,10 @@ type Task struct {
 	Results   []string // 已保存结果路径
 	Rewritten bool     // 审核失败后提示词被改写过，卡片上要能看见
 
-	submitted          bool   // 已确认发送，重试时继续等待原任务
-	sentURL            string // 千问 /chat/<id>，重试只回到这一条
-	sentWrap           string // data-chat-question-wrap
+	submitted          bool      // 已确认发送，重试时继续等待原任务
+	sentAt             time.Time // 最近一次确认发送的时间，用于计算账号发送间隔
+	sentURL            string    // 千问 /chat/<id>，重试只回到这一条
+	sentWrap           string    // data-chat-question-wrap
 	savedHashes        map[string]bool
 	matchedSavedResult bool   // 本轮是否再次获取到本任务已成功落盘的原图
 	slot               int64  // 这次派发时占用的浏览器，完成后用来释放并发名额
@@ -52,6 +53,8 @@ type Task struct {
 	Reassigned         string // 改派到的账号名。卡片写「已改由…」，成功后也留着
 	ReassignWhy        string // 改派前的失败原因
 	soften             int    // 审核改写已经自动重试的次数
+	batch              []Task // 豆包洗图一次发送的原始单图任务
+	noUse              bool   // 确认还未尝试发送，不占账号每日次数
 }
 
 // Options 引擎运行参数（由设置表构造）。
@@ -60,6 +63,7 @@ type Options struct {
 	Prompts            []string
 	PromptSuffix       string
 	UseSuffix          bool
+	StructuredPrompt   string
 	Images             []string
 	Concurrency        int // 0 按可用账号自动；正数是同时出图的上限
 	RetryCount         int
@@ -71,6 +75,7 @@ type Options struct {
 	TaskSwitchingCount int
 	StartBrowserIndex  int
 	OutputPath         string
+	OutputSize         OutputSize
 	RemoveWatermark    bool // 千问另存去水印版本，保留原图
 	DailyCap           int
 	RiskyWords         []string
@@ -121,6 +126,9 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 			}
 			units = append(units, queueUnit{prompt: prompt, fixed: true})
 		}
+		if len(units) == 0 && strings.TrimSpace(opts.StructuredPrompt) != "" {
+			units = append(units, queueUnit{fixed: true})
+		}
 	}
 	for _, unit := range units {
 		for _, platform := range opts.Platforms {
@@ -131,6 +139,13 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 			}
 			if opts.UseSuffix && opts.PromptSuffix != "" {
 				prompt = strings.TrimSpace(prompt + "\n" + opts.PromptSuffix)
+			}
+			if extra := strings.TrimSpace(opts.StructuredPrompt); extra != "" {
+				if strings.TrimSpace(prompt) == "" {
+					prompt = extra
+				} else {
+					prompt = strings.TrimSpace(prompt + "\n附加要求：\n" + extra)
+				}
 			}
 			var images []string
 			if unit.hasImage {

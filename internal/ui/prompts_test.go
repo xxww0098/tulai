@@ -22,15 +22,14 @@ func TestPromptLibraryKeepsBuiltinAndUserCopies(t *testing.T) {
 	if !ok || wash.Body != DefaultWashPrompt {
 		t.Fatal("the default wash prompt is missing from the library")
 	}
-	a.promptEditChoice = "数字油画"
+	a.promptEditChoice = "默认洗图"
 	a.applyPromptChoice()
-	oil, _ := prompts.Builtin(prompts.IDOil)
-	if !prompts.BuiltinUnchanged(prompts.IDOil, a.promptEditText) || a.prompts != "" {
+	if !prompts.BuiltinUnchanged(prompts.IDWash, a.promptEditText) || a.prompts != "" {
 		t.Fatal("editing a builtin should not change the workspace")
 	}
-	a.promptEditText = oil.Body + "\n用户加了一句"
+	a.promptEditText = wash.Body + "\n用户加了一句"
 	a.saveCurrentPrompt()
-	if a.promptEditPick == prompts.IDOil || len(a.userPrompts) != 1 || !strings.Contains(a.userPrompts[0].Body, "用户加了一句") {
+	if a.promptEditPick == prompts.IDWash || len(a.userPrompts) != 1 || !strings.Contains(a.userPrompts[0].Body, "用户加了一句") {
 		t.Fatalf("copy not saved: %+v", a.userPrompts)
 	}
 	a.saveSettings()
@@ -40,7 +39,7 @@ func TestPromptLibraryKeepsBuiltinAndUserCopies(t *testing.T) {
 	if len(again.userPrompts) != 1 || !strings.Contains(again.userPrompts[0].Body, "用户加了一句") {
 		t.Fatalf("copy not restored: %+v", again.userPrompts)
 	}
-	again.promptEditChoice = "数字油画"
+	again.promptEditChoice = "默认洗图"
 	again.applyPromptChoice()
 	again.promptEditText += "\n再改"
 	again.promptEditChoice = newPromptLabel
@@ -48,9 +47,41 @@ func TestPromptLibraryKeepsBuiltinAndUserCopies(t *testing.T) {
 	if !strings.Contains(prompts.FormatUser(again.userPrompts), "再改") {
 		t.Fatal("leaving a dirty builtin did not keep a copy")
 	}
-	canon, _ := prompts.Builtin(prompts.IDOil)
+	canon, _ := prompts.Builtin(prompts.IDWash)
 	if strings.Contains(canon.Body, "再改") || strings.Contains(canon.Body, "用户加了一句") {
 		t.Fatal("builtin body changed")
+	}
+}
+
+func TestRetiredBuiltinKeepsWorkspacePrompt(t *testing.T) {
+	for _, id := range []string{"oil", "art", "circle"} {
+		t.Run(id, func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			const body = "旧模板第一行\n用户修改的第二行"
+			st.Set("prompt_pick", id)
+			st.Set("prompts", body)
+			st.Set("prompts_freeform", "原来的按行提示词")
+			st.Set("user_prompts", `[{"id":"u1","label":"旧模板副本","body":"用户保存的内容","from":"oil"}]`)
+			if _, err := st.SaveActive(store.Session{Page: store.PageGen, Prompts: body}, nil); err != nil {
+				t.Fatal(err)
+			}
+
+			for i := 0; i < 2; i++ {
+				a := &App{store: st}
+				a.loadSettings()
+				if a.promptPick != detachedPromptID || len(a.taskPromptList()) != 1 || a.taskPromptList()[0] != body {
+					t.Fatalf("retired selection lost its full prompt: pick=%q prompts=%q", a.promptPick, a.prompts)
+				}
+				if a.freeformPrompts != "原来的按行提示词" || len(a.userPrompts) != 1 || a.userPrompts[0].Body != "用户保存的内容" {
+					t.Fatalf("user content changed: freeform=%q library=%+v", a.freeformPrompts, a.userPrompts)
+				}
+				a.saveSettings()
+			}
+		})
 	}
 }
 
@@ -110,16 +141,10 @@ func TestPromptLibrarySelectionAcrossWorkspaces(t *testing.T) {
 	tt.Frame()
 	tt.Advance(motionUI)
 	assertVisible(t, tt, "选择洗图提示词", 1280, 840)
-	if err := tt.Click(choosePromptLabel); err != nil {
-		t.Fatal(err)
+	if a.prompts != DefaultWashPrompt || a.washPromptChoice != "默认洗图" {
+		t.Fatal("the default wash template is not shown")
 	}
-	if err := tt.Click("默认洗图"); err != nil {
-		t.Fatal(err)
-	}
-	if a.prompts != DefaultWashPrompt {
-		t.Fatal("the default wash template is not selectable")
-	}
-	if err := tt.Click(choosePromptLabel); err != nil {
+	if err := tt.Click("选择洗图提示词"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.Click(label); err != nil {
@@ -129,7 +154,7 @@ func TestPromptLibrarySelectionAcrossWorkspaces(t *testing.T) {
 		t.Fatalf("wash template: %#v", got)
 	}
 	a.prompts += "\n洗图临时修改"
-	if err := tt.Click(choosePromptLabel); err != nil {
+	if err := tt.Click("选择洗图提示词"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.Click(label); err != nil {
@@ -181,7 +206,7 @@ func TestPromptLibrarySelectionAcrossWorkspaces(t *testing.T) {
 
 func TestPromptSelectorsStayVisibleInCompactWindows(t *testing.T) {
 	for _, size := range [][2]float32{{1024, 700}, {760, 900}} {
-		a := &App{platformAuto: true, promptPick: prompts.IDArt, promptChoice: "数字画", prompts: "一只猫"}
+		a := &App{platformAuto: true, promptPick: detachedPromptID, promptChoice: detachedPromptLabel, prompts: "一只猫"}
 		tt := ui.NewTester(a.view, int(size[0]), int(size[1]))
 		for _, label := range []string{"选择生图提示词", "按行发送"} {
 			assertVisible(t, tt, label, size[0], size[1])
@@ -190,6 +215,71 @@ func TestPromptSelectorsStayVisibleInCompactWindows(t *testing.T) {
 		tt.Frame()
 		tt.Advance(motionUI)
 		assertVisible(t, tt, "选择洗图提示词", size[0], size[1])
+	}
+}
+
+func TestWashPromptSelectorShowsAppliedTemplate(t *testing.T) {
+	const customLabel, customBody = "我的洗图", "用户洗图正文"
+	a := &App{
+		platformAuto: true, tab: pageWash, statePage: pageWash, prompts: "原有内容",
+		userPrompts: []prompts.UserPrompt{{ID: "u1", Label: customLabel, Body: customBody, Kind: prompts.KindWash}},
+	}
+	tt := ui.NewTester(a.view, 1280, 840)
+	if err := tt.Click("选择洗图提示词"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("默认洗图"); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompts != DefaultWashPrompt || a.washPromptChoice != "默认洗图" {
+		t.Fatalf("default selection: choice=%q prompts=%q", a.washPromptChoice, a.prompts)
+	}
+	assertVisible(t, tt, "默认洗图", 1280, 840)
+
+	if err := tt.Click("选择洗图提示词"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click(customLabel); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompts != customBody || a.washPromptChoice != customLabel {
+		t.Fatalf("custom selection: choice=%q prompts=%q", a.washPromptChoice, a.prompts)
+	}
+	assertVisible(t, tt, customLabel, 1280, 840)
+
+	a.prompts += "\n临时修改"
+	tt.Frame()
+	if a.washPromptChoice != choosePromptLabel {
+		t.Fatalf("edited prompt still claims a template: %q", a.washPromptChoice)
+	}
+	if err := tt.Click("选择洗图提示词"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click(customLabel); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompts != customBody || a.washPromptChoice != customLabel {
+		t.Fatal("reselecting the edited template did not restore it")
+	}
+
+	a.tab = pageHome
+	tt.Frame()
+	a.tab = pageWash
+	tt.Frame()
+	if a.washPromptChoice != customLabel {
+		t.Fatalf("page switch lost the selection: %q", a.washPromptChoice)
+	}
+	if err := tt.Click("恢复默认"); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompts != DefaultWashPrompt || a.washPromptChoice != "默认洗图" {
+		t.Fatalf("restoring default: choice=%q prompts=%q", a.washPromptChoice, a.prompts)
+	}
+
+	a.applySession(pageWash, store.Session{Prompts: customBody}, nil, false)
+	tt.Frame()
+	if a.washPromptChoice != customLabel {
+		t.Fatalf("restored prompt did not show its template: %q", a.washPromptChoice)
 	}
 }
 
@@ -290,7 +380,7 @@ func TestPromptTypesCanBeEditedAndFilterBothWorkspaces(t *testing.T) {
 	a.tab = pageWash
 	tt.Frame()
 	tt.Advance(motionUI)
-	if err := tt.Click(choosePromptLabel); err != nil {
+	if err := tt.Click("选择洗图提示词"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := tt.Find("仅洗图模板"); !ok {
@@ -306,6 +396,7 @@ func TestPromptTypesCanBeEditedAndFilterBothWorkspaces(t *testing.T) {
 		label   string
 		want    bool
 	}{
+		{gen, "默认洗图", false}, {wash, "默认洗图", true},
 		{gen, "仅生图模板", true}, {gen, "仅洗图模板", false}, {gen, "已分类旧模板", false},
 		{wash, "仅生图模板", false}, {wash, "仅洗图模板", true}, {wash, "已分类旧模板", true},
 	} {

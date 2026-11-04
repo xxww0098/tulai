@@ -82,7 +82,7 @@ func TestCamoufoxMigrationPreservesAccountsAndOldProfiles(t *testing.T) {
 			t.Fatalf("migration repeated: %+v", b)
 		}
 	}
-	if s.Get("browser_backend") != "Camoufox" || s.Get("browserBackend") != "camoufox" {
+	if s.Get("browser_backend") != "Camoufox" || s.Get("browserBackend") != "camoufox_extension" {
 		t.Fatal("backend migration missing")
 	}
 }

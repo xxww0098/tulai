@@ -25,6 +25,8 @@ type dlPhase int
 
 type downloadBrowser interface {
 	Capture(context.Context) (download.Discovery, error)
+	BindCurrent(context.Context, string, string) error
+	OpenTarget(context.Context, string) error
 	Getter() download.Getter
 	Alive() bool
 	Close()
@@ -725,7 +727,14 @@ func (a *App) retryTask(t *downloadTask) {
 	if t == nil || !t.Phase.terminal() {
 		return
 	}
-	t.overwrite = t.Phase == dlDone
+	a.requeueDownloadTask(t, t.Phase == dlDone)
+}
+
+func (a *App) requeueDownloadTask(t *downloadTask, overwrite bool) {
+	if t == nil || !t.Phase.terminal() {
+		return
+	}
+	t.overwrite = overwrite
 	t.Phase = dlQueued
 	t.Err = ""
 	if !t.IsPage {

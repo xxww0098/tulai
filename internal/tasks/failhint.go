@@ -26,6 +26,7 @@ const (
 	FailCaptcha
 	FailNetwork
 	FailUpload
+	FailUnmatched
 )
 
 // FailHint 是卡片上的一句话和一个按钮。
@@ -67,7 +68,16 @@ func ClassifyFailure(status Status, raw string) FailHint {
 		return FailHint{FailCaptcha, "需要在网页里完成验证", "重试"}
 	}
 	text := strings.TrimSpace(raw)
-	if status == StatusSkipped || strings.Contains(text, "已停止") {
+	if status == StatusSkipped {
+		return FailHint{FailUnknown, "已停止", "重试"}
+	}
+	if strings.Contains(text, "未匹配结果保存在 ") {
+		return FailHint{FailUnmatched, "结果已放入待核对，请检查", "查看待核对"}
+	}
+	if strings.Contains(text, "未按源图保存") {
+		return FailHint{FailUnknown, "无法确认图片对应关系，请检查豆包页面", "重试"}
+	}
+	if strings.Contains(text, "已停止") {
 		return FailHint{FailUnknown, "已停止", "重试"}
 	}
 	if strings.Contains(text, "出图超时") {
@@ -205,7 +215,11 @@ func (e *Engine) noteUse(t Task, previousSoften int) {
 	case StatusFailed:
 		failed = 1
 	}
-	if err := e.store.RecordUse(id, time.Now(), 1+t.soften-previousSoften, success, failed); err != nil {
+	used := 1 + t.soften - previousSoften
+	if t.noUse {
+		used = 0
+	}
+	if err := e.store.RecordUse(id, time.Now(), used, success, failed); err != nil {
 		logging.Log.Errorf("保存账号今日统计失败: %v", err)
 	}
 }

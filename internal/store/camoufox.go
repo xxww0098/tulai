@@ -52,7 +52,7 @@ func (s *Store) PrepareCamoufoxProfiles(dataRoot string) error {
 			return err
 		}
 	}
-	for key, value := range map[string]string{"camoufox_profiles_v1": "1", "browser_backend": "Camoufox", "browserBackend": "camoufox"} {
+	for key, value := range map[string]string{"camoufox_profiles_v1": "1", "browser_backend": "Camoufox", "browserBackend": "camoufox_extension"} {
 		if _, err := tx.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
 			return err
 		}

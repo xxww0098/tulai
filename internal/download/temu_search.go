@@ -2,6 +2,7 @@ package download
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,14 +12,16 @@ import (
 	"unicode"
 
 	"github.com/chromedp/chromedp"
+
+	extbundle "github.com/xxww0098/tulai/extension"
 )
 
 var temuSearchPath = regexp.MustCompile(`^/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?/)?search_result\.html$`)
 var temuHomePath = regexp.MustCompile(`^/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?/?)?$`)
 var temuSearchGoodsID = regexp.MustCompile(`^[1-9][0-9]{14,19}$`)
 
-// shortcut: capture at most 1000 loaded search cards; raise the limit only after validating larger lists.
-const maxTemuSearchCards = 1000
+// shortcut: cap a single search at 10000 cards; use narrower searches for larger collections.
+const maxTemuSearchCards = 10000
 
 func temuSearchSite(page *url.URL) bool {
 	if page == nil || page.User != nil || (page.Scheme != "http" && page.Scheme != "https") ||
@@ -52,7 +55,7 @@ func temuSearchQuery(page *url.URL) (url.Values, bool) {
 
 func temuSearchTrackingKey(key string) bool {
 	return strings.HasPrefix(key, "refer_page_") || strings.HasPrefix(key, "_x_") ||
-		key == "search_method" || key == "srch_enter_source"
+		key == "search_method" || key == "srch_enter_source" || key == "is_back"
 }
 
 func temuSearchSameSearch(start, current *url.URL) bool {
@@ -101,50 +104,9 @@ type temuSearchSnapshot struct {
 	Blocked   bool            `json:"blocked"`
 }
 
-// The selected classes and title ID are emitted by Temu's search and goods-list scripts.
-// Only read already-loaded, visibly rendered cards; no network response interception.
-const temuSearchSnapshotScript = `(() => {
-  const out = {url: location.href, title: document.title.slice(0, 1024), rows: [], missing: 0, truncated: false, blocked: false};
-  const visible = (node, image) => {
-    const rect = node.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return false;
-    let n = node, depth = 0;
-    for (; n && depth < 100; n = n.parentElement, depth++) {
-      if (n.hidden || (n.getAttribute('aria-hidden') === 'true' && !(image && n === node))) return false;
-      const style = getComputedStyle(n);
-      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;
-    }
-    return !n;
-  };
-  for (const node of document.querySelectorAll('form, [role="dialog"], iframe')) {
-    if (visible(node, false) && /security verification|captcha|verify you are human/i.test((node.innerText || '') + ' ' + (node.getAttribute('title') || ''))) {
-      out.blocked = true; return out;
-    }
-  }
-  const cards = document.querySelectorAll('.js-search-goodsList .EKDT7a3v');
-  if (cards.length > 10000) out.truncated = true;
-  for (let i = 0; i < cards.length && i < 10000; i++) {
-    const card = cards[i];
-    if (!visible(card, false)) continue;
-    const names = [...card.querySelectorAll('[id^="goodName-"]')].filter(n => n.closest('.EKDT7a3v') === card && visible(n, false));
-    if (names.length !== 1) { out.missing++; continue; }
-    const name = names[0], id = name.id.slice('goodName-'.length);
-    if (!/^[1-9][0-9]{14,19}$/.test(id)) { out.missing++; continue; }
-    const links = [...card.querySelectorAll('a[href]')].filter(n => n.closest('.EKDT7a3v') === card)
-      .map(n => n.href).filter(raw => {
-        try { const u = new URL(raw); return /(^|\.)temu\.com$/i.test(u.hostname) && u.pathname.endsWith('-g-' + id + '.html'); }
-        catch (_) { return false; }
-      });
-    if (links.length === 0) { out.missing++; continue; }
-    const images = [...new Set([...card.querySelectorAll('img.goods-img-external, .goods-img-external img')]
-      .filter(n => n.closest('.EKDT7a3v') === card && n.complete && n.naturalWidth > 0 && visible(n, true))
-      .map(n => n.currentSrc || n.src).filter(Boolean))];
-    if (images.length !== 1) { out.missing++; continue; }
-    if (out.rows.length >= 1000) { out.truncated = true; break; }
-    out.rows.push({id, title: (name.getAttribute('title') || name.textContent || '').trim().slice(0, 1024), image: images[0], link: links[0]});
-  }
-  return out;
-})()`
+// The selected classes and title attributes are emitted by Temu's search and goods-list scripts.
+// Only read visible cards from the current page; no network response interception.
+var temuSearchSnapshotScript = "(() => {\n" + extbundle.TemuSearchJS() + "\nreturn tulaiTemuSnapshot(); })()"
 
 func temuSearchCollect(ctx context.Context, page *url.URL, snapshot temuSearchSnapshot) (Discovery, error) {
 	result := Discovery{IsPage: true}
@@ -210,9 +172,8 @@ func temuSearchCollect(ctx context.Context, page *url.URL, snapshot temuSearchSn
 		return result, errors.New("没有找到已加载的 TEMU 搜索商品；请完成验证或等待页面加载")
 	}
 	var issues []error
-	issues = append(issues, errors.New("TEMU 搜索仅采集当前已加载的商品；请手动加载更多后再次采集"))
 	if snapshot.Missing > 0 || invalid {
-		issues = append(issues, errors.New("部分 TEMU 商品图片未加载或无法确认来源"))
+		issues = append(issues, errors.New("部分 TEMU 商品图片无法确认来源"))
 	}
 	if snapshot.Truncated {
 		issues = append(issues, fmt.Errorf("TEMU 搜索超过 %d 个商品的采集上限", maxTemuSearchCards))
@@ -238,6 +199,31 @@ func temuSearchCapture(ctx context.Context, s *RenderedSession, start, page *url
 	}
 	if current != snapshot.URL {
 		return result, errors.New("采集期间 TEMU 搜索页面发生变化")
+	}
+	var cached struct {
+		Value    string `json:"value"`
+		TooLarge bool   `json:"tooLarge"`
+	}
+	if err := s.run(ctx, chromedp.Evaluate(`(() => {
+  const value = document.querySelector('[data-tulai-download-helper]')?.getAttribute('data-tulai-temu-snapshot') || '';
+  return {value: value.length <= 8 * 1024 * 1024 ? value : '', tooLarge: value.length > 8 * 1024 * 1024};
+})()`, &cached)); err != nil {
+		return result, err
+	}
+	if cached.TooLarge {
+		return result, errors.New("TEMU 商品信息过多，请缩小搜索范围后下载")
+	}
+	if cached.Value != "" {
+		var prior temuSearchSnapshot
+		if err := json.Unmarshal([]byte(cached.Value), &prior); err != nil {
+			return result, errors.New("TEMU 商品列表无效，请重新点击下载")
+		}
+		priorPage, err := crawlInputURL(prior.URL)
+		if err != nil || !temuSearchSameSearch(page, priorPage) {
+			return result, errors.New("TEMU 搜索条件已改变，请重新点击下载")
+		}
+		snapshot.Rows = append(prior.Rows, snapshot.Rows...)
+		snapshot.Truncated = snapshot.Truncated || prior.Truncated
 	}
 	return temuSearchCollect(ctx, page, snapshot)
 }

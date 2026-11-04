@@ -145,6 +145,87 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	assertVisible(t, tt, "设置向导", 1280, 900)
 }
 
+func TestWizardShownOnlyOnFirstLaunch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := &App{store: st}
+	first.loadSettings()
+	first.applyWizardGate()
+	if !first.wizardOn || !st.GetBool(wizard.KeyShown) || st.Get(wizard.KeyComplete) == wizard.CompleteYes {
+		t.Fatal("first launch should show and record the wizard without marking it complete")
+	}
+	first.saveSettings()
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	second := &App{store: st, splitSz: 380, sourceHeight: 210}
+	second.loadSettings()
+	second.applyWizardGate()
+	if second.wizardOn || st.Get(wizard.KeyComplete) == wizard.CompleteYes {
+		t.Fatal("an interrupted first setup should not reopen or be marked complete")
+	}
+	tt := ui.NewTester(second.view, 1280, 900)
+	if err := tt.Click("设置向导"); err != nil {
+		t.Fatal(err)
+	}
+	if !second.wizardOn || !second.wizardFirst {
+		t.Fatal("the user should still be able to finish the first setup manually")
+	}
+}
+
+func TestWizardSkipsReturningUsersWithoutUsableAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		complete bool
+		account  bool
+		saved    bool
+	}{
+		{name: "completed and account removed", complete: true},
+		{name: "completed and account logged out", complete: true, account: true},
+		{name: "legacy account logged out", account: true},
+		{name: "legacy saved workspace without accounts", saved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			if tc.complete {
+				st.Set(wizard.KeyComplete, wizard.CompleteYes)
+			}
+			if tc.saved {
+				st.Set("gen_stage_picked", "0")
+			}
+			if tc.account {
+				row, err := st.AddBrowser("豆包", "账号1", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				st.UpdateBrowserHealth(row.ID, store.HealthExhausted, 0, "未登录")
+			}
+			a := &App{store: st}
+			a.applyWizardGate()
+			if a.wizardOn || st.Get(wizard.KeyComplete) != wizard.CompleteYes {
+				t.Fatal("returning users should skip and keep the completion marker")
+			}
+			a.openWizard()
+			if a.wizardFirst {
+				t.Fatal("manually reopening should preserve the existing platform selection")
+			}
+		})
+	}
+}
+
 func TestWizardSkipsHealthyAccountAndCanReopen(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {

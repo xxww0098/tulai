@@ -141,6 +141,29 @@ func TestBrowserTableLayoutAndThemes(t *testing.T) {
 	}
 }
 
+func TestBrowserTableRefreshesDailyUsageAtMidnight(t *testing.T) {
+	a := browserTableTestApp(t, 1)
+	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	b := a.store.Browsers()[0]
+	if err := a.store.RecordUse(b.ID, now, 2, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	a.store.UpdateBrowserHealth(b.ID, store.HealthExhausted, midnight.Unix(), "今日额度已用尽")
+	tt := ui.NewTester(a.view, 1280, 840)
+	if !tt.HasText("2 / 100") || !tt.HasText("已用尽") {
+		t.Fatalf("before midnight: %v", tt.Texts())
+	}
+	tt.Advance(midnight.Sub(tt.Now()) - time.Second)
+	if !tt.HasText("2 / 100") || !tt.HasText("已用尽") {
+		t.Fatalf("just before midnight: %v", tt.Texts())
+	}
+	tt.Advance(time.Second)
+	if !tt.HasText("0 / 100") || !tt.HasText("未启动") || tt.HasText("今日额度已用尽") {
+		t.Fatalf("at midnight: %v", tt.Texts())
+	}
+}
+
 func TestBrowserTableKeyboardSelection(t *testing.T) {
 	a := browserTableTestApp(t, 3)
 	tt := ui.NewTester(a.view, 1280, 720)

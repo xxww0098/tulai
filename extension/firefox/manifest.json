@@ -1,0 +1,38 @@
+{
+  "manifest_version": 2,
+  "name": "tulai 页面桥",
+  "version": "0.3.13",
+  "description": "在绑定的 Camoufox 账号中执行豆包和千问任务。",
+  "browser_specific_settings": { "gecko": { "id": "page-bridge@tulai.local" } },
+  "permissions": [
+    "storage", "tabs", "alarms", "downloads", "webRequest", "webRequestBlocking",
+    "https://*.tongyi.com/*", "https://tongyi.com/*",
+    "https://*.qianwen.com/*", "https://qianwen.com/*",
+    "https://*.qwen.ai/*", "https://qwen.ai/*",
+    "https://qianwen.biz.aliyun.com/*",
+    "https://*.doubao.com/*", "https://doubao.com/*",
+    "https://*.byteimg.com/*", "http://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": ["firefox/settings.js", "firefox/shim.js", "protocol.js", "bridge_logic.js", "pair.js", "network.js", "background.js"]
+  },
+  "browser_action": { "default_title": "tulai 页面桥", "default_popup": "popup.html" },
+  "content_scripts": [
+    {
+      "matches": ["https://*.tongyi.com/*", "https://tongyi.com/*", "https://*.qianwen.com/*", "https://qianwen.com/*", "https://*.qwen.ai/*", "https://qwen.ai/*"],
+      "js": ["qianwen/chooser.js"], "world": "MAIN", "run_at": "document_start"
+    },
+    {
+      "matches": ["https://*.tongyi.com/*", "https://tongyi.com/*", "https://*.qianwen.com/*", "https://qianwen.com/*", "https://*.qwen.ai/*", "https://qwen.ai/*"],
+      "js": ["firefox/shim.js", "protocol.js", "quota.js", "refuse.js", "qianwen/page.js", "content.js"], "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.doubao.com/*", "https://doubao.com/*"],
+      "js": ["doubao/raw.js"], "world": "MAIN", "run_at": "document_start"
+    },
+    {
+      "matches": ["https://*.doubao.com/*", "https://doubao.com/*"],
+      "js": ["firefox/shim.js", "protocol.js", "quota.js", "refuse.js", "doubao/page.js", "doubao/source_map.js", "content.js"], "run_at": "document_idle"
+    }
+  ]
+}

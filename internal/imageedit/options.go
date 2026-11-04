@@ -37,6 +37,7 @@ type Options struct {
 	ResizeWidth    int     `json:"resize_width,omitempty"`
 	ResizeHeight   int     `json:"resize_height,omitempty"`
 	ResizeMode     string  `json:"resize_mode,omitempty"`
+	ResizeUpscale  bool    `json:"resize_upscale,omitempty"`
 	Rotate         int     `json:"rotate,omitempty"`
 	FlipHorizontal bool    `json:"flip_horizontal,omitempty"`
 	FlipVertical   bool    `json:"flip_vertical,omitempty"`
@@ -64,6 +65,7 @@ type Normalized struct {
 	ResizeWidth    int
 	ResizeHeight   int
 	ResizeMode     string // inside / fill / contain
+	ResizeUpscale  bool
 	Rotate         int
 	FlipHorizontal bool
 	FlipVertical   bool
@@ -88,6 +90,7 @@ func Normalize(o Options) (Normalized, error) {
 		ResizeWidth:    o.ResizeWidth,
 		ResizeHeight:   o.ResizeHeight,
 		ResizeMode:     "inside",
+		ResizeUpscale:  o.ResizeUpscale,
 		Rotate:         o.Rotate,
 		FlipHorizontal: o.FlipHorizontal,
 		FlipVertical:   o.FlipVertical,

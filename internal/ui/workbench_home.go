@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -83,28 +84,40 @@ func (a *App) navRail(c *ui.Context) {
 
 func (a *App) pageTabs(c *ui.Context) {
 	type item struct {
+		page  int
 		label string
 		icon  *ui.SVG
 	}
 	items := []item{
-		{"生图", iconImages},
-		{"洗图", iconWash},
-		{"去重", iconDedup},
-		{"浏览器", iconGlobe},
-		{"提示词", iconPen},
-		{"下载", iconDownload},
-		{"批量重命名", iconRename},
-		{"图片编辑", iconCrop},
-		{"设置", iconSettings},
+		{pageHome, "图片生成", iconImages},
+		{pageDedup, "去重", iconDedup},
+		{pageBrowser, "浏览器", iconGlobe},
+		{pagePrompts, "提示词", iconPen},
+		{pageDownload, "下载", iconDownload},
+		{pageRename, "批量重命名", iconRename},
+		{pageImageEdit, "图片编辑", iconCrop},
+		{pageSettings, "设置", iconSettings},
 	}
-	tabs := ui.TabsBase(c.Key("main-tabs"), &a.tab, len(items))
-	tabs.List.Column().Gap(4).AlignItems(ui.Center).Children(func() {
+	selected := 0
+	for i, it := range items {
+		if it.page == a.tab {
+			selected = i
+			break
+		}
+	}
+	tabs := ui.TabsBase(c.Key("main-tabs"), &selected, len(items))
+	tabs.List.Column().Gap(4).AlignItems(ui.Center).Disabled(a.running).OnChange(func() {
+		a.tab = items[selected].page
+		if a.tab == pageHome && a.workspacePage == store.PageWash {
+			a.tab = pageWash
+		}
+	}).Children(func() {
 		for i, it := range items {
 			tab := tabs.Tab(i).Size(36, 36).Radius(10).Center().Label(it.label).Disabled(a.running)
 			if !a.running {
 				tab.Cursor(ui.CursorPointer)
 			}
-			a.paintNavIcon(c, tab, it.icon, i == a.tab, false)
+			a.paintNavIcon(c, tab, it.icon, i == selected, false)
 			railTip(c, tab, it.label)
 		}
 	})
@@ -366,9 +379,13 @@ func (a *App) openLogFile() {
 
 func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 	tok := a.look
+	reveal := motionReveal()
+	if a.tab == pageHome || a.tab == pageWash {
+		reveal.Enter.Opacity = 0.9
+	}
 	card := ui.Column(c.Key(key)).FillWidth().Padding(12, 14).Gap(8).Radius(tok.radiusL).
 		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
-		Transition(motionReveal())
+		Transition(reveal)
 	if !tok.dark {
 		card.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.9))
 	}
@@ -481,7 +498,7 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	tok := a.look
 	th := c.Theme()
 	running := a.running && a.ownsRun()
-	// 一个账号都没有时，按钮仍打开设置向导。有账号但今天都不能用，则关掉。
+	// 没有可用账号时关掉开始按钮。
 	// 另一页在跑时引擎占着，这一页只能等。
 	disabled := (!running && (plan.Action == StartNone || a.renameUpdateActive())) || (a.running && !running) ||
 		(!running && a.washing() && len(a.sources) == 0) || len(a.browserPending) > 0
@@ -586,17 +603,16 @@ func (a *App) loggedOutCallout() bool {
 	return any
 }
 
-// noAccountCallout 是这一页所选平台一个账号都没有，开始按钮也不会改去开浏览器向导。
-// Antigravity 只在右栏用「+ 添加账号」登录，没有账号时也要提示一句。
+// noAccountCallout 在所选平台没有账号且已准备输入时显示提示。
 func (a *App) noAccountCallout() bool {
-	if a == nil || a.stagePlatform() != agy.Platform {
+	if a == nil {
 		return false
 	}
 	in := a.workbenchInput()
 	if !in.HasImages && !in.HasPrompts {
 		return false
 	}
-	return !hasPlatformAccount(in.Accounts, agy.Platform)
+	return !hasPlatformAccount(in.Accounts, a.stagePlatform())
 }
 
 func (a *App) accountCallout(c *ui.Context) {
@@ -616,7 +632,7 @@ func (a *App) accountCallout(c *ui.Context) {
 				a.addAgyAccount()
 				return
 			}
-			a.openWizard()
+			a.tab = pageBrowser
 		})
 	})
 }
@@ -642,12 +658,12 @@ func (a *App) stepLead(board tasks.Board) string {
 		if len(board.Lanes) > 0 {
 			return BlockedAccounts(board.Lanes)
 		}
-		if len(a.sources) == 0 && len(a.taskPromptList()) == 0 {
+		if len(a.sources) == 0 && !a.hasTaskPrompt() {
 			return "先添加图片，或写一条提示词"
 		}
 		return "还没有可用账号"
 	}
-	return RunSummary(len(a.sources), len(a.taskPromptList()) > 0)
+	return RunSummary(len(a.sources), a.hasTaskPrompt())
 }
 
 // pausedAccountNotice 是这一页已经开跑，但一个号都出不了图。用和停跑时同一句「没有可用账号」。
@@ -742,6 +758,21 @@ func (a *App) failAction(card ProgressCard) {
 		a.reloginCard(card)
 	case "换图":
 		a.replaceCardImage(card)
+	case "查看待核对":
+		for _, task := range card.Retry {
+			if _, path, ok := strings.Cut(task.Error, "未匹配结果保存在 "); ok {
+				path, _, _ = strings.Cut(path, "\n")
+				path = strings.TrimSpace(path)
+				if info, err := os.Stat(path); err == nil && info.IsDir() {
+					if err := mygo.Shell.OpenPath(path); err == nil {
+						return
+					}
+				}
+				a.outputNote = "无法打开待核对文件夹"
+				logging.Log.Errorf("无法打开待核对文件夹: %s", path)
+				return
+			}
+		}
 	default:
 		a.retryTasks(card.Retry)
 	}

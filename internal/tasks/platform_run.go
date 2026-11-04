@@ -46,10 +46,10 @@ func (s *slotSched) snap() (map[int64]bool, map[int64]time.Time) {
 	return busy, ready
 }
 
-func (s *slotSched) claim(slot int64, now time.Time) bool {
+func (s *slotSched) claim(slot int64, now time.Time, limit int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.busy[slot] || now.Before(s.ready[slot]) {
+	if s.busy[slot] || now.Before(s.ready[slot]) || (limit > 0 && len(s.busy) >= limit) {
 		return false
 	}
 	if s.busy == nil {
@@ -82,13 +82,21 @@ func (s *slotSched) finish(busySlot, readySlot int64, ready time.Time) {
 }
 
 func (s *slotSched) ping() {
-	if s == nil || s.notify == nil {
+	if s == nil {
 		return
 	}
-	select {
-	case s.notify <- struct{}{}:
-	default:
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.notify != nil {
+		close(s.notify)
+		s.notify = make(chan struct{})
 	}
+}
+
+func (s *slotSched) watch() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.notify
 }
 
 func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
@@ -101,7 +109,7 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 		groups[task.Platform] = append(groups[task.Platform], task)
 	}
 	events := make(chan runEvent, 32)
-	sched := &slotSched{notify: make(chan struct{}, 1)}
+	sched := &slotSched{notify: make(chan struct{})}
 	g, _ := errgroup.WithContext(ctx)
 	for _, name := range order {
 		tasks := groups[name]
@@ -201,17 +209,23 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				e.laneStart(e.slotKey(t.BrowserID), t.BrowserID, jobOf(t, time.Now()))
 				t.Status = StatusRunning
 				if e.view != nil {
-					e.view.Update(t)
+					for _, item := range batchMembers(t) {
+						e.view.Update(item)
+					}
 				}
 				name := e.accountName(t.BrowserID)
 				stopLog := logging.Bind(t.Platform, name, e.accountPort(t.BrowserID), t.Index)
 				e.traceTask(&t, "assign", "#"+itoa(t.Index)+" "+name+" 开始", 0, 0, nil)
 				if onTask != nil {
-					onTask(t)
+					for _, item := range batchMembers(t) {
+						onTask(item)
+					}
 				}
 				t = e.execute(tctx, t, attempt)
 				cancel()
-				e.noteUse(t, previousSoften)
+				for _, item := range batchMembers(t) {
+					e.noteUse(item, previousSoften)
+				}
 				stage, msg := "done", "#"+itoa(t.Index)+" "+name+" 结束"
 				if t.rotated && t.Status == StatusPending {
 					stage = "retry"
@@ -257,7 +271,32 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 	pending := queue
 	ctxDone := ctx.Done()
 	var claimed int64
+	var lastAccount int64
+	switchAfter := 0
+	completedByAccount := map[int64]int{}
+	if e.opts.TaskSwitching {
+		switchAfter = max(1, e.opts.TaskSwitchingCount)
+	}
+	pickAccount := func(preferred, avoid int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
+		if switchAfter > 0 {
+			if lastAccount > 0 {
+				preferred = lastAccount
+			}
+			excluded := map[int64]bool{}
+			for id, count := range completedByAccount {
+				if count >= switchAfter {
+					excluded[id] = true
+				}
+			}
+			if id, ok := e.pickIdleAccountExcept(platform, preferred, avoid, busy, readyAt, now, excluded, true); ok {
+				return id, true
+			}
+			return e.pickIdleAccountExcept(platform, preferred, avoid, busy, readyAt, now, nil, true)
+		}
+		return e.pickIdleAccount(platform, preferred, avoid, busy, readyAt, now)
+	}
 	for len(pending) > 0 || active > 0 {
+		schedNotify := sched.watch()
 		if ctx.Err() != nil {
 			e.stopQueued(pending, events)
 			pending, ctxDone = nil, nil
@@ -268,14 +307,15 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		var dispatch chan Task
 		var next Task
 		index := -1
+		var batchIndices []int
 		var earliest time.Time
 		now := time.Now()
 		if active < e.platformCap(platform, now) && ctx.Err() == nil {
 			busy, readyAt := sched.snap()
 			for i := 0; i < len(pending); i++ {
 				task := pending[i]
-				if platform != agy.Platform && task.Attempts == 0 && task.Error == "" && !task.submitted {
-					if id, ok := e.pickIdleAccount(platform, task.BrowserID, task.avoidSend, busy, readyAt, now); ok {
+				if (platform != agy.Platform || switchAfter > 0) && task.Attempts == 0 && task.Error == "" && !task.submitted {
+					if id, ok := pickAccount(task.BrowserID, task.avoidSend, busy, readyAt, now); ok {
 						task.BrowserID = id
 					}
 				}
@@ -286,11 +326,16 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					if task.Error == "" {
 						task.Error = "同平台账号都不可用"
 					}
+					members := batchMembers(task)
 					if e.view != nil {
-						e.view.Update(task)
+						for _, item := range members {
+							e.view.Update(item)
+						}
 					}
 					e.traceTask(&task, "assign", "#"+itoa(task.Index)+" 跳过："+task.Error, 0, 0, nil)
-					events <- runEvent{task: task, terminal: true}
+					for _, item := range members {
+						events <- runEvent{task: item, terminal: true}
+					}
 					pending = append(pending[:i], pending[i+1:]...)
 					i--
 					continue
@@ -303,7 +348,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				}
 				resource := e.slotKey(task.BrowserID)
 				if !task.submitted && (busy[resource] || now.Before(readyAt[resource])) {
-					if id, ok := e.pickIdleAccount(task.Platform, 0, task.avoidSend, busy, readyAt, now); ok {
+					if id, ok := pickAccount(0, task.avoidSend, busy, readyAt, now); ok {
 						task.BrowserID = id
 						pending[i] = task
 						resource = e.slotKey(id)
@@ -320,11 +365,16 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					noteCool(&earliest, e.accountsFor(task.Platform), now)
 					continue
 				}
-				if !sched.claim(resource, now) {
+				if !sched.claim(resource, now, e.opts.Concurrency) {
 					continue
 				}
 				claimed = resource
-				index, next, dispatch = i, task, jobs
+				maxImages := washChatTasks
+				if remaining := switchAfter - completedByAccount[task.BrowserID]; switchAfter > 0 && remaining > 0 {
+					maxImages = min(maxImages, remaining)
+				}
+				next, batchIndices = e.bundleWashTasks(pending, i, task, maxImages, now)
+				index, dispatch = i, jobs
 				break
 			}
 		} else if ctx.Err() == nil {
@@ -347,10 +397,19 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		case dispatch <- next:
 			sent = true
 			claimed = 0
-			if index == 0 {
-				pending = pending[1:]
-			} else if index > 0 {
-				pending = append(pending[:index], pending[index+1:]...)
+			if switchAfter > 0 {
+				for id, count := range completedByAccount {
+					if id != next.BrowserID && count >= switchAfter {
+						delete(completedByAccount, id)
+					}
+				}
+			}
+			if len(batchIndices) == 0 && index >= 0 {
+				batchIndices = []int{index}
+			}
+			for i := len(batchIndices) - 1; i >= 0; i-- {
+				j := batchIndices[i]
+				pending = append(pending[:j], pending[j+1:]...)
 			}
 			active++
 		case t := <-completed:
@@ -364,6 +423,12 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			if used == 0 {
 				used = resource
 			}
+			if switchAfter > 0 && t.slot != 0 && t.Attempts > 0 && used > 0 {
+				lastAccount = used
+				if completedByAccount[used] < switchAfter {
+					completedByAccount[used] += len(batchMembers(t))
+				}
+			}
 			readySlot := e.slotKey(used)
 			gap := time.Duration(0)
 			if t.slot != 0 {
@@ -371,17 +436,32 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			}
 			ready := time.Time{}
 			if gap > 0 {
-				ready = time.Now().Add(gap)
+				now := time.Now()
+				ready = now.Add(gap)
+				if e.opts.Wash && t.Status == StatusSuccess && !t.sentAt.IsZero() {
+					ready = t.sentAt.Add(gap)
+					if !ready.After(now) {
+						ready = time.Time{}
+						gap = 0
+					} else {
+						gap = ready.Sub(now)
+					}
+				}
 			}
 			sched.finish(busySlot, readySlot, ready)
 			e.laneFinish(busySlot, resource, readySlot, gap)
+			members := batchMembers(t)
 			if e.view != nil {
-				e.view.Update(t)
+				for _, item := range members {
+					e.view.Update(item)
+				}
 			}
 			if t.rotated && t.Status == StatusPending {
 				t.rotated = false
 				pending = append(pending, t)
-				events <- runEvent{task: t}
+				for _, item := range members {
+					events <- runEvent{task: item}
+				}
 				if timer != nil {
 					timer.Stop()
 					timer = nil
@@ -393,11 +473,13 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				continue
 			}
 			if t.Status != StatusPending {
-				events <- runEvent{task: t, terminal: true, needsUser: t.Status == StatusNeedsUser}
+				for _, item := range members {
+					events <- runEvent{task: item, terminal: true, needsUser: item.Status == StatusNeedsUser}
+				}
 			}
 		case <-wake:
 		case <-nudge:
-		case <-sched.notify:
+		case <-schedNotify:
 		case <-ctxDone:
 			e.stopQueued(pending, events)
 			pending, ctxDone = nil, nil
@@ -421,11 +503,13 @@ func (e *Engine) stopQueued(pending []Task, events chan<- runEvent) {
 		}
 		t.Status = StatusSkipped
 		t.Error = "已停止"
-		if e != nil && e.view != nil {
-			e.view.Update(t)
-		}
-		if events != nil {
-			events <- runEvent{task: t, terminal: true}
+		for _, item := range batchMembers(t) {
+			if e != nil && e.view != nil {
+				e.view.Update(item)
+			}
+			if events != nil {
+				events <- runEvent{task: item, terminal: true}
+			}
 		}
 	}
 }

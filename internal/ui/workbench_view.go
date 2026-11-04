@@ -39,7 +39,7 @@ func (a *App) settingsPage(c *ui.Context) {
 		ui.Row(c).FillWidth().Justify(ui.Center).Children(func() {
 			ui.Column(c).FillWidth().MaxWidth(720).Gap(12).Padding(4, 0, 20, 0).Children(func() {
 				ui.Text(c, "设置").FontSize(22).Bold()
-				ui.Text(c, "生图和洗图只负责输入和开始。输出、并发和生成规则都在这里。").FontSize(13).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "在这里管理保存路径、并发和生成规则。").FontSize(13).TextColor(c.Theme().TextMuted)
 				ui.Tabs(c.Key("settings-tabs"), &a.settingsTab, "输出", "下载", "账号与并发", "Antigravity", "生成规则", "验证码 / 高级", "更新").FillWidth().Wrap()
 				switch a.settingsTab {
 				case settingsOutput:
@@ -264,8 +264,20 @@ func (a *App) downloadSettings(c *ui.Context) {
 
 func (a *App) accountSettings(c *ui.Context) {
 	tok := a.look
+	boundBridge := a.store != nil && a.store.Get("browserBackend") == "camoufox_extension"
 	ui.Form(c, func() {
 		ui.Text(c, "额度用尽、限流或验证码时，自动换到同平台下一个健康账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Checkbox(c, &boundBridge, "绑定账号使用 Firefox 页面桥").Disabled(a.running || a.store == nil).OnChange(func() {
+			if a.store == nil {
+				return
+			}
+			mode := "camoufox"
+			if boundBridge {
+				mode = "camoufox_extension"
+			}
+			a.store.Set("browserBackend", mode)
+		})
+		ui.Text(c, "使用已有账号的指纹和登录状态，页面桥随任务启动。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Checkbox(c, &a.platformAuto, "自动使用已登录的平台").Disabled(a.running)
 		if !a.platformAuto {
 			ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
@@ -275,13 +287,6 @@ func (a *App) accountSettings(c *ui.Context) {
 			})
 		}
 		ui.Text(c, a.platformLine()).FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Checkbox(c, &a.concurrencyAuto, "按可用账号自动并发").Disabled(a.running)
-		ui.Text(c, ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots())).FontSize(12).TextColor(c.Theme().TextMuted)
-		if !a.concurrencyAuto {
-			ui.Field(c, "同时出图上限", func() {
-				ui.NumberInput(c, &a.concurrency, 1, 16, 1).Disabled(a.running)
-			})
-		}
 		ui.Text(c, fmt.Sprintf("豆包、千问每个平台同时最多 %d 张。Antigravity 一次只跑一个账号。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(12).TextColor(tok.muted)
 		ui.Field(c, "每日上限", func() {
 			ui.NumberInput(c, &a.dailyCap, 1, 200, 1).Disabled(a.running)
@@ -335,9 +340,11 @@ func (a *App) ruleSettings(c *ui.Context) {
 				ui.Switch(c, &a.taskSwitch).Disabled(a.running)
 				if a.taskSwitch {
 					ui.NumberInput(c, &a.switchCount, 1, 9999, 1).Disabled(a.running)
+					ui.Text(c, "个任务").FontSize(12).TextColor(c.Theme().TextMuted)
 				}
 			})
 		})
+		ui.Text(c, "达到任务数后优先切换到其他空闲账号；没有其他空闲账号时继续使用当前账号。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "起始浏览器序号", func() {
 			ui.NumberInput(c, &a.startBrowserIdx, 1, 999, 1).Disabled(a.running)
 		})
@@ -373,7 +380,7 @@ func (a *App) workbenchInput() WorkbenchInput {
 	return WorkbenchInput{
 		Running:         a.running,
 		HasImages:       len(a.sources) > 0,
-		HasPrompts:      len(a.taskPromptList()) > 0,
+		HasPrompts:      a.hasTaskPrompt(),
 		AutoPlatform:    a.platformAuto,
 		WantDoubao:      a.platDoubao,
 		WantQianwen:     a.platQianwen,
@@ -396,7 +403,7 @@ func (a *App) taskConcurrency() int {
 	if a.concurrencyAuto {
 		return 0
 	}
-	return clampInt(int(a.concurrency), 1, 16)
+	return 1
 }
 
 func (a *App) shownDailyCap() int {
@@ -534,12 +541,7 @@ func (a *App) startTasks() {
 		return
 	}
 	plan := a.workbenchPlan()
-	switch plan.Action {
-	case StartWizard:
-		a.progText = ""
-		a.openWizard()
-		return
-	case StartNone:
+	if plan.Action != StartGenerate {
 		return
 	}
 	a.runQueue(plan.Platforms, a.taskPromptList(), a.batchImages(), nil)
@@ -554,8 +556,7 @@ func (a *App) retryTasks(items []tasks.Task) {
 	in.HasImages = true
 	in.AutoPlatform = true
 	if PlanWorkbench(in).Action != StartGenerate {
-		a.progText = ""
-		a.openWizard()
+		a.progText = "没有可用账号，请先登录后重试"
 		return
 	}
 	platforms := map[string]bool{}
@@ -576,6 +577,23 @@ func (a *App) retryTasks(items []tasks.Task) {
 func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task) {
 	if a.engine == nil || a.running || a.renameUpdateActive() || len(a.browserPending) > 0 {
 		return
+	}
+	if retry == nil {
+		if err := a.currentPromptParts().validate(); err != nil {
+			a.progText = err.Error()
+			logging.Log.Errorf("%s", a.progText)
+			return
+		}
+	}
+	for _, platform := range platforms {
+		if platform == "豆包" {
+			if err := a.doubaoOutputSize().Validate(); err != nil {
+				a.progText = "豆包输出尺寸：" + err.Error()
+				logging.Log.Errorf("%s", a.progText)
+				return
+			}
+			break
+		}
 	}
 	if !a.extensionTasks() {
 		for _, platform := range platforms {

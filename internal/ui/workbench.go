@@ -32,12 +32,10 @@ const DefaultOutputName = "输出结果"
 type StartAction int
 
 const (
-	// StartNone 表示现在不能出图：正在跑，或者还没有图片和提示词。
+	// StartNone 表示现在不能出图：正在跑，缺少输入或没有可用账号。
 	StartNone StartAction = iota
 	// StartGenerate 用已经登录的账号直接出图。
 	StartGenerate
-	// StartWizard 没有可用账号，按钮改为打开设置向导。
-	StartWizard
 )
 
 // AccountSnap 是判断平台和向导时用的账号快照。
@@ -71,7 +69,7 @@ type WorkbenchPlan struct {
 	Platforms []string
 }
 
-// PlanWorkbench 决定开始按钮该出图、打开向导，还是先不动。
+// PlanWorkbench 决定开始按钮该出图还是先不动。
 // 右栏选了平台时只跑这个平台。否则自动平台用已登录且还能恢复的账号；关掉自动后只保留勾选的平台。
 func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 	if in.Running || (!in.HasImages && !in.HasPrompts) {
@@ -99,12 +97,7 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 	}
 	platforms := platformsFromAccounts(in.Accounts, in.ExtensionMode, in.Now, want)
 	if len(platforms) == 0 {
-		// 这一页已经有账号，只是登录或额度不行。按钮关掉，不要改去开向导。
-		// Antigravity 没有账号时留在这一页，用「+ 添加账号」，不打开浏览器向导。
-		if only == agy.Platform || (only != "" && hasPlatformAccount(in.Accounts, only)) {
-			return WorkbenchPlan{Action: StartNone}
-		}
-		return WorkbenchPlan{Action: StartWizard}
+		return WorkbenchPlan{Action: StartNone}
 	}
 	return WorkbenchPlan{Action: StartGenerate, Platforms: platforms}
 }
@@ -119,15 +112,15 @@ func hasPlatformAccount(accounts []AccountSnap, platform string) bool {
 }
 
 // ConcurrencyCaption 是「调度与等待」里并发这一行的说明。
-// 自动时写出当前能同时出图的账号数；手动时写出上限旁边的可用账号数。
+// 开启时展示可用账号数；关闭时说明任务会串行执行。
 func ConcurrencyCaption(auto bool, slots int) string {
 	if slots < 0 {
 		slots = 0
 	}
 	if auto {
-		return fmt.Sprintf("自动（当前 %d 个账号同时出图）", slots)
+		return fmt.Sprintf("按可用账号自动并发（当前 %d 个账号可用）", slots)
 	}
-	return fmt.Sprintf("手动上限（当前 %d 个账号可用）", slots)
+	return "并发已关闭，一次运行 1 批任务"
 }
 
 func (a AccountSnap) carries(extensionMode bool, now time.Time) bool {
@@ -394,7 +387,7 @@ func RunSummary(images int, prompts bool) string {
 
 // FormatProgressTally 是一个平台的进度。并发上限写在同一行，不再另起一条「同时出图」。
 // limit 是这一页实际能同时跑的账号数；Antigravity 一次只跑一个。没有可用账号时不写。
-func FormatProgressTally(done, running, queued, failed, needs, stopped, limit int) string {
+func FormatProgressTally(done, running, queued, failed, needs, stopped, active, limit int) string {
 	parts := []string{
 		fmt.Sprintf("完成 %d", done),
 		fmt.Sprintf("进行中 %d", running),
@@ -408,7 +401,7 @@ func FormatProgressTally(done, running, queued, failed, needs, stopped, limit in
 		parts = append(parts, fmt.Sprintf("未完成 %d", stopped))
 	}
 	if limit > 0 {
-		parts = append(parts, fmt.Sprintf("%d/%d 并发", running, limit))
+		parts = append(parts, fmt.Sprintf("%d/%d 并发", active, limit))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -503,11 +496,11 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 	return out
 }
 
-// FailedTasks 是「全部重试失败项」要点的任务。待验证不算失败。
+// FailedTasks 是「全部重试失败项」要点的任务。待验证和待核对不自动重试。
 func FailedTasks(items []tasks.Task) []tasks.Task {
 	var out []tasks.Task
 	for _, task := range items {
-		if task.Status == tasks.StatusFailed || task.Status == tasks.StatusSkipped {
+		if (task.Status == tasks.StatusFailed || task.Status == tasks.StatusSkipped) && tasks.ClassifyFailure(task.Status, task.Error).Class != tasks.FailUnmatched {
 			out = append(out, task)
 		}
 	}

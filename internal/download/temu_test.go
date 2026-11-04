@@ -93,7 +93,7 @@ func TestTemuPartialAndSafety(t *testing.T) {
 	for _, tc := range []struct {
 		mode string
 		want int
-	}{{"wrong-id", 0}, {"missing-id", 0}, {"conflicting-id", 0}, {"bad-host", 2}, {"missing-sku", 2}, {"empty-shell", 0}, {"cancel", 0}} {
+	}{{"wrong-id", 0}, {"missing-id", 0}, {"conflicting-id", 0}, {"bad-host", 2}, {"empty-shell", 0}, {"cancel", 0}} {
 		t.Run(tc.mode, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -107,8 +107,6 @@ func TestTemuPartialAndSafety(t *testing.T) {
 				body = strings.Replace(body, `<meta property="og:title"`, `<meta property="og:url" content="https://www.temu.com/other-g-601099513224344.html"><meta property="og:title"`, 1)
 			case "bad-host":
 				body = strings.Replace(body, "https://img-eu.kwcdn.com/product/detail.jpg", "https://evil.test/detail.jpg", 1)
-			case "missing-sku":
-				body = strings.Replace(body, `<div class="_2bzGqXzH"><img alt="蓝色" src="https://img.kwcdn.com/product/sku.png"></div>`, "", 1)
 			case "empty-shell":
 				body = `<title>TEMU</title><meta property="og:url" content="https://www.temu.com/example-g-601099513224343.html"><img src="https://img.kwcdn.com/product/recommended.jpg">`
 			case "cancel":
@@ -127,6 +125,22 @@ func TestTemuPartialAndSafety(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTemuCurrentGalleryWithoutVariants(t *testing.T) {
+	page, _ := url.Parse(temuTestPage)
+	body := `<html><head><meta property="og:url" content="` + temuTestPage + `"></head><body>
+<div class="gallery _2AOclWz7"><img src="https://img.kwcdn.com/product/main.jpeg?imageView2/2/w/180"></div>
+<li class="_2YJlRFSG"><img src="https://img.kwcdn.com/product/main.jpeg?imageView2/2/w/800"></li>
+<div class="_2AOclWz7-other"><img src="https://img.kwcdn.com/product/recommended.jpeg"></div></body></html>`
+	doc, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := temuProductPage(context.Background(), doc, page)
+	if err != nil || len(got.Items) != 1 || got.Items[0].URL != "https://img.kwcdn.com/product/main.jpeg" || got.Items[0].Metadata["image_kind"] != "main" {
+		t.Fatalf("current gallery=%+v err=%v", got.Items, err)
 	}
 }
 

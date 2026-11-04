@@ -57,6 +57,28 @@ func TestAsyncAddLandsOnThePageThatAsked(t *testing.T) {
 	}
 }
 
+func TestWashImportKeepsIdenticalFilesAtDifferentPaths(t *testing.T) {
+	dir := t.TempDir()
+	first, second := filepath.Join(dir, "first.png"), filepath.Join(dir, "second.png")
+	data := tinyPNG(t)
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loaded := loadSourceFiles([]string{first, second, first})
+	a := &App{statePage: pageHome}
+	a.addLoaded(pageWash, loaded)
+	a.addLoaded(pageWash, loaded)
+	got := a.stateOf(pageWash).sources
+	if len(got) != 2 || got[0].Path != first || got[1].Path != second {
+		t.Fatalf("wash must keep each source path exactly once: %+v", got)
+	}
+	if len(a.sources) != 0 {
+		t.Fatalf("async wash import changed the other page: %+v", a.sources)
+	}
+}
+
 func TestWashPromptAndImagesPersist(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "config.db"))
@@ -89,6 +111,42 @@ func TestWashPromptAndImagesPersist(t *testing.T) {
 	gen := b.stateOf(pageHome)
 	if gen.prompts != "生图提示词" || len(gen.sources) != 0 {
 		t.Fatalf("生图 reloaded wrong: %q %v", gen.prompts, gen.sources)
+	}
+}
+
+func TestWashDefaultUpgradeKeepsCustomPrompts(t *testing.T) {
+	const oldDefault = "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变"
+	for _, tc := range []struct {
+		name, saved, want string
+	}{
+		{"empty", "", DefaultWashPrompt},
+		{"old default", oldDefault, DefaultWashPrompt},
+		{"edited old default", oldDefault + "，保留标签", oldDefault + "，保留标签"},
+		{"custom", "我的洗图指令", "我的洗图指令"},
+	} {
+		for _, active := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/active=%t", tc.name, active), func(t *testing.T) {
+				st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer st.Close()
+				st.Set("wash_prompt", tc.saved)
+				if active {
+					if _, err := st.SaveActive(store.Session{Page: store.PageWash, Prompts: tc.saved}, []store.SessionTask{{Prompt: tc.saved}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				a := &App{store: st}
+				a.loadSettings()
+				if got := a.stateOf(pageWash).prompts; got != tc.want {
+					t.Fatalf("wash prompt = %q, want %q", got, tc.want)
+				}
+				if active && (len(a.stateOf(pageWash).queue) != 1 || a.stateOf(pageWash).queue[0].Prompt != tc.saved) {
+					t.Fatal("upgrading the default changed a saved task")
+				}
+			})
+		}
 	}
 }
 

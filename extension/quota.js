@@ -32,5 +32,13 @@
     return null
   }
 
-  globalThis.TULAIQuota = { accountBlock }
+  function imageReplyBlock(text) {
+    const lines = String(text || '').split('\n')
+    const message = lines.map(function (line) { return line.replace(/\s+/g, ' ').trim() }).find(function (line) {
+      return /^今日图片生成免费额度已用(?:完|尽)(?:[。.!！]|$)/.test(line)
+    })
+    return message ? { kind: 'quota', message } : null
+  }
+
+  globalThis.TULAIQuota = { accountBlock, imageReplyBlock }
 })()

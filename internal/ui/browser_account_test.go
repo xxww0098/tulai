@@ -180,3 +180,59 @@ func TestFollowLoginKeepsBrowsersOpenAfterWebpageLogin(t *testing.T) {
 		t.Fatalf("login row: %v", tt.Texts())
 	}
 }
+
+func TestFollowLoginClosesNewAccountAfterLogin(t *testing.T) {
+	for _, platform := range []string{"千问", "豆包"} {
+		t.Run(platform, func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			row, err := st.AddBrowser(platform, platform+"1", filepath.Join(t.TempDir(), "profile"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.SetRunning(row.ID, true)
+			states := make(chan string, 2)
+			states <- wizard.ProbeOut
+			probed := make(chan string, 2)
+			closed := make(chan struct{}, 1)
+			a := &App{
+				store: st, manager: browser.NewManager(), loginPoll: 10 * time.Millisecond,
+				wizardProbe: func(ctx context.Context, _ string) (string, error) {
+					select {
+					case state := <-states:
+						probed <- state
+						return state, nil
+					case <-ctx.Done():
+						return "", ctx.Err()
+					}
+				},
+				afterClose: func() { closed <- struct{}{} },
+			}
+			a.markFreshLogin(row.ID)
+			a.watchLogin(row, loginEndpoint(row))
+			select {
+			case <-probed:
+			case <-time.After(time.Second):
+				t.Fatal("login was not probed")
+			}
+			select {
+			case <-closed:
+				t.Fatal("browser closed before login")
+			default:
+			}
+			states <- wizard.ProbeIn
+			select {
+			case <-closed:
+			case <-time.After(time.Second):
+				t.Fatal("new account browser stayed open after login")
+			}
+			rows := st.Browsers()
+			if len(rows) != 1 || !rows[0].IsLoggedIn || rows[0].IsRunning || rows[0].UserDataDir != row.UserDataDir {
+				t.Fatalf("account after login: %+v", rows)
+			}
+		})
+	}
+}

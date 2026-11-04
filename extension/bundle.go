@@ -14,6 +14,8 @@ import (
 //go:embed all:icons
 //go:embed all:qianwen
 //go:embed all:doubao
+//go:embed all:download
+//go:embed all:firefox
 var packed embed.FS
 
 // Version 是嵌进二进制的扩展清单版本。
@@ -47,6 +49,61 @@ func DoubaoRawJS() string {
 		return ""
 	}
 	return string(body)
+}
+
+// TemuSearchJS is shared by the download helper and the browser collector.
+func TemuSearchJS() string {
+	body, err := fs.ReadFile(packed, "download/temu.js")
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+// InstallDownloadAddon prepares the helper used only by the download browser.
+func InstallDownloadAddon(profileDir, endpoint, token string) (string, error) {
+	dir := filepath.Join(profileDir, ".tulai-download-addon")
+	if err := copyFS(packed, "download", dir); err != nil {
+		return "", err
+	}
+	settings, err := json.Marshal(map[string]string{"endpoint": endpoint, "token": token})
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "settings.js")
+	if err := os.WriteFile(path, append([]byte("const TULAI_DOWNLOAD = "), settings...), 0o600); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// InstallFirefoxBridge prepares a private per-run add-on for a bound account.
+func InstallFirefoxBridge(dir, port, token, account string) (string, error) {
+	if err := copyFS(packed, ".", dir); err != nil {
+		return "", err
+	}
+	manifest, err := fs.ReadFile(packed, "firefox/manifest.json")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifest, 0o644); err != nil {
+		return "", err
+	}
+	settings, err := json.Marshal(map[string]string{"port": port, "token": token, "profileId": account})
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "firefox", "settings.js")
+	if err := os.WriteFile(path, append([]byte("globalThis.TULAI_FIREFOX_CONFIG = "), append(settings, '\n')...), 0o600); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // Install 把扩展解压到 <configDir>/extension/<版本>/，并同步到稳定目录 current。

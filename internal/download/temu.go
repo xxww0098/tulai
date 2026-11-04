@@ -127,7 +127,7 @@ func temuImageURL(page *url.URL, raw string) (string, string, bool) {
 		return "", "", false
 	}
 	h := strings.ToLower(u.Hostname())
-	if h != "img.kwcdn.com" && h != "img-eu.kwcdn.com" {
+	if !temuImageHost(h) {
 		return "", "", false
 	}
 	u.Scheme, u.Host = "https", h
@@ -137,6 +137,10 @@ func temuImageURL(page *url.URL, raw string) (string, string, bool) {
 		u.RawQuery = ""
 	}
 	return u.String(), alternate, true
+}
+
+func temuImageHost(host string) bool {
+	return host == "img.kwcdn.com" || host == "img-eu.kwcdn.com"
 }
 
 type temuImage struct{ raw, kind, variant string }
@@ -184,14 +188,18 @@ func temuProductPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 			if len(classes) == 0 {
 				continue
 			}
-			class := classes[0]
-			switch {
-			case class == "_2ftcdy74":
-				kind = "main"
-			case class == "_2bzGqXzH":
-				kind = "variant"
-			case class == "_2jCYETGt":
-				kind = "description"
+			for _, class := range classes {
+				switch class {
+				case "_2ftcdy74", "_2AOclWz7", "_2YJlRFSG":
+					kind = "main"
+				case "_2bzGqXzH":
+					kind = "variant"
+				case "_2jCYETGt":
+					kind = "description"
+				}
+				if kind != "" {
+					break
+				}
 			}
 			if kind != "" {
 				break
@@ -199,7 +207,7 @@ func temuProductPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 		}
 		switch kind {
 		case "main":
-			main = append(main, temuImage{raw: attribute(n, "data-src"), kind: kind})
+			main = append(main, temuImage{raw: firstNonEmpty(attribute(n, "data-src"), attribute(n, "src")), kind: kind})
 		case "variant":
 			present := false
 			for _, a := range n.Attr {
@@ -212,7 +220,7 @@ func temuProductPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 				sku = append(sku, temuImage{raw: attribute(n, "src"), kind: kind, variant: attribute(n, "alt")})
 			}
 		case "description":
-			detail = append(detail, temuImage{raw: attribute(n, "data-src"), kind: kind})
+			detail = append(detail, temuImage{raw: firstNonEmpty(attribute(n, "data-src"), attribute(n, "src")), kind: kind})
 		}
 	})
 	if err := ctx.Err(); err != nil {
@@ -229,7 +237,7 @@ func temuProductPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 		result.Title = ogTitle
 	}
 	seen := make(map[string]bool)
-	var invalid, limited, detailFound, skuFound bool
+	var invalid, limited bool
 	add := func(v temuImage) {
 		if ctx.Err() != nil || limited || v.raw == "" || strings.HasPrefix(strings.ToLower(v.raw), "data:") {
 			return
@@ -238,12 +246,6 @@ func temuProductPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 		if !ok {
 			invalid = true
 			return
-		}
-		if v.kind == "description" {
-			detailFound = true
-		}
-		if v.kind == "variant" {
-			skuFound = true
 		}
 		if seen[image] {
 			return
@@ -287,12 +289,6 @@ func temuProductPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 	}
 	if mainCount == 0 {
 		problems = append(problems, errors.New("TEMU 主图未加载，可能需要登录或安全验证"))
-	}
-	if !skuFound {
-		problems = append(problems, errors.New("TEMU 规格图未加载，结果可能不完整"))
-	}
-	if !detailFound {
-		problems = append(problems, errors.New("TEMU 详情图未加载，结果可能不完整"))
 	}
 	if limited {
 		problems = append(problems, fmt.Errorf("TEMU 商品超过 %d 张图片，结果不完整", maxTemuImages))

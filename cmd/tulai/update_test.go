@@ -14,10 +14,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/update"
 )
 
 func TestUpdateCheckCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/xxww0098/tulai/releases/latest" {
 			http.NotFound(w, r)
@@ -51,6 +55,9 @@ func TestUpdateCheckCommand(t *testing.T) {
 }
 
 func TestUpdateCheckUpToDate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(update.Release{Tag: "v0.1.0", HTMLURL: "https://github.com/xxww0098/tulai/releases/tag/v0.1.0"})
 	}))
@@ -65,6 +72,9 @@ func TestUpdateCheckUpToDate(t *testing.T) {
 }
 
 func TestUpdateInstallsUserArchive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	var tarBuf bytes.Buffer
 	gz := gzip.NewWriter(&tarBuf)
 	tw := tar.NewWriter(gz)
@@ -148,6 +158,26 @@ func TestUpdateInstallsUserArchive(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "home", ".local", "bin", "tulai")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConfiguredMirrorUsesApplicationDataOnMac(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("TULAI_UPDATE_MIRROR", "")
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "tulai", "database", "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Set(update.KeyMirror, "https://mirror.example")
+	st.Close()
+	if got := configuredMirror("darwin", "/tmp/dev/tulai"); got != "https://mirror.example" {
+		t.Fatalf("configured mirror = %q", got)
 	}
 }
 

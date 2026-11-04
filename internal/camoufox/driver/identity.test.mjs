@@ -17,6 +17,11 @@ test('restarts retain the device; upgrades track the real Firefox version',()=>{
  assert.equal(upgraded['canvas:seed'],42);
  assert.match(saved['navigator.userAgent'],/Firefox\/150\.0/);
 });
+test('addon paths are configured afresh instead of persisted as device identity',()=>{
+ const saved={...device,addons:['/old/download-helper']};
+ assert.deepEqual(prepareIdentity(saved,'150',false),device);
+ assert.deepEqual(saved.addons,['/old/download-helper']);
+});
 test('changing or clearing a proxy cannot retain the previous exit location',()=>{
  const saved={...device,'webrtc:ipv4':'1.1.1.1','timezone':'old','locale:language':'old','geolocation:latitude':10,'voices':['old'],'headers.Accept-Language':'old'};
  for (const proxy of [true,false]) assert.deepEqual(prepareIdentity(saved,'150',proxy),{...device,voices:['old']});

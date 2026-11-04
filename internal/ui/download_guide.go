@@ -28,7 +28,7 @@ var downloadGuideGroups = []downloadGuideGroup{
 	{"电商商品与店铺", []downloadGuideEntry{
 		{"亚马逊 Amazon", "商品详情和搜索结果；搜索页按商品保存主图。法国站尚未实测。", "amazon.com"},
 		{"eBay 易贝", "商品详情和搜索结果；搜索页目前仅通过合成测试。", "ebay.com"},
-		{"Temu", "商品详情；搜索结果需用下载浏览器，先手动加载商品。真实搜索尚未验证。", "temu.com"},
+		{"Temu", "商品详情及搜索结果；搜索使用下载浏览器，可自动加载或手动滚动后下载。", "temu.com"},
 		{"Ozon", "商品图库和规格图；页面采集仅通过合成测试。", "ozon.ru"},
 		{"1688", "商品详情、公开店铺相册及相册详情。", "1688.com"},
 		{"淘宝、天猫", "商品详情的主图、部分规格图和详情图；可能需要登录。", "taobao.com tmall.com"},
@@ -111,7 +111,7 @@ func matchingDownloadGuide(query string) []downloadGuideGroup {
 	for _, group := range downloadGuideGroups {
 		var entries []downloadGuideEntry
 		for _, entry := range group.entries {
-			if query == "" || strings.Contains(strings.ToLower(group.title+" "+entry.site+" "+entry.pages), query) {
+			if query == "" || strings.Contains(strings.ToLower(group.title+" "+entry.site+" "+entry.pages+" "+entry.icons), query) {
 				entries = append(entries, entry)
 			}
 		}
@@ -120,6 +120,23 @@ func matchingDownloadGuide(query string) []downloadGuideGroup {
 		}
 	}
 	return groups
+}
+
+func downloadGuideURL(host string) string {
+	switch host {
+	case "baidu.com":
+		return "https://image.baidu.com/"
+	case "sogou.com":
+		return "https://pic.sogou.com/"
+	case "360.cn":
+		return "https://image.so.com/"
+	case "bing.com":
+		return "https://www.bing.com/images"
+	case "google.com":
+		return "https://www.google.com/imghp"
+	default:
+		return "https://" + host
+	}
 }
 
 func (a *App) downloadGuide(c *ui.Context, tok tokens) {
@@ -137,7 +154,7 @@ func (a *App) downloadGuide(c *ui.Context, tok tokens) {
 			icon.Children(func() { ui.Icon(c, iconGlobe).FontSize(20).TextColor(dlTransferStrong(tok)) })
 			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
 				ui.Text(c, "支持哪些页面？").FontSize(18).FontWeight(600).TextColor(tok.text)
-				ui.Text(c, "复制对应页面的网址。部分站点需要登录或验证，也可能只读取当前页。").
+				ui.Text(c, "点击站点打开专用浏览器，找到目标页面后复制网址。部分站点需要登录或验证。").
 					FontSize(12).TextColor(tok.muted).FillWidth().Wrap()
 			})
 		})
@@ -173,6 +190,17 @@ func (a *App) downloadGuide(c *ui.Context, tok tokens) {
 								ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
 									ui.Text(c, entry.site).FontSize(13).FontWeight(500).TextColor(tok.text).FillWidth().Wrap()
 									ui.Text(c, entry.pages).FontSize(12).TextColor(tok.muted).FillWidth().Wrap()
+									if entry.icons != "" {
+										ui.Row(c).FillWidth().Gap(5).Wrap().Children(func() {
+											for _, host := range strings.Fields(entry.icons) {
+												ui.Button(c.Key("dl-guide-open-"+host), "打开 "+host).FontSize(11).Height(30).Padding(4, 8).
+													Disabled(a.dlBrowserBusy).OnClick(func() {
+													a.dlBrowserMode = true
+													a.openDownloadBrowserURL(downloadGuideURL(host))
+												})
+											}
+										})
+									}
 								})
 							})
 						}
@@ -180,6 +208,11 @@ func (a *App) downloadGuide(c *ui.Context, tok tokens) {
 				}
 			})
 		})
+		if a.dlBrowserErr != "" {
+			ui.Text(c, a.dlBrowserErr).FontSize(12).TextColor(tok.danger).FillWidth().Wrap()
+		} else if a.dlBrowserBusy {
+			ui.Text(c, "正在打开下载浏览器…").FontSize(12).TextColor(tok.muted)
+		}
 		ui.Row(c).FillWidth().Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(tok.border).AlignItems(ui.Center).Children(func() {
 			if len(groups) > 0 && strings.TrimSpace(a.dlGuideSearch) == "" {
 				ui.Text(c, "向下滚动查看更多站点").FontSize(12).TextColor(tok.muted)

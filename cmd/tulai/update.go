@@ -106,7 +106,7 @@ func runUpdateWith(args []string, run updateRun) int {
 		}
 		run.Executable = exe
 	}
-	run.Client.ApplyMirrorSetting(configuredMirror())
+	run.Client.ApplyMirrorSetting(configuredMirror(run.GOOS, run.Executable))
 	current := run.Client.Version
 	if current == "" {
 		current = runningVersion()
@@ -204,11 +204,14 @@ func runUpdateWith(args []string, run updateRun) int {
 	return 0
 }
 
-func configuredMirror() string {
+func configuredMirror(goos, executable string) string {
 	if v := strings.TrimSpace(os.Getenv("TULAI_UPDATE_MIRROR")); v != "" {
 		return v
 	}
 	path := filepath.Join("database", "config.db")
+	if dir, err := packagedDataDir(goos, executable); err == nil && dir != "" {
+		path = filepath.Join(dir, "database", "config.db")
+	}
 	if _, err := os.Stat(path); err != nil {
 		return ""
 	}

@@ -2,12 +2,12 @@ package logging
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,13 +28,13 @@ type Line struct {
 }
 
 var (
-	traceMu   sync.Mutex
-	traceLog  *slog.Logger
-	tracePath string
-	runID     string
+	traceMu     sync.Mutex
+	traceLog    *slog.Logger
+	traceRotate *rotator
+	runID       string
 )
 
-// Open 把结构化日志写到数据目录 logs/tulai.log，并同时打到 stderr。
+// Open 把结构化日志按天切片写到数据目录 logs/tulai.YYYYMMDD.log，并同时打到 stderr。
 func Open(dir string) error {
 	if dir == "" {
 		dir = "."
@@ -43,15 +43,14 @@ func Open(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "tulai.log")
-	w, err := newRotator(path, 2<<20, 3)
+	w, err := newRotator(dir, "tulai", keepDays, time.Now)
 	if err != nil {
 		return err
 	}
 	h := slog.NewTextHandler(io.MultiWriter(os.Stderr, w), &slog.HandlerOptions{Level: slog.LevelDebug})
 	traceMu.Lock()
 	traceLog = slog.New(h)
-	tracePath = path
+	traceRotate = w
 	traceMu.Unlock()
 	return nil
 }
@@ -59,8 +58,12 @@ func Open(dir string) error {
 // Path 是当前日志文件。还没打开时为空。
 func Path() string {
 	traceMu.Lock()
-	defer traceMu.Unlock()
-	return tracePath
+	r := traceRotate
+	traceMu.Unlock()
+	if r == nil {
+		return ""
+	}
+	return r.currentPath()
 }
 
 // SetRun 记下这一批的 run_id。空则按时间生成。
@@ -215,63 +218,102 @@ func (l *Logger) add(level Level, msg string) {
 	writeSlog(slogLevel, boundLine(Line{Stage: "log", Msg: msg}))
 }
 
+// 日志按天切片：每天一个 tulai.YYYYMMDD.log，跨天写入时自动切换，过期的旧片自动清理。
+const (
+	dayLayout = "20060102"
+	keepDays  = 7
+)
+
 type rotator struct {
 	mu   sync.Mutex
-	path string
-	max  int64
+	dir  string
+	stem string
 	keep int
+	now  func() time.Time
 	f    *os.File
-	n    int64
+	day  string
 }
 
-func newRotator(path string, max int64, keep int) (*rotator, error) {
+func newRotator(dir, stem string, keep int, now func() time.Time) (*rotator, error) {
 	if keep < 1 {
 		keep = 1
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
+	if now == nil {
+		now = time.Now
+	}
+	r := &rotator{dir: dir, stem: stem, keep: keep, now: now}
+	if err := r.switchTo(now().Format(dayLayout)); err != nil {
 		return nil, err
 	}
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	return &rotator{path: path, max: max, keep: keep, f: f, n: info.Size()}, nil
+	return r, nil
 }
 
+func (r *rotator) path(day string) string {
+	return filepath.Join(r.dir, r.stem+"."+day+".log")
+}
+
+// Write 跨天时先切到新一天的文件再写。
 func (r *rotator) Write(p []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.n+int64(len(p)) > r.max {
-		if err := r.rotate(); err != nil {
+	if day := r.now().Format(dayLayout); day != r.day {
+		if err := r.switchTo(day); err != nil {
 			return 0, err
 		}
 	}
-	n, err := r.f.Write(p)
-	r.n += int64(n)
-	return n, err
+	return r.f.Write(p)
 }
 
-func (r *rotator) rotate() error {
-	if err := r.f.Close(); err != nil {
-		return err
-	}
-	for i := r.keep - 1; i >= 1; i-- {
-		_ = os.Rename(r.backup(i), r.backup(i+1))
-	}
-	if err := os.Rename(r.path, r.backup(1)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	f, err := os.OpenFile(r.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+// currentPath 是最近写入的日志文件。
+func (r *rotator) currentPath() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.path(r.day)
+}
+
+// switchTo 打开指定日期的切片；成功后关闭旧文件并清理过期切片。
+func (r *rotator) switchTo(day string) error {
+	f, err := os.OpenFile(r.path(day), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
+	if r.f != nil {
+		_ = r.f.Close()
+	}
 	r.f = f
-	r.n = 0
+	r.day = day
+	r.prune(day)
 	return nil
 }
 
-func (r *rotator) backup(i int) string {
-	return fmt.Sprintf("%s.%d", r.path, i)
+// prune 删除保留窗口之外的旧切片；文件名对不上日期格式的一律不动。
+func (r *rotator) prune(today string) {
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		return
+	}
+	cut, err := time.ParseInLocation(dayLayout, today, time.Local)
+	if err != nil {
+		return
+	}
+	cut = cut.AddDate(0, 0, -(r.keep - 1)) // 保留今天在内共 keep 天
+	prefix := r.stem + "."
+	suffix := ".log"
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+			continue
+		}
+		dayText := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		day, err := time.ParseInLocation(dayLayout, dayText, time.Local)
+		if err != nil {
+			continue
+		}
+		if day.Before(cut) {
+			_ = os.Remove(filepath.Join(r.dir, name))
+		}
+	}
 }

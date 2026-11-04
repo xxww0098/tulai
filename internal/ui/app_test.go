@@ -20,7 +20,7 @@ import (
 func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	a := &App{engine: tasks.NewEngine(nil, nil, nil, ""), platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"生图", "洗图", "浏览器", "提示词", "设置", "开始出图", "提示词内容", "拖入或点击添加图片", "检查更新", "设置向导"} {
+	for _, label := range []string{"图片生成", "自由生图", "批量洗图", "浏览器", "提示词", "设置", "开始出图", "提示词内容", "拖入或点击添加图片", "检查更新", "设置向导"} {
 		assertVisible(t, tt, label, 1280, 840)
 	}
 	if tt.HasText("更多设置") || tt.HasText("输出目录") || tt.HasText("每日上限") {
@@ -45,8 +45,9 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 		{"浏览器", "浏览器实例"},
 		{"提示词", "保存提示词"},
 		{"设置", "账号与并发"},
-		{"洗图", "开始洗图"},
-		{"生图", "开始出图"},
+		{"图片生成", "开始出图"},
+		{"批量洗图", "开始洗图"},
+		{"自由生图", "开始出图"},
 	} {
 		if err := tt.Click(tab.label); err != nil {
 			t.Fatal(err)
@@ -228,10 +229,9 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 	if err := tt.Click("开始出图"); err != nil {
 		t.Fatal(err)
 	}
-	if a.running || a.progText != "" || !a.wizardOn {
-		t.Fatal("没有可用账号时应打开设置向导，而不是报错")
+	if a.running || a.progText != "" || a.wizardOn {
+		t.Fatal("没有可用账号时应留在工作台")
 	}
-	a.wizardOn = false
 	row, err := st.AddBrowser("豆包", "工作", "")
 	if err != nil {
 		t.Fatal(err)
@@ -252,16 +252,58 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 	}
 }
 
+func TestMissingAccountDoesNotOpenWizardWhenStartingOrRetrying(t *testing.T) {
+	for _, page := range []int{pageHome, pageWash} {
+		t.Run(pageLabel(page), func(t *testing.T) {
+			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			failed := tasks.Task{Index: 1, Platform: "豆包", Status: tasks.StatusFailed, Prompt: "画一只猫"}
+			a := &App{
+				store: st, engine: tasks.NewEngine(st, nil, nil, ""), platformAuto: true,
+				tab: page, statePage: page, prompts: "画一只猫", queue: []tasks.Task{failed},
+			}
+			if page == pageWash {
+				a.sources = []sourceImage{{Path: "input.png"}}
+			}
+			tt := ui.NewTester(a.view, 1280, 900)
+			if !tt.HasText("还没有可用账号。先去设置登录，再开始出图。") {
+				t.Fatal("没有账号时应提示先登录")
+			}
+			a.startTasks()
+			if a.wizardOn || a.running {
+				t.Fatal("开始任务不应打开向导或开始运行")
+			}
+			a.retryTasks([]tasks.Task{failed})
+			if a.wizardOn || a.running || a.progText != "没有可用账号，请先登录后重试" || len(a.queue) != 1 || a.queue[0].Status != tasks.StatusFailed {
+				t.Fatalf("重试状态: wizard=%v running=%v note=%q queue=%+v", a.wizardOn, a.running, a.progText, a.queue)
+			}
+			tt.Frame()
+			if !tt.HasText(a.progText) {
+				t.Fatal("重试失败时应提示先登录")
+			}
+			if err := tt.Click("去设置"); err != nil {
+				t.Fatal(err)
+			}
+			if a.wizardOn || a.tab != pageBrowser {
+				t.Fatal("去设置应打开浏览器账号管理")
+			}
+		})
+	}
+}
+
 func TestAppendSourcesDeduplicatesAcrossImports(t *testing.T) {
 	a := &App{sources: []sourceImage{{Path: "first.png", Hash: "same"}}}
 	if added := a.appendSources([]sourceImage{
 		{Path: "duplicate.png", Hash: "same"},
 		{Path: "second.png", Hash: "new"},
 		{Path: "batch-duplicate.png", Hash: "new"},
-	}); added != 1 || len(a.sources) != 2 || a.sources[1].Path != "second.png" {
+	}, false); added != 1 || len(a.sources) != 2 || a.sources[1].Path != "second.png" {
 		t.Fatalf("unexpected imported sources: added=%d, sources=%+v", added, a.sources)
 	}
-	if added := a.appendSources([]sourceImage{{Path: "later-duplicate.png", Hash: "new"}}); added != 0 {
+	if added := a.appendSources([]sourceImage{{Path: "later-duplicate.png", Hash: "new"}}, false); added != 0 {
 		t.Fatalf("a later import added %d duplicate images", added)
 	}
 }
@@ -317,7 +359,7 @@ func TestWorkspaceNeedsUserVisible(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"待验证", verificationHint, FormatProgressTally(0, 0, 0, 0, 1, 0, a.liveParallel()), "开始出图", "出图进度", "重试"} {
+				for _, label := range []string{"待验证", verificationHint, FormatProgressTally(0, 0, 0, 0, 1, 0, 0, a.liveParallel()), "开始出图", "出图进度", "重试"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 				if tt.HasText("已结束") || tt.HasText("失败: 验证码需要手动处理") {
@@ -586,7 +628,7 @@ func TestTextBatchStartsFromPromptAlone(t *testing.T) {
 	if a.prompts != "画一只灯笼" || !a.canStart() || len(a.batchImages()) != 0 {
 		t.Fatalf("text batch prompt=%q canStart=%v images=%v", a.prompts, a.canStart(), a.batchImages())
 	}
-	a.appendSources([]sourceImage{{Path: "kept.png", Hash: "kept"}})
+	a.appendSources([]sourceImage{{Path: "kept.png", Hash: "kept"}}, false)
 	tt.Frame()
 	if !a.canStart() {
 		t.Fatal("adding a source blocked start")
@@ -735,10 +777,9 @@ func TestCamoufoxQianwenWithoutAccountCannotStart(t *testing.T) {
 	if err := tt.Click("开始出图"); err != nil {
 		t.Fatal(err)
 	}
-	if a.running || a.progText != "" || !a.wizardOn {
-		t.Fatal("没有可用账号时开始按钮没有打开设置向导")
+	if a.running || a.progText != "" || a.wizardOn {
+		t.Fatal("没有可用账号时开始按钮应留在工作台")
 	}
-	a.wizardOn = false
 	tt.Frame()
 	if err := tt.Click("浏览器"); err != nil {
 		t.Fatal(err)

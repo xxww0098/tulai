@@ -21,15 +21,20 @@ globalThis.TULAIPage = (function () {
     } catch (e) { return '' }
   }
 
-  if (typeof globalThis.addEventListener === 'function') globalThis.addEventListener('message', function (event) {
-    if (event.source !== globalThis || !event.data || event.data.type !== 'TULAI_DOUBAO_RAW_IMAGES' || !Array.isArray(event.data.pairs)) return
-    event.data.pairs.slice(0, 2048).forEach(function (item) {
+  function acceptRawImages(pairs) {
+    if (!Array.isArray(pairs)) return
+    pairs.slice(0, 2048).forEach(function (item) {
       const key = rawImageKey(item && item.source)
-      if (key && rawImageKey(item.raw)) {
+      if (key && key === rawImageKey(item.raw)) {
         if (rawURLs.size >= 2048 && !rawURLs.has(key)) rawURLs.delete(rawURLs.keys().next().value)
         rawURLs.set(key, item.raw)
       }
     })
+  }
+
+  if (typeof globalThis.addEventListener === 'function') globalThis.addEventListener('message', function (event) {
+    if (event.source !== globalThis || !event.data || event.data.type !== 'TULAI_DOUBAO_RAW_IMAGES') return
+    acceptRawImages(event.data.pairs)
   })
 
   function hostOf(doc) {
@@ -260,6 +265,7 @@ globalThis.TULAIPage = (function () {
   }
 
   function loginWall(doc) {
+    if (all(doc, '[data-testid="to_login_button"]').some(enabled)) return true
     if (composer(doc)) return false
     if (all(doc, 'input[type="password"]').some(visible)) return true
     return all(doc, 'button,[role="button"],a').some(function (el) {
@@ -799,11 +805,19 @@ globalThis.TULAIPage = (function () {
     // 豆包收下文件后会先挂 attachment-image-card。卡内 blob 预览经常长期 naturalWidth=0，
     // 不能干等解码；可见的附件卡本身就表示源图已进输入区。
     const cards = all(scope, '[data-testid="attachment-image-card"]')
-    if (cards.some(visible)) return true
+    if (cards.some(function (card) { return visible(card) && baseline && !baseline.has(card) })) return true
     const fresh = all(scope, 'img').filter(function (img) {
       return visible(img) && img.complete && img.naturalWidth > 0 && baseline && !baseline.has(img)
     })
     return fresh.length > 0
+  }
+
+  function attachmentNames(doc) {
+    const comp = composer(doc)
+    const scope = attachmentScope(comp, uploadEntry(doc, comp))
+    return all(scope, '[data-testid="attachment-image-card"]').filter(visible).map(function (card) {
+      return String(card.getAttribute('aria-label') || '')
+    })
   }
 
   function captchaEvidence(el) {
@@ -895,6 +909,8 @@ globalThis.TULAIPage = (function () {
     removeButtons,
     dismissClientPromo,
     mark,
+    acceptRawImages,
+    newAssistants,
     resultImages,
     revealResults,
     resultsBusy,
@@ -904,6 +920,7 @@ globalThis.TULAIPage = (function () {
     sendAccepted,
     assignFiles,
     freshAttachment,
+    attachmentNames,
     attachmentScope,
     detectCaptcha,
     captchaCrop,

@@ -10,6 +10,7 @@
   var baselineURLs = new Set();
   var baselineActions = new WeakSet();
   var baselineReplies = new WeakSet();
+  var doubaoTurn = null;
   var taskNumber = 0, pendingGeneration = 0;
   function generationURL(url) { return /sse|event-stream|chat|completion|stream|message|segment|generation/i.test(url); }
   function beginGeneration() {
@@ -554,7 +555,9 @@
   // 地址要再稳大约 3 秒才由调用方收下；这里只报告这一拍的判断。
   window.__tulaiLiveImages = function () {
     if (qwenPage()) return qwenLiveImages();
-    var replies = replyNodes();
+    var scoped = doubaoTurn && window.__tulaiWashPage;
+    if (scoped) window.__tulaiWashPage.revealResults(document, doubaoTurn);
+    var replies = scoped ? window.__tulaiWashPage.newAssistants(document, doubaoTurn) : replyNodes();
     var groups = [];
     var busy = composerStopping();
     var bar = false;
@@ -572,10 +575,12 @@
       });
     });
     // 角色选择器对不上时，回复外的 mdbox 实图也算。用户消息上的图仍然排除。
-    document.querySelectorAll('[data-testid="mdbox_image"] img').forEach(function (img) {
-      if (inUserBubble(img)) return;
-      considerImage(groups, img);
-    });
+    if (!scoped) {
+      document.querySelectorAll('[data-testid="mdbox_image"] img').forEach(function (img) {
+        if (inUserBubble(img)) return;
+        considerImage(groups, img);
+      });
+    }
     var images = [];
     var seen = {};
     groups.forEach(function (group) {
@@ -705,6 +710,7 @@
 
   // ---- 标记当前任务起点（MarkJs） ----
   window.__tulaiMarkTask = function () {
+    doubaoTurn = null;
     taskNumber++;
     if (window.__tulaiDoubaoRaw) window.__tulaiDoubaoRaw.clear();
     pendingGeneration = 0;
@@ -726,6 +732,12 @@
       });
       checkImg(img);
     });
+  };
+  window.__tulaiMarkDoubaoTurn = function (prompt) {
+    var page = window.__tulaiWashPage;
+    if (!page || !page.mark || !page.newAssistants || !page.revealResults || !String(prompt || '').trim()) return false;
+    doubaoTurn = page.mark(document, prompt);
+    return !!doubaoTurn;
   };
   window.__tulaiResultsSince = function () {
     return results.filter(function (r) { return r.task === taskNumber && !ignoredURLs.has(r.url); });

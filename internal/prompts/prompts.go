@@ -1,28 +1,22 @@
 // Package prompts 是桌面端的提示词库：内置模板和用户另存的副本。
-// 内置正文只去掉开头的 BOM 和空白，其余原样保留，方便恢复。
 package prompts
 
 import (
-	"embed"
 	"encoding/json"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
-
-//go:embed builtin/*.txt
-var builtinFS embed.FS
 
 const (
 	// LabelCustom 是不套模板、按行拆分的那一项。
 	LabelCustom       = "每行一条"
-	IDOil             = "oil"
-	IDArt             = "art"
-	IDCircle          = "circle"
 	IDWash            = "wash"
 	KindGen           = "gen"
 	KindWash          = "wash"
-	DefaultWashPrompt = "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变"
+	DefaultWashPrompt = `请分别参考每张输入图重新绘制，并为每张原图生成一张独立图片。
+保留原图的主体、主题、构图、整体风格、主要色彩和清晰可辨的文字与标志，不改变关键特征；未指定输出比例时参考原图比例。
+在保留主要内容的前提下，适度调整线条、纹理、光影和局部细节，使画面自然清晰，与原图有适当区别。
+不要新增无关元素、文字或水印，不要猜测无法辨认的文字；避免主体变形、重复、模糊或拼图。直接输出图片，不要输出文字说明。`
 )
 
 // Template 是一条可选提示词。Builtin 为真时正文不可改写，编辑后应另存。
@@ -44,26 +38,9 @@ type UserPrompt struct {
 	From  string `json:"from,omitempty"`
 }
 
-type builtinSpec struct {
-	id, label, file string
-}
-
-var builtinOrder = []builtinSpec{
-	{IDOil, "数字油画", "builtin/digital-oil.txt"},
-	{IDArt, "数字画", "builtin/digital-art.txt"},
-	{IDCircle, "圆形印花", "builtin/circle-print.txt"},
-}
-
 // Builtins 按界面顺序返回内置模板。
 func Builtins() []Template {
-	out := make([]Template, 0, len(builtinOrder)+1)
-	for _, spec := range builtinOrder {
-		out = append(out, Template{
-			ID: spec.id, Label: spec.label, Body: mustBuiltin(spec.file), Builtin: true,
-		})
-	}
-	out = append(out, Template{ID: IDWash, Label: "默认洗图", Body: DefaultWashPrompt, Kind: KindWash, Builtin: true})
-	return out
+	return []Template{{ID: IDWash, Label: "默认洗图", Body: DefaultWashPrompt, Kind: KindWash, Builtin: true}}
 }
 
 // Builtin 按 id 取内置模板。
@@ -80,20 +57,6 @@ func Builtin(id string) (Template, bool) {
 func IsBuiltin(id string) bool {
 	_, ok := Builtin(id)
 	return ok
-}
-
-func mustBuiltin(name string) string {
-	raw, err := builtinFS.ReadFile(name)
-	if err != nil {
-		panic(err)
-	}
-	return normalizeBuiltin(string(raw))
-}
-
-// normalizeBuiltin 只去掉开头的 BOM 和空白。
-func normalizeBuiltin(s string) string {
-	s = strings.TrimPrefix(s, "\uFEFF")
-	return strings.TrimLeftFunc(s, unicode.IsSpace)
 }
 
 // ParseUser 解析配置库里的用户提示词。坏数据当成没有。

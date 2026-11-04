@@ -38,23 +38,26 @@ type Progress struct {
 
 // Engine 批量执行引擎。
 type Engine struct {
-	mu          sync.Mutex
-	store       *store.Store
-	browsers    *browser.Manager
-	solver      captcha.Solver
-	opts        Options
-	view        *QueueView
-	cancel      context.CancelFunc
-	running     bool
-	sessions    map[string]*cdp.Session // key: backend:platform:browserID
-	runBrowsers map[int64]struct{}
-	seenHash    map[string]bool // 结果 SHA256 去重
-	srcHashes   map[string]bool // 源图哈希（回声过滤）
-	dataRoot    string
-	active      map[int64]bool
-	manual      map[int64]bool
-	dlFetch     *download.Fetcher // 结果图改用直接下载时共用：站点并发和限速按这一次运行算
+	mu            sync.Mutex
+	store         *store.Store
+	browsers      *browser.Manager
+	solver        captcha.Solver
+	opts          Options
+	view          *QueueView
+	cancel        context.CancelFunc
+	running       bool
+	sessions      map[string]*cdp.Session // key: backend:platform:browserID
+	washChats     map[*cdp.Session]washChat
+	extWashChats  map[int64]extensionWashChat
+	firefoxAddons map[int64]string
+	runBrowsers   map[int64]struct{}
+	srcHashes     map[string]string // 源图路径 → SHA256（当前任务的回声过滤）
+	dataRoot      string
+	active        map[int64]bool
+	manual        map[int64]bool
+	dlFetch       *download.Fetcher // 结果图改用直接下载时共用：站点并发和限速按这一次运行算
 
+	extStartMu  sync.Mutex
 	extMu       sync.Mutex
 	extSrv      *extbridge.Server
 	extBatch    string
@@ -95,7 +98,6 @@ func NewEngine(st *store.Store, bm *browser.Manager, solver captcha.Solver, data
 		browsers: bm,
 		solver:   solver,
 		sessions: map[string]*cdp.Session{},
-		seenHash: map[string]bool{},
 		dataRoot: dataRoot,
 	}
 }
@@ -154,6 +156,14 @@ func (e *Engine) Retry(ctx context.Context, opts Options, failed []Task, onTask 
 }
 
 func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
+	for _, task := range failed {
+		if task.Platform == "豆包" {
+			if err := opts.OutputSize.Validate(); err != nil {
+				return fmt.Errorf("豆包输出尺寸: %w", err)
+			}
+			break
+		}
+	}
 	e.mu.Lock()
 	if err := e.claimRun(); err != nil {
 		e.mu.Unlock()
@@ -185,6 +195,14 @@ func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask 
 }
 
 func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
+	for _, platform := range opts.Platforms {
+		if platform == "豆包" {
+			if err := opts.OutputSize.Validate(); err != nil {
+				return fmt.Errorf("豆包输出尺寸: %w", err)
+			}
+			break
+		}
+	}
 	e.mu.Lock()
 	if err := e.claimRun(); err != nil {
 		e.mu.Unlock()
@@ -224,15 +242,17 @@ func (e *Engine) claimRun() error {
 // driveLocked 执行已经建好的队列。调用时持有 e.mu。
 func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	e.opts = opts
+	e.washChats = nil
+	e.extWashChats = nil
 	e.dlFetch = newResultFetcher(opts)
 	e.agyNoted = false
 	e.noAccountNoted = false
 	e.view = NewQueueView(queue)
 	// 预计算源图哈希：结果若与源图字节相同（平台回显原图）则跳过
-	e.srcHashes = map[string]bool{}
+	e.srcHashes = map[string]string{}
 	for _, img := range opts.Images {
 		if data, err := os.ReadFile(img); err == nil {
-			e.srcHashes[images.SHA256(data)] = true
+			e.srcHashes[img] = images.SHA256(data)
 		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -252,6 +272,8 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		logging.Event(logging.Line{Stage: "queue", Msg: "任务结束"})
 		e.mu.Lock()
 		e.running = false
+		e.washChats = nil
+		e.extWashChats = nil
 		e.cancel = nil
 		if e.wake == nudge {
 			e.wake = nil
@@ -326,6 +348,10 @@ func (e *Engine) slotKey(id int64) int64 {
 
 // pickIdleAccount 优先选择剩余日额度较少的空闲账号；相同时保留原分配或最近最少使用的账号。
 func (e *Engine) pickIdleAccount(platform string, preferred, avoid int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
+	return e.pickIdleAccountExcept(platform, preferred, avoid, busy, readyAt, now, nil, false)
+}
+
+func (e *Engine) pickIdleAccountExcept(platform string, preferred, avoid int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time, excluded map[int64]bool, preferFirst bool) (int64, bool) {
 	if e == nil || e.store == nil {
 		return 0, false
 	}
@@ -333,12 +359,15 @@ func (e *Engine) pickIdleAccount(platform string, preferred, avoid int64, busy m
 	var best *store.Browser
 	bestUsed := 0
 	for _, b := range e.accountsFor(platform) {
-		if b.ID == avoid || !openAccount(b, now, e.capNow()) {
+		if b.ID == avoid || excluded[b.ID] || !openAccount(b, now, e.capNow()) {
 			continue
 		}
 		slot := accountSlot(all, b.ID)
 		if busy[slot] || now.Before(readyAt[slot]) {
 			continue
+		}
+		if preferFirst && b.ID == preferred {
+			return b.ID, true
 		}
 		used := 0
 		if platform != agy.Platform {
@@ -413,6 +442,16 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		if err == nil {
 			t.Status = StatusSuccess
 			t.Error = ""
+			return t
+		}
+		if len(t.batch) > 1 && (t.submitted || errors.Is(err, strategy.ErrSubmissionUncertain)) {
+			if kind := classifyFault(err); kind == faultQuota || kind == faultRate {
+				id := t.ranOnOr(t.BrowserID)
+				e.noteFault(id, kind, err, time.Now())
+				e.announceAccount(id, kind)
+			}
+			t.Status = StatusFailed
+			t.Error = "本批已发送或发送状态未确认，请检查豆包结果后再重试：" + err.Error()
 			return t
 		}
 		if errors.Is(err, strategy.ErrPlatformReply) {
@@ -581,6 +620,9 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 			}
 		}
 	}()
+	if e.opts.Wash && t.Platform == "豆包" && e.opts.WaitResult && !sess.IsEgo() {
+		defer func() { e.finishWashChat(sess, attemptErr == nil && t.submitted && ctx.Err() == nil) }()
+	}
 	// 发送前等待（等待页面/登录就绪）
 	if !t.submitted && e.opts.WaitBeforeSend > 0 {
 		select {
@@ -654,7 +696,7 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	if t.submitted {
 		return nil
 	}
-	// 复用的标签还停在上一轮对话里。每单先开新对话，再记基准图。
+	reuse := e.reuseWashChat(t, sess)
 	// 同一账号只留这一张标签，前面任务漏关的豆包页在这里关掉。
 	if sess != nil && strat != nil {
 		sess.KeepOnePage(strat.HomeURL())
@@ -666,8 +708,13 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 			logging.Log.Debugf("#%d %s「%s」打开新对话页 %s", t.Index, t.Platform, e.accountName(t.BrowserID), err.Error())
 		}
 	}
-	if err := strategy.FreshChat(sess); err != nil {
-		return fmt.Errorf("新对话: %w", err)
+	if reuse {
+		sess.ResetChat()
+		logging.Log.Debugf("#%d 复用已完成的豆包洗图对话", t.Index)
+	} else {
+		if err := strategy.FreshChat(sess); err != nil {
+			return fmt.Errorf("新对话: %w", err)
+		}
 	}
 	// 清理上个任务残留
 	if err := strat.CleanComposer(sess); err != nil {
@@ -684,16 +731,24 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	if err := strat.MarkTask(sess); err != nil {
 		return err
 	}
+	prompt := e.opts.OutputSize.prompt(t.Platform, t.Prompt)
+	if reuse {
+		if err := strategy.MarkDoubaoTurn(sess, prompt); err != nil {
+			return err
+		}
+	}
 	// 发送提示词
-	if err := strat.SendPrompt(sess, t.Prompt); err != nil {
+	if err := strat.SendPrompt(sess, prompt); err != nil {
 		if adoptSentChat(t, sess) {
 			t.submitted = true
+			t.sentAt = time.Now()
 			return nil
 		}
 		return fmt.Errorf("发送: %w", err)
 	}
 	adoptSentChat(t, sess)
 	t.submitted = true
+	t.sentAt = time.Now()
 	e.traceTask(t, "submit", fmt.Sprintf("#%d %s 已提交", t.Index, e.accountName(t.BrowserID)), 0, 0, nil)
 	return nil
 }
@@ -824,7 +879,7 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 // browsersOfPlatforms 返回每个平台可用的浏览器。
 // browserBackend=extension 时优先用已连上的扩展账号。还没有会话时用占位 ID，跟以前的单连接一样。
 func (e *Engine) browsersOfPlatforms() map[string][]int64 {
-	if e.useExtension("千问") {
+	if e.useExtension("千问") && !e.useBoundExtension("千问") {
 		browsersOf := map[string][]int64{}
 		if e.store != nil {
 			for _, b := range e.store.Browsers() {
@@ -973,6 +1028,13 @@ func (e *Engine) closeRunBrowsers() {
 		}()
 	}
 	wg.Wait()
+	e.mu.Lock()
+	addons := e.firefoxAddons
+	e.firefoxAddons = nil
+	e.mu.Unlock()
+	for _, dir := range addons {
+		_ = os.RemoveAll(dir)
+	}
 }
 
 type failedSession interface {
@@ -1310,6 +1372,17 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			t.matchedSavedResult = true
 			continue
 		}
+		sourceEcho := false
+		for _, source := range t.Images {
+			if e.srcHashes[source] == hash {
+				sourceEcho = true
+				break
+			}
+		}
+		if sourceEcho {
+			logging.Log.Debugf("候选图 #%d 与本任务的源图相同", i+1)
+			continue
+		}
 		if t.Platform == "豆包" && !usingRaw && !r.WatermarkRemoved && watermarkStaticImage(data, format) {
 			repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -1327,14 +1400,6 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 				logging.Log.Warning("#%d 图片 #%d 未匹配到已支持的水印，保留原图", t.Index, i+1)
 			}
 		}
-		e.mu.Lock()
-		dup := e.seenHash[hash] || e.srcHashes[hash] // 全局去重 + 源图回声过滤
-		e.seenHash[hash] = true
-		e.mu.Unlock()
-		if dup {
-			logging.Log.Debugf("候选图 #%d 与源图或已保存结果重复", i+1)
-			continue
-		}
 		ext := "." + format
 		if format == "jpeg" {
 			ext = ".jpg"
@@ -1347,12 +1412,25 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			}
 			data, ext = png, ".png"
 		}
+		if t.Platform == "豆包" {
+			adjusted, sizeErr := e.opts.OutputSize.process(ctx, data, cfg)
+			if sizeErr != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return saved, ctxErr
+				}
+				backup := e.opts
+				backup.OutputPath = filepath.Join(backup.OutputPath, "待核对")
+				original, saveErr := writeNumberedFile(ctx, backup.ResultDir(time.Now()), backup.resultStem(t.Prompt, resultSource(t)), ext, data)
+				if saveErr != nil {
+					return saved, errors.Join(fmt.Errorf("调整输出尺寸失败: %w", sizeErr), fmt.Errorf("保留未调整尺寸的图片失败: %w", saveErr))
+				}
+				return saved, fmt.Errorf("调整输出尺寸失败，未调整尺寸的图片保存在 %s: %w", original, sizeErr)
+			}
+			data = adjusted
+		}
 		dir := e.opts.ResultDir(time.Now())
 		path, err := writeNumberedFile(ctx, dir, e.opts.resultStem(t.Prompt, resultSource(t)), ext, data)
 		if err != nil {
-			e.mu.Lock()
-			delete(e.seenHash, hash)
-			e.mu.Unlock()
 			return saved, err
 		}
 		saved = append(saved, path)

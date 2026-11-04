@@ -38,6 +38,7 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 		})
 	}
 	a.previewModal(c)
+	a.promptPartsModal(c)
 }
 
 // workSide 输入在上，内容多时自己滚动；开始卡片始终露出，运行日志撑满左栏剩下的高度。
@@ -81,6 +82,9 @@ func (a *App) promptFocus(c *ui.Context) {
 	}
 	card.Children(func() {
 		n := len(prompts.TaskPrompts(a.promptPick, a.prompts))
+		if n == 0 && a.hasTaskPrompt() {
+			n = 1
+		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "提示词").FontSize(tok.title).Bold().Shrink(0)
 			hint := "每行一条；导入段落会合并"
@@ -107,6 +111,7 @@ func (a *App) promptFocus(c *ui.Context) {
 			if a.promptPick != "" {
 				a.quietButton(c, "按行发送").OnClick(func() { a.useLinePrompts() })
 			}
+			a.promptPartsButton(c)
 		})
 	})
 }
@@ -213,14 +218,22 @@ func (a *App) runCard(c *ui.Context) {
 	plan := a.workbenchPlan()
 	card := a.stepCard(c, "step-run", stepPending).Gap(4)
 	card.Children(func() {
-		if !a.running && (plan.Action == StartWizard || a.loggedOutCallout() || a.noAccountCallout()) {
+		if !a.running && (a.loggedOutCallout() || a.noAccountCallout()) {
 			a.accountCallout(c)
 		}
 		target := "本次发送至：" + a.stagePlatform()
 		if a.running {
 			target = "当前查看：" + a.stagePlatform()
 		}
-		ui.Text(c, target).FontSize(tok.caption).Bold().TextColor(tok.accent).SingleLine().Tooltip(target)
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, target).FontSize(tok.caption).Bold().TextColor(tok.accent).Grow(1).MinWidth(0).SingleLine().Tooltip(target)
+			if a.stagePlatform() == "豆包" {
+				a.outputSizeSelect(c)
+			}
+		})
+		if a.stagePlatform() == "豆包" {
+			a.outputSizeFields(c)
+		}
 		board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Clip().Children(func() {

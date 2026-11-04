@@ -18,7 +18,7 @@ func TestOpenAndDefaults(t *testing.T) {
 	if n := s.GetInt("concurrency"); n != 0 {
 		t.Errorf("默认并发: %d，0 表示自动", n)
 	}
-	if got := s.Get("browserBackend"); got != "camoufox" {
+	if got := s.Get("browserBackend"); got != "camoufox_extension" {
 		t.Errorf("默认控制面: %s", got)
 	}
 	if got := s.Get("extBridgePort"); got != "18765" {

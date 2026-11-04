@@ -275,8 +275,15 @@ func (a *App) workspacePromptSelect(c *ui.Context) {
 func (a *App) washPromptSelect(c *ui.Context) {
 	options := workspacePromptOptions(prompts.KindWash, a.userPrompts)
 	labels := promptLabels(options)
-	if !containsStr(labels, a.washPromptChoice) {
+	id := promptOptionID(a.washPromptChoice, options)
+	if body, ok := prompts.Body(id, a.userPrompts); !ok || body != a.prompts {
 		a.washPromptChoice = choosePromptLabel
+		for _, option := range options {
+			if option.ID != "" && option.Body == a.prompts {
+				a.washPromptChoice = option.Label
+				break
+			}
+		}
 	}
 	motionSelect(c.Key("wash-prompt-template"), &a.washPromptChoice, labels).Grow(1).MinWidth(0).
 		Label("选择洗图提示词").Disabled(a.running).OnChange(func() {
@@ -284,7 +291,6 @@ func (a *App) washPromptSelect(c *ui.Context) {
 		if body, ok := prompts.Body(id, a.userPrompts); ok {
 			a.prompts = body
 		}
-		a.washPromptChoice = choosePromptLabel
 	})
 }
 

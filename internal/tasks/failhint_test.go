@@ -32,6 +32,9 @@ func TestClassifyFailure(t *testing.T) {
 		{StatusFailed, "扩展账号未连接", FailNetwork, "重试"},
 		{StatusFailed, "上传: 连接被拒绝", FailUpload, "换图"},
 		{StatusFailed, "E_UPLOAD_FAIL: 源图是空文件", FailUpload, "换图"},
+		{StatusFailed, "出图超时；2 张未匹配结果保存在 /tmp/待核对", FailUnmatched, "查看待核对"},
+		{StatusFailed, "来源不明；2 张未匹配结果保存在 /tmp/已停止/待核对", FailUnmatched, "查看待核对"},
+		{StatusFailed, "豆包未提供完整的源图关联，未按源图保存", FailUnknown, "重试"},
 		{StatusFailed, "something broke", FailUnknown, "重试"},
 		{StatusFailed, "", FailUnknown, "重试"},
 	}
@@ -57,6 +60,8 @@ func TestClassifyFailureNamesTheCategory(t *testing.T) {
 		{StatusSkipped, "", "已停止", FailUnknown},
 		{StatusFailed, "账号额度已用尽", "账号额度已用完", FailQuota},
 		{StatusFailed, "登录已失效", "登录失效了，请重新登录", FailAuth},
+		{StatusFailed, "结果缺少来源；2 张未匹配结果保存在 /tmp/待核对", "结果已放入待核对，请检查", FailUnmatched},
+		{StatusFailed, "未按源图保存", "无法确认图片对应关系，请检查豆包页面", FailUnknown},
 	}
 	for _, tc := range cases {
 		got := ClassifyFailure(tc.status, tc.raw)

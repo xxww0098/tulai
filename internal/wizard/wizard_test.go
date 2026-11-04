@@ -27,55 +27,47 @@ func TestPlanBrowserUsesCamoufoxOnly(t *testing.T) {
 	}
 }
 
-func TestShouldShowSkipsHealthyAccounts(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	ready := Account{Platform: "豆包", Name: "账号1", LoggedIn: true, Health: "ready"}
-	if ShouldShow("", []Account{ready}, now) {
-		t.Fatal("a logged-in account should skip the wizard before the flag is written")
+func TestShouldShowOnlyForNewUsers(t *testing.T) {
+	cases := []struct {
+		name     string
+		complete string
+		accounts []Account
+		want     bool
+	}{
+		{name: "new", want: true},
+		{name: "blank platform", accounts: []Account{{Name: "账号1", LoggedIn: true}}, want: true},
+		{name: "completed with no accounts", complete: CompleteYes},
+		{name: "existing logged in", accounts: []Account{{Platform: "豆包", LoggedIn: true}}},
+		{name: "existing logged out", accounts: []Account{{Platform: "豆包"}}},
+		{name: "existing exhausted", accounts: []Account{{Platform: "千问", LoggedIn: true, Health: "exhausted"}}},
+		{name: "existing extension", accounts: []Account{{Platform: "豆包", Extension: true}}},
 	}
-	if ShouldShow(CompleteYes, []Account{ready}, now) {
-		t.Fatal("completed wizard with a healthy account should stay closed")
-	}
-	for _, platform := range []string{"豆包", "千问"} {
-		connected := Account{Platform: platform, Name: "扩展账号abcd", Extension: true, Health: "ready"}
-		if !ShouldShow("", []Account{connected}, now) {
-			t.Fatalf("%s extension that only connected should still show the wizard", platform)
-		}
-		signed := connected
-		signed.LoggedIn = true
-		if ShouldShow("", []Account{signed}, now) {
-			t.Fatalf("logged-in %s extension should skip the wizard", platform)
-		}
-	}
-	cooling := Account{Platform: "豆包", LoggedIn: true, Health: "cooling", CoolUntil: now.Unix() + 60}
-	if ShouldShow(CompleteYes, []Account{cooling}, now) {
-		t.Fatal("temporary cooling should not reopen the wizard")
-	}
-	recovered := Account{Platform: "豆包", LoggedIn: true, Health: "exhausted", CoolUntil: now.Unix() - 5}
-	if ShouldShow("", []Account{recovered}, now) {
-		t.Fatal("an account whose quota window already passed is usable again")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ShouldShow(tc.complete, tc.accounts); got != tc.want {
+				t.Fatalf("ShouldShow() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestShouldShowWhenNothingUsable(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	if !ShouldShow("", nil, now) {
-		t.Fatal("first launch with no accounts should show the wizard")
-	}
-	if !ShouldShow(CompleteYes, nil, now) {
-		t.Fatal("a finished wizard with no remaining accounts should show again")
-	}
-	shell := Account{Platform: "豆包", Name: "账号1", Health: "ready"}
-	if !ShouldShow(CompleteYes, []Account{shell}, now) {
-		t.Fatal("an added profile that was never logged in is not usable")
-	}
-	signedOut := Account{Platform: "豆包", LoggedIn: true, Health: "exhausted", CoolUntil: 0}
-	if !ShouldShow(CompleteYes, []Account{signedOut}, now) {
-		t.Fatal("a login that will not recover on its own should bring the wizard back")
-	}
-	blank := Account{Name: "账号1", LoggedIn: true, Health: "ready"}
-	if !ShouldShow("", []Account{blank}, now) {
-		t.Fatal("a row without a platform does not count")
+func TestKeepsClosedStillRequiresARecoverableLogin(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account Account
+		want    bool
+	}{
+		{"ready", Account{Platform: "豆包", LoggedIn: true, Health: "ready"}, true},
+		{"cooling", Account{Platform: "豆包", LoggedIn: true, Health: "cooling", CoolUntil: 1}, true},
+		{"exhausted", Account{Platform: "豆包", LoggedIn: true, Health: "exhausted"}, false},
+		{"signed out", Account{Platform: "豆包", Health: "ready"}, false},
+		{"no platform", Account{LoggedIn: true, Health: "ready"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := KeepsClosed(tc.account, time.Time{}); got != tc.want {
+				t.Fatalf("KeepsClosed() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

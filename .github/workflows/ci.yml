@@ -48,6 +48,7 @@ jobs:
       - name: Extension tests
         run: |
           node extension/content_test.js
+          node extension/download_test.js
           node extension/network_test.js
           node extension/qianwen/page_test.js
           node extension/doubao/page_test.js

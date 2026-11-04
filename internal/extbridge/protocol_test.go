@@ -17,7 +17,7 @@ func TestVocabularyMatchesSpec(t *testing.T) {
 	if strings.Join(Types(), ",") != "cmd,ack,event,ping,pong,hello,error" {
 		t.Fatalf("types: %s", strings.Join(Types(), ","))
 	}
-	if strings.Join(Commands(), ",") != "ping,helloAck,upload,setPrompt,send,waitResult,download,captchaAssist,cancel,status,reload" {
+	if strings.Join(Commands(), ",") != "ping,helloAck,upload,setPrompt,send,waitResult,download,captchaAssist,washChat,cancel,status,reload" {
 		t.Fatalf("commands: %s", strings.Join(Commands(), ","))
 	}
 	wantCodes := "E_NOT_CONNECTED,E_NO_TAB,E_NOT_LOGGED_IN,E_SELECTOR_MISS,E_UPLOAD_FAIL,E_SEND_UNCERTAIN,E_TIMEOUT,E_CAPTCHA_HUMAN,E_CAPTCHA_SOLVE_FAIL,E_DOWNLOAD_FAIL,E_SW_SLEEP,E_PROTOCOL,E_AUTH,E_CANCELLED,E_QUOTA,E_RATE_LIMIT,E_MODERATION"
@@ -224,6 +224,8 @@ func TestExtensionScriptsParse(t *testing.T) {
 		"extension/content.js",
 		"extension/background.js",
 		"extension/network.js",
+		"extension/firefox/shim.js",
+		"extension/firefox/settings.js",
 		"extension/protocol.js",
 		"extension/options.js",
 		"extension/doubao/page.js",
@@ -258,6 +260,14 @@ func TestExtensionNetworkObservation(t *testing.T) {
 	out, err := exec.Command("node", filepath.Join(root, "extension", "network_test.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("network_test.js: %v\n%s", err, out)
+	}
+}
+
+func TestFirefoxExtensionNetworkObservation(t *testing.T) {
+	root := repoRoot(t)
+	out, err := exec.Command("node", filepath.Join(root, "extension", "firefox", "network_test.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("firefox network_test.js: %v\n%s", err, out)
 	}
 }
 

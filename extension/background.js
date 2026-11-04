@@ -1,4 +1,4 @@
-importScripts('protocol.js', 'bridge_logic.js', 'pair.js', 'network.js')
+if (typeof importScripts === 'function') importScripts('protocol.js', 'bridge_logic.js', 'pair.js', 'network.js')
 
 const TULAI = globalThis.TULAI
 const ALARM = 'tulai-bridge-reconnect'
@@ -74,6 +74,7 @@ const links = {
   doubao: newLink('doubao'),
 }
 const tabs = new Map()
+const taskTabs = new Map()
 
 function storageGet() {
   return chrome.storage.local.get({
@@ -321,6 +322,7 @@ async function connect(link) {
 
 async function autoPair() {
   const cfg = await storageGet()
+  if (globalThis.TULAI_FIREFOX_CONFIG) return Object.assign(cfg, globalThis.TULAI_FIREFOX_CONFIG, { pairMode: 'manual' })
   const ident = await TULAIPair.identity(chrome.storage.local)
   cfg.profileId = ident.profileId
   if (cfg.pairMode === 'manual') return cfg
@@ -419,10 +421,23 @@ async function dispatchCommand(link, env) {
     sendToHost(link, TULAI.fail(env, TULAI.errors.E_PROTOCOL, '未知命令 ' + name))
     return
   }
-  const tab = await pickTab(link.platform)
+  const taskKey = env.taskId ? link.platform + ':' + env.taskId : ''
+  let tab = null
+  const pinned = taskKey && taskTabs.get(taskKey)
+  if (pinned != null) {
+    try {
+      const candidate = await chrome.tabs.get(pinned)
+      if (siteOf(candidate.url || '') === link.platform) tab = candidate
+    } catch (err) {}
+  }
+  if (!tab) tab = await pickTab(link.platform)
   if (!tab) {
     sendToHost(link, TULAI.fail(env, TULAI.errors.E_NO_TAB, SITES[link.platform].noTab))
     return
+  }
+  if (name === TULAI.commands.washChat && taskKey) {
+    if (taskTabs.size >= 256 && !taskTabs.has(taskKey)) taskTabs.delete(taskTabs.keys().next().value)
+    taskTabs.set(taskKey, tab.id)
   }
   // 豆包在后台标签时，合成 pointer/click 常常点了也不发送（E_SEND_UNCERTAIN）。
   // 下发页内命令前先把标签页拉到前台。
@@ -430,6 +445,15 @@ async function dispatchCommand(link, env) {
   markTab(tab.id, 'busy', env.taskId || '', tab.url || '')
   let keepNetwork = false
   try {
+    if (name === TULAI.commands.washChat && env.payload.mode === 'fresh') {
+      if (link.platform !== 'doubao') {
+        sendToHost(link, TULAI.fail(env, TULAI.errors.E_PROTOCOL, '洗图会话仅用于豆包'))
+        return
+      }
+      await openFreshDoubao(tab.id)
+      sendToHost(link, TULAI.ack(env, { name, ok: true, tabId: tab.id }))
+      return
+    }
     if (name === TULAI.commands.send) {
       await TULAINetwork.start(tab.id, link.platform, env.taskId || '', (observation) => {
         const event = TULAI.envelope('event', {
@@ -441,6 +465,8 @@ async function dispatchCommand(link, env) {
         if (observation.kind) {
           chrome.tabs.sendMessage(tab.id, { type: 'NETWORK_FAULT', taskId: env.taskId || '', kind: observation.kind }).catch(() => {})
         }
+      }, (pairs) => {
+        chrome.tabs.sendMessage(tab.id, { type: 'NETWORK_RAW_IMAGES', taskId: env.taskId || '', pairs }).catch(() => {})
       })
     } else if (name === TULAI.commands.waitResult) {
       TULAINetwork.extend(tab.id, env.taskId || '', env.payload && env.payload.timeoutMs)
@@ -453,6 +479,7 @@ async function dispatchCommand(link, env) {
       sendToHost(link, TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '内容脚本没有返回结果'))
       return
     }
+    if ((name === TULAI.commands.washChat || name === TULAI.commands.waitResult) && response.payload) response.payload.tabId = tab.id
     keepNetwork = name === TULAI.commands.send && !!(response.payload && response.payload.ok)
     sendToHost(link, response)
   } catch (err) {
@@ -461,8 +488,29 @@ async function dispatchCommand(link, env) {
     if (!keepNetwork && (name === TULAI.commands.send || name === TULAI.commands.waitResult || name === TULAI.commands.cancel)) {
       await TULAINetwork.stop(tab.id, env.taskId || '')
     }
+    if (taskKey && (name === TULAI.commands.waitResult || name === TULAI.commands.cancel || (name === TULAI.commands.send && !keepNetwork))) taskTabs.delete(taskKey)
     markTab(tab.id, 'idle', '', tab.url || '')
   }
+}
+
+function openFreshDoubao(tabId) {
+  return new Promise((resolve, reject) => {
+    let started = false
+    const timer = setTimeout(() => finish(new Error('等待豆包新对话导航超时')), 35000)
+    function finish(err) {
+      clearTimeout(timer)
+      chrome.tabs.onUpdated.removeListener(updated)
+      if (err) reject(err)
+      else resolve()
+    }
+    function updated(id, change, tab) {
+      if (id !== tabId) return
+      if (change.status === 'loading') started = true
+      if (started && change.status === 'complete' && isDoubaoURL(tab.url || '')) finish()
+    }
+    chrome.tabs.onUpdated.addListener(updated)
+    chrome.tabs.update(tabId, { url: 'https://www.doubao.com/chat/' }).catch(finish)
+  })
 }
 
 function markTab(tabId, state, taskId, url) {

@@ -204,7 +204,7 @@ func render(ctx context.Context, source []byte, options Options) (*image.NRGBA, 
 				th = height
 			}
 			if n.ResizeMode == "contain" {
-				img = containImage(img, tw, th)
+				img = containImage(img, tw, th, n.ResizeUpscale)
 			} else {
 				img = resizeImage(img, tw, th)
 			}

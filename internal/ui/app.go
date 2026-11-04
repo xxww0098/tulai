@@ -82,43 +82,48 @@ type App struct {
 	camoufoxReady    bool
 
 	// 任务设置（与 settings 表一一对应）
-	platDoubao      bool
-	platQianwen     bool
-	platAntigravity bool
-	agyBin          string
-	agyHomeRoot     string
-	agyModel        string
-	agyTimeoutMin   float64
-	agySaved        string
-	agyLogin        *agyLoginState
-	agyChooser      *agyChooserState
-	agyUsageMu      sync.Mutex
-	agyUsage        map[int64]agyUsageSlot
-	agyUsageForce   map[int64]bool
-	agyUsageStop    context.CancelFunc
-	agyUsageWake    chan struct{}
-	agyUsageSync    bool
-	agyUsageFetch   func(context.Context, string, string) (agy.GeminiUsage, error)
-	agyUsageBusy    func(int64) bool
-	sendStrategy    string
-	concurrencyAuto bool
-	concurrency     float64 // 手动上限。自动时仍记住这个数，关掉自动后接着用
-	retryCount      float64
-	sendWait        float64
-	dailyCap        float64
-	riskyWords      string
-	pickFile        func() (string, error)
-	waitBefore      float64
-	waitResult      bool
-	waitResultS     float64
-	taskSwitch      bool
-	switchCount     float64
-	startBrowserIdx float64
-	outputPath      string
-	removeWatermark bool
-	downloadConc    float64
-	downloadRetries float64
-	downloadRateKB  float64
+	platDoubao       bool
+	platQianwen      bool
+	platAntigravity  bool
+	agyBin           string
+	agyHomeRoot      string
+	agyModel         string
+	agyTimeoutMin    float64
+	agySaved         string
+	agyLogin         *agyLoginState
+	agyChooser       *agyChooserState
+	agyUsageMu       sync.Mutex
+	agyUsage         map[int64]agyUsageSlot
+	agyUsageForce    map[int64]bool
+	agyUsageStop     context.CancelFunc
+	agyUsageWake     chan struct{}
+	agyUsageSync     bool
+	agyUsageFetch    func(context.Context, string, string) (agy.GeminiUsage, error)
+	agyUsageBusy     func(int64) bool
+	sendStrategy     string
+	concurrencyAuto  bool
+	retryCount       float64
+	sendWait         float64
+	dailyCap         float64
+	riskyWords       string
+	pickFile         func() (string, error)
+	waitBefore       float64
+	waitResult       bool
+	waitResultS      float64
+	taskSwitch       bool
+	switchCount      float64
+	startBrowserIdx  float64
+	outputPath       string
+	outputSizeMode   string
+	outputSizePreset string
+	outputRatio      string
+	outputWidth      string
+	outputHeight     string
+	outputCrop       bool
+	removeWatermark  bool
+	downloadConc     float64
+	downloadRetries  float64
+	downloadRateKB   float64
 
 	// 下载页
 	dlURLs           string
@@ -173,6 +178,11 @@ type App struct {
 	washPromptChoice string
 	promptSuffix     string
 	useSuffix        bool
+	structuredGen    promptParts
+	structuredWash   promptParts
+	structuredReady  bool
+	structuredOpen   bool
+	structuredPage   int
 	batchMode        int // batchText 文生图 / batchImage 图生图
 	platformAuto     bool
 	logScroll        ui.ScrollState
@@ -288,7 +298,7 @@ type App struct {
 	wizardAccount   store.Browser
 	wizardExtra     bool
 	wizardChoice    string                      // 第一步选中的平台，三选一
-	wizardFirst     bool                        // 打开向导时还没有可用账号：选定的平台就是全部勾选
+	wizardFirst     bool                        // 首次设置时，选定的平台就是全部勾选
 	wizardAgy       wizardAgyState              // 安装步骤里对 agy 的检测结果
 	wizardPlanFn    func() wizard.BrowserPlan   // 测试可换掉本机浏览器检测
 	agyLocate       func(string) (string, bool) // 测试可换掉 agy 查找
@@ -468,13 +478,7 @@ func (a *App) loadSettings() {
 		a.platformAuto = raw == "1"
 	}
 	a.sendStrategy = pickStr(s.Get("send_strategy"), "顺序循环", []string{"顺序循环", "随机循环"})
-	if n := s.GetInt("concurrency"); n <= 0 {
-		a.concurrencyAuto = true
-		a.concurrency = 1
-	} else {
-		a.concurrencyAuto = false
-		a.concurrency = float64(clampInt(n, 1, 16))
-	}
+	a.concurrencyAuto = s.GetInt("concurrency") != 1
 	a.retryCount = float64(clampInt(s.GetInt("retry_count"), 0, 20))
 	a.sendWait = float64(clampInt(s.GetInt("send_wait_seconds"), 0, 600))
 	a.dailyCap = float64(clampInt(s.GetInt("daily_cap"), 1, 200))
@@ -483,6 +487,7 @@ func (a *App) loadSettings() {
 		a.riskyWords = tasks.RiskySetting()
 	}
 	a.loadImageEditSettings()
+	a.loadPromptParts()
 	a.waitBefore = float64(clampInt(s.GetInt("wait_before_sending"), 0, 60))
 	a.waitResult = s.GetBool("wait_result")
 	a.waitResultS = float64(clampInt(s.GetInt("wait_result_seconds"), 10, 1800))
@@ -490,6 +495,7 @@ func (a *App) loadSettings() {
 	a.switchCount = float64(clampInt(s.GetInt("task_switching_count"), 1, 9999))
 	a.startBrowserIdx = float64(clampInt(s.GetInt("start_browser_index"), 1, 999))
 	a.outputPath = s.Get("output_path")
+	a.loadOutputSize()
 	a.dlURLs = s.Get("download_urls")
 	a.dlDir = strings.TrimSpace(s.Get("download_dir"))
 	a.dlDepth = float64(clampInt(s.GetInt("download_depth"), 1, 32767))
@@ -517,7 +523,12 @@ func (a *App) loadSettings() {
 	a.userPrompts = prompts.ParseUser(s.Get("user_prompts"))
 	a.promptPick = s.Get("prompt_pick")
 	if a.promptPick != detachedPromptID {
+		oldPick := strings.TrimSpace(a.promptPick)
 		a.promptPick = prompts.NormalizePick(a.promptPick, a.userPrompts)
+		// 下架模板的正文仍在工作区，保持整段发送。
+		if a.promptPick == "" && (oldPick == "oil" || oldPick == "art" || oldPick == "circle") {
+			a.promptPick = detachedPromptID
+		}
 	}
 	if a.promptPick == "" {
 		a.freeformPrompts = a.prompts
@@ -582,6 +593,10 @@ func (a *App) loadSettings() {
 		a.stagePicked = s.Get("gen_stage_picked") == "1"
 	})
 	a.onPage(pageWash, func() {
+		// 只升级未经修改的旧默认，保留用户改过的内容。
+		if strings.TrimSpace(a.prompts) == "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变" {
+			a.prompts = DefaultWashPrompt
+		}
 		a.stageTab = s.GetInt("wash_stage")
 		a.stagePicked = s.Get("wash_stage_picked") == "1"
 	})
@@ -606,11 +621,7 @@ func (a *App) saveSettings() {
 	a.persistAgySettings()
 	s.SetInt("platform_auto", boolInt(a.platformAuto))
 	s.Set("send_strategy", a.sendStrategy)
-	if a.concurrencyAuto {
-		s.SetInt("concurrency", 0)
-	} else {
-		s.SetInt("concurrency", clampInt(int(a.concurrency), 1, 16))
-	}
+	s.SetInt("concurrency", a.taskConcurrency())
 	s.SetInt("retry_count", int(a.retryCount))
 	s.SetInt("send_wait_seconds", int(a.sendWait))
 	s.SetInt("daily_cap", a.shownDailyCap())
@@ -626,6 +637,7 @@ func (a *App) saveSettings() {
 	s.SetInt("task_switching_count", int(a.switchCount))
 	s.SetInt("start_browser_index", int(a.startBrowserIdx))
 	s.Set("output_path", a.outputPath)
+	a.saveOutputSize()
 	s.Set("download_urls", redactQzoneURLs(a.dlURLs))
 	s.Set("download_dir", strings.TrimSpace(a.dlDir))
 	s.SetInt("download_depth", clampInt(int(a.dlDepth), 1, 32767))
@@ -642,6 +654,7 @@ func (a *App) saveSettings() {
 	s.SetInt("remove_watermark", boolInt(a.removeWatermark))
 	a.noteWorkspacePage()
 	a.saveImageEditSettings()
+	a.savePromptParts()
 	if a.workspacePage == store.PageGen || a.workspacePage == store.PageWash {
 		s.Set("workspace_page", a.workspacePage)
 	}
@@ -736,7 +749,11 @@ func (a *App) view(c *ui.Context) {
 		slot.Children(func() { a.updateBanner(c) })
 		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 			a.navRail(c)
-			page := ui.Column(c.Key(fmt.Sprintf("page-%d", a.tab))).Grow(1).MinWidth(0).MinHeight(0).Transition(a.pageMotion())
+			pageKey := a.tab
+			if pageKey == pageWash {
+				pageKey = pageHome
+			}
+			page := ui.Column(c.Key(fmt.Sprintf("page-%d", pageKey))).Grow(1).MinWidth(0).MinHeight(0).Transition(a.pageMotion())
 			if a.tab != pageRename && a.tab != pageImageEdit {
 				page.Padding(12, pagePadX, 12, pagePadX)
 			}
@@ -850,6 +867,7 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		Prompts:             prompts,
 		PromptSuffix:        a.promptSuffix,
 		UseSuffix:           a.useSuffix,
+		StructuredPrompt:    a.currentPromptParts().text(),
 		Images:              paths,
 		Concurrency:         a.taskConcurrency(),
 		RetryCount:          int(a.retryCount),
@@ -861,6 +879,7 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		TaskSwitchingCount:  int(a.switchCount),
 		StartBrowserIndex:   int(a.startBrowserIdx),
 		OutputPath:          a.outputPath,
+		OutputSize:          a.doubaoOutputSize(),
 		RemoveWatermark:     a.removeWatermark,
 		DownloadConcurrency: int(a.downloadConc),
 		DownloadRetries:     int(a.downloadRetries),
@@ -909,17 +928,23 @@ func (a *App) addImages() {
 	}()
 }
 
-// appendSources 在 UI 线程合并导入结果，包含本批次及导入期间新增的源图去重。
-func (a *App) appendSources(loaded []sourceImage) int {
+// appendSources 在 UI 线程合并导入结果。洗图按路径去重，生图按内容去重。
+func (a *App) appendSources(loaded []sourceImage, wash bool) int {
+	key := func(si sourceImage) string {
+		if wash {
+			return filepath.Clean(si.Path)
+		}
+		return si.Hash
+	}
 	seen := make(map[string]bool, len(a.sources)+len(loaded))
 	for _, si := range a.sources {
-		seen[si.Hash] = true
+		seen[key(si)] = true
 	}
 	added := 0
 	for _, si := range loaded {
-		if !seen[si.Hash] {
+		if !seen[key(si)] {
 			a.sources = append(a.sources, si)
-			seen[si.Hash] = true
+			seen[key(si)] = true
 			added++
 		}
 	}

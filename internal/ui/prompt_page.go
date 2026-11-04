@@ -16,7 +16,7 @@ func (a *App) promptsPage(c *ui.Context) {
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
 				ui.Text(c, "提示词").FontSize(22).Bold()
-				ui.Text(c, "按用途管理模板，在生图或洗图页面快速选择。通用模板两边都可使用。").FontSize(12).TextColor(a.look.muted).SingleLine()
+				ui.Text(c, "按用途管理模板，在图片生成页的对应模式中快速选择。通用模板两边都可使用。").FontSize(12).TextColor(a.look.muted).SingleLine()
 			})
 			ui.PrimaryButton(c, "新建提示词").Shrink(0).Disabled(a.running).OnClick(func() {
 				a.promptEditChoice = newPromptLabel

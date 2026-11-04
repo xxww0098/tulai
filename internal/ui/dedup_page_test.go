@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -111,6 +112,73 @@ func TestDedupPickingALevelIsOneClick(t *testing.T) {
 	}
 }
 
+func TestDedupLevelCapsuleMotion(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, reduce := range []bool{false, true} {
+			t.Run(fmt.Sprintf("dark=%t/reduced=%t", dark, reduce), func(t *testing.T) {
+				a := newDedupApp()
+				a.look = lightTokens()
+				if dark {
+					a.look = darkTokens()
+				}
+				tt := ui.NewTester(a.dedupLevelTabs, 180, 36)
+				tt.SetPreferences(ui.Preferences{ReduceMotion: reduce, TextScale: 1})
+				pill := tt.Image().RGBAAt(90, 6)
+				if pill == tt.Image().RGBAAt(30, 6) {
+					t.Fatal("选中的胶囊不可见")
+				}
+				center := func() int {
+					sum, count := 0, 0
+					for x := 8; x < 172; x++ {
+						if tt.Image().RGBAAt(x, 6) == pill {
+							sum += x
+							count++
+						}
+					}
+					if count == 0 {
+						t.Fatal("选中的胶囊消失了")
+					}
+					return sum / count
+				}
+				if err := tt.Click("宽松"); err != nil {
+					t.Fatal(err)
+				}
+				if reduce {
+					if x := center(); x < 140 {
+						t.Fatalf("减少动态效果时胶囊没有立即移动: %d", x)
+					}
+				} else {
+					tt.Advance(60 * time.Millisecond)
+					if x := center(); x <= 95 || x >= 145 {
+						t.Fatalf("胶囊没有在选项间滑动: %d", x)
+					}
+				}
+				if err := tt.Click("严格"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Advance(motionUI)
+				if x := center(); a.dedup.level != dedupStrict || x > 40 {
+					t.Fatalf("胶囊没有到达严格: level=%d center=%d", a.dedup.level, x)
+				}
+				tt.Key(0, ui.KeyRight)
+				tt.Advance(motionUI)
+				if x := center(); a.dedup.level != dedupStandard || x < 80 || x > 100 {
+					t.Fatalf("键盘选择没有移动胶囊: level=%d center=%d", a.dedup.level, x)
+				}
+				a.dedup.busy = true
+				tt.Frame()
+				if err := tt.Click("宽松"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Key(0, ui.KeyRight)
+				if a.dedup.level != dedupStandard {
+					t.Fatalf("去重期间仍能更改档位: %d", a.dedup.level)
+				}
+			})
+		}
+	}
+}
+
 func TestDedupIngestSkipsKnownPathsAndBadFiles(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.png")
@@ -159,6 +227,29 @@ func TestDedupOutputDir(t *testing.T) {
 	a.dedup.outDir = "/tmp/mine"
 	if got := a.dedupOutDir(); got != "/tmp/mine" {
 		t.Fatalf("手选输出 = %q", got)
+	}
+}
+
+func TestDedupOutputLinkReportsErrors(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := newDedupApp()
+	a.dedup.outDir = filepath.Join(file, "output")
+	tt := ui.NewTester(a.view, 1280, 840)
+	label := "打开文件夹：" + a.dedup.outDir
+	if err := tt.Click(label); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("无法创建输出文件夹") {
+		t.Fatalf("打开失败时没有显示提示: %v", tt.Texts())
+	}
+	a.dedup.folderErr = ""
+	tt.Frame()
+	tt.Key(0, ui.KeyEnter)
+	if !tt.HasText("无法创建输出文件夹") {
+		t.Fatal("键盘无法打开输出文件夹")
 	}
 }
 

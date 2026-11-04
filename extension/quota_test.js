@@ -50,4 +50,8 @@ const hidden = TULAIQuota.accountBlock(doc([
 ]))
 assert.strictEqual(hidden, null)
 
+assert.strictEqual(TULAIQuota.imageReplyBlock('今日图片生成免费额度已用完。开通订阅畅享更多额度。').kind, 'quota')
+assert.strictEqual(TULAIQuota.imageReplyBlock('为什么提示今日图片生成免费额度已用完？'), null)
+assert.strictEqual(TULAIQuota.imageReplyBlock('今日图片生成免费额度已用完了怎么办？'), null)
+
 console.log('quota_test ok')

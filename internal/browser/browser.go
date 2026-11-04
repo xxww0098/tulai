@@ -33,6 +33,7 @@ type Manager struct {
 	starts    sync.Map
 	procs     map[int64]*camoufox.Process
 	quiet     map[int64]bool
+	addons    map[int64]string
 	focusApp  func()
 	configDir string
 	headless  bool
@@ -41,15 +42,19 @@ type Manager struct {
 func NewManager() *Manager { return &Manager{procs: map[int64]*camoufox.Process{}} }
 
 func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, background bool) (string, error) {
-	return m.start(b, dataRoot, startURL, background, false)
+	return m.start(b, dataRoot, startURL, background, false, "")
 }
 
 // StartTask uses a headless process even if the account was left open for login.
 func (m *Manager) StartTask(b store.Browser, dataRoot, backend, startURL string) (string, error) {
-	return m.start(b, dataRoot, startURL, true, true)
+	return m.start(b, dataRoot, startURL, true, true, "")
 }
 
-func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, task bool) (string, error) {
+func (m *Manager) StartTaskWithAddon(b store.Browser, dataRoot, startURL, addon string) (string, error) {
+	return m.start(b, dataRoot, startURL, true, true, addon)
+}
+
+func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, task bool, addon string) (string, error) {
 	m.lifecycle.RLock()
 	defer m.lifecycle.RUnlock()
 	lock, _ := m.starts.LoadOrStore(b.ID, &sync.Mutex{})
@@ -58,8 +63,9 @@ func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, 
 	m.mu.Lock()
 	running := m.procs[b.ID]
 	quiet := m.quiet[b.ID]
+	loadedAddon := m.addons[b.ID]
 	m.mu.Unlock()
-	if running.Alive() && (!task || quiet) {
+	if running.Alive() && (!task || quiet && loadedAddon == addon) {
 		return camoufox.Endpoint(b.Port), nil
 	}
 	dir := accountProfilePath(dataRoot, KindCamoufox, b)
@@ -85,10 +91,15 @@ func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, 
 		m.mu.Lock()
 		delete(m.procs, b.ID)
 		delete(m.quiet, b.ID)
+		delete(m.addons, b.ID)
 		m.mu.Unlock()
 	}
 	headless := background || m.headless
-	proc, err := camoufox.Start(ctx, configDir, camoufox.Options{Profile: dir, Proxy: proxy, Headless: headless}, nil)
+	var addons []string
+	if addon != "" {
+		addons = []string{addon}
+	}
+	proc, err := camoufox.Start(ctx, configDir, camoufox.Options{Profile: dir, Proxy: proxy, Headless: headless, Addons: addons}, nil)
 	if err != nil {
 		return "", err
 	}
@@ -104,6 +115,10 @@ func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, 
 		m.quiet = map[int64]bool{}
 	}
 	m.quiet[b.ID] = headless
+	if m.addons == nil {
+		m.addons = map[int64]string{}
+	}
+	m.addons[b.ID] = addon
 	m.mu.Unlock()
 	camoufox.Register(b.Port, proc)
 	go func() { <-proc.Context().Done(); camoufox.Unregister(b.Port, proc) }()
@@ -114,15 +129,30 @@ func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, 
 func (m *Manager) SetAppFocus(fn func()) { m.mu.Lock(); m.focusApp = fn; m.mu.Unlock() }
 
 func (m *Manager) Stop(id int64) {
+	m.stop(id, false)
+}
+
+// StopLogin leaves an account alone if a task has already switched it to the background.
+func (m *Manager) StopLogin(id int64) bool {
+	return m.stop(id, true)
+}
+
+func (m *Manager) stop(id int64, visibleOnly bool) bool {
 	lock, _ := m.starts.LoadOrStore(id, &sync.Mutex{})
 	lock.(*sync.Mutex).Lock()
 	defer lock.(*sync.Mutex).Unlock()
 	m.mu.Lock()
+	if visibleOnly && m.quiet[id] {
+		m.mu.Unlock()
+		return false
+	}
 	proc := m.procs[id]
 	delete(m.procs, id)
 	delete(m.quiet, id)
+	delete(m.addons, id)
 	m.mu.Unlock()
 	proc.Close()
+	return true
 }
 
 func (m *Manager) StopAll() {
