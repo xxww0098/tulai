@@ -68,7 +68,7 @@ async function run(mode,alreadyOpen=false){
   cdp:()=>{throw new Error('raw CDP is forbidden')},
  };
  if(mode==='at-target')document.activeElement=target;
- const request={selectors:alreadyOpen?[]:['entry'],menuLabel:'上传图片',files:['中文.png'],timeout:20};
+ const request={selectors:alreadyOpen?[]:['entry'],menuLabel:'上传图片',files:['中文.png'],timeout:mode==='expired'?20:1000};
  let error;
  try{await egoSDKAction(page,'sdkUpload',request)}catch(value){error=value}
  assert.equal(waiting,false,'chooser must be consumed after errors');
