@@ -82,6 +82,68 @@ async function sendThenWait(page) {
 }
 
 async function main() {
+  for (const withImage of [false, true]) {
+    let active = false
+    let switches = 0
+    let box = { value: '' }
+    const actions = []
+    const page = composerPage({
+      doubaoHost() { return true },
+      async ensureImageMode() {
+        if (!active) {
+          actions.push('mode')
+          active = true
+          switches++
+          box = { value: '' }
+        }
+        return { ok: true }
+      },
+      composer() { return box },
+      readComposer(comp) { return comp.value },
+      setComposer(comp, text) {
+        assert.strictEqual(active, true)
+        assert.strictEqual(comp, box, '填词必须使用切换模式后的输入框')
+        actions.push('prompt')
+        comp.value = text
+        return true
+      },
+      removeButtons() { return [] },
+      unsentBlocksUpload() { return '' },
+      fileInput() { return {} },
+      base64ToBytes() { return new Uint8Array([1]) },
+      assignFiles() { assert.strictEqual(active, true); actions.push('upload'); return true },
+      freshAttachment() { return true },
+      sendButton() { return { click() { assert.strictEqual(active, true); actions.push('send'); box.value = '' } } },
+      sendAccepted() { return box.value === '' },
+    })
+    const call = load(page)
+    if (withImage) {
+      const uploaded = await call({ name: 'upload', uploadId: 'mode-image', total: 1, dataBase64: 'AQ==', finish: true })
+      assert.strictEqual(uploaded.payload.ok, true, JSON.stringify(uploaded.payload))
+    }
+    assert.strictEqual((await call({ name: 'setPrompt', prompt: '水彩风格' })).payload.ok, true)
+    assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+    assert.deepStrictEqual(actions, withImage ? ['mode', 'upload', 'prompt', 'send'] : ['mode', 'prompt', 'send'])
+    assert.strictEqual(switches, 1, '洗图上传、填词和发送之间不能重复切换模式')
+  }
+  for (const name of ['upload', 'setPrompt', 'send']) {
+    const call = load(composerPage({
+      doubaoHost() { return true },
+      ensureImageMode() { return { error: '点击「图像生成」后模式未生效，未开始任务', code: 'E_SELECTOR_MISS' } },
+      setComposer() { assert.fail('切换失败后不能填词') },
+      assignFiles() { assert.fail('切换失败后不能上传') },
+      sendButton() { assert.fail('切换失败后不能发送') },
+    }))
+    const failed = await call({ name, prompt: '水彩风格' })
+    assert.strictEqual(failed.payload.code, 'E_SELECTOR_MISS', name)
+    assert.match(failed.payload.message, /模式未生效/)
+  }
+  const plainQianwen = load(composerPage({
+    setComposer(box, text) { box.value = text; return true },
+    ensureImageMode() { assert.fail('千问纯文字任务不应提前切模式') },
+  }))
+  assert.strictEqual((await plainQianwen({ name: 'setPrompt', prompt: '水彩风格' })).payload.ok, true)
+
   const qianwen = composerPage({
     reveals: 0,
     ready: false,

@@ -232,6 +232,29 @@ func TestExportWorkbenchShots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for stage, platform := range []string{"豆包", "千问"} {
+		accounts := &App{platformAuto: true, stageTab: stage, stagePicked: true, outputPath: shotOut, prompts: "一只坐在窗边的猫", dailyCap: 200}
+		for i, name := range []string{"设计主力", "待登录账号", "待验证账号", "备用账号"} {
+			row := loggedLane(int64(201+i), name, platform)
+			row.DayCount = []int{15, 200, 180, 0}[i]
+			row.DaySuccess = []int{12, 100, 100, 0}[i]
+			row.DayFailed = []int{3, 100, 80, 0}[i]
+			if i == 1 {
+				row.IsLoggedIn = false
+			}
+			if i == 2 {
+				row.Health, row.LastError, row.CoolUntil = store.HealthCooling, "需要人工验证", time.Now().Add(time.Hour).Unix()
+			}
+			accounts.browserRows = append(accounts.browserRows, row)
+		}
+		accounts.queue = []tasks.Task{{Index: 1, Platform: platform, BrowserID: 201, Status: tasks.StatusRunning, Prompt: "生成春日海报"}}
+		tag := []string{"doubao", "qianwen"}[stage]
+		saveAt(tag+"-accounts-wide", 1280, 800, accounts)
+		saveAt(tag+"-accounts-dark", 1280, 800, accounts, true)
+		saveAt(tag+"-accounts-narrow", 900, 700, accounts)
+		saveAt(tag+"-accounts-compact", 760, 900, accounts)
+		saveAt(tag+"-accounts-empty", 900, 700, &App{platformAuto: true, stageTab: stage, stagePicked: true, outputPath: shotOut})
+	}
 	extra := []struct{ file, prompt string }{
 		{"街景.png", "街边的傍晚"},
 		{"夜色.png", "深蓝的夜色"},
@@ -330,6 +353,10 @@ func TestExportWorkbenchShots(t *testing.T) {
 			platformAuto: true, stageTab: 2, stagePicked: true, outputPath: shotOut,
 			prompts:     "一只坐在窗边的猫",
 			browserRows: agyAccount(exhausted),
+			agyUsage: map[int64]agyUsageSlot{1: {view: agy.UsageView{State: agy.UsageOK, At: time.Now(), Usage: agy.GeminiUsage{
+				FiveHour: agy.UsageWindow{Remaining: 0.72, Reset: time.Now().Add(2 * time.Hour)},
+				Weekly:   agy.UsageWindow{Remaining: 0.46, Reset: time.Now().Add(48 * time.Hour)},
+			}}}},
 		}
 	}
 	saveAt("antigravity-gen", 1024, 700, agyBase(false))
@@ -351,6 +378,45 @@ func TestExportWorkbenchShots(t *testing.T) {
 		canImport: found.CanImport(), keychain: found.Keychain,
 	}
 	saveAt("antigravity-add-chooser", 1024, 700, chooser)
+	emptyChooser := agyBase(false)
+	emptyChooser.tab, emptyChooser.statePage = pageWash, pageWash
+	emptyChooser.browserRows, emptyChooser.agyUsage = nil, nil
+	emptyChooser.prompts = DefaultWashPrompt
+	emptyChooser.agyChooser = &agyChooserState{hint: agy.MsgKeychain, canImport: true}
+	saveAt("antigravity-add-empty-900x700", 900, 700, emptyChooser)
+	saveAt("antigravity-add-empty-1024x700", 1024, 700, emptyChooser)
+	saveAt("antigravity-add-empty-1280x800", 1280, 800, emptyChooser)
+	saveAt("antigravity-add-empty-dark", 1024, 700, emptyChooser, true)
+	emptyTable := agyBase(false)
+	emptyTable.browserRows, emptyTable.agyUsage = nil, nil
+	saveAt("antigravity-empty", 1024, 700, emptyTable)
+	accounts := agyBase(false)
+	accounts.browserRows = nil
+	accounts.agyUsage = map[int64]agyUsageSlot{}
+	for i, name := range []string{"设计账号", "备用账号", "额度用尽", "待登录"} {
+		home := t.TempDir()
+		writeAgyHome(t, home, []string{"design@example.com", "backup@example.com", "quota@example.com", "login@example.com"}[i])
+		id := int64(101 + i)
+		row := store.Browser{ID: id, Name: name, Platform: agy.Platform, UserDataDir: home, IsLoggedIn: true, Health: store.HealthReady}
+		view := agy.UsageView{State: agy.UsageOK, At: time.Now(), Usage: agy.GeminiUsage{
+			FiveHour: agy.UsageWindow{Remaining: []float64{0.72, 0.91, 0, 0}[i], Reset: time.Now().Add(2 * time.Hour)},
+			Weekly:   agy.UsageWindow{Remaining: []float64{0.46, 0.84, 0.22, 0}[i], Reset: time.Now().Add(48 * time.Hour)},
+		}}
+		if i == 2 {
+			row.Health, row.LastError, row.CoolUntil = store.HealthExhausted, "额度不足", time.Now().Add(2*time.Hour).Unix()
+		}
+		if i == 3 {
+			row.IsLoggedIn = false
+			view.State, view.Reason = agy.UsageNeedLogin, agy.ReasonLogin
+		}
+		accounts.browserRows = append(accounts.browserRows, row)
+		accounts.agyUsage[id] = agyUsageSlot{view: view}
+	}
+	saveAt("antigravity-accounts-wide", 1280, 800, accounts)
+	saveAt("antigravity-accounts-dark", 1280, 800, accounts, true)
+	saveAt("antigravity-accounts-narrow", 900, 700, accounts)
+	accounts.queue = []tasks.Task{{Index: 1, Platform: agy.Platform, BrowserID: 101, Status: tasks.StatusRunning, Prompt: "生成春日海报"}}
+	saveAt("antigravity-account-running", 900, 700, accounts)
 	detected := agyBase(false)
 	detected.agyChooser = &agyChooserState{
 		hint: "已检测到 li@gmail.com", email: "li@gmail.com", home: agyHome, canImport: true,
@@ -530,7 +596,7 @@ func writeAgyHome(t *testing.T, home, email string) {
 	if err := os.WriteFile(filepath.Join(dir, "cli.log"), []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "antigravity-oauth-token"), []byte{}, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "antigravity-oauth-token"), []byte(`{"token":{"refresh_token":"test-refresh"},"auth_method":"consumer"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

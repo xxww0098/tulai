@@ -93,7 +93,7 @@ func (a *App) browserInstances(c *ui.Context) {
 			}
 		})
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问"}).Width(88).Shrink(0).Label("浏览器平台")
+			motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问", "ChatGPT"}).Width(100).Shrink(0).Label("浏览器平台")
 			ui.TextInput(c, &a.newBrowserName).Grow(1).MaxWidth(280).MinWidth(0).Placeholder("环境名称（可选）").Label("浏览器名称")
 			ui.Button(c, "添加环境").Shrink(0).Disabled(a.running || len(a.browserPending) > 0).Background(c.Theme().Accent).TextColor(c.Theme().AccentText).OnClick(func() { a.addBrowser() })
 			ui.Box(c).Grow(1)

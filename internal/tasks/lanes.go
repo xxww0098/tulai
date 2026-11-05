@@ -493,6 +493,10 @@ func (e *Engine) laneRows() []store.Browser {
 	wantExt := e.useExtension("豆包") && !e.useBoundExtension("豆包")
 	var out []store.Browser
 	for _, b := range e.store.Browsers() {
+		if b.Platform == "ChatGPT" && b.ExtAccount == "" {
+			out = append(out, b)
+			continue
+		}
 		if b.Platform == agy.Platform {
 			out = append(out, b)
 			continue

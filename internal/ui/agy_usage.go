@@ -20,6 +20,7 @@ type agyUsageSlot struct {
 	view     agy.UsageView
 	inflight bool
 	again    bool
+	done     chan struct{}
 }
 
 func (a *App) startAgyUsage() {
@@ -31,6 +32,7 @@ func (a *App) startAgyUsage() {
 	a.agyUsageWake = make(chan struct{}, 1)
 	if a.engine != nil {
 		eng := a.engine
+		eng.SetAgyUsageRefresh(a.refreshAgyUsageBeforeRun)
 		eng.SetAgyUsageKick(func(id int64) {
 			a.markAgyUsageForce(id)
 			a.wakeAgyUsage()
@@ -45,6 +47,39 @@ func (a *App) stopAgyUsage() {
 	}
 	a.agyUsageStop()
 	a.agyUsageStop = nil
+	if a.engine != nil {
+		a.engine.SetAgyUsageRefresh(nil)
+	}
+}
+
+func (a *App) refreshAgyUsageBeforeRun(ctx context.Context) {
+	bin, rows := a.agyUsageSnap()
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return
+		}
+		if row.Disabled {
+			continue
+		}
+		if saved, ok := tasks.SavedAgyUsage(a.store, row.ID); ok && (!saved.Usage.FiveHour.Reset.After(time.Now()) || !saved.Usage.Weekly.Reset.After(time.Now())) {
+			a.markAgyUsageForce(row.ID)
+		}
+		if a.beginAgyUsage(row.ID, time.Now()) {
+			a.fetchAgyAccount(ctx, row, bin)
+			a.finishAgyUsage(row.ID)
+			continue
+		}
+		a.agyUsageMu.Lock()
+		done := a.agyUsage[row.ID].done
+		a.agyUsageMu.Unlock()
+		if done != nil {
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
 }
 
 func (a *App) wakeAgyUsage() {
@@ -67,6 +102,16 @@ func (a *App) markAgyUsageForce(id int64) {
 		a.agyUsageForce = map[int64]bool{}
 	}
 	a.agyUsageForce[id] = true
+}
+
+func (a *App) resetAgyUsage(id int64) {
+	if a == nil || id <= 0 {
+		return
+	}
+	tasks.ClearAgyQuota(a.store, id)
+	a.publishUsage(id, agy.UsageView{State: agy.UsageReading, Reason: agy.ReasonReading})
+	a.markAgyUsageForce(id)
+	a.wakeAgyUsage()
 }
 
 func (a *App) agyUsageLoop(ctx context.Context) {
@@ -136,6 +181,7 @@ func (a *App) beginAgyUsage(id int64, now time.Time) bool {
 	}
 	delete(a.agyUsageForce, id)
 	slot.inflight = true
+	slot.done = make(chan struct{})
 	if a.agyUsage == nil {
 		a.agyUsage = map[int64]agyUsageSlot{}
 	}
@@ -148,6 +194,10 @@ func (a *App) finishAgyUsage(id int64) {
 	a.agyUsageMu.Lock()
 	slot := a.agyUsage[id]
 	slot.inflight = false
+	if slot.done != nil {
+		close(slot.done)
+		slot.done = nil
+	}
 	again := slot.again
 	slot.again = false
 	if a.agyUsage == nil {
@@ -284,7 +334,10 @@ func (a *App) agyUsageView(id int64) agy.UsageView {
 	a.agyUsageMu.Lock()
 	slot, ok := a.agyUsage[id]
 	a.agyUsageMu.Unlock()
-	if !ok {
+	if !ok || slot.view.At.IsZero() {
+		if saved, found := tasks.SavedAgyUsage(a.store, id); found {
+			return saved
+		}
 		return agy.UsageView{State: agy.UsageReading, Reason: agy.ReasonReading}
 	}
 	view := slot.view

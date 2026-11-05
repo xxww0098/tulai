@@ -25,7 +25,7 @@ func TestDetectAtLoggedInAndMissing(t *testing.T) {
 	if _, err := os.Stat(miss.Home); err == nil {
 		t.Fatal("checked dir should be recorded even when it does not exist")
 	}
-	writeImportSource(t, home, []byte("token-bytes"))
+	writeImportSource(t, home, []byte(testCredential))
 	got := DetectAt(home)
 	if !got.HasToken || !got.CanImport() || got.Email != "later@gmail.com" || got.Hint != "已检测到 later@gmail.com" {
 		t.Fatalf("detected %+v", got)
@@ -53,7 +53,7 @@ func TestDetectLocalMissingKeepsCheckedDir(t *testing.T) {
 
 func TestNormalizeHomeAcceptsThreeFolders(t *testing.T) {
 	home := t.TempDir()
-	writeImportSource(t, home, []byte("token-bytes"))
+	writeImportSource(t, home, []byte(testCredential))
 	want, err := absClean(home)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestCopyAccountFilesOnlyAllowed(t *testing.T) {
 func TestImportRejectsDuplicateAndInsideRoot(t *testing.T) {
 	script := agyScript(t)
 	src := t.TempDir()
-	writeImportSource(t, src, []byte("token-bytes"))
+	writeImportSource(t, src, []byte(testCredential))
 	root := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -155,7 +155,7 @@ func TestImportRejectsDuplicateAndInsideRoot(t *testing.T) {
 	}
 
 	inside := filepath.Join(root, "acc9")
-	writeImportSource(t, inside, []byte("token-bytes"))
+	writeImportSource(t, inside, []byte(testCredential))
 	_, err = Import(ctx, ImportRequest{
 		SourceHome: inside, AccountRoot: root, Bin: script, Timeout: 3 * time.Second,
 	})
@@ -174,7 +174,7 @@ func TestImportRejectsDuplicateAndInsideRoot(t *testing.T) {
 func TestImportVerifyFailureRemovesNewHome(t *testing.T) {
 	script := agyScript(t)
 	src := t.TempDir()
-	writeImportSource(t, src, []byte("token-bytes"))
+	writeImportSource(t, src, []byte(testCredential))
 	root := t.TempDir()
 	t.Setenv("AGY_FIXTURE", "fail")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -205,7 +205,7 @@ func TestImportVerifyFailureRemovesNewHome(t *testing.T) {
 func TestImportVerifySuccess(t *testing.T) {
 	script := agyScript(t)
 	src := t.TempDir()
-	token := []byte("token-bytes")
+	token := []byte(testCredential)
 	writeImportSource(t, src, token)
 	root := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -242,19 +242,6 @@ func TestImportVerifySuccess(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cliDir(res.Home), "cli.log")); err == nil {
 		t.Fatal("不应复制日志")
-	}
-}
-
-func TestKeychainProbeDoesNotRevealSecret(t *testing.T) {
-	got := keychainProbeArgs()
-	want := []string{"find-generic-password", "-s", "antigravity"}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("%q", got)
-	}
-	for _, arg := range got {
-		if arg == "-w" || arg == "-g" || strings.HasPrefix(arg, "-w") || strings.HasPrefix(arg, "-g") {
-			t.Fatal(arg)
-		}
 	}
 }
 

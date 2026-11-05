@@ -355,6 +355,8 @@ func sameSite(a, b string) bool {
 
 func loginSite(host string) string {
 	switch {
+	case host == "chatgpt.com" || host == "auth.openai.com" || host == "auth0.openai.com":
+		return "chatgpt"
 	case host == "tongyi.com" || strings.HasSuffix(host, ".tongyi.com") ||
 		host == "qianwen.com" || strings.HasSuffix(host, ".qianwen.com") ||
 		host == "qwen.ai" || strings.HasSuffix(host, ".qwen.ai"):

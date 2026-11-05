@@ -4,6 +4,7 @@ package agy
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,23 +19,29 @@ import (
 
 // Login 是一次在伪终端里的授权。授权码只写进终端，不留在结构体里。
 type Login struct {
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	ptmx     *os.File
-	home     string
-	dir      string
-	url      string
-	err      error
-	finished bool
-	done     chan struct{}
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	ptmx        *os.File
+	home        string
+	dir         string
+	url         string
+	err         error
+	finished    bool
+	done        chan struct{}
+	credentials *cliSession
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // StartLogin 用和出图相同的命令拉起登录提示。
-func StartLogin(bin, home, model string) (*Login, error) {
-	return startLogin(bin, home, model, LoginTimeout)
+func StartLogin(ctx context.Context, bin, home, model string) (*Login, error) {
+	return startLogin(ctx, bin, home, model, LoginTimeout)
 }
 
-func startLogin(bin, home, model string, timeout time.Duration) (*Login, error) {
+func startLogin(ctx context.Context, bin, home, model string, timeout time.Duration) (*Login, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	bin = strings.TrimSpace(bin)
 	if bin == "" {
 		bin = DefaultBin()
@@ -53,8 +60,17 @@ func startLogin(bin, home, model string, timeout time.Duration) (*Login, error) 
 	if timeout <= 0 {
 		timeout = LoginTimeout
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	credentials, err := beginCLI(ctx, home, true)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	work, err := os.MkdirTemp("", "agy-login-")
 	if err != nil {
+		cancel()
+		err = errors.Join(err, credentials.restore())
+		credentials.unlock()
 		return nil, fmt.Errorf("创建临时目录失败: %w", err)
 	}
 	cmd := exec.Command(bin, "-p", Instruction("登录", ""), "--output-format", "stream-json", "--model", model)
@@ -62,19 +78,25 @@ func startLogin(bin, home, model string, timeout time.Duration) (*Login, error) 
 	cmd.Env = envWithHome(home)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
+		cancel()
 		_ = os.RemoveAll(work)
+		err = errors.Join(err, credentials.restore())
+		credentials.unlock()
 		return nil, fmt.Errorf("无法启动登录: %w", err)
 	}
 	silenceEcho(ptmx)
 	l := &Login{
-		cmd:  cmd,
-		ptmx: ptmx,
-		home: home,
-		dir:  work,
-		done: make(chan struct{}),
+		cmd:         cmd,
+		ptmx:        ptmx,
+		home:        home,
+		dir:         work,
+		done:        make(chan struct{}),
+		credentials: credentials,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 	go l.read()
-	go l.watch(timeout)
+	go l.watch()
 	return l, nil
 }
 
@@ -101,7 +123,7 @@ func (l *Login) read() {
 			}
 		}
 	}
-	if LoggedIn(l.home) || (sawPhrase && l.waitToken(2*time.Second)) {
+	if l.waitToken(2 * time.Second) {
 		l.finish(nil)
 		return
 	}
@@ -111,23 +133,28 @@ func (l *Login) read() {
 func (l *Login) waitToken(limit time.Duration) bool {
 	deadline := time.Now().Add(limit)
 	for {
-		if LoggedIn(l.home) {
+		ctx, cancel := context.WithDeadline(l.ctx, deadline)
+		_, err := l.credentials.current(ctx)
+		cancel()
+		if err == nil {
 			return true
 		}
-		if time.Now().After(deadline) {
+		if l.ctx.Err() != nil || time.Now().After(deadline) {
 			return false
 		}
-		time.Sleep(40 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-func (l *Login) watch(timeout time.Duration) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+func (l *Login) watch() {
 	select {
 	case <-l.done:
-	case <-timer.C:
-		l.finish(errors.New("登录超时，请点重试"))
+	case <-l.ctx.Done():
+		if errors.Is(l.ctx.Err(), context.DeadlineExceeded) {
+			l.finish(errors.New("登录超时，请点重试"))
+		} else {
+			l.finish(errors.New("已取消登录"))
+		}
 	}
 }
 
@@ -200,7 +227,7 @@ func (l *Login) finish(err error) {
 		return
 	}
 	l.finished = true
-	l.err = err
+	l.cancel()
 	ptmx := l.ptmx
 	cmd := l.cmd
 	dir := l.dir
@@ -215,8 +242,18 @@ func (l *Login) finish(err error) {
 	if cmd != nil {
 		_ = cmd.Wait()
 	}
+	if err == nil {
+		err = l.credentials.save()
+	}
+	if err != nil {
+		err = errors.Join(err, l.credentials.restore())
+	}
+	l.credentials.unlock()
 	if dir != "" {
 		_ = os.RemoveAll(dir)
 	}
+	l.mu.Lock()
+	l.err = err
+	l.mu.Unlock()
 	close(l.done)
 }

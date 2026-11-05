@@ -436,10 +436,10 @@ func browserKey(key ui.Key) (string, int) {
 }
 
 func (a *App) laneBrowserButton(c *ui.Context, ln tasks.AccountLane) {
-	if ln.Extension || (ln.Platform != "豆包" && ln.Platform != "千问") {
+	if ln.Extension || (ln.Platform != "豆包" && ln.Platform != "千问" && ln.Platform != "ChatGPT") {
 		return
 	}
-	ui.Button(c.Key("view-browser"), "查看").FontSize(a.look.caption).Padding(2, 7).
+	ui.Button(c.Key("view-browser"), "查看").FontSize(a.look.caption).Height(28).Padding(0, 8).Radius(a.look.radiusS).Shrink(0).
 		Label("查看浏览器 " + ln.Name).Tooltip("查看浏览器").OnClick(func() {
 		if a.store == nil {
 			return

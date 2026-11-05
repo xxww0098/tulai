@@ -156,18 +156,23 @@ function loginOrMiss(env, name, message) {
 }
 
 async function readyComposer(timeout) {
-  return waitFor(function () {
+  const ready = await waitFor(function () {
     if (Page.loginWall(document)) return 'login'
     const comp = Page.composer(document)
     if (comp) return comp
     return null
   }, timeout || 8000)
+  if (!ready || typeof ready === 'string' || typeof Page.doubaoHost !== 'function') return ready
+  const mode = await Page.ensureImageMode(document, function () { return cancelRequested })
+  if (mode.error) return mode
+  return waitFor(function () { return Page.composer(document) }, 2000)
 }
 
 async function upload(env, payload) {
   const ready = await readyComposer(8000)
   if (ready === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入的输入框')
+  if (ready.error) return TULAI.fail(env, ready.code, ready.error)
   const blocked = accountBlocked(env)
   if (blocked) return blocked
   const comp = ready
@@ -323,6 +328,7 @@ async function setPrompt(env, payload) {
   const ready = await readyComposer(8000)
   if (ready === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  if (ready.error) return TULAI.fail(env, ready.code, ready.error)
   const blockedPrompt = accountBlocked(env)
   if (blockedPrompt) return blockedPrompt
   const comp = ready
@@ -361,6 +367,7 @@ async function sendPrompt(env, payload) {
   const ready = await readyComposer(8000)
   if (ready === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待输入框已取消')
   if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  if (ready.error) return TULAI.fail(env, ready.code, ready.error)
   const blockedSend = accountBlocked(env)
   if (blockedSend) return blockedSend
   const comp = ready
@@ -392,7 +399,7 @@ function captchaSendMessage(found) {
   return '发送后出现验证码，需要人工处理'
 }
 
-// 豆包没有这些函数，这里直接放行，发送仍只 click。
+// 豆包已在 readyComposer 中进入图像模式。
 // 千问：失败或未解码的预览不点发送。有可用源图时先进入「AI生图」，再重取发送按钮。
 async function prepareAttachedSend(payload) {
   if (typeof Page.sendBlockReason !== 'function' && typeof Page.composerHasAttachment !== 'function') return null
@@ -400,7 +407,7 @@ async function prepareAttachedSend(payload) {
   if (reason) return { code: TULAI.errors.E_UPLOAD_FAIL, message: reason }
   const hasAttachment = typeof Page.composerHasAttachment === 'function' && Page.composerHasAttachment(document)
   if (!hasAttachment || typeof Page.ensureImageMode !== 'function') return null
-  const switched = Page.ensureImageMode(document)
+  const switched = await Page.ensureImageMode(document)
   if (!switched || switched.error) {
     return {
       code: (switched && switched.code) || TULAI.errors.E_SELECTOR_MISS,

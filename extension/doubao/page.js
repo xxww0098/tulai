@@ -172,9 +172,9 @@ globalThis.TULAIPage = (function () {
   function attachmentScope(comp, entry) {
     if (!comp) return null
     const surface = closest(comp, '.guidance-input-surface')
-    if (surface && entry && surface.contains(entry)) return surface
+    if (surface && (!entry || surface.contains(entry))) return surface
     const body = closest(comp, '[data-chat-input-body]')
-    if (body && entry && body.contains(entry)) return body
+    if (body && (!entry || body.contains(entry))) return body
     for (let node = comp.parentElement; node && node !== (comp.ownerDocument || {}).body; node = node.parentElement) {
       if (entry && node.contains && node.contains(entry)) return node
     }
@@ -186,6 +186,43 @@ globalThis.TULAIPage = (function () {
       if (node.matches && node.matches(sel)) return node
     }
     return null
+  }
+
+  function imageModeScope(doc) {
+    const comp = composer(doc)
+    return closest(comp, '[data-testid="chat_input"]') || attachmentScope(comp, uploadEntry(doc, comp))
+  }
+
+  function imageModeControl(doc) {
+    return all(imageModeScope(doc), '[data-testid="skill_bar_button_3"]').find(enabled) || null
+  }
+
+  function imageModeActive(doc) {
+    const scope = imageModeScope(doc)
+    return all(scope, 'button,[role="button"],span,div').some(function (el) {
+      if (!visible(el) || !exactText(el, '图像生成')) return false
+      if (el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true') return true
+      // 普通工具栏始终有同名入口，只有输入区里的已选模式标签才算切换成功。
+      return !closest(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]') &&
+        !all(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"]').length
+    })
+  }
+
+  async function ensureImageMode(doc, cancelled) {
+    const deadline = Date.now() + 2000
+    let clicked = false
+    while (Date.now() < deadline) {
+      if (cancelled && cancelled()) return { error: '切换图像生成模式已取消', code: 'E_CANCELLED' }
+      if (loginWall(doc)) return { error: '请先登录平台账号', code: 'E_NOT_LOGGED_IN' }
+      if (imageModeActive(doc)) return { ok: true }
+      const control = imageModeControl(doc)
+      if (!clicked && control && enabled(control)) {
+        if (!activate(control)) return { error: '无法点击「图像生成」，未开始任务', code: 'E_SELECTOR_MISS' }
+        clicked = true
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 100) })
+    }
+    return { error: clicked ? '点击「图像生成」后模式未生效，未开始任务' : '未找到「图像生成」入口，未开始任务', code: 'E_SELECTOR_MISS' }
   }
 
   function fileInputs(scope) {
@@ -351,6 +388,9 @@ globalThis.TULAIPage = (function () {
     nodes.forEach(function (node) {
       const text = businessText(node)
       if (text && out.indexOf(text) === -1) out.push(text)
+      // 图像模式会给用户消息加「生成图片：」，回复仍须按原始提示词定位。
+      const prompt = text.replace(/^生成图片[：:]\s*/, '')
+      if (prompt && out.indexOf(prompt) === -1) out.push(prompt)
     })
     return out
   }
@@ -902,6 +942,8 @@ globalThis.TULAIPage = (function () {
     fileInput,
     uploadEntry,
     uploadImageItem,
+    imageModeActive,
+    ensureImageMode,
     unsentBlocksUpload,
     sendButton,
     activate,

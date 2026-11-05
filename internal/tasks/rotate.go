@@ -20,12 +20,22 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 		return time.Time{}, false
 	}
 	rows := e.accountsFor(task.Platform)
+	if task.Platform == "ChatGPT" && task.chatGPT != nil && task.chatGPT.Attempted {
+		if current := findBrowser(rows, task.BrowserID); current == nil || current.Disabled {
+			task.Error = "ChatGPT 原任务的账号已移除或停用，请检查该账号的网页结果"
+			return time.Time{}, true
+		}
+		if e.AccountManual(task.BrowserID) {
+			return now.Add(heal.RecheckAfter), false
+		}
+		return time.Time{}, false
+	}
 	if len(rows) == 0 {
 		return time.Time{}, false
 	}
 	limit := e.capNow()
 	if task.BrowserID <= 0 {
-		if id, ok := pickHealthy(rows, 0, now, limit); ok {
+		if id, ok := pickHealthy(e.store, rows, 0, now, limit); ok {
 			task.BrowserID = id
 		}
 	}
@@ -33,7 +43,7 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 	if current != nil && openAccount(*current, now, limit) {
 		return time.Time{}, false
 	}
-	if id, ok := pickHealthy(rows, task.BrowserID, now, limit); ok {
+	if id, ok := pickHealthy(e.store, rows, task.BrowserID, now, limit); ok {
 		task.BrowserID = id
 		task.Error = ""
 		return time.Time{}, false
@@ -90,14 +100,14 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	if task == nil {
 		return false
 	}
-	if (kind == faultCaptcha || kind == faultAuth) && task.submitted {
+	if (kind == faultCaptcha || kind == faultAuth || task.Platform == "ChatGPT") && task.submitted {
 		id := task.ranOnOr(task.BrowserID)
 		e.noteFault(id, kind, err, now)
 		e.announceAccount(id, kind)
 		return false
 	}
 	current := task.ranOnOr(task.BrowserID)
-	next, ok := pickHealthy(e.accountsFor(task.Platform), current, now, e.capNow())
+	next, ok := pickHealthy(e.store, e.accountsFor(task.Platform), current, now, e.capNow())
 	if !ok {
 		if kind != faultOffline {
 			e.noteFault(current, kind, err, now)
@@ -117,6 +127,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	task.BrowserID = next
 	task.submitted = false
 	task.sentURL, task.sentWrap = "", ""
+	task.chatGPT = nil
 	task.rotated = true
 	task.pauseNote = ""
 	if task.Attempts > 0 {
@@ -130,11 +141,11 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 // rotateUncertain 在发送没被页面接住时，换一个同平台的空闲账号再试一次。
 // 同一个账号不再发：点击已经发生，重发可能变成两条。没有别的账号就只让这一条失败。
 func (e *Engine) rotateUncertain(task *Task, now time.Time) bool {
-	if e == nil || task == nil || task.submitted || task.altTried {
+	if e == nil || task == nil || task.submitted || task.altTried || task.Platform == "ChatGPT" {
 		return false
 	}
 	current := task.ranOnOr(task.BrowserID)
-	next, ok := pickHealthy(e.accountsFor(task.Platform), current, now, e.capNow())
+	next, ok := pickHealthy(e.store, e.accountsFor(task.Platform), current, now, e.capNow())
 	if !ok || next == current {
 		return false
 	}
@@ -156,7 +167,7 @@ func (e *Engine) rotateUncertain(task *Task, now time.Time) bool {
 }
 
 func (e *Engine) hasOtherHealthy(platform string, avoid int64, now time.Time) bool {
-	_, ok := pickHealthy(e.accountsFor(platform), avoid, now, e.capNow())
+	_, ok := pickHealthy(e.store, e.accountsFor(platform), avoid, now, e.capNow())
 	return ok
 }
 
@@ -225,15 +236,21 @@ func cappedOut(rows []store.Browser, now time.Time, cap int) bool {
 	return hit
 }
 
-func pickHealthy(rows []store.Browser, avoid int64, now time.Time, cap int) (int64, bool) {
+func pickHealthy(st *store.Store, rows []store.Browser, avoid int64, now time.Time, cap int) (int64, bool) {
 	var best *store.Browser
+	bestRemaining := -1.0
 	for i := range rows {
 		b := &rows[i]
 		if b.ID == avoid || !openAccount(*b, now, cap) {
 			continue
 		}
-		if best == nil || b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID) {
+		remaining := -1.0
+		if b.Platform == agy.Platform {
+			remaining = agyRemaining(st, b.ID, now)
+		}
+		if best == nil || remaining > bestRemaining || (remaining == bestRemaining && (b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID))) {
 			best = b
+			bestRemaining = remaining
 		}
 	}
 	if best == nil {

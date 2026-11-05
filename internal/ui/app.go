@@ -86,6 +86,8 @@ type App struct {
 	platDoubao       bool
 	platQianwen      bool
 	platAntigravity  bool
+	platChatGPT      bool
+	chatGPTModel     string
 	agyBin           string
 	agyHomeRoot      string
 	agyModel         string
@@ -452,6 +454,11 @@ func (a *App) loadSettings() {
 	a.platDoubao = containsStr(s.Platforms(), "豆包")
 	a.platQianwen = containsStr(s.Platforms(), "千问")
 	a.platAntigravity = containsStr(s.Platforms(), agy.Platform)
+	a.platChatGPT = containsStr(s.Platforms(), "ChatGPT")
+	a.chatGPTModel = s.Get("chatgpt_model")
+	if a.chatGPTModel == "" {
+		a.chatGPTModel = "gpt-image-2"
+	}
 	a.agyBin = strings.TrimSpace(s.Get("agy_bin"))
 	if a.agyBin == "" {
 		a.agyBin = agy.DefaultBin()
@@ -622,6 +629,7 @@ func (a *App) saveSettings() {
 	s.Set(extbridge.SettingExtToken, a.extToken)
 	s.Set(extbridge.SettingExtPort, a.extPort)
 	s.SetPlatforms(a.selectedPlatforms())
+	s.Set("chatgpt_model", a.chatGPTModel)
 	a.persistAgySettings()
 	s.SetInt("platform_auto", boolInt(a.platformAuto))
 	s.Set("send_strategy", a.sendStrategy)
@@ -888,6 +896,7 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		RiskyWords:          tasks.ParseWords(a.riskyWords),
 		AgyBin:              a.agyBin,
 		AgyModel:            a.agyModel,
+		ChatGPTModel:        a.chatGPTModel,
 		AgyHomeRoot:         a.agyHomeRoot,
 		AgyTimeoutSec:       a.agyTimeoutSec(),
 	}

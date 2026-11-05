@@ -5,9 +5,11 @@
 锚点来自 `internal/strategy/js/ego.js`，不是新编的 class：
 
 - 首页 `https://www.doubao.com/chat/`，主机 `doubao.com`（含 `www` 和裸域）
+- 洗图和生图都先点击输入区的「图像生成」（`skill_bar_button_3`），确认已选模式后才上传或填词。已选中时不重复点击；切换失败则停止任务
 - 上传入口 `button[data-testid="upload_file_button"]`，二级菜单全文「上传文件或图片」
 - 仍优先写输入区旁边的隐藏 `input[type=file]`，不点击菜单项本身
 - 结果必须在 `[data-testid="mdbox_image"]` 内；`message_image_content` 是用户图。空 SVG / blob 占位不算结果
+- 批量洗图复用对话时，发送提示词会列出本批附件的唯一文件名。结果仍须通过源图 URI 关联校验；引用旧批次的结果进入「待核对」，不会按当前源文件名保存
 - 发送按钮与千问相同：`chat_input_send_button` 或「发送」
 - 验证码只检测。客户端推广「立即下载电脑版」旁的「关闭」只在清理附件时点一次
 

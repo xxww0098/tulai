@@ -57,6 +57,7 @@ type WorkbenchInput struct {
 	WantDoubao      bool
 	WantQianwen     bool
 	WantAntigravity bool
+	WantChatGPT     bool
 	OnlyPlatform    string
 	ExtensionMode   bool
 	Accounts        []AccountSnap
@@ -82,7 +83,7 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 			return platform == only
 		}
 		if in.AutoPlatform {
-			return platform == "豆包" || platform == "千问" || platform == agy.Platform
+			return wizard.Valid(platform)
 		}
 		switch platform {
 		case "豆包":
@@ -91,6 +92,8 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 			return in.WantQianwen
 		case agy.Platform:
 			return in.WantAntigravity
+		case "ChatGPT":
+			return in.WantChatGPT
 		default:
 			return false
 		}
@@ -124,7 +127,7 @@ func ConcurrencyCaption(auto bool, slots int) string {
 }
 
 func (a AccountSnap) carries(extensionMode bool, now time.Time) bool {
-	if a.Disabled || (a.Platform != agy.Platform && a.Extension != extensionMode) {
+	if a.Disabled || ((a.Platform == "豆包" || a.Platform == "千问") && a.Extension != extensionMode) || (a.Platform == "ChatGPT" && a.Extension) {
 		return false
 	}
 	return wizard.KeepsClosed(wizard.Account{
@@ -152,6 +155,9 @@ func platformsFromAccounts(accounts []AccountSnap, extensionMode bool, now time.
 	}
 	if has[agy.Platform] {
 		out = append(out, agy.Platform)
+	}
+	if has["ChatGPT"] {
+		out = append(out, "ChatGPT")
 	}
 	return out
 }

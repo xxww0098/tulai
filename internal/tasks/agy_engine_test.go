@@ -338,7 +338,8 @@ func addAgyAccount(t *testing.T, st *store.Store, name, home, mode string) store
 	if err := os.MkdirAll(filepath.Dir(agy.TokenPath(home)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(agy.TokenPath(home), []byte{}, 0o644); err != nil {
+	token := `{"token":{"refresh_token":"` + name + `-test-refresh"},"auth_method":"consumer"}`
+	if err := os.WriteFile(agy.TokenPath(home), []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "fixture.txt"), []byte(mode), 0o644); err != nil {

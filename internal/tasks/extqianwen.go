@@ -822,6 +822,9 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 	if job.IdempotencyPrefix == "" {
 		job.IdempotencyPrefix = job.TaskID
 	}
+	if platform == "豆包" && job.VerifyAttachments && len(job.Images) > 1 {
+		job.Prompt = doubaoBatchPrompt(job)
+	}
 	if _, err := extCall(ctx, sess, extbridge.CmdCaptchaAssist, job.TaskID, "", nil, 10*time.Second, platform); err != nil {
 		return out, err
 	}
@@ -909,6 +912,17 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		out.sourceIndices = append(out.sourceIndices, item.SourceIndex)
 	}
 	return out, dlErr
+}
+
+func doubaoBatchPrompt(job QianwenJob) string {
+	// 复用对话时，相同提示词可能让豆包再次引用上一批源图。
+	var prompt strings.Builder
+	prompt.WriteString(job.Prompt)
+	prompt.WriteString("\n本批次仅使用本条消息新上传的以下附件，忽略历史消息中的图片。每张结果只能引用对应的当前附件：")
+	for i := range job.Images {
+		fmt.Fprintf(&prompt, "\n第 %d 张：%s", i+1, extUploadName(job, i))
+	}
+	return prompt.String()
 }
 
 func extUploadName(job QianwenJob, index int) string {

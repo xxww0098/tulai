@@ -207,6 +207,7 @@ func (a *App) platformTabs(c *ui.Context) {
 	doubaoN := a.runningOn("豆包")
 	qianwenN := a.runningOn("千问")
 	agyN := a.runningOn(agy.Platform)
+	chatGPTN := a.runningOn("ChatGPT")
 	if !a.stagePicked {
 		a.stageTab = 0
 		best := doubaoN
@@ -216,12 +217,17 @@ func (a *App) platformTabs(c *ui.Context) {
 		}
 		if agyN > best {
 			a.stageTab = 2
+			best = agyN
+		}
+		if chatGPTN > best {
+			a.stageTab = 3
 		}
 	}
 	ui.Row(c.Key("platform-tabs")).Gap(6).AlignItems(ui.Center).Children(func() {
 		a.stageButton(c, 0, "豆包", doubaoN)
 		a.stageButton(c, 1, "千问", qianwenN)
 		a.stageButton(c, 2, agy.Platform, agyN)
+		a.stageButton(c, 3, "ChatGPT", chatGPTN)
 	})
 }
 
@@ -261,6 +267,8 @@ func (a *App) stagePlatform() string {
 		return "千问"
 	case 2:
 		return agy.Platform
+	case 3:
+		return "ChatGPT"
 	default:
 		return "豆包"
 	}
@@ -596,7 +604,7 @@ func (a *App) loggedOutCallout() bool {
 		if account.Platform != stage {
 			continue
 		}
-		if account.Platform != agy.Platform && account.Extension != in.ExtensionMode {
+		if (account.Platform == "豆包" || account.Platform == "千问") && account.Extension != in.ExtensionMode {
 			continue
 		}
 		if account.LoggedIn {
@@ -625,19 +633,13 @@ func (a *App) accountCallout(c *ui.Context) {
 		Radius(tok.radiusM).Background(tok.warning.Alpha(0.14)).Border(1, tok.warning).
 		Transition(motionBanner()).Children(func() {
 		text := "还没有可用账号。先去设置登录，再开始出图。"
-		button := "去设置"
 		if a.stagePlatform() == agy.Platform {
-			text = "还没有可用账号。在右侧点「+ 添加账号」登录。"
-			button = "+ 添加账号"
+			text = "还没有可用账号。在右上角账号表格点「+ 添加账号」登录。"
 		}
 		ui.Text(c, text).FontSize(tok.body).Grow(1).MinWidth(0)
-		ui.Button(c, button).OnClick(func() {
-			if a.stagePlatform() == agy.Platform {
-				a.addAgyAccount()
-				return
-			}
-			a.tab = pageBrowser
-		})
+		if a.stagePlatform() != agy.Platform {
+			ui.Button(c, "去设置").OnClick(func() { a.tab = pageBrowser })
+		}
 	})
 }
 

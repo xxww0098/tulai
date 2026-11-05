@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -292,6 +293,22 @@ func TestWashUploadNamesDistinguishBatchesAndSameNamedFiles(t *testing.T) {
 	}
 }
 
+func TestDoubaoBatchPromptDistinguishesReusedBatches(t *testing.T) {
+	job := QianwenJob{IdempotencyPrefix: "run:1", Prompt: "分别洗图", Images: []string{"/a/same.png", "/b/same.png"}, VerifyAttachments: true}
+	first := doubaoBatchPrompt(job)
+	oldName := extUploadName(job, 0)
+	job.IdempotencyPrefix = "run:2"
+	second := doubaoBatchPrompt(job)
+	if first == second || strings.Contains(second, oldName) || !strings.HasPrefix(second, job.Prompt) {
+		t.Fatalf("reused batch prompt retained old source: %q", second)
+	}
+	for i := range job.Images {
+		if !strings.Contains(second, extUploadName(job, i)) {
+			t.Fatalf("batch prompt omitted source %d: %q", i, second)
+		}
+	}
+}
+
 func TestBatchBridgeUploadsOnceAndSavesTenMatchingResults(t *testing.T) {
 	dir := t.TempDir()
 	var paths, names []string
@@ -313,6 +330,17 @@ func TestBatchBridgeUploadsOnceAndSavesTenMatchingResults(t *testing.T) {
 	sends := 0
 	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
 		name, _ := env.Name()
+		if name == extbridge.CmdSetPrompt || name == extbridge.CmdSend || name == extbridge.CmdWaitResult {
+			var p struct {
+				Prompt string `json:"prompt"`
+			}
+			_ = json.Unmarshal(env.Payload, &p)
+			for _, uploaded := range names {
+				if !strings.Contains(p.Prompt, uploaded) {
+					t.Errorf("%s prompt omitted current attachment %q", name, uploaded)
+				}
+			}
+		}
 		switch name {
 		case extbridge.CmdUpload:
 			var p struct {

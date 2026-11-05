@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "tulai 页面桥",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "在绑定的 Camoufox 账号中执行豆包和千问任务。",
   "browser_specific_settings": { "gecko": { "id": "page-bridge@tulai.local" } },
   "permissions": [

@@ -63,6 +63,26 @@ jobs:
       - name: Test release gate
         run: bash scripts/check-release-ci.test.sh
 
+  windows-test:
+    if: github.ref_type != 'tag'
+    needs: guard
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test Windows downloads and ChatGPT
+        run: go test ./internal/download ./internal/chatgpt -short
+      - name: Test Windows background commands
+        run: go test ./internal/agy -short -run '^TestWindowsBackgroundCommand'
+      - name: Vet
+        run: go tool mygo vet
+
   extension:
     needs: guard
     runs-on: ubuntu-latest
@@ -100,7 +120,7 @@ jobs:
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-latest","macos-latest","macos-15-intel"]' || '["windows-latest"]') }}
         suite:
           - name: browser
-            packages: ./internal/browser ./internal/cdp ./internal/captcha
+            packages: ./internal/browser ./internal/cdp ./internal/captcha ./internal/chatgpt
           - name: strategy
             packages: ./internal/strategy
     steps:

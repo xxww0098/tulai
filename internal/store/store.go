@@ -100,6 +100,7 @@ var defaults = map[string]string{
 	"agy_home_root":           "",
 	"agy_model":               "gemini-3.8-flash",
 	"agy_timeout_seconds":     "360",
+	"chatgpt_model":           "gpt-image-2",
 }
 
 const schema = `

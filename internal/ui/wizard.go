@@ -120,6 +120,7 @@ func (a *App) wizardFlow() []wizard.Step { return wizard.Flow(a.wizardChoice) }
 
 func (a *App) wizardView(c *ui.Context) {
 	tok := a.look
+	w, _ := c.Size()
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Background(tok.paper).Children(func() {
 		a.wizardSidebar(c)
 		ui.Column(c.Key("wizard-main")).Grow(1).MinWidth(0).Children(func() {
@@ -137,7 +138,7 @@ func (a *App) wizardView(c *ui.Context) {
 						case wizard.StepDone:
 							a.wizardDoneStep(c)
 						default:
-							a.wizardPlatformStep(c)
+							a.wizardPlatformStep(c, min(wizardBodyWidth, w-wizardSideWidth-80))
 						}
 					})
 				})
@@ -328,19 +329,19 @@ func (a *App) wizardBrowserStep(c *ui.Context) {
 	}
 }
 
-func (a *App) wizardPlatformStep(c *ui.Context) {
+func (a *App) wizardPlatformStep(c *ui.Context, width float32) {
 	a.wizardNormalizeChoice()
 	ui.RadioGroup(c, func() {
 		for _, name := range wizard.Platforms() {
-			a.wizardPlatformCard(c, name, wizardBlurb(name))
+			a.wizardPlatformCard(c, name, wizardBlurb(name), width)
 		}
-	}).Label("选择一个平台").Row().FillWidth().Gap(16).AlignItems(ui.Stretch)
+	}).Label("选择一个平台").Row().Wrap().FillWidth().Gap(16).AlignItems(ui.Stretch)
 }
 
-func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string) {
+func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string, available float32) {
 	tok := a.look
 	on := a.wizardChoice == name
-	card := ui.RadioBase(c.Key("wizard-"+name), &a.wizardChoice, name).Grow(1).Basis(0).MinWidth(0).MinHeight(188).
+	card := ui.RadioBase(c.Key("wizard-"+name), &a.wizardChoice, name).Grow(1).Basis((available - 16) / 2).MinWidth(196).MinHeight(188).
 		AlignItems(ui.Stretch).Radius(tok.radiusL).Cursor(ui.CursorPointer)
 	bg, border, width := tok.card, tok.border, float32(1)
 	switch {

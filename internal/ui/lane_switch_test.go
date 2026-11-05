@@ -26,7 +26,7 @@ func TestConcurrencySwitchInAccountHeader(t *testing.T) {
 				label := assertVisible(t, tt, "并发", float32(width), 900)
 				switchRect := assertVisible(t, tt, "启用并发", float32(width), 900)
 				add := assertVisible(t, tt, "+ 添加账号", float32(width), 900)
-				tableHead := assertVisible(t, tt, "当前任务", float32(width), 900)
+				tableHead := assertVisible(t, tt, "今日", float32(width), 900)
 				if header.X+header.W > label.X || label.X+label.W > switchRect.X ||
 					switchRect.X+switchRect.W > add.X || switchRect.Y+switchRect.H > tableHead.Y {
 					t.Fatalf("并发开关应位于账号表格标题和添加账号之间: header=%+v label=%+v switch=%+v add=%+v table=%+v", header, label, switchRect, add, tableHead)

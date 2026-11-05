@@ -14,7 +14,7 @@ import (
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
-// PlatformInFlight 是每个平台同时出图的上限。豆包、千问各 2，两边一起最多 4。
+// PlatformInFlight 是豆包、千问、ChatGPT 各自同时出图的上限。
 const PlatformInFlight = 2
 
 type runEvent struct {
@@ -278,6 +278,9 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		switchAfter = max(1, e.opts.TaskSwitchingCount)
 	}
 	pickAccount := func(preferred, avoid int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
+		if platform == agy.Platform && e.hasAgyUsage(now) {
+			return e.pickIdleAccount(platform, preferred, avoid, busy, readyAt, now)
+		}
 		if switchAfter > 0 {
 			if lastAccount > 0 {
 				preferred = lastAccount
@@ -314,7 +317,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			busy, readyAt := sched.snap()
 			for i := 0; i < len(pending); i++ {
 				task := pending[i]
-				if (platform != agy.Platform || switchAfter > 0) && task.Attempts == 0 && task.Error == "" && !task.submitted {
+				pinned := task.Platform == "ChatGPT" && task.chatGPT != nil && task.chatGPT.Attempted
+				if task.Attempts == 0 && task.Error == "" && !task.submitted && !pinned {
 					if id, ok := pickAccount(task.BrowserID, task.avoidSend, busy, readyAt, now); ok {
 						task.BrowserID = id
 					}
@@ -347,7 +351,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					continue
 				}
 				resource := e.slotKey(task.BrowserID)
-				if !task.submitted && (busy[resource] || now.Before(readyAt[resource])) {
+				if !task.submitted && !pinned && (busy[resource] || now.Before(readyAt[resource])) {
 					if id, ok := pickAccount(0, task.avoidSend, busy, readyAt, now); ok {
 						task.BrowserID = id
 						pending[i] = task

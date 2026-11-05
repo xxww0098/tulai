@@ -23,7 +23,7 @@ type wizardAgyState struct {
 	created int64 // 登录步骤里这一轮新建的账号。没登录就离开时清掉
 }
 
-// selectedPlatforms 是勾选的平台，按豆包、千问、Antigravity 排。
+// selectedPlatforms 按服务商显示顺序返回勾选的平台。
 func (a *App) selectedPlatforms() []string {
 	var out []string
 	if a.platDoubao {
@@ -35,6 +35,9 @@ func (a *App) selectedPlatforms() []string {
 	if a.platAntigravity {
 		out = append(out, agy.Platform)
 	}
+	if a.platChatGPT {
+		out = append(out, "ChatGPT")
+	}
 	return out
 }
 
@@ -45,7 +48,7 @@ func (a *App) wizardApplyChoice() {
 		return
 	}
 	if a.wizardFirst {
-		a.platDoubao, a.platQianwen, a.platAntigravity = false, false, false
+		a.platDoubao, a.platQianwen, a.platAntigravity, a.platChatGPT = false, false, false, false
 	}
 	switch a.wizardChoice {
 	case "豆包":
@@ -54,6 +57,8 @@ func (a *App) wizardApplyChoice() {
 		a.platQianwen = true
 	case agy.Platform:
 		a.platAntigravity = true
+	case "ChatGPT":
+		a.platChatGPT = true
 	}
 }
 
@@ -64,6 +69,8 @@ func stageIndex(platform string) int {
 		return 1
 	case agy.Platform:
 		return 2
+	case "ChatGPT":
+		return 3
 	default:
 		return 0
 	}
@@ -176,8 +183,14 @@ func (a *App) wizardEnterAgyAccount(extra bool) {
 }
 
 func (a *App) closeAgyLogin() {
+	if a.agyLogin != nil && a.agyLogin.cancel != nil {
+		a.agyLogin.cancel()
+	}
 	if a.agyLogin != nil && a.agyLogin.sess != nil {
 		a.agyLogin.sess.Close()
+	}
+	if a.agyLogin != nil && a.manager != nil {
+		a.manager.Stop(a.agyLogin.id)
 	}
 	a.agyLogin = nil
 }
@@ -222,10 +235,10 @@ func (a *App) abandonAgyAccount() {
 
 func (a *App) wizardIsAgy() bool { return a.wizardChoice == agy.Platform }
 
-// wizardNeedsBrowser 为真时才用得着浏览器：只有豆包和千问在网页里登录。
+// wizardNeedsBrowser 为真时使用账号的 Camoufox 登录窗口。
 func (a *App) wizardNeedsBrowser() bool { return !a.wizardIsAgy() }
 
-// wizardNormalizeChoice 保证选中的是三个平台之一。没选过时取已勾选的第一个，再不行是豆包。
+// wizardNormalizeChoice 没选过时取已勾选的第一个，再不行是豆包。
 func (a *App) wizardNormalizeChoice() {
 	if !wizard.Valid(a.wizardChoice) {
 		a.wizardChoice = wizard.DefaultChoice(a.selectedPlatforms())
@@ -233,8 +246,11 @@ func (a *App) wizardNormalizeChoice() {
 }
 
 func wizardBlurb(platform string) string {
+	if platform == "ChatGPT" {
+		return "在 ChatGPT 中生图和编辑图片。在账号的 Camoufox 窗口登录，额度用尽时自动切号。"
+	}
 	if platform == agy.Platform {
-		return "用 Google 账号登录命令行 agy 出图。要先安装，不用浏览器。"
+		return "用命令行 agy 出图，按账号自动切号。Google 授权使用账号的 Camoufox 窗口。"
 	}
 	return "在" + platform + "里生图。在打开的网页里登录一个免费账号。"
 }

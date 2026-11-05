@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xxww0098/tulai/internal/chatgpt"
 )
 
 // Status 任务状态。
@@ -27,7 +29,7 @@ const (
 // Task 一条批量任务：一个平台 × 一条提示词。图生图另带一张源图；文生图 Images 为空。
 type Task struct {
 	Index     int      // 序号（从 1 起）
-	Platform  string   // 豆包 / 千问
+	Platform  string   // 服务商名称
 	BrowserID int64    // 执行用的浏览器（构建后分配）
 	Prompt    string   // 提示词（已拼后缀）
 	Images    []string // 源图路径；文生图为空，执行时不上传
@@ -37,7 +39,8 @@ type Task struct {
 	Results   []string // 已保存结果路径
 	Rewritten bool     // 审核失败后提示词被改写过，卡片上要能看见
 
-	submitted          bool      // 已确认发送，重试时继续等待原任务
+	submitted          bool // 已确认发送，重试时继续等待原任务
+	chatGPT            *chatgpt.Generation
 	sentAt             time.Time // 最近一次确认发送的时间，用于计算账号发送间隔
 	sentURL            string    // 千问 /chat/<id>，重试只回到这一条
 	sentWrap           string    // data-chat-question-wrap
@@ -83,6 +86,7 @@ type Options struct {
 	AgyModel           string
 	AgyHomeRoot        string
 	AgyTimeoutSec      int
+	ChatGPTModel       string
 	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
 	Wash bool
 	// 结果图不经页面、直接按地址下载时的设置。并发按站点算，整批任务共用。
@@ -192,6 +196,16 @@ func RebuildRetry(items []Task) []Task {
 			Prompt:    task.Prompt,
 			Rewritten: task.Rewritten,
 			Status:    StatusPending,
+		}
+		if task.Platform == chatgpt.Platform && task.chatGPT != nil && task.chatGPT.Attempted {
+			next.chatGPT, next.BrowserID = task.chatGPT, task.BrowserID
+			next.noUse = true
+			next.submitted, next.sentURL, next.sentAt = task.submitted, task.sentURL, task.sentAt
+			next.Results = append([]string(nil), task.Results...)
+			next.savedHashes = make(map[string]bool, len(task.savedHashes))
+			for hash, saved := range task.savedHashes {
+				next.savedHashes[hash] = saved
+			}
 		}
 		if len(task.Images) > 0 {
 			next.Images = append([]string(nil), task.Images...)

@@ -66,8 +66,9 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	doubao := assertVisible(t, tt, "豆包", 1280, 900)
 	qianwen := assertVisible(t, tt, "千问", 1280, 900)
 	agyCard := assertVisible(t, tt, "Antigravity", 1280, 900)
-	if qianwen.X <= doubao.X+40 || agyCard.X <= qianwen.X+40 {
-		t.Fatalf("platform cards are stacked or overlapping: doubao=%+v qianwen=%+v agy=%+v", doubao, qianwen, agyCard)
+	chatGPTCard := assertVisible(t, tt, "ChatGPT", 1280, 900)
+	if qianwen.X <= doubao.X+40 || agyCard.Y <= doubao.Y+40 || chatGPTCard.X <= agyCard.X+40 || chatGPTCard.Y != agyCard.Y {
+		t.Fatalf("platform cards should form two columns: doubao=%+v qianwen=%+v agy=%+v chatgpt=%+v", doubao, qianwen, agyCard, chatGPTCard)
 	}
 	next := assertVisible(t, tt, "下一步", 1280, 900)
 	if next.Y < doubao.Y+80 {
@@ -76,7 +77,7 @@ func TestWizardWalkthroughCreatesAccountsAndPersists(t *testing.T) {
 	if a.wizardChoice != "豆包" {
 		t.Fatalf("a new config should start on doubao, got %q", a.wizardChoice)
 	}
-	// 三选一：点千问之后豆包就不再选中。
+	// 单选：点千问之后豆包就不再选中。
 	if err := tt.Click("千问"); err != nil {
 		t.Fatal(err)
 	}

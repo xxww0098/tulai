@@ -1,7 +1,7 @@
 {
   "name": "tulai",
   "identifier": "dev.tulai.app",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "copyright": "Copyright (c) 2026 xxww0098",
   "out": "build",
   "main": "./cmd/tulai",

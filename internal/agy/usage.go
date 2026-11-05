@@ -123,6 +123,9 @@ func windowFrom(bucket usageBucket) (UsageWindow, error) {
 	if bucket.Remaining == nil || strings.TrimSpace(bucket.Reset) == "" {
 		return UsageWindow{}, errUsageData
 	}
+	if math.IsNaN(*bucket.Remaining) || math.IsInf(*bucket.Remaining, 0) || *bucket.Remaining < 0 || *bucket.Remaining > 1 {
+		return UsageWindow{}, errUsageData
+	}
 	reset, err := time.Parse(time.RFC3339, strings.TrimSpace(bucket.Reset))
 	if err != nil {
 		return UsageWindow{}, errUsageData

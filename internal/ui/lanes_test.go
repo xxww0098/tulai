@@ -90,7 +90,11 @@ func TestDailyResultsFitAccountTable(t *testing.T) {
 					used, usedOK := tt.Find(usedLabel)
 					success, successOK := tt.Find(successLabel)
 					failed, failedOK := tt.Find(failedLabel)
-					task, taskOK := tt.Find("当前任务")
+					nextColumn := "当前任务"
+					if width < 1150 {
+						nextColumn = "操作"
+					}
+					task, taskOK := tt.Find(nextColumn)
 					if !usedOK || !successOK || !failedOK || !taskOK || used.Y+used.H > success.Y+1 || success.X+success.W > failed.X || failed.X+failed.W > task.X {
 						t.Fatalf("today stats overlap: used=%+v success=%+v failed=%+v task=%+v", used, success, failed, task)
 					}
@@ -466,7 +470,7 @@ func TestAccountTableScalesToTwelveAccounts(t *testing.T) {
 		if log.Y+log.H > 800-140 {
 			t.Fatalf("tab %d: 运行日志 pushed down to %+v", tab, log)
 		}
-		if last, ok := tt.Find("车道豆包12"); ok && last.Y < log.Y && last.Y+last.H <= first.Y+laneTableMaxH {
+		if last, ok := tt.Find("车道豆包12"); ok && last.Y < log.Y && last.Y+last.H <= first.Y+laneRowH*3 {
 			t.Fatalf("tab %d: twelve rows fit without the cap, table not capped", tab)
 		}
 		if tt.FramePending() {
@@ -475,38 +479,74 @@ func TestAccountTableScalesToTwelveAccounts(t *testing.T) {
 	}
 }
 
-func TestAccountTableCapsRowsOnShortWindow(t *testing.T) {
-	var rows []store.Browser
-	for i := 1; i <= 12; i++ {
-		rows = append(rows, loggedLane(int64(i), fmt.Sprintf("豆包%02d", i), "豆包"))
+func TestAccountTableDefaultsToThreeRows(t *testing.T) {
+	for stage, platform := range []string{"豆包", "千问", "Antigravity"} {
+		for _, page := range []int{pageHome, pageWash} {
+			for _, size := range [][2]int{{900, 700}, {1280, 800}} {
+				t.Run(fmt.Sprintf("%s-%s-%v", platform, pageLabel(page), size), func(t *testing.T) {
+					a := &App{platformAuto: true, concurrencyAuto: true, stageTab: stage, stagePicked: true, tab: page, statePage: page, prompts: "一只猫"}
+					for i := 1; i <= 12; i++ {
+						b := loggedLane(int64(i), fmt.Sprintf("%s%02d", platform, i), platform)
+						b.UserDataDir = t.TempDir()
+						a.browserRows = append(a.browserRows, b)
+					}
+					tt := ui.NewTester(a.view, size[0], size[1])
+					tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+					tt.Advance(200 * time.Millisecond)
+					list := assertVisible(t, tt, "账号列表", float32(size[0]), float32(size[1]))
+					third, ok := tt.Find("车道" + platform + "03")
+					if !ok || third.Y < list.Y-1 || third.Y+third.H > list.Y+list.H+1 || list.H < third.H*3-1 || list.H > third.H*3+1 {
+						t.Fatalf("列表没有完整显示三行: row=%v list=%v", third, list)
+					}
+					fourth, ok := tt.Find("车道" + platform + "04")
+					if ok && fourth.Y < list.Y+list.H-1 {
+						t.Fatalf("第四行仍然可见: row=%v list=%v", fourth, list)
+					}
+					prog := assertVisible(t, tt, "出图进度", float32(size[0]), float32(size[1]))
+					if float32(size[1])-prog.Y < 160 {
+						t.Fatalf("结果区过矮: %v", prog)
+					}
+					tt.Scroll(list.X+list.W/2, list.Y+list.H/2, 0, 2000)
+					tt.Advance(200 * time.Millisecond)
+					last, ok := tt.Find("车道" + platform + "12")
+					if !ok || last.Y < list.Y-1 || last.Y+last.H > list.Y+list.H+1 {
+						t.Fatalf("无法滚动到最后一个账号: row=%v list=%v", last, list)
+					}
+				})
+			}
+		}
 	}
-	a := &App{platformAuto: true, concurrencyAuto: true, browserRows: rows, prompts: "一只猫"}
-	short := ui.NewTester(a.view, 1024, 700)
-	short.Advance(200 * time.Millisecond)
-	list, ok := short.Find("账号列表")
-	if !ok {
-		t.Fatal("账号列表 missing")
-	}
-	if list.H > laneRowH*5+1 || list.H < laneRowH*4 {
-		t.Fatalf("short window list height %v", list.H)
-	}
-	fifth, ok := short.Find("车道豆包05")
-	if !ok || fifth.Y < list.Y-1 || fifth.Y+fifth.H > list.Y+list.H+1 {
-		t.Fatalf("fifth row not fully in the list: row %v list %v", fifth, list)
-	}
-	seventh, ok := short.Find("车道豆包07")
-	if ok && seventh.Y >= list.Y-1 && seventh.Y+seventh.H <= list.Y+list.H+1 {
-		t.Fatalf("seventh row still fully visible: %v list %v", seventh, list)
-	}
-	prog, ok := short.Find("出图进度")
-	if !ok || 700-prog.Y < 160 {
-		t.Fatalf("results too short: %+v", prog)
-	}
-	tall := ui.NewTester(a.view, 1280, 800)
-	tall.Advance(200 * time.Millisecond)
-	tallList, ok := tall.Find("账号列表")
-	if !ok || tallList.H <= laneRowH*5+1 {
-		t.Fatalf("tall window list %v", tallList)
+}
+
+func TestBrowserProviderTableKeepsTaskAndActionsReadable(t *testing.T) {
+	for stage, platform := range []string{"豆包", "千问"} {
+		for _, size := range [][2]int{{900, 700}, {1280, 800}} {
+			t.Run(fmt.Sprintf("%s-%v", platform, size), func(t *testing.T) {
+				loggedOut := loggedLane(2, "待登录账号", platform)
+				loggedOut.IsLoggedIn = false
+				a := &App{
+					platformAuto: true, stageTab: stage, stagePicked: true,
+					browserRows: []store.Browser{loggedLane(1, "设计主力", platform), loggedOut},
+					queue:       []tasks.Task{{Index: 1, Platform: platform, BrowserID: 1, Status: tasks.StatusRunning, Prompt: "生成春日海报"}},
+				}
+				tt := ui.NewTester(a.view, size[0], size[1])
+				tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+				tt.Advance(300 * time.Millisecond)
+				assertVisible(t, tt, platform+" 账号", float32(size[0]), float32(size[1]))
+				row := assertVisible(t, tt, "车道设计主力", float32(size[0]), float32(size[1]))
+				task := assertVisible(t, tt, "生成春日海报", float32(size[0]), float32(size[1]))
+				if row.H < 44 || row.H > 56 || (size[0] < 1150 && (task.Y < row.Y+18 || task.Y+task.H > row.Y+row.H)) {
+					t.Fatalf("账号信息与当前任务排版错误: row=%v task=%v", row, task)
+				}
+				outRow := assertVisible(t, tt, "车道待登录账号", float32(size[0]), float32(size[1]))
+				view := assertVisible(t, tt, "查看浏览器 待登录账号", float32(size[0]), float32(size[1]))
+				login := assertVisible(t, tt, "去重登 待登录账号", float32(size[0]), float32(size[1]))
+				pen := assertVisible(t, tt, "改名 待登录账号", float32(size[0]), float32(size[1]))
+				if view.H < 28 || login.H < 28 || pen.H < 28 || view.X+view.W > login.X || login.X+login.W > pen.X || pen.X+pen.W > outRow.X+outRow.W+1 {
+					t.Fatalf("操作按钮被挤压或重叠: view=%v login=%v pen=%v row=%v", view, login, pen, outRow)
+				}
+			})
+		}
 	}
 }
 

@@ -12,11 +12,17 @@ const maxResourceBytes = 64 << 20
 
 // LoadResource 使用当前浏览器登录态读取资源，不受页面 fetch 的 CORS 限制。
 func (s *Session) LoadResource(rawURL string) ([]byte, error) {
+	return s.LoadResourceContext(s.ctx, rawURL)
+}
+
+func (s *Session) LoadResourceContext(parent context.Context, rawURL string) ([]byte, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, fmt.Errorf("资源地址必须是 HTTP 或 HTTPS")
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, 50*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 50*time.Second)
+	stop := context.AfterFunc(s.ctx, cancel)
+	defer stop()
 	defer cancel()
 	var result struct{ Data string }
 	if err := s.client.proc.Call(ctx, s.target, "resource", map[string]any{"url": rawURL}, &result); err != nil {

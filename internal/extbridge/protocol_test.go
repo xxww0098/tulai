@@ -208,10 +208,10 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		}
 	}
 	doubaoPage := mustRead(t, filepath.Join(root, "extension", "doubao", "page.js"))
-	if bytes.Contains(doubaoPage, []byte("attachLocalImage")) || bytes.Contains(doubaoPage, []byte("createChooserBridge")) || bytes.Contains(doubaoPage, []byte("ensureImageMode")) || bytes.Contains(doubaoPage, []byte("AI生图")) {
-		t.Fatal("doubao page should keep assigning an existing file input and not grow the qianwen chooser or image mode")
+	if bytes.Contains(doubaoPage, []byte("attachLocalImage")) || bytes.Contains(doubaoPage, []byte("createChooserBridge")) || bytes.Contains(doubaoPage, []byte("AI生图")) {
+		t.Fatal("doubao page should keep assigning an existing file input and not grow the qianwen chooser")
 	}
-	for _, needle := range []string{"upload_file_button", "上传文件或图片", "mdbox_image", "message_image_content", "captchaBlocked", "DataTransfer"} {
+	for _, needle := range []string{"upload_file_button", "上传文件或图片", "mdbox_image", "message_image_content", "captchaBlocked", "DataTransfer", "skill_bar_button_3", "ensureImageMode", "imageModeActive"} {
 		if !bytes.Contains(doubaoPage, []byte(needle)) && !bytes.Contains(content, []byte(needle)) {
 			t.Errorf("doubao page actions missing %s", needle)
 		}

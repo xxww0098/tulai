@@ -1,4 +1,4 @@
-// Package agy 跑 Antigravity 命令行出图。账号是各自的 HOME 目录，不走浏览器。
+// Package agy 跑 Antigravity 命令行出图，按账号切换并保存 OAuth 凭据。
 package agy
 
 import (
@@ -77,7 +77,7 @@ func cliDir(home string) string {
 	return filepath.Join(home, ".gemini", "antigravity-cli")
 }
 
-// TokenPath 是登录凭证文件。只判断它在不在，不读内容。
+// TokenPath 是账号的 OAuth 快照，也是 CLI 的文件回退凭据。
 func TokenPath(home string) string {
 	return filepath.Join(cliDir(home), "antigravity-oauth-token")
 }
@@ -92,10 +92,14 @@ func BrainDir(home, conversationID string) string {
 	return filepath.Join(cliDir(home), "brain", conversationID)
 }
 
-// LoggedIn 只看凭证文件是否存在。
+// LoggedIn 要求存在可刷新的 OAuth 凭据，空文件不能代表登录成功。
 func LoggedIn(home string) bool {
-	info, err := os.Stat(TokenPath(home))
-	return err == nil && info != nil && !info.IsDir()
+	data, err := os.ReadFile(TokenPath(home))
+	if err != nil {
+		return false
+	}
+	_, err = normalizeCredential(data)
+	return err == nil
 }
 
 // ForgetToken 删掉失效的凭证文件，不读取内容。
@@ -107,6 +111,11 @@ var emailRe = regexp.MustCompile(`OAuth: authenticated successfully as (\S+@\S+)
 
 // Email 取日志里最后一次登录成功的邮箱。没有就是空字符串。
 func Email(home string) string {
+	if token, err := os.ReadFile(TokenPath(home)); err == nil {
+		if email := credentialEmail(token); email != "" {
+			return email
+		}
+	}
 	data, err := readTail(LogPath(home), 2<<20)
 	if err != nil || len(data) == 0 {
 		return ""

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 func TestAntigravityAddChooser(t *testing.T) {
@@ -192,6 +194,8 @@ func TestAntigravityTabShowsAccountAndLogin(t *testing.T) {
 	y, m, d := now.Date()
 	midnight := time.Date(y, m, d+1, 0, 0, 0, 0, now.Location()).Unix()
 	const link = "https://accounts.google.com/o/oauth2/auth?client_id=agy"
+	launched := make(chan store.Browser, 1)
+	navigated := make(chan string, 1)
 	a := &App{
 		platformAuto: true,
 		stageTab:     2,
@@ -201,7 +205,15 @@ func TestAntigravityTabShowsAccountAndLogin(t *testing.T) {
 			ID: 1, Name: "acc1", Platform: agy.Platform, UserDataDir: home,
 			IsLoggedIn: true, Health: store.HealthExhausted, LastError: "额度不足", CoolUntil: midnight,
 		}},
-		agyLogin: &agyLoginState{url: link, name: "acc1"},
+		agyLogin:     &agyLoginState{id: 1, home: home, url: link, name: "acc1"},
+		wizardLaunch: func(row store.Browser) (string, error) { launched <- row; return "camoufox://9333", nil },
+		wizardOpen: func(ws, rawURL string) error {
+			if ws != "camoufox://9333" {
+				return errors.New("wrong account endpoint")
+			}
+			navigated <- rawURL
+			return nil
+		},
 	}
 	tt := ui.NewTester(a.view, 1024, 700)
 	tt.Advance(300 * time.Millisecond)
@@ -214,9 +226,24 @@ func TestAntigravityTabShowsAccountAndLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Advance(50 * time.Millisecond)
-	opened := tt.OpenedURLs()
-	if len(opened) == 0 || opened[0] != link {
-		t.Fatalf("opened %#v", opened)
+	select {
+	case row := <-launched:
+		if row.ID != 1 || row.UserDataDir != filepath.Join(home, "oauth-browser") {
+			t.Fatal("OAuth did not use the account's dedicated profile")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("account browser was not started")
+	}
+	select {
+	case rawURL := <-navigated:
+		if rawURL != link {
+			t.Fatal("wrong OAuth URL")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("OAuth page was not opened")
+	}
+	if len(tt.OpenedURLs()) != 0 {
+		t.Fatal("OAuth opened an external browser")
 	}
 	if err := tt.Click("复制链接"); err != nil {
 		t.Fatal(err)
@@ -250,30 +277,84 @@ func TestAntigravityTabShowsAccountAndLogin(t *testing.T) {
 	}
 }
 
-func TestAntigravityNoAccountShowsAddAccountCallout(t *testing.T) {
-	cases := []struct {
-		name string
-		app  *App
-	}{
-		{
-			// 洗图页自带默认指令，还没有图片也应该先提示去加账号。
-			name: "wash",
-			app: &App{platformAuto: true, tab: pageWash, statePage: pageWash,
-				stageTab: 2, stagePicked: true, prompts: DefaultWashPrompt},
-		},
-		{
-			// 生图页写了提示词，没加图片。
-			name: "home",
-			app: &App{platformAuto: true, stageTab: 2, stagePicked: true,
-				prompts: "一只猫"},
-		},
+func TestAntigravityAddAccountStaysInAccountTable(t *testing.T) {
+	for _, page := range []int{pageHome, pageWash} {
+		for _, width := range []int{900, 1024, 1280} {
+			t.Run(fmt.Sprintf("%s-%d", pageLabel(page), width), func(t *testing.T) {
+				a := &App{platformAuto: true, tab: page, statePage: page, stageTab: 2, stagePicked: true, prompts: "一只猫"}
+				if page == pageWash {
+					a.prompts = DefaultWashPrompt
+				}
+				tester := ui.NewTester(a.view, width, 900)
+				check := func() (ui.Rect, ui.Rect) {
+					t.Helper()
+					tester.Frame()
+					tester.Advance(200 * time.Millisecond)
+					table := assertVisible(t, tester, "账号表格", float32(width), 900)
+					add := assertVisible(t, tester, "+ 添加账号", float32(width), 900)
+					if countExact(tester, "+ 添加账号") != 1 {
+						t.Fatal("添加账号入口重复")
+					}
+					if add.X < table.X+table.W/2 || add.X+add.W > table.X+table.W || add.X+add.W < table.X+table.W-32 || add.Y < table.Y || add.Y+add.H > table.Y+52 {
+						t.Fatalf("添加账号没有固定在表格右上角: table=%v add=%v", table, add)
+					}
+					return table, add
+				}
+				check()
+				if !tester.HasText("还没有可用账号。在右上角账号表格点「+ 添加账号」登录。") {
+					t.Fatal("缺少添加账号的位置提示")
+				}
+				a.agyChooser = &agyChooserState{hint: agy.MsgKeychain, canImport: true}
+				table, add := check()
+				panel := assertVisible(t, tester, "agy-add-chooser", float32(width), 900)
+				if panel.Y < add.Y+add.H || panel.X < table.X || panel.X+panel.W > table.X+table.W || panel.Y+panel.H > table.Y+table.H {
+					t.Fatalf("登录/导入选择器不在账号表格内: table=%v panel=%v", table, panel)
+				}
+				a.agyChooser = nil
+				a.agyLogin = &agyLoginState{url: "https://accounts.google.com/o/oauth2/auth?client_id=agy"}
+				table, add = check()
+				title := assertVisible(t, tester, "登录 Antigravity", float32(width), 900)
+				submit := assertVisible(t, tester, "提交", float32(width), 900)
+				if title.Y < add.Y+add.H || submit.Y+submit.H > table.Y+table.H {
+					t.Fatal("授权表单不在账号表格内")
+				}
+			})
+		}
 	}
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			tester := ui.NewTester(tt.app.view, 1280, 900)
-			tester.Advance(200 * time.Millisecond)
-			if !tester.HasText("还没有可用账号。在右侧点「+ 添加账号」登录。") {
-				t.Fatalf("Antigravity 没有账号时缺少提示: %v", tester.Texts())
+}
+
+func TestAntigravityTableKeepsQuotaAndRunningTaskReadable(t *testing.T) {
+	for _, size := range [][2]int{{900, 700}, {1280, 800}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			now := time.Now()
+			a := &App{platformAuto: true, stageTab: 2, stagePicked: true, prompts: "一只猫", agyUsage: map[int64]agyUsageSlot{}}
+			usage := agy.GeminiUsage{FiveHour: agy.UsageWindow{Remaining: 0.7, Reset: now.Add(time.Hour)}, Weekly: agy.UsageWindow{Remaining: 0.6, Reset: now.Add(48 * time.Hour)}}
+			for i := 1; i <= 8; i++ {
+				name := fmt.Sprintf("账号%d", i)
+				home := t.TempDir()
+				writeAgyHome(t, home, fmt.Sprintf("account%d@example.com", i))
+				a.browserRows = append(a.browserRows, store.Browser{ID: int64(i), Name: name, Platform: agy.Platform, UserDataDir: home, IsLoggedIn: true, Health: store.HealthReady})
+				a.agyUsage[int64(i)] = agyUsageSlot{view: agy.UsageView{State: agy.UsageOK, At: now, Usage: usage}}
+			}
+			a.queue = []tasks.Task{{Index: 1, Platform: agy.Platform, BrowserID: 1, Status: tasks.StatusRunning, Prompt: "正在处理的插画"}}
+			tester := ui.NewTester(a.view, size[0], size[1])
+			tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+			tester.Advance(300 * time.Millisecond)
+			row := assertVisible(t, tester, "车道账号1", float32(size[0]), float32(size[1]))
+			if row.H < 44 || row.H > 56 {
+				t.Fatalf("账号行不适合双行信息: %v", row)
+			}
+			list := assertVisible(t, tester, "账号列表", float32(size[0]), float32(size[1]))
+			if list.H > 3*row.H+1 {
+				t.Fatal("账号列表挤占结果区")
+			}
+			bar := assertVisible(t, tester, agy.WindowTip(agy.Window5h, usage.FiveHour.Remaining, usage.FiveHour.Reset, now), float32(size[0]), float32(size[1]))
+			if bar.W < 40 {
+				t.Fatalf("用量条过窄: %v", bar)
+			}
+			task := assertVisible(t, tester, "正在处理的插画", float32(size[0]), float32(size[1]))
+			if size[0] < 1150 && (task.Y < row.Y+18 || task.Y+task.H > row.Y+row.H) {
+				t.Fatal("窄窗口的当前任务没有放在账号下方")
 			}
 		})
 	}

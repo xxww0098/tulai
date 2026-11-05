@@ -84,6 +84,10 @@ func (a *App) laneBrowsers() []store.Browser {
 	ext := a.extensionTasks()
 	var out []store.Browser
 	for _, b := range a.configuredBrowsers() {
+		if b.Platform == "ChatGPT" && b.ExtAccount == "" {
+			out = append(out, b)
+			continue
+		}
 		if b.Platform == agy.Platform {
 			out = append(out, b)
 			continue
@@ -100,20 +104,11 @@ func (a *App) laneBrowsers() []store.Browser {
 }
 
 func (a *App) accountPanel(c *ui.Context) {
-	if a.stagePlatform() == agy.Platform {
-		a.agyLoginPanel(c)
-		a.agyChooserPanel(c)
-	}
 	board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
-	if len(board.Lanes) == 0 {
-		row := ui.Row(c.Key("lane-empty")).FillWidth().Gap(8).AlignItems(ui.Center)
-		row.Children(func() {
-			a.addAccountButton(c)
-		})
-		return
+	if len(board.Lanes) > 0 {
+		refreshAtMidnight(c)
+		a.laneClock(c, board)
 	}
-	refreshAtMidnight(c)
-	a.laneClock(c, board)
 	a.laneTable(c, board)
 }
 
@@ -204,8 +199,12 @@ func (a *App) laneHeader(c *ui.Context) {
 	}
 	row := ui.Row(c.Key("lane-title")).FillWidth().AlignItems(ui.Center).Gap(8)
 	row.Children(func() {
-		ui.Text(c.Key("lane-header"), line).FontSize(tok.body).Bold().SingleLine().Tooltip(line).Grow(1).MinWidth(0).
-			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
+		platform := a.stagePlatform()
+		platformIcon(c, platform, 24, tok)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+			ui.Text(c, platform+" 账号").FontSize(tok.body).FontWeight(600).SingleLine()
+			ui.Text(c.Key("lane-header"), line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line).ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
+		})
 		ui.Text(c, "并发").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
 		ui.Switch(c.Key("concurrency"), &a.concurrencyAuto).Size(32, 18).Radius(9).
 			Label("启用并发").Tooltip("此设置对所有服务商生效。" + ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots())).
@@ -219,7 +218,7 @@ func (a *App) laneHeader(c *ui.Context) {
 }
 
 func (a *App) addAccountButton(c *ui.Context) {
-	ui.Button(c, "+ 添加账号").Shrink(0).FontSize(12).Disabled(a.running).OnClick(func() {
+	ui.PrimaryButton(c, "+ 添加账号").Shrink(0).FontSize(12).Height(32).Padding(0, 12).Radius(a.look.radiusS).Disabled(a.running).OnClick(func() {
 		a.addAccountHere()
 	})
 }
@@ -237,8 +236,11 @@ func laneEnter(i int) ui.ElementTransition {
 
 func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
 	label := ln.Action
+	if ln.Platform == agy.Platform && label == "去登录" {
+		label = "登录"
+	}
 	id := ln.ID
-	ui.Button(c.Key("act"), label).FontSize(12).Height(24).Padding(0, 8).Radius(8).Shrink(0).OnClick(func() { a.openLane(id) })
+	ui.Button(c.Key("act"), label).Label(label+" "+ln.Name).FontSize(12).Height(28).Padding(0, 8).Radius(a.look.radiusS).Shrink(0).OnClick(func() { a.openLane(id) })
 }
 
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
@@ -353,10 +355,6 @@ func elapsedLabel(d time.Duration) string {
 		return fmt.Sprintf("已用 %d 秒", s)
 	}
 	return fmt.Sprintf("已用 %d 分 %d 秒", s/60, s%60)
-}
-
-func platformMark(c *ui.Context, platform string, tok tokens) {
-	platformIcon(c, platform, 18, tok)
 }
 
 func shotBadge(platform, name string) string {

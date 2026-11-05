@@ -188,9 +188,9 @@ func findKind(found []Found, kind string) (string, bool) {
 	return "", false
 }
 
-// Platforms 是第一步能选的三个平台，按显示顺序排列。三选一。
+// Platforms 是第一步能选的平台，按显示顺序排列。
 func Platforms() []string {
-	return []string{"豆包", "千问", agy.Platform}
+	return []string{"豆包", "千问", agy.Platform, "ChatGPT"}
 }
 
 // Valid 报告 name 是不是第一步能选的平台。

@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.11
+# 发布 tulai 0.1.12
 
-当前桌面端版本是 **0.1.11**，标签 **`v0.1.11`**。页面桥扩展是 **0.3.13**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.12**，标签 **`v0.1.12`**。页面桥扩展是 **0.3.14**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.12
+
+新增 ChatGPT 服务商，改进 Antigravity 的账号凭据与额度调度、豆包的图像模式和批次附件处理，并修复 Windows 下载保存及后台命令窗口。本版只发布 Windows 安装包，页面桥扩展更新至 0.3.14。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.11
 
@@ -68,18 +72,18 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.11` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.11` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.11` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.13` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 桌面端 | `0.1.12` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.12` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.12` 之后，模块版本就是这个标签。 |
+| 页面桥扩展 | `0.3.14` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载；当前源码是 0.3.13。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载；当前源码是 0.3.14。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
 
 ## 流水线
 
 `.github/workflows/ci.yml`：
 
-- pull request 和 `main`：运行 Go、扩展及浏览器测试，并打出 Windows 安装包。浏览器基础测试与策略测试分开并行；`main` 测试 Windows，pull request 额外测试 macOS。产物在 Actions 的 artifacts 里保留 14 天。
+- pull request 和 `main`：在 Linux 运行全部 Go 短测试，在 Windows 原生测试下载、ChatGPT 和后台命令，另跑扩展及 Camoufox 浏览器测试，并打出 Windows 安装包。浏览器基础测试（含 ChatGPT 传输）与策略测试分开并行；`main` 测试 Windows 浏览器，pull request 额外测试 macOS。产物在 Actions 的 artifacts 里保留 14 天。
 - 标签 `v*`：版本必须与 `mygo.json` 一致，且标签指向的提交必须有通过的 `main` CI。标签流水线复用这次测试结果，只重新打包并签名，再上传 Windows 安装包、Windows 更新清单、扩展 zip 和 `SHA256SUMS`。缺少签名密钥或必需附件时发布失败。
 
 `mygo.json` 的 `updates.github` 指向 `xxww0098/tulai`，`updates.publicKey` 是更新验签公钥。私钥只放在安全备份和 GitHub Actions secret `MYGO_UPDATER_PRIVATE_KEY`，不能提交到仓库或写入日志。更换或丢失私钥会使已安装版本无法验证新更新，应先安全备份。签名更新不等于 Apple 公证或 Windows 代码签名。Release 仍由现有的 `gh release create` 上传，以兼容旧版附件名。
@@ -103,12 +107,12 @@ git push origin vX.Y.Z
 
 ## 附件
 
-新流水线只发布 Windows。以下以桌面版本 `0.1.11` 为例展示命名；此前发布的 0.1.10 仍保留原有的 macOS 和 Linux 附件。
+新流水线只发布 Windows。以下以桌面版本 `0.1.12` 为例展示命名；此前发布的 0.1.10 仍保留原有的 macOS 和 Linux 附件。
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows | `tulai Setup 0.1.11 amd64.exe`、`tulai Setup 0.1.11 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.11-windows-amd64.exe` 和 `tulai-0.1.11-windows-arm64.exe`。 |
-| 扩展 | `tulai-extension-0.3.13.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
+| Windows | `tulai Setup 0.1.12 amd64.exe`、`tulai Setup 0.1.12 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.12-windows-amd64.exe` 和 `tulai-0.1.12-windows-arm64.exe`。 |
+| 扩展 | `tulai-extension-0.3.14.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
 新版本还包含 `update-windows-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。
 
@@ -154,7 +158,7 @@ MyGo 在安装时验证 Ed25519 签名；验证失败或缺少签名清单会报
 
 发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。旧更新器没有这份校验文件会拒绝安装；MyGo 更新验证清单里的开发者签名。
 
-版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.13.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.14.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
 以下是各平台旧更新器选择附件的规则；新发布仅包含 Windows 附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 

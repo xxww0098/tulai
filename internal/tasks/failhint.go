@@ -179,6 +179,10 @@ func (e *Engine) softenModeration(t *Task, err error) (again, stop bool) {
 	if t == nil || !isModeration(err) {
 		return false, false
 	}
+	if t.Platform == "ChatGPT" {
+		t.Error, t.Status = err.Error(), StatusFailed
+		return false, true
+	}
 	if t.soften >= 2 {
 		t.Error = err.Error()
 		t.Status = StatusFailed

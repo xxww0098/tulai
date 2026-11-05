@@ -69,22 +69,23 @@ type Engine struct {
 	pairErr     error
 	extNotice   string
 
-	loginProbe     func(context.Context, store.Browser) (string, error)
-	loginFocus     func(context.Context, store.Browser) error
-	sliderFn       func(context.Context, store.Browser) error
-	onHeal         func()
-	onRecover      func(heal.Action, int64)
-	loginLast      map[int64]time.Time
-	loginPrev      map[int64]string
-	attention      string
-	attentionID    int64
-	notes          []string
-	wake           chan struct{}
-	wakes          []chan struct{}
-	gap            func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
-	agyNoted       bool
-	noAccountNoted bool
-	onAgyDone      func(int64)
+	loginProbe      func(context.Context, store.Browser) (string, error)
+	loginFocus      func(context.Context, store.Browser) error
+	sliderFn        func(context.Context, store.Browser) error
+	onHeal          func()
+	onRecover       func(heal.Action, int64)
+	loginLast       map[int64]time.Time
+	loginPrev       map[int64]string
+	attention       string
+	attentionID     int64
+	notes           []string
+	wake            chan struct{}
+	wakes           []chan struct{}
+	gap             func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
+	agyNoted        bool
+	noAccountNoted  bool
+	onAgyDone       func(int64)
+	refreshAgyUsage func(context.Context)
 
 	liveMu sync.Mutex
 	clock  laneClock
@@ -110,6 +111,16 @@ func (e *Engine) SetAgyUsageKick(fn func(int64)) {
 	}
 	e.mu.Lock()
 	e.onAgyDone = fn
+	e.mu.Unlock()
+}
+
+// SetAgyUsageRefresh waits for quota readings before the first CLI task is assigned.
+func (e *Engine) SetAgyUsageRefresh(fn func(context.Context)) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.refreshAgyUsage = fn
 	e.mu.Unlock()
 }
 
@@ -284,6 +295,17 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	logging.SetRun(time.Now().Format("20060102T150405.000"))
 	logging.Event(logging.Line{Stage: "queue", Msg: fmt.Sprintf("任务开始：共 %d 个", len(queue)), Images: len(queue)})
 	onProgress(Progress{Done: 0, Total: len(queue)})
+	e.mu.Lock()
+	refresh := e.refreshAgyUsage
+	e.mu.Unlock()
+	if refresh != nil {
+		for _, task := range queue {
+			if task.Platform == agy.Platform {
+				refresh(ctx)
+				break
+			}
+		}
+	}
 	runErr := e.runPlatforms(ctx, nudge, queue, onTask, onProgress, attempt)
 	// 跑完或停下时，还排着的都改成已停止。界面和计数共用这一份状态。
 	e.stopLeftovers()
@@ -346,7 +368,7 @@ func (e *Engine) slotKey(id int64) int64 {
 	return accountSlot(e.store.Browsers(), id)
 }
 
-// pickIdleAccount 优先选择剩余日额度较少的空闲账号；相同时保留原分配或最近最少使用的账号。
+// pickIdleAccount 优先使用 Gemini 剩余额度最多的账号；网页平台仍优先用剩余日额度较少的账号。
 func (e *Engine) pickIdleAccount(platform string, preferred, avoid int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
 	return e.pickIdleAccountExcept(platform, preferred, avoid, busy, readyAt, now, nil, false)
 }
@@ -357,7 +379,7 @@ func (e *Engine) pickIdleAccountExcept(platform string, preferred, avoid int64, 
 	}
 	all := e.store.Browsers()
 	var best *store.Browser
-	bestUsed := 0
+	bestUsed := -1.0
 	for _, b := range e.accountsFor(platform) {
 		if b.ID == avoid || excluded[b.ID] || !openAccount(b, now, e.capNow()) {
 			continue
@@ -366,12 +388,12 @@ func (e *Engine) pickIdleAccountExcept(platform string, preferred, avoid int64, 
 		if busy[slot] || now.Before(readyAt[slot]) {
 			continue
 		}
-		if preferFirst && b.ID == preferred {
+		if preferFirst && b.ID == preferred && platform != agy.Platform {
 			return b.ID, true
 		}
-		used := 0
-		if platform != agy.Platform {
-			used = b.UsedToday(now)
+		used := float64(b.UsedToday(now))
+		if platform == agy.Platform {
+			used = agyRemaining(e.store, b.ID, now)
 		}
 		if best == nil || used > bestUsed || (used == bestUsed &&
 			(b.ID == preferred || (best.ID != preferred && (b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID))))) {
@@ -564,6 +586,9 @@ func stoppedTask(ctx context.Context, t Task) Task {
 
 // attempt 单次尝试：会话准备 → 上传 → 发送 → 等结果 → 保存。
 func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
+	if t != nil && t.Platform == "ChatGPT" {
+		return e.attemptChatGPT(ctx, t)
+	}
 	if t != nil && t.Platform == agy.Platform {
 		return e.attemptAntigravity(ctx, t)
 	}
@@ -883,7 +908,7 @@ func (e *Engine) browsersOfPlatforms() map[string][]int64 {
 		browsersOf := map[string][]int64{}
 		if e.store != nil {
 			for _, b := range e.store.Browsers() {
-				if b.Platform == agy.Platform {
+				if b.Platform == agy.Platform || b.Platform == "ChatGPT" {
 					if b.ExtAccount == "" {
 						browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
 					}
@@ -1439,7 +1464,7 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 		}
 		t.savedHashes[hash] = true
 		// 扩展下载已经换成去水印 PNG 时，不再按实验开关另存一份。
-		if t.Platform == "豆包" || !e.opts.RemoveWatermark || r.WatermarkRemoved {
+		if t.Platform != "千问" || !e.opts.RemoveWatermark || r.WatermarkRemoved {
 			continue
 		}
 		if !watermarkStaticImage(data, format) {

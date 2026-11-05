@@ -3,6 +3,7 @@ package download
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // replace 把 source 改名覆盖到 target，再同步所在目录。
@@ -16,6 +17,9 @@ func replace(source, target string) error {
 
 // syncDir 同步目录项，让改名在崩溃后仍然可见。Windows 不能同步目录。
 func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	f, err := os.Open(dir)
 	if err != nil {
 		return err

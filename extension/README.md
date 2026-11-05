@@ -1,6 +1,6 @@
 # tulai 页面桥
 
-这个目录包含 Chromium 的 Manifest V3 页面桥和 `firefox/` 中供绑定账号使用的 Firefox 页面桥，当前版本 **0.3.13**。桌面端和扩展的版本分别管理，hello 的 `payload.version` 与清单一致，打包方法见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
+这个目录包含 Chromium 的 Manifest V3 页面桥和 `firefox/` 中供绑定账号使用的 Firefox 页面桥，当前版本 **0.3.14**。桌面端和扩展的版本分别管理，hello 的 `payload.version` 与清单一致，打包方法见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
 
 桌面端默认在每个绑定的 Camoufox 账号中自动加载临时 Firefox 页面桥，并将会话映射到原账号；可在「设置 → 账号与并发」关闭。无需手动安装或配对，任务结束后清理临时扩展；原账号登录资料继续保留。豆包洗图每批最多在一条消息中发送 10 张源图，使用回复中的参考图片 URI 将每个结果关联到上传的源图。数量不符、关联缺失或存在歧义时，已取回的图片放入待核对目录，不按顺序猜测。下文的 Chromium 步骤只保留作历史实现参考；本项目的运行和测试使用内置 Camoufox，详见 [AGENTS.md](../AGENTS.md)。
 

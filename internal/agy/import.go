@@ -19,8 +19,8 @@ const (
 	VerifyTimeout = 90 * time.Second
 	// MsgNotFound 是本机 HOME 里没有已登录的 CLI。
 	MsgNotFound = "本机没有找到已登录的 Antigravity CLI"
-	// MsgKeychain 是令牌在钥匙串里、目录里没有凭证文件。
-	MsgKeychain = "这个账号存在钥匙串里，可直接导入为一个账号（同一台 Mac 的钥匙串账号只能用一个）"
+	// MsgKeychain 表示可把系统凭据保存为独立账号。
+	MsgKeychain = "已检测到系统 OAuth 凭据，可保存为独立账号，运行时自动切号"
 	// MsgAlready 是源目录在账号根里，或邮箱已经导入过。
 	MsgAlready = "这个账号已经导入过"
 	// MsgVerifying 是导入后正在试跑。
@@ -61,11 +61,28 @@ func DetectLocal() Detection {
 	return DetectAt(home)
 }
 
-// DetectAt 看指定 HOME 里有没有已登录的 CLI。不读取凭证内容。
+// DetectAt 优先检测本机正在使用的系统凭据，避免导入过期的文件回退账号。
 func DetectAt(home string) Detection {
 	home = strings.TrimSpace(home)
 	if home == "" {
 		return Detection{Hint: MsgNotFound}
+	}
+	if local, err := os.UserHomeDir(); err == nil && sameHome(home, local) && Keyring != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		unlock, err := lockCLI(ctx)
+		if err != nil {
+			return Detection{Hint: "Antigravity 正在运行，请稍后重试导入"}
+		}
+		data, err := Keyring.Read(ctx)
+		unlock()
+		if err != nil {
+			return Detection{Hint: err.Error()}
+		}
+		if data, err = normalizeCredential(data); err == nil {
+			email := credentialSourceEmail(data, home)
+			return Detection{Home: home, Email: email, Keychain: true, HasToken: LoggedIn(home), Hint: MsgKeychain}
+		}
 	}
 	if LoggedIn(home) {
 		email := Email(home)
@@ -75,10 +92,13 @@ func DetectAt(home string) Detection {
 		}
 		return Detection{Home: home, Email: email, HasToken: true, Hint: hint}
 	}
-	if keychainHasToken() {
-		return Detection{Home: home, Email: Email(home), Keychain: true, Hint: MsgKeychain}
-	}
 	return missingDetection(home)
+}
+
+func sameHome(a, b string) bool {
+	a, err1 := absClean(a)
+	b, err2 := absClean(b)
+	return err1 == nil && err2 == nil && a == b
 }
 
 // missingDetection 没找到登录时仍记下查过的 CLI 目录。
@@ -109,11 +129,6 @@ func tildeWithin(path, home string) string {
 		rel = "~" + path[len(home):]
 	}
 	return filepath.ToSlash(rel)
-}
-
-// keychainProbeArgs 只按服务名查找，不能带出会泄漏口令的参数。
-func keychainProbeArgs() []string {
-	return []string{"find-generic-password", "-s", "antigravity"}
 }
 
 // NormalizeHome 接受三种目录：用户 HOME、.gemini，或 antigravity-cli 本身。
@@ -196,6 +211,9 @@ type ImportResult struct {
 
 // Import 新建 accN，只复制登录需要的文件，再试跑。失败就删掉新建的目录。
 func Import(ctx context.Context, req ImportRequest) (ImportResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	src, err := absClean(req.SourceHome)
 	if err != nil {
 		return ImportResult{}, errors.New("没有可导入的账号")
@@ -211,12 +229,28 @@ func Import(ctx context.Context, req ImportRequest) (ImportResult, error) {
 	if WithinAccountRoot(src, root) {
 		return ImportResult{}, ErrAlreadyImported
 	}
-	email := Email(src)
+	unlock, err := lockCLI(ctx)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	var token []byte
+	if req.AllowMissingToken && Keyring != nil {
+		readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		token, err = Keyring.Read(readCtx)
+		cancel()
+	} else {
+		token, err = os.ReadFile(TokenPath(src))
+	}
+	if err == nil {
+		token, err = normalizeCredential(token)
+	}
+	unlock()
+	if err != nil {
+		return ImportResult{}, errors.New(MsgNoToken)
+	}
+	email := credentialSourceEmail(token, src)
 	if EmailUsed(email, req.ExistingEmails) {
 		return ImportResult{}, ErrAlreadyImported
-	}
-	if !LoggedIn(src) && !req.AllowMissingToken {
-		return ImportResult{}, errors.New(MsgNoToken)
 	}
 	bin := strings.TrimSpace(req.Bin)
 	if bin == "" {
@@ -230,6 +264,10 @@ func Import(ctx context.Context, req ImportRequest) (ImportResult, error) {
 		return ImportResult{}, err
 	}
 	if err := copyAccountFiles(src, dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return ImportResult{}, err
+	}
+	if err := writeCredential(dir, token); err != nil {
 		_ = os.RemoveAll(dir)
 		return ImportResult{}, err
 	}
@@ -370,7 +408,13 @@ func verify(ctx context.Context, bin, home, model string, timeout time.Duration)
 		return fmt.Errorf("创建临时目录失败: %w", err)
 	}
 	defer os.RemoveAll(work)
+	session, err := beginCLI(ctx, home, false)
+	if err != nil {
+		return err
+	}
+	defer session.unlock()
 	cmd := exec.CommandContext(ctx, bin, "-p", verifyPrompt, "--output-format", "stream-json", "--model", model)
+	configureCommand(cmd)
 	cmd.Dir = work
 	cmd.Env = envWithHome(home)
 	stdout, err := cmd.StdoutPipe()
@@ -409,11 +453,14 @@ func verify(ctx context.Context, bin, home, model string, timeout time.Duration)
 		}
 	}
 	_ = cmd.Wait()
-	if state.Status == "SUCCESS" {
-		return nil
-	}
 	if state.Auth {
 		return errors.New("登录已失效")
+	}
+	if err := session.save(); err != nil {
+		return err
+	}
+	if state.Status == "SUCCESS" {
+		return nil
 	}
 	if state.Quota {
 		return &QuotaError{Until: state.Until}

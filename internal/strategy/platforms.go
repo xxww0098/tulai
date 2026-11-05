@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/cdp"
 )
 
@@ -16,6 +17,33 @@ func (Doubao) Platform() string { return "豆包" }
 
 // HomeURL 豆包图像生成入口。
 func (Doubao) HomeURL() string { return "https://www.doubao.com/chat/" }
+
+// CleanComposer 在新对话或复用对话中先进入图像模式，之后才上传或填词。
+func (d Doubao) CleanComposer(s *cdp.Session) error {
+	if err := d.base.CleanComposer(s); err != nil {
+		return err
+	}
+	out, err := s.EvaluateAsync(`(async () => {
+		if (!window.__tulaiWashPage) {` + extbundle.DoubaoPageJS() + `
+			window.__tulaiWashPage = window.TULAIPage;
+		}
+		return JSON.stringify(await window.__tulaiWashPage.ensureImageMode(document));
+	})()`)
+	if err != nil {
+		return err
+	}
+	var mode struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := cdp.ParseJSValue(out, &mode); err != nil {
+		return err
+	}
+	if !mode.OK {
+		return fmt.Errorf("进入豆包图像生成模式: %s", mode.Error)
+	}
+	return nil
+}
 
 // FetchResultBytes 豆包覆盖：先要原图地址，再按页面 referer 和浏览器登录态去拉。
 func (d Doubao) FetchResultBytes(s *cdp.Session, raw string) ([]byte, error) {

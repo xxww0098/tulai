@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,17 +32,19 @@ type agyChooserState struct {
 
 // agyLoginState 是添加账号时的授权面板。授权码只留在输入框，提交后清掉，不进日志。
 type agyLoginState struct {
-	id     int64
-	home   string
-	name   string
-	url    string
-	code   string
-	err    string
-	busy   bool
-	retry  bool
-	copied bool
-	sess   *agy.Login
-	gen    int
+	id      int64
+	home    string
+	name    string
+	url     string
+	code    string
+	err     string
+	busy    bool
+	retry   bool
+	copied  bool
+	opening bool
+	sess    *agy.Login
+	cancel  context.CancelFunc
+	gen     int
 }
 
 func (a *App) agySignature() string {
@@ -95,7 +98,7 @@ func (a *App) persistAgySettings() {
 
 func (a *App) agySettings(c *ui.Context) {
 	ui.Form(c, func() {
-		ui.Text(c, "在生图或洗图右侧选中 Antigravity 后，任务只走这里的账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "Antigravity 任务优先使用 Gemini 剩余额度最多的账号，5小时或7天任一窗口用尽时自动切号。").FontSize(12).TextColor(c.Theme().TextMuted)
 		ui.Field(c, "agy 路径", func() {
 			ui.TextInput(c, &a.agyBin).Placeholder(agy.DefaultBin()).Disabled(a.running)
 		})
@@ -239,7 +242,7 @@ func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
 	})
 }
 
-// agyBox 是选择方式和授权共用的外框。出图页里紧凑，向导里和其它卡片一样宽松。
+// agyBox 在账号表格内平铺表单，向导里使用独立卡片。
 func (a *App) agyBox(c *ui.Context, key, label string, roomy bool) ui.Element {
 	tok := a.look
 	box := ui.Column(c.Key(key)).FillWidth()
@@ -249,7 +252,7 @@ func (a *App) agyBox(c *ui.Context, key, label string, roomy bool) ui.Element {
 	if roomy {
 		return wizardCard(box.Gap(12).Padding(16, 20), tok)
 	}
-	return box.Gap(8).Padding(10, 12).Radius(tok.radiusM).Background(tok.card).Border(1, tok.border)
+	return box.Gap(12).Padding(12, 0).BorderWidth(1, 0, 0, 0).BorderColor(tok.border)
 }
 
 // agyChooserHint 把「已检查 <路径>」单独放在一行。路径不换行，放不下就在行尾省略。
@@ -311,7 +314,7 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 	tok := a.look
 	a.agyBox(c, "agy-login", "", roomy).Children(func() {
 		ui.Text(c, "登录 Antigravity").FontSize(tok.body).Bold()
-		ui.Text(c, "把浏览器给出的授权码粘贴到下面，不会写入日志。").FontSize(tok.caption).TextColor(tok.muted)
+		ui.Text(c, "在账号的 Camoufox 窗口中授权，再把授权码粘贴到下面。").FontSize(tok.caption).TextColor(tok.muted)
 		ui.Field(c, "授权链接", func() {
 			url := s.url
 			if url == "" {
@@ -319,13 +322,11 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 			}
 			link := ui.Text(c.Key("agy-url"), url).FontSize(tok.caption).TextColor(tok.accent).SingleLine().Tooltip(url).Cursor(ui.CursorPointer)
 			if s.url != "" && link.Clicked() {
-				c.OpenURL(s.url)
+				a.openAgyAuthURL()
 			}
 			ui.Row(c).Gap(8).Children(func() {
-				ui.Button(c, "打开浏览器").Height(36).Disabled(s.url == "").OnClick(func() {
-					if s.url != "" {
-						c.OpenURL(s.url)
-					}
+				ui.Button(c, "打开浏览器").Height(36).Disabled(s.url == "" || s.opening).OnClick(func() {
+					a.openAgyAuthURL()
 				})
 				ui.Button(c, "复制链接").Height(36).Disabled(s.url == "").OnClick(func() {
 					if s.url == "" {
@@ -354,6 +355,52 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 			ui.Text(c, s.err).FontSize(tok.caption).TextColor(tok.danger)
 		}
 	})
+}
+
+func (a *App) openAgyAuthURL() {
+	if a == nil || a.agyLogin == nil || a.agyLogin.opening {
+		return
+	}
+	s := a.agyLogin
+	if s.url == "" {
+		return
+	}
+	for _, row := range a.configuredBrowsers() {
+		if row.ID != s.id || row.Platform != agy.Platform {
+			continue
+		}
+		// The OAuth browser belongs to this account but is separate from CLI files.
+		row.UserDataDir = filepath.Join(s.home, "oauth-browser")
+		s.opening = true
+		sess, rawURL := s.sess, s.url
+		go func() {
+			ws, err := a.launchWizardBrowser(row)
+			if err == nil && sess != nil {
+				select {
+				case <-sess.Done():
+					err = fmt.Errorf("登录已结束，请重试")
+				default:
+				}
+			}
+			if err == nil {
+				err = a.openWizardPage(ws, rawURL)
+			}
+			a.postUI(func() {
+				if a.agyLogin != s {
+					if a.manager != nil && (a.agyLogin == nil || a.agyLogin.id != s.id) {
+						a.manager.Stop(s.id)
+					}
+					return
+				}
+				s.opening = false
+				if err != nil {
+					s.err = "打开账号浏览器失败，请检查 Camoufox 是否已安装"
+				}
+			})
+		}()
+		return
+	}
+	s.err = "没有找到 Antigravity 账号"
 }
 
 func (a *App) submitAgyCode() {
@@ -385,7 +432,7 @@ func (a *App) addAgyAccount() {
 	if a == nil || a.running {
 		return
 	}
-	if a.agyLogin != nil && a.agyLogin.sess != nil && !a.agyLogin.retry {
+	if a.agyLogin != nil && !a.agyLogin.retry {
 		logging.Log.Info("Antigravity 正在登录，请先完成或点重试")
 		return
 	}
@@ -543,7 +590,7 @@ func (a *App) startAgyImport() {
 		logging.Log.Errorf("还没有配置库，无法添加 Antigravity 账号")
 		return
 	}
-	if a.agySourceBlocked(s.home) {
+	if agy.WithinAccountRoot(s.home, a.agyAccountRoot()) || agy.EmailUsed(s.email, a.agyEmails()) {
 		s.err = agy.ErrAlreadyImported.Error()
 		s.retry = false
 		return
@@ -559,7 +606,7 @@ func (a *App) startAgyImport() {
 		Bin:               strings.TrimSpace(a.agyBin),
 		Model:             strings.TrimSpace(a.agyModel),
 		Timeout:           agy.VerifyTimeout,
-		AllowMissingToken: s.keychain && !agy.LoggedIn(s.home),
+		AllowMissingToken: s.keychain,
 	}
 	window := a.window
 	go func() {
@@ -611,6 +658,7 @@ func (a *App) finishAgyImport(res agy.ImportResult, err error) {
 	}
 	a.store.UpdateBrowser(row.ID, false, true)
 	a.store.ResetBrowserHealth(row.ID)
+	a.resetAgyUsage(row.ID)
 	a.refreshBrowsers()
 	if a.engine != nil {
 		a.engine.Wake()
@@ -633,6 +681,9 @@ func (a *App) beginAgyLogin(row store.Browser) {
 	if a.agyLogin != nil && a.agyLogin.sess != nil {
 		a.agyLogin.sess.Close()
 	}
+	if a.agyLogin != nil && a.agyLogin.cancel != nil {
+		a.agyLogin.cancel()
+	}
 	gen := 1
 	if a.agyLogin != nil {
 		gen = a.agyLogin.gen + 1
@@ -642,18 +693,41 @@ func (a *App) beginAgyLogin(row store.Browser) {
 		home: row.UserDataDir,
 		name: row.Name,
 		gen:  gen,
+		busy: true,
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	state.cancel = cancel
 	a.agyLogin = state
 	bin := strings.TrimSpace(a.agyBin)
 	model := strings.TrimSpace(a.agyModel)
-	sess, err := agy.StartLogin(bin, row.UserDataDir, model)
-	if err != nil {
-		state.err = err.Error()
+	if bin == "" {
+		bin = agy.DefaultBin()
+	}
+	if _, err := os.Stat(bin); err != nil {
+		cancel()
+		state.err = "找不到 agy：" + bin
+		state.busy = false
 		state.retry = true
 		return
 	}
-	state.sess = sess
-	go a.watchAgyLogin(gen, sess, row.ID, row.Name, row.UserDataDir)
+	go func() {
+		sess, err := agy.StartLogin(ctx, bin, row.UserDataDir, model)
+		a.postUI(func() {
+			if a.agyLogin != state {
+				if sess != nil {
+					go sess.Close()
+				}
+				return
+			}
+			state.busy = false
+			if err != nil {
+				state.err, state.retry = err.Error(), true
+				return
+			}
+			state.sess = sess
+			go a.watchAgyLogin(gen, sess, row.ID, row.Name, row.UserDataDir)
+		})
+	}()
 }
 
 func (a *App) watchAgyLogin(gen int, sess *agy.Login, id int64, name, home string) {
@@ -665,7 +739,7 @@ func (a *App) watchAgyLogin(gen int, sess *agy.Login, id int64, name, home strin
 		url := sess.URL()
 		if url != "" {
 			a.syncUI(func() {
-				if a.agyLogin != nil && a.agyLogin.gen == gen && a.agyLogin.url == "" {
+				if a.agyLogin != nil && a.agyLogin.gen == gen && a.agyLogin.sess == sess && a.agyLogin.url == "" {
 					a.agyLogin.url = url
 				}
 			})
@@ -681,9 +755,9 @@ func (a *App) watchAgyLogin(gen int, sess *agy.Login, id int64, name, home strin
 		}
 	}
 	err := sess.Wait()
-	ok := agy.LoggedIn(home)
+	ok := err == nil && agy.LoggedIn(home)
 	a.syncUI(func() {
-		if a.agyLogin == nil || a.agyLogin.gen != gen {
+		if a.agyLogin == nil || a.agyLogin.gen != gen || a.agyLogin.sess != sess {
 			return
 		}
 		if ok {
@@ -713,6 +787,7 @@ func (a *App) finishAgyLogin(id int64, name string) {
 	if a != nil && a.store != nil && id > 0 {
 		a.store.UpdateBrowser(id, false, true)
 		a.store.ResetBrowserHealth(id)
+		a.resetAgyUsage(id)
 		a.refreshBrowsers()
 	}
 	if a != nil && a.engine != nil {
@@ -723,7 +798,7 @@ func (a *App) finishAgyLogin(id int64, name string) {
 	}
 	logging.Log.Success("Antigravity 账号「%s」已登录", name)
 	if a != nil {
-		a.agyLogin = nil
+		a.closeAgyLogin()
 		a.agyAccountAdded()
 	}
 }

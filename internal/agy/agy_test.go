@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+const testCredential = `{"token":{"access_token":"test-access","refresh_token":"test-refresh","token_type":"Bearer","expiry":"2026-12-01T00:00:00Z"},"auth_method":"consumer"}`
+
+func TestCLIHomeAlsoSetsWindowsUserProfile(t *testing.T) {
+	t.Setenv("HOME", "old-home")
+	t.Setenv("USERPROFILE", "old-profile")
+	newHome := t.TempDir()
+	seen := map[string]int{}
+	for _, item := range envWithHome(newHome) {
+		key, value, ok := strings.Cut(item, "=")
+		if ok && (key == "HOME" || key == "USERPROFILE") {
+			seen[key]++
+			if value != newHome {
+				t.Fatalf("%s did not use the account directory", key)
+			}
+		}
+	}
+	if seen["HOME"] != 1 || seen["USERPROFILE"] != 1 {
+		t.Fatal("account home variables were missing or duplicated")
+	}
+}
+
 func TestEmailLastMatch(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".gemini", "antigravity-cli")
@@ -29,6 +50,10 @@ func TestEmailLastMatch(t *testing.T) {
 	if err := os.WriteFile(TokenPath(home), []byte{}, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if LoggedIn(home) {
+		t.Fatal("空凭证不能代表登录成功")
+	}
+	writeToken(t, home)
 	if !LoggedIn(home) {
 		t.Fatal("凭证文件存在时应算已登录")
 	}
@@ -292,7 +317,7 @@ func writeToken(t *testing.T, home string) {
 	if err := os.MkdirAll(filepath.Dir(TokenPath(home)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(TokenPath(home), []byte{}, 0o644); err != nil {
+	if err := os.WriteFile(TokenPath(home), []byte(testCredential), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

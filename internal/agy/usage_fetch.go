@@ -26,7 +26,7 @@ var (
 	errUsageCanceled = errors.New("context canceled")
 )
 
-// FetchUsage 在账号 HOME 里执行 agy -p /usage。不读凭证内容，也不往标准输入写任何东西。
+// FetchUsage 切换账号凭据后执行 agy -p /usage，不往标准输入写任何东西。
 // 输出里一出现 Authentication required 就杀掉进程：它会停在那里等授权码。
 func FetchUsage(ctx context.Context, bin, home string) (GeminiUsage, error) {
 	return fetchUsage(ctx, bin, home, UsageTimeout)
@@ -50,14 +50,26 @@ func fetchUsage(ctx context.Context, bin, home string, timeout time.Duration) (G
 	if timeout <= 0 {
 		timeout = UsageTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	work, err := os.MkdirTemp("", "agy-usage-")
 	if err != nil {
 		return GeminiUsage{}, errUsageEmpty
 	}
 	defer os.RemoveAll(work)
+	session, err := beginCLI(ctx, home, false)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return GeminiUsage{}, errUsageTimeout
+		}
+		if errors.Is(err, context.Canceled) {
+			return GeminiUsage{}, errUsageCanceled
+		}
+		return GeminiUsage{}, err
+	}
+	defer session.unlock()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "-p", "/usage", "--output-format", "json")
+	configureCommand(cmd)
 	cmd.Dir = work
 	cmd.Env = envWithHome(home)
 	// nil 标准输入接到空设备，不会把授权码或别的内容送进去。
@@ -65,6 +77,9 @@ func fetchUsage(ctx context.Context, bin, home string, timeout time.Duration) (G
 	out, err := captureUsage(ctx, cmd)
 	if bytes.Contains(out, []byte("Authentication required")) {
 		return GeminiUsage{}, ErrNeedLogin
+	}
+	if saveErr := session.save(); saveErr != nil {
+		return GeminiUsage{}, saveErr
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return GeminiUsage{}, errUsageTimeout

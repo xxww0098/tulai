@@ -75,6 +75,48 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 		})
 	}
 
+	t.Run("image mode before input", func(t *testing.T) {
+		sess := openFixture(t, client, srv.URL+"/9337-1", hook, composer)
+		defer sess.Close()
+		if err := PrepareDoubaoTurns(sess); err != nil {
+			t.Fatal(err)
+		}
+		if !sess.EvaluateBool(`(() => {
+			var entry = document.querySelector('[data-testid="skill_bar_button_3"]');
+			var area = window.__tulaiWashPage.composer(document);
+			if (!entry || !area) return false;
+			window.__modeClicks = 0;
+			entry.addEventListener('click', function () {
+				window.__modeClicks++;
+				setTimeout(function () {
+					var replacement = area.cloneNode(true);
+					replacement.id = 'redrawn-composer';
+					area.replaceWith(replacement);
+					var selected = document.createElement('span');
+					selected.textContent = '图像生成';
+					replacement.parentElement.appendChild(selected);
+				}, 50);
+			});
+			return true;
+		})()`) {
+			t.Fatal("保存的豆包页面缺少图像生成入口或输入框")
+		}
+		strat := Doubao{}
+		if err := strat.CleanComposer(sess); err != nil {
+			t.Fatal(err)
+		}
+		if !sess.EvaluateBool(`window.__modeClicks === 1 && window.__tulaiWashPage.composer(document).id === 'redrawn-composer'`) {
+			diagnostic, _ := sess.Evaluate(`JSON.stringify({clicks:window.__modeClicks,composer:window.__tulaiWashPage.composer(document)?.id})`)
+			t.Fatalf("进入图像模式后必须等待输入框重绘完成: %s", diagnostic)
+		}
+		if err := strat.CleanComposer(sess); err != nil {
+			t.Fatal(err)
+		}
+		if sess.EvaluateInt(`window.__modeClicks`) != 1 {
+			t.Fatal("复用对话时不能把已选中的图像模式再点一次")
+		}
+	})
+
 	t.Run("send", func(t *testing.T) {
 		prompt := "雪山下的小木屋，油画风格"
 		sess := openFixture(t, client, srv.URL+"/9336-0", hook, composer)

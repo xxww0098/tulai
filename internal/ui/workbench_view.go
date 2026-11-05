@@ -16,6 +16,7 @@ import (
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 const (
@@ -284,10 +285,14 @@ func (a *App) accountSettings(c *ui.Context) {
 				a.platformCheck(c, "豆包", &a.platDoubao)
 				a.platformCheck(c, "千问", &a.platQianwen)
 				a.platformCheck(c, agy.Platform, &a.platAntigravity)
+				a.platformCheck(c, "ChatGPT", &a.platChatGPT)
 			})
 		}
 		ui.Text(c, a.platformLine()).FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Text(c, fmt.Sprintf("豆包、千问每个平台同时最多 %d 张。Antigravity 一次只跑一个账号。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(12).TextColor(tok.muted)
+		ui.Text(c, fmt.Sprintf("豆包、千问、ChatGPT 每个平台同时最多 %d 张。Antigravity 一次只跑一个账号。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(12).TextColor(tok.muted)
+		ui.Field(c, "ChatGPT 模型", func() {
+			motionSelect(c, &a.chatGPTModel, []string{"gpt-image-2", "auto"}).Disabled(a.running)
+		})
 		ui.Field(c, "每日上限", func() {
 			ui.NumberInput(c, &a.dailyCap, 1, 200, 1).Disabled(a.running)
 		})
@@ -359,8 +364,8 @@ func (a *App) platformLine() string {
 		}
 		return "当前将使用：" + strings.Join(names, "、")
 	}
-	if !a.platDoubao && !a.platQianwen && !a.platAntigravity {
-		return "请勾选豆包、千问或 Antigravity"
+	if !a.platDoubao && !a.platQianwen && !a.platAntigravity && !a.platChatGPT {
+		return "请勾选豆包、千问、Antigravity 或 ChatGPT"
 	}
 	return "按勾选的平台出图，仍会在健康账号之间自动轮换"
 }
@@ -385,6 +390,7 @@ func (a *App) workbenchInput() WorkbenchInput {
 		WantDoubao:      a.platDoubao,
 		WantQianwen:     a.platQianwen,
 		WantAntigravity: a.platAntigravity,
+		WantChatGPT:     a.platChatGPT,
 		ExtensionMode:   a.extensionTasks(),
 		Accounts:        a.accountSnaps(),
 		Now:             time.Now(),
@@ -431,6 +437,7 @@ func (a *App) parallelSlots() int {
 	wantDoubao := a.platformAuto || a.platDoubao || stage == "豆包"
 	wantQianwen := a.platformAuto || a.platQianwen || stage == "千问"
 	wantAgy := a.platformAuto || a.platAntigravity || stage == agy.Platform
+	wantChatGPT := a.platformAuto || a.platChatGPT || stage == "ChatGPT"
 	var rows []store.Browser
 	for _, b := range a.configuredBrowsers() {
 		if stage != "" && b.Platform != stage {
@@ -453,6 +460,10 @@ func (a *App) parallelSlots() int {
 			}
 		case agy.Platform:
 			if !wantAgy {
+				continue
+			}
+		case "ChatGPT":
+			if !wantChatGPT || b.ExtAccount != "" {
 				continue
 			}
 		default:
@@ -566,7 +577,7 @@ func (a *App) retryTasks(items []tasks.Task) {
 		}
 	}
 	var names []string
-	for _, name := range []string{"豆包", "千问", agy.Platform} {
+	for _, name := range wizard.Platforms() {
 		if platforms[name] {
 			names = append(names, name)
 		}
@@ -597,7 +608,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	}
 	if !a.extensionTasks() {
 		for _, platform := range platforms {
-			if platform != "豆包" && platform != "千问" {
+			if platform != "豆包" && platform != "千问" && platform != "ChatGPT" {
 				continue
 			}
 			if _, ready := browser.InstalledCamoufox(browser.ConfigDir()); !ready {

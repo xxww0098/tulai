@@ -76,6 +76,8 @@ func Factory(platform string) Strategy {
 		return &Doubao{}
 	case "千问":
 		return &Qianwen{}
+	case "ChatGPT":
+		return &ChatGPT{}
 	}
 	return nil
 }

@@ -197,8 +197,6 @@ func TestNewTaskClearsResultGrid(t *testing.T) {
 	if len(snap) != 1 || snap[0].Status != tasks.StatusSuccess || len(snap[0].Results) != 1 {
 		t.Fatalf("run %+v", snap)
 	}
-	// 账号行会盖住历史里的「恢复」。这一步只看结果格和历史，账号可以拿掉。
-	st.DeleteBrowser(row.ID)
 	a := &App{
 		store: st, engine: eng, platformAuto: true,
 		prompts: "一只猫", queue: snap, runPage: pageHome,
@@ -397,7 +395,7 @@ func TestHistoryPopupClearsHeaderAndLog(t *testing.T) {
 				t.Fatalf("%v: %s left the window row %v", sz, name, row)
 			}
 		}
-		for _, label := range []string{"今日", "当前任务"} {
+		for _, label := range []string{"今日", "操作"} {
 			cell, found := tt.Find(label)
 			if !found {
 				t.Fatalf("%v: %s missing", sz, label)

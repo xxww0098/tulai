@@ -63,7 +63,7 @@ func (s *Store) PrepareCamoufoxProfiles(dataRoot string) error {
 func (s *Store) SetBrowserProxy(id int64, proxy string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result, err := s.db.Exec(`UPDATE browsers SET proxy=? WHERE id=? AND COALESCE(ext_account,'')='' AND platform IN ('豆包','千问')`, proxy, id)
+	result, err := s.db.Exec(`UPDATE browsers SET proxy=? WHERE id=? AND COALESCE(ext_account,'')='' AND platform IN ('豆包','千问','ChatGPT')`, proxy, id)
 	if err != nil {
 		return err
 	}

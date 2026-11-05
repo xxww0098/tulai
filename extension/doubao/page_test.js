@@ -242,6 +242,81 @@ function boxSet(doc, value) {
   Page.composer(doc).value = value
 }
 
+for (const attrs of [{ class: 'guidance-input-surface' }, { 'data-chat-input-body': '1' }]) {
+  const doc = makeDoc('www.doubao.com')
+  doc.body.append(new El('div', { 'data-testid': 'attachment-image-card', 'aria-label': 'old.png' }))
+  const wrap = doc.body.append(new El('div', attrs))
+  const input = wrap.append(new El('div'))
+  input.append(new El('textarea'))
+  input.append(new El('button'))
+  const baseline = new Set(descendants(doc))
+  wrap.append(new El('div', { 'data-testid': 'attachment-image-card', 'aria-label': 'source.png' }))
+  assert.strictEqual(Page.uploadEntry(doc, Page.composer(doc)), null)
+  assert.deepStrictEqual(Page.attachmentNames(doc), ['source.png'], '图像模式没有旧上传按钮标识时，仍须读取同一输入壳内的附件')
+  assert.strictEqual(Page.freshAttachment(doc, baseline), true)
+}
+
+for (const prefix of ['生成图片：', '生成图片: ']) {
+  const { doc, box } = surface()
+  const prompt = '橙色陶瓷杯静物图片'
+  box.value = prompt
+  message(doc, 'user', prefix + prompt)
+  const old = message(doc, 'assistant', '')
+  rasterImg(old.append(new El('div', { 'data-testid': 'mdbox_image' })), 'https://cdn.example/old-mode.png', 1024)
+  const marked = Page.mark(doc, prompt)
+  assert.strictEqual(Page.sendAccepted(doc, marked), false, '旧的带前缀消息不能算新发送')
+  assert.strictEqual(Page.resultImages(doc, marked).length, 0)
+  const user = message(doc, 'user', '')
+  user.append(new El('p')).addText(prefix + prompt)
+  user.append(new El('span')).addText('今天 19:32')
+  const answer = message(doc, 'assistant', '')
+  rasterImg(answer.append(new El('div', { 'data-testid': 'mdbox_image' })), 'https://cdn.example/new-mode.png', 1024)
+  assert.strictEqual(Page.sendAccepted(doc, marked), true)
+  assert.deepStrictEqual(Page.newAssistants(doc, marked), [answer])
+  assert.deepStrictEqual(Page.resultImages(doc, marked).map(image => image.url), ['https://cdn.example/new-mode.png'])
+}
+
+async function testImageMode() {
+  const { doc, box } = surface()
+  const outside = doc.body.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  const bar = box.parentElement.append(new El('div', { 'data-testid': 'guidance-skill-bar' }))
+  const button = bar.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  let clicks = 0
+  let replacement
+  button.click = function () {
+    clicks++
+    setTimeout(function () {
+      box.isConnected = false
+      replacement = box.parentElement.append(new El('textarea'))
+      box.parentElement.append(new El('span')).addText('图像生成')
+    }, 10)
+  }
+  assert.strictEqual(Page.imageModeActive(doc), false, '工具栏的同名入口不代表模式已选中')
+  assert.strictEqual((await Page.ensureImageMode(doc)).ok, true)
+  assert.strictEqual(Page.composer(doc), replacement, '切换模式后须使用重绘的输入框')
+  assert.strictEqual(Page.imageModeActive(doc), true)
+  assert.strictEqual((await Page.ensureImageMode(doc)).ok, true)
+  assert.strictEqual(clicks, 1, '模式已经选中时不能再次点击')
+  assert.strictEqual(outside.clicked, undefined, '不能点击输入区外的同名按钮')
+
+  const selected = surface()
+  const pressed = selected.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3', 'aria-pressed': 'true' })).addText('图像生成')
+  assert.strictEqual((await Page.ensureImageMode(selected.doc)).ok, true)
+  assert.strictEqual(pressed.clicked, undefined)
+
+  const unchanged = surface()
+  const entry = unchanged.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  assert.strictEqual((await Page.ensureImageMode(unchanged.doc)).code, 'E_SELECTOR_MISS', '只有点击、没有选中证据时必须停止')
+  assert.strictEqual(entry.clicked, 1, '等待模式生效时不能反复点击')
+
+  const missing = surface()
+  missing.doc.body.append(new El('span')).addText('图像生成')
+  assert.strictEqual((await Page.ensureImageMode(missing.doc)).code, 'E_SELECTOR_MISS', '输入区外的文字不能代表模式已选中')
+  assert.strictEqual((await Page.ensureImageMode(missing.doc, () => true)).code, 'E_CANCELLED')
+  missing.doc.body.append(new El('button', { 'data-testid': 'to_login_button' }))
+  assert.strictEqual((await Page.ensureImageMode(missing.doc)).code, 'E_NOT_LOGGED_IN')
+}
+
 {
   const doc = makeDoc('www.doubao.com')
   const hiddenMenu = doc.body.append(new El('div', { role: 'listbox' }))
@@ -669,3 +744,5 @@ console.log('doubao page.js anchors ok')
   assert.strictEqual(live.done, true)
   assert.deepStrictEqual(Array.from(live.images, (image) => image.url), ['https://cdn.example/new.png'])
 }
+
+testImageMode().then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })

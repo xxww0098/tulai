@@ -13,7 +13,7 @@ import (
 // 但二维码要等点开右上角登录才出现，不能因为有输入框就当成已登录。
 // 滑块、安全验证或 punish 页是 challenge，不算退出登录。
 // 地区限制页是 region，不算退出登录。连接断开时不关用户的标签页。
-const loginProbeJS = `(function () {
+const loginProbeJS = `(async function () {
   function visible(el) {
     if (!el) return false;
     var r = el.getBoundingClientRect();
@@ -80,6 +80,19 @@ const loginProbeJS = `(function () {
     if (/受区域限制|当前地区暂不支持|所在地区暂不可用|服务在当前地区不可用/.test(top)) return {state:'region'};
   }
   if (challenge()) return {state:'challenge', evidence:'challenge'};
+  if (host === 'auth.openai.com' || host === 'auth0.openai.com') return {state:'out', evidence:'chatgpt_auth'};
+  if (host === 'chatgpt.com') {
+    if (visible(document.querySelector('#challenge-running,#cf-challenge-running,.cf-turnstile')) ||
+        /Just a moment|Checking your browser|Verify you are human/.test(String(document.title || ''))) return {state:'challenge'};
+    try {
+      const response = await fetch('/api/auth/session', {credentials:'same-origin', redirect:'error', signal:AbortSignal.timeout(2000)});
+      if (response.status === 401) return {state:'out', evidence:'chatgpt_session'};
+      if (response.status === 403) return {state:'challenge'};
+      if (!response.ok) return {state:'unknown'};
+      const session = await response.json();
+      return {state:session.accessToken ? 'in' : 'out', evidence:'chatgpt_session'};
+    } catch (_) { return {state:'unknown'}; }
+  }
   if (generating()) return {state:'unknown', evidence:'generating'};
   var hasComposer = composer();
   // 退出必须有正面证据：登录层、密码框，或明确的登录按钮且页面上没有已登录痕迹。
@@ -139,7 +152,7 @@ func ProbeLogin(ctx context.Context, endpoint string) (string, error) {
 		return RegionBlocked, nil
 	}
 	var result loginProbeResult
-	if err := conn.EvalJSON(ctx, id, loginProbeJS, &result); err != nil {
+	if err := conn.evalJSON(ctx, id, loginProbeJS, &result, true, true); err != nil {
 		return "", err
 	}
 	return NormalizeLoginState(result.State), nil
@@ -181,7 +194,7 @@ func (s *Session) LoginState() (string, error) {
 	if s == nil {
 		return "unknown", errors.New("没有页面")
 	}
-	out, err := s.Evaluate(loginProbeJS)
+	out, err := s.EvaluateAsync(loginProbeJS)
 	if err != nil {
 		return "", err
 	}
@@ -220,7 +233,7 @@ func pickLoginTarget(list []sliderTarget) (string, bool) {
 			continue
 		}
 		url := strings.ToLower(item.URL)
-		if strings.Contains(url, "doubao.com") || strings.Contains(url, "qianwen.com") || strings.Contains(url, "tongyi.com") || strings.Contains(url, "qwen.ai") {
+		if strings.Contains(url, "doubao.com") || strings.Contains(url, "qianwen.com") || strings.Contains(url, "tongyi.com") || strings.Contains(url, "qwen.ai") || strings.HasPrefix(url, "https://chatgpt.com/") || strings.HasPrefix(url, "https://auth.openai.com/") || strings.HasPrefix(url, "https://auth0.openai.com/") {
 			return item.ID, true
 		}
 		if page == "" {

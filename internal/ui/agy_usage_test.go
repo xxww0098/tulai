@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 func TestAgyQuotaBarsAndTooltip(t *testing.T) {
@@ -38,8 +40,10 @@ func TestAgyQuotaBarsAndTooltip(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
 	tt.Advance(300 * time.Millisecond)
-	if !tt.HasText("额度") {
-		t.Fatal("缺少额度列")
+	for _, label := range []string{"Gemini 已用", "5小时", "7天", "0%", "3%"} {
+		if !tt.HasText(label) {
+			t.Fatalf("缺少 Gemini 用量标识 %q", label)
+		}
 	}
 	if tt.HasText("今日") || tt.HasText("7/20") || countExact(tt, "7") != 0 {
 		t.Fatalf("额度列还在显示今日次数: %v", tt.Texts())
@@ -60,6 +64,83 @@ func TestAgyQuotaBarsAndTooltip(t *testing.T) {
 	}
 	hoverTip(t, tt, fiveTip)
 	hoverTip(t, tt, weekTip)
+}
+
+func TestAgyQuotaViewRestoresSavedReading(t *testing.T) {
+	st := openUsageStore(t)
+	row, err := st.AddBrowser(agy.Platform, "账号", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Second)
+	usage := agy.GeminiUsage{FiveHour: agy.UsageWindow{Remaining: 0.7, Reset: now.Add(time.Hour)}, Weekly: agy.UsageWindow{Remaining: 0.4, Reset: now.Add(48 * time.Hour)}}
+	tasks.NoteAgyQuota(st, row.ID, usage, now)
+	a := &App{store: st}
+	for _, loading := range []bool{false, true} {
+		if loading {
+			a.agyUsage = map[int64]agyUsageSlot{row.ID: {inflight: true}}
+		}
+		view := a.agyUsageView(row.ID)
+		if view.State != agy.UsageOK || !view.At.Equal(now) || view.Usage.FiveHour.Remaining != 0.7 || view.Usage.Weekly.Remaining != 0.4 {
+			t.Fatalf("saved UI quota = %+v", view)
+		}
+	}
+	a.resetAgyUsage(row.ID)
+	if _, ok := tasks.SavedAgyUsage(st, row.ID); ok {
+		t.Fatal("new OAuth identity retained the old account's quota")
+	}
+	if view := a.agyUsageView(row.ID); view.State != agy.UsageReading {
+		t.Fatalf("new identity still shows old usage: %+v", view)
+	}
+}
+
+func TestAgyPreflightWaitsForExistingQuotaRead(t *testing.T) {
+	st := openUsageStore(t)
+	home := t.TempDir()
+	writeEmptyAgyToken(t, home)
+	row, err := st.AddBrowser(agy.Platform, "账号", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, release, fetched, preflight := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	a := &App{store: st, agyUsageFetch: func(ctx context.Context, _, _ string) (agy.GeminiUsage, error) {
+		calls.Add(1)
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return agy.GeminiUsage{}, ctx.Err()
+		}
+		now := time.Now()
+		return agy.GeminiUsage{FiveHour: agy.UsageWindow{Remaining: 0.9, Reset: now.Add(time.Hour)}, Weekly: agy.UsageWindow{Remaining: 0.7, Reset: now.Add(48 * time.Hour)}}, nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if !a.beginAgyUsage(row.ID, time.Now()) {
+		t.Fatal("quota read did not start")
+	}
+	go func() { defer close(fetched); defer a.finishAgyUsage(row.ID); a.fetchAgyAccount(ctx, row, "") }()
+	<-started
+	go func() { defer close(preflight); a.refreshAgyUsageBeforeRun(ctx) }()
+	select {
+	case <-preflight:
+		t.Fatal("batch did not wait for quota read")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-preflight:
+	case <-ctx.Done():
+		t.Fatal("batch remained blocked after quota read")
+	}
+	<-fetched
+	if calls.Load() != 1 {
+		t.Fatal("batch duplicated an ongoing quota query")
+	}
+	if view, ok := tasks.SavedAgyUsage(st, row.ID); !ok || view.Usage.Weekly.Remaining != 0.7 {
+		t.Fatal("batch started before quota was saved")
+	}
 }
 
 func TestAgyQuotaDashReasons(t *testing.T) {
@@ -283,7 +364,7 @@ func writeEmptyAgyToken(t *testing.T, home string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"token":{"refresh_token":"test-refresh"},"auth_method":"consumer"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

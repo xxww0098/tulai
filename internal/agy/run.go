@@ -51,9 +51,6 @@ func Run(ctx context.Context, req Request) (string, error) {
 	if model == "" {
 		model = DefaultModel
 	}
-	if !LoggedIn(home) {
-		return "", ErrNeedLogin
-	}
 	work, err := os.MkdirTemp("", "agy-run-")
 	if err != nil {
 		return "", fmt.Errorf("创建临时目录失败: %w", err)
@@ -68,9 +65,15 @@ func Run(ctx context.Context, req Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	session, err := beginCLI(ctx, home, false)
+	if err != nil {
+		return "", err
+	}
+	defer session.unlock()
 
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, bin, "-p", prompt, "--output-format", "stream-json", "--model", model)
+	configureCommand(cmd)
 	cmd.Dir = work
 	cmd.Env = envWithHome(home)
 	stdout, err := cmd.StdoutPipe()
@@ -107,13 +110,15 @@ func Run(ctx context.Context, req Request) (string, error) {
 		state.Feed(line.text, line.stderr, time.Now())
 		if state.Auth && cmd.Process != nil {
 			_ = cmd.Process.Kill()
-			break
 		}
 	}
 	_ = cmd.Wait()
 	if state.Auth {
 		ForgetToken(home)
 		return "", ErrNeedLogin
+	}
+	if err := session.save(); err != nil {
+		return "", err
 	}
 	if ctx.Err() != nil {
 		return "", ctx.Err()
@@ -213,11 +218,11 @@ func envWithHome(home string) []string {
 	base := os.Environ()
 	out := make([]string, 0, len(base)+1)
 	for _, item := range base {
-		if strings.HasPrefix(item, "HOME=") {
+		if strings.HasPrefix(item, "HOME=") || strings.HasPrefix(item, "USERPROFILE=") {
 			continue
 		}
 		out = append(out, item)
 	}
-	out = append(out, "HOME="+home)
+	out = append(out, "HOME="+home, "USERPROFILE="+home)
 	return out
 }

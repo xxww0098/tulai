@@ -63,7 +63,8 @@ func TestCanceledResourceClosesTemporaryPage(t *testing.T) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	finished := make(chan error, 1)
 	go func() {
-		finished <- s.client.proc.Call(ctx, s.target, "resource", map[string]any{"url": srv.URL + "/slow"}, nil)
+		_, err := s.LoadResourceContext(ctx, srv.URL+"/slow")
+		finished <- err
 	}()
 	select {
 	case <-started:

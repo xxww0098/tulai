@@ -1,6 +1,6 @@
 # tulai
 
-tulai 是豆包和千问的批量生图桌面应用。命令和安装包里的可执行文件也叫 `tulai`。源码仓库是 [xxww0098/tulai](https://github.com/xxww0098/tulai)。窗口标题和标题栏大字是「tulai」；macOS 菜单里的应用名也是「tulai」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
+tulai 是豆包、千问、ChatGPT 和 Antigravity 的批量生图桌面应用。命令和安装包里的可执行文件也叫 `tulai`。源码仓库是 [xxww0098/tulai](https://github.com/xxww0098/tulai)。窗口标题和标题栏大字是「tulai」；macOS 菜单里的应用名也是「tulai」。支持文生图和图生图：写提示词即可开跑，也可以按源图批量改图。界面使用 [mygo](https://github.com/egoist/mygo) 原生控件，语言是 Go，目标平台是 macOS、Windows 和 Linux，纯 Go、无 CGO。
 
 本地运行，没有授权激活，也不接远端数据库。已安装的桌面端可以从 GitHub Releases 检查并安装更新。
 
@@ -12,6 +12,7 @@ tulai 是豆包和千问的批量生图桌面应用。命令和安装包里的�
 | `internal/camoufox` | 固定版本启动库与 Node 的安装、私有管道通信、账号指纹保存和 Firefox 页面控制 |
 | `internal/browser` | 只管理 Camoufox：每账号独立进程、资料目录和代理，串行启动同一账号，正常关闭时保存登录资料 |
 | `internal/strategy` | 在 Camoufox 页面操作编辑器并截获结果；扩展模式另走页面桥 |
+| `internal/chatgpt` | Go 实现 ChatGPT 网页生图协议：请求凭据、工作量证明、参考图上传、生成流、原对话查询；网络使用账号的 Camoufox |
 | `internal/captcha` | 三后端：free（纯 Go CV）/ custom（视觉大模型）/ ikunocr（接码） |
 | `internal/tasks` | 顺序循环、并发、重试、定时切浏览器、SHA256 去重、按日期保存 |
 | `internal/dedup` | 图片去重：解码后像素 SHA-256 判完全相同，pHash（32×32 灰度 DCT 低频 63 位）判近似，并查集分组，留下分辨率最大的一张复制到新文件夹，另写一份 CSV 报告。界面只露严格/标准/宽松三档 |
@@ -33,7 +34,7 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 `go.mod` 把 MyGo 工具固定在 **v0.7.4**（`github.com/egoist/mygo`）。产品版本仍是 `mygo.json` 的 `version`，不跟着 MyGo 的版本走。
 
-桌面端产品版本是 **0.1.11**。标签 `v0.1.10` 的历史发布包含三个系统的安装包；新流水线只发布 Windows。页面桥扩展是 **0.3.13**。步骤见下文「发布 0.1.11」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
+桌面端产品版本是 **0.1.12**。标签 `v0.1.10` 的历史发布包含三个系统的安装包；新流水线只发布 Windows。页面桥扩展是 **0.3.14**。步骤见下文「发布 0.1.12」和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 已安装的桌面端会在启动时和大约每 6 小时静默检查更新（设置里的「自动检查更新」默认开着）。有新版本时顶部出现「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。正在进行的任务结束后才安装。也可以用菜单 **帮助 → 检查更新…**、左侧导航、设置页、设置向导，或终端里的 `tulai update`（只查看用 `tulai update --check`）。检查使用公开的 GitHub Releases，不附带 token，连接失败时尝试可配置的镜像。Windows 安装版使用 MyGo 验证更新签名；免安装程序及旧版继续使用 SHA256SUMS。旧 macOS 和 Linux 客户端可能检查到仅供 Windows 的新版本，并提示缺少对应更新文件，可关闭自动检查。Windows 没有代码签名。页面桥扩展单独更新。签名发布及安装方式见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
@@ -47,9 +48,15 @@ go run ./cmd/tulai-ext-smoke   # 扩展桥冒烟：本机 WebSocket，等待千�
 
 Camoufox 由官方启动库通过 Playwright Firefox / Juggler 管道控制，不打开 CDP 调试端口。配置库里的旧 `port` 仅作为应用内账号标识保留，`camoufox://9333` 不是网络监听地址。
 
-第一次打开时会出现设置向导。第一步在豆包、千问、Antigravity 里三选一，第一次只勾选选中的这个平台。豆包和千问接着确认浏览器，弹出登录页，扫码登录。完成后自动进入主界面，出图页停在刚设置的平台上。向导展示状态写在配置库里；之后即使没有可用账号也不会自动弹出。侧栏的「设置向导」可以手动打开，用来完成设置、再加一个平台，或给已选的平台多加一个账号。
+第一次打开时会出现设置向导。第一步在豆包、千问、Antigravity、ChatGPT 里选一个，第一次只勾选选中的这个平台。豆包、千问和 ChatGPT 接着确认浏览器，弹出登录页，在网页中完成登录。完成后自动进入主界面，出图页停在刚设置的平台上。向导展示状态写在配置库里；之后即使没有可用账号也不会自动弹出。侧栏的「设置向导」可以手动打开，用来完成设置、再加一个平台，或给已选的平台多加一个账号。
 
-选 Antigravity 时向导不启动浏览器。第二步检查本机有没有 `agy` 命令行（依次找设置里的路径、官方脚本的默认位置、PATH）。没有就显示官方安装命令和复制按钮，另有官方下载页链接；装在别处的可以手动选文件。装好后自动识别，不用重启 tulai，「下一步」随后亮起。第三步用 Google 授权码登录，或导入本机已登录的账号。
+选 Antigravity 时，第二步检查本机有没有 `agy` 命令行（依次找设置里的路径、官方脚本的默认位置、PATH）。没有就显示官方安装命令和复制按钮，另有官方下载页链接；装在别处的可以手动选文件。装好后自动识别，不用重启 tulai，「下一步」随后亮起。第三步用 Google 授权码登录，授权链接在该账号的内置 Camoufox 窗口打开；也可直接导入本机已登录的 CLI 账号。
+
+ChatGPT 使用 Go 实现的网页图片协议，参考 [chatgpt2api](https://github.com/basketikun/chatgpt2api)，无需安装 Python 或单独运行后端。选择「ChatGPT」后添加账号，在该账号的 Camoufox 窗口登录。支持文生图、单图洗图和模型选择；「设置 → 账号与并发」可选 `gpt-image-2` 或 `auto`。网页会话凭据仅在内存中使用，登录资料仍由账号浏览器保存。额度用尽、限流或登录失效时使用现有账号调度；确认提交后，结果获取失败只查询原对话，不换号重发。未确认的提交需先检查网页；退出应用后不保留该恢复状态。需要 Turnstile 或 Arkose 验证时转人工处理。当前未提供 Codex 生图链路、账号密码批量导入或对外兼容 API 服务。
+
+Antigravity 生图、洗图和额度查询使用 `agy` CLI。每个账号在账号目录保存独立的 OAuth 凭据（权限 `0600`）；执行前切换系统凭据及该账号的 CLI 文件回退凭据，执行后保存刷新后的 OAuth。出图、额度查询、导入和登录共用切号锁，登录取消或失败会恢复原凭据。凭据格式与系统存储键参考 [cockpit-tools](https://github.com/jlcodes99/cockpit-tools/blob/main/src-tauri/src/modules/antigravity_credential.rs)：macOS 为 `gemini` / `antigravity` 钥匙串项，Windows 为 `gemini:antigravity`，Linux 使用 Secret Service（需安装 `secret-tool`）。独立 HOME 用来分开日志和生成结果，账号身份通过切换 OAuth 确定。系统凭据与本机其它 Antigravity 客户端共用，运行 tulai 任务时应避免在其它客户端同时切号。
+
+账号表显示 Gemini 模型的 **5小时 / 7天已用百分比**，悬停可看重置时间。每次成功读取都会保存到本地配置库，重启后仍可查看。批次首单派发前会等待读额完成；之后任务结束会触发刷新，空闲时每 5 分钟刷新。调度按两个窗口中较低的剩余比例从高到低选账号；任一窗口用尽或 CLI 返回额度不足，会自动切到下一个可用账号。读到 Gemini 额度时，以额度优先顺序替代按固定任务数轮号；未知或已过期的记录不会优先于已确认有额度的账号。全部用尽时保留待处理任务，等对应窗口重置。
 
 首次使用在向导或浏览器页点击「安装 Camoufox」。应用准备固定版本 Node、Camoufox 启动库、Firefox 内核和指纹模型，无需另装 Python、Node 或系统浏览器。支持 Windows x64、macOS Intel / Apple Silicon，以及 Linux x64 / ARM64。安装需要访问 Node.js、npm 和 Camoufox 上游下载服务；首次下载体积较大。
 
@@ -73,6 +80,8 @@ macOS 打包版和源码版都将配置库、`BrowserData/` 和默认输出保�
 
 服务商网页账号需要 Windows x64 版应用和 Camoufox；当前 Camoufox 上游没有 Windows ARM64 内核。Windows ARM 设备可使用系统支持的 x64 仿真运行 x64 应用；ARM64 GUI 构建仍可用于不依赖账号浏览器的功能。
 
+CI 在 Windows 原生运行下载、ChatGPT 和后台命令测试，覆盖中文和空格路径、下载替换保存，以及 Antigravity 后台命令的参数和管道传递。ChatGPT 的浏览器传输也纳入 Camoufox 测试。
+
 在已安装 Go 的 Windows 开发环境执行 `build-windows.cmd`，或在 macOS/Linux 交叉构建：
 
 ```sh
@@ -85,7 +94,7 @@ CGO_ENABLED=0 go tool mygo build -platform windows/amd64,windows/arm64
 
 第一次打开先完成设置向导。在「图片生成」页面选择「自由生图」或「批量洗图」；两种模式各自保留草稿和历史。顶部选择服务商，左侧准备输入并开始，右侧查看该服务商的账号和结果。
 
-1. 在顶部选择豆包、千问或 Antigravity。每次开始只向选中的服务商发送任务；启动按钮上方也会显示本次发送目标。
+1. 在顶部选择豆包、千问、ChatGPT 或 Antigravity。每次开始只向选中的服务商发送任务；启动按钮上方也会显示本次发送目标。
 2. 自由生图时直接填写提示词，每行一条。从文本文件载入时，空行隔开的段落会合并为一条；已保存的提示词模板则整段发送。参考图可选：不添加时按提示词生图，添加后按图片生成，提示词按顺序循环。选择豆包时，可在两种模式的开始区域选择常用或自定义输出比例、像素；设置会保留，保存时按目标尺寸缩放补白或裁剪。
 3. 批量洗图时添加原图或选择文件夹，再使用默认洗图指令或修改指令。唯一的内置模板会要求保留原图主体、风格和可辨认文字，并适度重绘。每张原图单独处理，结果按原文件名保存。两种模式都可以从下拉框选择提示词；在「提示词」页按生图、洗图或通用类型维护模板，工作区内的修改不会改变模板。原有未分类模板保留为通用。
 4. 第一次使用按设置向导登录。要再加账号，可以在当前服务商的账号区添加，或打开设置向导。
@@ -265,9 +274,9 @@ go run ./cmd/tulai-camoufox-smoke   # Camoufox 安装与页面控制冒烟
 - 界面是 mygo 原生控件。
 - 验证码求解仅用于自动化自己账号的合法登录流程，请遵守平台条款。
 
-## 发布 0.1.11
+## 发布 0.1.12
 
-桌面端产品版本是 **0.1.11**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.13**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
+桌面端产品版本是 **0.1.12**：`mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion`。`go tool mygo build` 会把这个版本链进安装包。页面桥扩展是 **0.3.14**（`extension/manifest.json` 和 hello 的 `payload.version`）。协议信封仍是 `v: 1`。Go 模块路径是 `github.com/xxww0098/tulai`，模块版本由 git 标签决定。
 
 0.1.9 改用 Camoufox 账号环境，增加图片下载和批量工具，并接入 MyGo 签名更新。旧浏览器资料会保留，账号需要重新登录。完整说明见 [`CHANGELOG.md`](CHANGELOG.md) 和 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
@@ -276,8 +285,8 @@ go run ./cmd/tulai-camoufox-smoke   # Camoufox 安装与页面控制冒烟
 ```sh
 git checkout main
 git pull origin main
-git tag v0.1.11
-git push origin v0.1.11
+git tag v0.1.12
+git push origin v0.1.12
 ```
 
 附件名称、校验、各系统安装方式和签名限制见 [`docs/RELEASING.md`](docs/RELEASING.md)。

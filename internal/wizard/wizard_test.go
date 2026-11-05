@@ -139,6 +139,7 @@ func TestFlowIsPlatformFirstThenBrowserOrInstall(t *testing.T) {
 	want := map[string][]Step{
 		"豆包":         {StepPlatform, StepBrowser, StepAccount, StepDone},
 		"千问":         {StepPlatform, StepBrowser, StepAccount, StepDone},
+		"ChatGPT":    {StepPlatform, StepBrowser, StepAccount, StepDone},
 		agy.Platform: {StepPlatform, StepInstall, StepAccount, StepDone},
 	}
 	for platform, steps := range want {
@@ -199,12 +200,12 @@ func TestNextAndPrevWalkTheChosenPlatformsFlow(t *testing.T) {
 	}
 }
 
-func TestPlatformChoiceIsOneOfThree(t *testing.T) {
+func TestPlatformChoices(t *testing.T) {
 	got := Platforms()
-	if len(got) != 3 || got[0] != "豆包" || got[1] != "千问" || got[2] != agy.Platform {
+	if len(got) != 4 || got[0] != "豆包" || got[1] != "千问" || got[2] != agy.Platform || got[3] != "ChatGPT" {
 		t.Fatalf("platforms = %v", got)
 	}
-	if !Valid("千问") || !Valid(agy.Platform) || Valid("") || Valid("Antigravity2") {
+	if !Valid("千问") || !Valid(agy.Platform) || !Valid("ChatGPT") || Valid("") || Valid("Antigravity2") {
 		t.Fatal("valid platform names")
 	}
 	if DefaultChoice(nil) != "豆包" {

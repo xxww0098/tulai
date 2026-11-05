@@ -65,7 +65,7 @@ case "$mode" in
     set -e
     unset _code
     mkdir -p "$root"
-    : > "$root/antigravity-oauth-token"
+    printf '%s\n' '{"token":{"access_token":"login-access","refresh_token":"login-refresh","token_type":"Bearer"},"auth_method":"consumer"}' > "$root/antigravity-oauth-token"
     printf '%s\n' 'OAuth: authenticated successfully as someone@gmail.com' >> "$root/cli.log"
     exit 0
     ;;

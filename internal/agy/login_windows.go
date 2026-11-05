@@ -3,6 +3,7 @@
 package agy
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -13,9 +14,11 @@ type Login struct{}
 var errLoginOS = errors.New("当前系统不能在这里完成 Antigravity 登录")
 
 // StartLogin 在 Windows 上直接返回说明。
-func StartLogin(string, string, string) (*Login, error) { return nil, errLoginOS }
+func StartLogin(context.Context, string, string, string) (*Login, error) {
+	return nil, errLoginOS
+}
 
-func startLogin(string, string, string, time.Duration) (*Login, error) {
+func startLogin(context.Context, string, string, string, time.Duration) (*Login, error) {
 	return nil, errLoginOS
 }
 
