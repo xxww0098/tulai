@@ -123,6 +123,46 @@ func TestResultRetryContinuesOriginalTask(t *testing.T) {
 	}
 }
 
+func TestAcceptedTaskRecoversConnectionWithoutResending(t *testing.T) {
+	for _, failure := range []error{errors.New("connection reset"), errors.New("target closed")} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				e := NewEngine(nil, nil, nil, "")
+				e.opts.RetryCount = 1
+				strat := &resumeStrategy{}
+				calls := 0
+				got := e.execute(context.Background(), Task{Platform: "豆包", BrowserID: 7, Results: []string{"saved.png"}}, func(ctx context.Context, task *Task) error {
+					calls++
+					if err := e.submitTask(ctx, task, strat, nil); err != nil {
+						return err
+					}
+					if calls == 1 {
+						return failure
+					}
+					return nil
+				})
+				if got.Status != StatusSuccess || calls != 2 || !got.submitted || got.BrowserID != 7 || len(got.Results) != 1 || strings.Join(strat.calls, ",") != "clean,mark,send" {
+					t.Fatalf("connection recovery must only resume results: task=%+v calls=%v", got, strat.calls)
+				}
+			})
+		})
+	}
+}
+
+func TestAcceptedTaskDoesNotResendOnModerationText(t *testing.T) {
+	e := NewEngine(nil, nil, nil, "")
+	e.opts.RetryCount = 3
+	failure := errors.New("请求失败，审核不通过")
+	calls := 0
+	got := e.execute(context.Background(), Task{Platform: "豆包", BrowserID: 7, Prompt: "画猫", submitted: true}, func(context.Context, *Task) error {
+		calls++
+		return failure
+	})
+	if calls != 1 || got.Status != StatusFailed || !got.submitted || got.Rewritten || got.Error != failure.Error() {
+		t.Fatalf("text alone must not authorize resending an accepted task: %+v calls=%d", got, calls)
+	}
+}
+
 func TestResultRetryErrorsBeatSavedPartial(t *testing.T) {
 	for _, failure := range []error{captcha.ErrVerificationRequired, context.Canceled, errors.Join(captcha.ErrVerificationRequired, context.Canceled)} {
 		t.Run(failure.Error(), func(t *testing.T) {

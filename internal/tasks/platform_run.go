@@ -319,7 +319,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				task := pending[i]
 				pinned := task.Platform == "ChatGPT" && task.chatGPT != nil && task.chatGPT.Attempted
 				if task.Attempts == 0 && task.Error == "" && !task.submitted && !pinned {
-					if id, ok := pickAccount(task.BrowserID, task.avoidSend, busy, readyAt, now); ok {
+					if id, ok := pickAccount(task.BrowserID, 0, busy, readyAt, now); ok {
 						task.BrowserID = id
 					}
 				}
@@ -352,7 +352,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				}
 				resource := e.slotKey(task.BrowserID)
 				if !task.submitted && !pinned && (busy[resource] || now.Before(readyAt[resource])) {
-					if id, ok := pickAccount(0, task.avoidSend, busy, readyAt, now); ok {
+					if id, ok := pickAccount(0, 0, busy, readyAt, now); ok {
 						task.BrowserID = id
 						pending[i] = task
 						resource = e.slotKey(id)

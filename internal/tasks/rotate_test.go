@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -148,35 +150,90 @@ func TestSubmittedCaptchaDoesNotResendOnAnotherAccount(t *testing.T) {
 	}
 }
 
-func TestUncertainSendRetriesOnceOnAnotherAccount(t *testing.T) {
-	st := openRotateStore(t)
-	addNamed(t, st, "豆包", "甲")
-	addNamed(t, st, "豆包", "乙")
-	e := NewEngine(st, nil, nil, "")
-	var calls atomic.Int32
-	err := e.run(context.Background(), Options{
-		Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Concurrency: 1, RetryCount: 3,
-	}, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
-		calls.Add(1)
-		return strategy.ErrSubmissionUncertain
-	})
-	queue := e.View().Snapshot()
-	failed := 0
-	for _, task := range queue {
-		if task.Status == StatusSkipped || task.Error == "已停止" {
-			t.Fatalf("uncertain send must not stop the other task: %+v", queue)
-		}
-		if task.Status == StatusFailed && strings.Contains(task.Error, "未确认") {
-			failed++
+func TestUncertainSendNeverRetriesOnAnotherAccount(t *testing.T) {
+	for _, platform := range []string{"豆包", "千问", "ChatGPT"} {
+		t.Run(platform, func(t *testing.T) {
+			st := openRotateStore(t)
+			addNamed(t, st, platform, "甲")
+			addNamed(t, st, platform, "乙")
+			e := NewEngine(st, nil, nil, "")
+			var calls atomic.Int32
+			err := e.run(context.Background(), Options{
+				Platforms: []string{platform}, Prompts: []string{"画猫", "画狗"}, Concurrency: 1, RetryCount: 3,
+			}, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
+				calls.Add(1)
+				return strategy.ErrSubmissionUncertain
+			})
+			queue := e.View().Snapshot()
+			if err != nil || calls.Load() != 2 || len(queue) != 2 {
+				t.Fatalf("each task must stop after its first uncertain send: calls=%d err=%v queue=%+v", calls.Load(), err, queue)
+			}
+			for _, task := range queue {
+				if task.Status != StatusFailed || task.Attempts != 1 || task.rotated || !strings.Contains(task.Error, "未确认") {
+					t.Fatalf("uncertain send must fail only its own task: %+v", task)
+				}
+			}
+		})
+	}
+}
+
+func TestUncertainSendPrecedesOtherRecovery(t *testing.T) {
+	for _, platform := range []string{"豆包", "千问", "ChatGPT", "Antigravity"} {
+		for _, cause := range []error{heal.ErrNetwork, heal.ErrCrashed, captcha.ErrVerificationRequired, errHumanGaveUp, strategy.ErrAccountQuota, strategy.ErrAccountRate, strategy.ErrModeration, strategy.ErrPlatformReply} {
+			t.Run(platform+"/"+cause.Error(), func(t *testing.T) {
+				e := NewEngine(nil, nil, nil, "")
+				e.opts.RetryCount = 3
+				failure := errors.Join(strategy.ErrSubmissionUncertain, cause)
+				calls := 0
+				got := e.execute(context.Background(), Task{Platform: platform, BrowserID: 7, Results: []string{"saved.png"}}, func(context.Context, *Task) error {
+					calls++
+					return failure
+				})
+				if calls != 1 || got.Status != StatusFailed || got.BrowserID != 7 || got.rotated || got.Error != failure.Error() || len(got.Results) != 1 {
+					t.Fatalf("uncertain send entered automatic recovery: calls=%d task=%+v", calls, got)
+				}
+			})
 		}
 	}
-	if err != nil || calls.Load() != 4 || failed != 2 {
-		t.Fatalf("each task may try the other account once, then fail: calls=%d failed=%d err=%v queue=%+v", calls.Load(), failed, err, queue)
-	}
-	for _, task := range queue {
-		if task.Reassigned == "" || task.ReassignWhy == "" {
-			t.Fatalf("换账号后要留下改派说明: %+v", task)
+}
+
+func TestAcceptedTasksNeverRotateOnAccountFault(t *testing.T) {
+	for _, platform := range []string{"豆包", "千问", "ChatGPT"} {
+		for _, failure := range []error{strategy.ErrAccountQuota, strategy.ErrAccountRate, errExtOffline, errDoubaoLogin, captcha.ErrVerificationRequired, errors.New("额度不足")} {
+			t.Run(platform+"/"+failure.Error(), func(t *testing.T) {
+				st := openRotateStore(t)
+				owner := addNamed(t, st, platform, "原账号")
+				addNamed(t, st, platform, "其他账号")
+				e := NewEngine(st, nil, nil, "")
+				task := Task{Platform: platform, BrowserID: owner.ID, submitted: true, sentURL: "original", sentWrap: "original-wrap", Results: []string{"saved.png"}}
+				if e.maybeRotate(&task, failure, time.Now()) || task.BrowserID != owner.ID || !task.submitted || task.rotated || task.sentURL != "original" || task.sentWrap != "original-wrap" || len(task.Results) != 1 {
+					t.Fatalf("accepted task lost its original generation: %+v", task)
+				}
+			})
 		}
+	}
+}
+
+func TestUncertainSendRetainsCancellationAndTimeoutPriority(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprint(expired), func(t *testing.T) {
+			e := NewEngine(nil, nil, nil, "")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cause, want := error(context.Canceled), StatusSkipped
+			if expired {
+				cause, want = context.DeadlineExceeded, StatusFailed
+			}
+			got := e.execute(ctx, Task{}, func(context.Context, *Task) error {
+				if !expired {
+					cancel()
+				}
+				return errors.Join(strategy.ErrSubmissionUncertain, cause)
+			})
+			if got.Status != want || (expired && (!strings.Contains(got.Error, "出图超时") || !strings.Contains(got.Error, strategy.ErrSubmissionUncertain.Error()))) || (!expired && got.Error != "已停止") {
+				t.Fatalf("context outcome must keep priority: %+v", got)
+			}
+		})
 	}
 }
 

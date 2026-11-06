@@ -784,7 +784,7 @@ func (e *Engine) startBoundExtension(ctx context.Context, t *Task) error {
 	if strat == nil {
 		return fmt.Errorf("不支持的平台 %s", t.Platform)
 	}
-	if _, err := e.browsers.StartTaskWithAddon(row, e.dataRoot, strat.HomeURL(), dir); err != nil {
+	if _, err := e.browsers.StartTaskWithAddon(ctx, row, e.dataRoot, strat.HomeURL(), dir); err != nil {
 		return fmt.Errorf("启动浏览器[%s]: %w", row.Name, err)
 	}
 	e.mu.Lock()

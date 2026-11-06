@@ -16,14 +16,15 @@ type Status string
 
 // 任务状态常量。
 const (
-	StatusPending   Status = "等待"
-	StatusRunning   Status = "执行中"
-	StatusRetry     Status = "重试中"
-	StatusSuccess   Status = "成功"
-	StatusFailed    Status = "失败"
-	StatusSkipped   Status = "跳过"
-	StatusNeedsUser Status = "待验证"
-	StatusAwaitUser Status = "需要人工验证"
+	StatusPending     Status = "等待"
+	StatusRunning     Status = "执行中"
+	StatusRetry       Status = "重试中"
+	StatusSuccess     Status = "成功"
+	StatusFailed      Status = "失败"
+	StatusSkipped     Status = "跳过"
+	StatusNeedsUser   Status = "待验证"
+	StatusAwaitUser   Status = "需要人工验证"
+	StatusNeedsReview Status = "需核对"
 )
 
 // Task 一条批量任务：一个平台 × 一条提示词。图生图另带一张源图；文生图 Images 为空。
@@ -50,9 +51,7 @@ type Task struct {
 	ranOn              int64  // 实际打到的账号。轮换后 BrowserID 会改成下一个
 	rotated            bool   // 失败后已改派，调度器要把任务放回队列
 	pauseNote          string // quota 或 login。换号日志已经写过时，不再补一句容易看错的说明
-	altTried           bool   // 发送未确认后已经换过一次账号
 	replyRetried       bool   // 平台回了报错后已经在新对话里重试过一次
-	avoidSend          int64  // 这次未确认的账号，调度不要把它立刻派回去
 	Reassigned         string // 改派到的账号名。卡片写「已改由…」，成功后也留着
 	ReassignWhy        string // 改派前的失败原因
 	soften             int    // 审核改写已经自动重试的次数
@@ -174,13 +173,13 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 	return out
 }
 
-// RebuildRetry 把失败、跳过或待验证的任务收成一批新的等待任务。
+// RebuildRetry 在用户主动操作后，把失败、跳过、待验证或需核对的任务收成一批新的等待任务。
 // 提示词保持原样（后缀已经拼过），不沿用上次的账号，方便重新挑一个健康账号。
 func RebuildRetry(items []Task) []Task {
 	var out []Task
 	for _, task := range items {
 		switch task.Status {
-		case StatusFailed, StatusSkipped, StatusNeedsUser:
+		case StatusFailed, StatusSkipped, StatusNeedsUser, StatusNeedsReview:
 		default:
 			continue
 		}

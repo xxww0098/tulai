@@ -230,10 +230,13 @@ func (a *App) newWorkspace() {
 	}
 	page := a.statePage
 	if a.store != nil && a.workspaceHasContent(page) {
-		a.persistWorkspace(page)
+		if !a.persistWorkspace(page) {
+			return
+		}
 		if id := a.sessionID(page); id > 0 {
 			if err := a.store.ArchiveSession(id); err != nil {
 				logging.Log.Errorf("收起当前任务失败: %v", err)
+				return
 			}
 			a.setSessionID(page, 0)
 		}
@@ -281,6 +284,13 @@ func (a *App) reopenSession(id int64) {
 		return
 	}
 	page := a.statePage
+	cur := a.sessionID(page)
+	if cur == id {
+		if a.persistWorkspace(page) {
+			a.historyOpen = false
+		}
+		return
+	}
 	sess, items, err := a.store.Session(id)
 	if err != nil {
 		logging.Log.Errorf("读取任务记录失败: %v", err)
@@ -290,22 +300,14 @@ func (a *App) reopenSession(id int64) {
 		logging.Log.Errorf("读取任务记录失败: 页不对")
 		return
 	}
-	cur := a.sessionID(page)
-	if cur != id {
-		if a.workspaceHasContent(page) {
-			a.persistWorkspace(page)
-			cur = a.sessionID(page)
-			if cur > 0 && cur != id {
-				if err := a.store.ArchiveSession(cur); err != nil {
-					logging.Log.Errorf("收起当前任务失败: %v", err)
-					return
-				}
-			}
-		} else if cur > 0 && cur != id {
-			if err := a.store.DeleteSession(cur); err != nil {
-				logging.Log.Errorf("删除历史记录失败: %v", err)
-				return
-			}
+	if a.workspaceHasContent(page) {
+		if !a.persistWorkspace(page) {
+			return
+		}
+	} else if cur > 0 {
+		if err := a.store.DeleteSession(cur); err != nil {
+			logging.Log.Errorf("删除历史记录失败: %v", err)
+			return
 		}
 	}
 	if err := a.store.ActivateSession(id); err != nil {
@@ -338,15 +340,15 @@ func (a *App) deleteSession(id int64) {
 	logging.Log.Info("已删除历史记录，图片文件仍保留")
 }
 
-func (a *App) persistWorkspace(page int) {
+func (a *App) persistWorkspace(page int) bool {
 	if a == nil || a.store == nil {
-		return
+		return true
 	}
 	st := a.stateOf(page)
 	items := a.tasksToSave(page)
 	id := a.sessionID(page)
 	if id == 0 && len(items) == 0 && len(st.sources) == 0 && !promptMeansContent(page, st.prompts) {
-		return
+		return true
 	}
 	saved, err := a.store.SaveActive(store.Session{
 		ID:       id,
@@ -358,9 +360,10 @@ func (a *App) persistWorkspace(page int) {
 	}, a.tasksForSession(page, items))
 	if err != nil {
 		logging.Log.Errorf("保存任务记录失败: %v", err)
-		return
+		return false
 	}
 	a.setSessionID(page, saved)
+	return true
 }
 
 func (a *App) restoreWorkspace(page int) {
@@ -394,6 +397,10 @@ func (a *App) applySession(page int, sess store.Session, items []store.SessionTa
 		a.queue = queueFromSession(items)
 		a.progress = sess.Progress
 		a.progText = sess.ProgText
+		if tally := TallyTasks(a.queue); tally.Review > 0 {
+			a.progress = float64(tally.Done+tally.Failed+tally.Needs+tally.Stopped) / float64(len(a.queue))
+			a.progText = taskResultSummary(a.queue)
+		}
 	})
 	if page != pageWash && (resetPick || a.promptPick == "") {
 		a.freeformPrompts = sess.Prompts
@@ -456,6 +463,12 @@ func queueFromSession(items []store.SessionTask) []tasks.Task {
 			Status:    tasks.Status(item.Status),
 			Error:     item.Error,
 			Results:   splitLines(item.Outputs),
+		}
+		// 历史记录没有提交上下文，活动态不能当作仍在执行或直接续发。
+		switch task.Status {
+		case tasks.StatusSuccess, tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser, tasks.StatusNeedsReview:
+		default:
+			task.Status = tasks.StatusNeedsReview
 		}
 		if task.Index <= 0 {
 			task.Index = len(out) + 1

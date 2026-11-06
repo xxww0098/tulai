@@ -247,8 +247,20 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 	if err := tt.Click("开始出图"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.running || a.progText != "" || a.wizardOn {
-		t.Fatalf("只有提示词时开始被拦住: running=%v text=%q wizard=%v", a.running, a.progText, a.wizardOn)
+	finishRecoveryRun(t, a)
+	view := a.engine.View()
+	if view == nil || a.wizardOn {
+		t.Fatalf("只有提示词时未创建任务: view=%v wizard=%v", view, a.wizardOn)
+	}
+	queue := view.Snapshot()
+	want := []string{"画一只猫", "画一条鱼"}
+	if len(queue) != len(want) {
+		t.Fatalf("文生图任务数量不符: %+v", queue)
+	}
+	for i, task := range queue {
+		if task.Prompt != want[i] || len(task.Images) != 0 || task.Attempts != 1 || task.BrowserID != row.ID {
+			t.Fatalf("文生图未按原提示词执行: %+v", queue)
+		}
 	}
 }
 
@@ -359,7 +371,7 @@ func TestWorkspaceNeedsUserVisible(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"待验证", verificationHint, FormatProgressTally(0, 0, 0, 0, 1, 0, 0, a.liveParallel()), "开始出图", "出图进度", "重试"} {
+				for _, label := range []string{"待验证", verificationHint, FormatProgressTally(0, 0, 0, 0, 1, 0, 0, 0, a.liveParallel()), "开始出图", "出图进度", "重试"} {
 					assertVisible(t, tt, label, float32(width), 720)
 				}
 				if tt.HasText("已结束") || tt.HasText("失败: 验证码需要手动处理") {

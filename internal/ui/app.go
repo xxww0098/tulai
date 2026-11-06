@@ -906,7 +906,11 @@ const verificationHint = "在浏览器中完成验证后重新开始任务"
 
 func taskResultSummary(queue []tasks.Task) string {
 	tally := TallyTasks(queue)
-	return fmt.Sprintf("成功 %d · 失败 %d · 待验证 %d · 未完成 %d", tally.Done, tally.Failed, tally.Needs, tally.Incomplete())
+	summary := fmt.Sprintf("成功 %d · 失败 %d · 待验证 %d", tally.Done, tally.Failed, tally.Needs)
+	if tally.Review > 0 {
+		summary += fmt.Sprintf(" · 需核对 %d", tally.Review)
+	}
+	return summary + fmt.Sprintf(" · 未完成 %d", tally.Incomplete())
 }
 
 // stopTasks 停止。

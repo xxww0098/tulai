@@ -17,10 +17,11 @@ const usageRefreshGap = 5 * time.Minute
 
 // agyUsageSlot 是内存里的一份额度。不把界面元素放进来。
 type agyUsageSlot struct {
-	view     agy.UsageView
-	inflight bool
-	again    bool
-	done     chan struct{}
+	view       agy.UsageView
+	generation uint64
+	inflight   bool
+	again      bool
+	done       chan struct{}
 }
 
 func (a *App) startAgyUsage() {
@@ -55,28 +56,39 @@ func (a *App) stopAgyUsage() {
 func (a *App) refreshAgyUsageBeforeRun(ctx context.Context) {
 	bin, rows := a.agyUsageSnap()
 	for _, row := range rows {
-		if ctx.Err() != nil {
-			return
-		}
 		if row.Disabled {
 			continue
 		}
-		if saved, ok := tasks.SavedAgyUsage(a.store, row.ID); ok && (!saved.Usage.FiveHour.Reset.After(time.Now()) || !saved.Usage.Weekly.Reset.After(time.Now())) {
-			a.markAgyUsageForce(row.ID)
-		}
-		if a.beginAgyUsage(row.ID, time.Now()) {
-			a.fetchAgyAccount(ctx, row, bin)
-			a.finishAgyUsage(row.ID)
-			continue
-		}
-		a.agyUsageMu.Lock()
-		done := a.agyUsage[row.ID].done
-		a.agyUsageMu.Unlock()
-		if done != nil {
-			select {
-			case <-done:
-			case <-ctx.Done():
+		for {
+			if ctx.Err() != nil {
 				return
+			}
+			a.agyUsageMu.Lock()
+			generation := a.agyUsage[row.ID].generation
+			a.agyUsageMu.Unlock()
+			if saved, ok := tasks.SavedAgyUsage(a.store, row.ID); ok && (!saved.Usage.FiveHour.Reset.After(time.Now()) || !saved.Usage.Weekly.Reset.After(time.Now())) {
+				a.markAgyUsageForce(row.ID)
+			}
+			if a.beginAgyUsage(row.ID, time.Now()) {
+				a.fetchAgyAccount(ctx, row, bin)
+				a.finishAgyUsage(row.ID)
+			} else {
+				a.agyUsageMu.Lock()
+				done := a.agyUsage[row.ID].done
+				a.agyUsageMu.Unlock()
+				if done != nil {
+					select {
+					case <-done:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+			a.agyUsageMu.Lock()
+			unchanged := a.agyUsage[row.ID].generation == generation
+			a.agyUsageMu.Unlock()
+			if unchanged {
+				break
 			}
 		}
 	}
@@ -108,9 +120,26 @@ func (a *App) resetAgyUsage(id int64) {
 	if a == nil || id <= 0 {
 		return
 	}
-	tasks.ClearAgyQuota(a.store, id)
-	a.publishUsage(id, agy.UsageView{State: agy.UsageReading, Reason: agy.ReasonReading})
-	a.markAgyUsageForce(id)
+	a.agyUsageMu.Lock()
+	slot := a.agyUsage[id]
+	slot.generation++
+	slot.view = agy.UsageView{State: agy.UsageReading, Reason: agy.ReasonReading}
+	slot.again = slot.again || slot.inflight
+	if a.store != nil {
+		a.store.UpdateBrowser(id, false, true)
+		a.store.ResetBrowserHealth(id)
+		tasks.ClearAgyQuota(a.store, id)
+	}
+	if a.agyUsage == nil {
+		a.agyUsage = map[int64]agyUsageSlot{}
+	}
+	a.agyUsage[id] = slot
+	if a.agyUsageForce == nil {
+		a.agyUsageForce = map[int64]bool{}
+	}
+	a.agyUsageForce[id] = true
+	a.agyUsageMu.Unlock()
+	a.syncUI(func() {})
 	a.wakeAgyUsage()
 }
 
@@ -259,36 +288,52 @@ func (a *App) agyUsageSnap() (string, []store.Browser) {
 }
 
 func (a *App) fetchAgyAccount(ctx context.Context, row store.Browser, bin string) {
-	now := time.Now()
-	if !agy.LoggedIn(row.UserDataDir) {
-		a.publishUsage(row.ID, agy.UsageView{State: agy.UsageNeedLogin, Reason: agy.ReasonLogin, At: now})
-		return
+	a.agyUsageMu.Lock()
+	generation := a.agyUsage[row.ID].generation
+	a.agyUsageMu.Unlock()
+	loggedIn := agy.LoggedIn(row.UserDataDir)
+	var usage agy.GeminiUsage
+	var err error
+	if loggedIn {
+		usage, err = a.runAgyUsageFetch(ctx, bin, row.UserDataDir)
+	} else {
+		err = agy.ErrNeedLogin
 	}
-	usage, err := a.runAgyUsageFetch(ctx, bin, row.UserDataDir)
 	view, ok := agy.ViewFrom(usage, err, time.Now())
 	if !ok {
 		return
 	}
-	if errors.Is(err, agy.ErrNeedLogin) {
+	a.agyUsageMu.Lock()
+	slot := a.agyUsage[row.ID]
+	// 身份失效和结果落库共用同一把锁，旧读取不能越过新登录写回。
+	if slot.generation != generation || ctx.Err() != nil {
+		a.agyUsageMu.Unlock()
+		return
+	}
+	if loggedIn && errors.Is(err, agy.ErrNeedLogin) {
 		// 读额度失败不要删凭证：可能是网络抖动。真正出图遇到需登录时再 ForgetToken。
 		if a.store != nil {
 			a.store.UpdateBrowser(row.ID, false, false)
 			a.store.UpdateBrowserHealth(row.ID, store.HealthExhausted, 0, agy.ErrNeedLogin.Error())
 		}
-		if a.engine != nil {
-			a.engine.Wake()
-		}
 	}
 	if err == nil && a.store != nil {
 		tasks.NoteAgyQuota(a.store, row.ID, usage, time.Now())
-		if a.engine != nil {
-			a.engine.Wake()
-		}
+	}
+	previous := slot.view
+	slot.view = view
+	if a.agyUsage == nil {
+		a.agyUsage = map[int64]agyUsageSlot{}
+	}
+	a.agyUsage[row.ID] = slot
+	a.agyUsageMu.Unlock()
+	if a.engine != nil && (loggedIn && errors.Is(err, agy.ErrNeedLogin) || err == nil && a.store != nil) {
+		a.engine.Wake()
 	}
 	if view.State == agy.UsageFailed {
-		a.logUsageFailure(row, view)
+		a.logUsageFailure(row, view, previous)
 	}
-	a.publishUsage(row.ID, view)
+	a.syncUI(func() {})
 }
 
 func (a *App) runAgyUsageFetch(ctx context.Context, bin, home string) (agy.GeminiUsage, error) {
@@ -298,10 +343,7 @@ func (a *App) runAgyUsageFetch(ctx context.Context, bin, home string) (agy.Gemin
 	return agy.FetchUsage(ctx, bin, home)
 }
 
-func (a *App) logUsageFailure(row store.Browser, view agy.UsageView) {
-	a.agyUsageMu.Lock()
-	prev := a.agyUsage[row.ID].view
-	a.agyUsageMu.Unlock()
+func (a *App) logUsageFailure(row store.Browser, view, prev agy.UsageView) {
 	if prev.State == view.State && prev.Reason == view.Reason {
 		return
 	}
@@ -310,21 +352,6 @@ func (a *App) logUsageFailure(row store.Browser, view agy.UsageView) {
 		name = agy.Platform
 	}
 	logging.Log.Warning("「%s」%s", name, view.Reason)
-}
-
-func (a *App) publishUsage(id int64, view agy.UsageView) {
-	if a == nil || id <= 0 {
-		return
-	}
-	a.agyUsageMu.Lock()
-	if a.agyUsage == nil {
-		a.agyUsage = map[int64]agyUsageSlot{}
-	}
-	slot := a.agyUsage[id]
-	slot.view = view
-	a.agyUsage[id] = slot
-	a.agyUsageMu.Unlock()
-	a.syncUI(func() {})
 }
 
 func (a *App) agyUsageView(id int64) agy.UsageView {

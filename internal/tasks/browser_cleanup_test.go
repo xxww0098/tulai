@@ -180,7 +180,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	if !mgr.IsRunning(unrelated.ID) {
 		t.Fatal("an unrelated browser was closed")
 	}
-	ep, err := mgr.StartTask(accounts[0], root, browser.KindCamoufox, server.URL+"/check")
+	ep, err := mgr.StartTask(context.Background(), accounts[0], root, browser.KindCamoufox, server.URL+"/check")
 	if err != nil {
 		t.Fatal(err)
 	}

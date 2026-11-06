@@ -323,26 +323,32 @@ func (c *Client) Results(ctx context.Context, g *Generation) ([]string, error) {
 			}
 		}
 		var results []string
+		pendingImage := false
 		for _, id := range g.files {
 			raw, err := c.downloadURL(ctx, "/backend-api/files/"+id+"/download")
 			if err == nil {
 				results = append(results, raw)
-			} else if !isNotFound(err) {
+			} else if isNotFound(err) {
+				pendingImage = true
+			} else {
 				return nil, err
 			}
 		}
 		for _, id := range g.sediments {
 			if g.ConversationID == "" {
+				pendingImage = true
 				continue
 			}
 			raw, err := c.downloadURL(ctx, "/backend-api/conversation/"+g.ConversationID+"/attachment/"+id+"/download")
 			if err == nil && !slices.Contains(results, raw) {
 				results = append(results, raw)
-			} else if err != nil && !isNotFound(err) {
+			} else if isNotFound(err) {
+				pendingImage = true
+			} else if err != nil {
 				return nil, err
 			}
 		}
-		if len(results) > 0 {
+		if len(results) > 0 && !pendingImage {
 			return results, nil
 		}
 		if g.ConversationID == "" {

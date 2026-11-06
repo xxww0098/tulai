@@ -90,7 +90,7 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 }
 
 // maybeRotate 在额度、限流、登录或验证码打到当前账号时改派。
-// 已经发出去的验证码和登录失败不换号重发。发送没确认时由 rotateUncertain 另换一次。
+// 已经发出去的任务保留原账号，只更新账号状态，不换号重发。
 func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	kind := classifyFault(err)
 	switch kind {
@@ -100,7 +100,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	if task == nil {
 		return false
 	}
-	if (kind == faultCaptcha || kind == faultAuth || task.Platform == "ChatGPT") && task.submitted {
+	if task.submitted {
 		id := task.ranOnOr(task.BrowserID)
 		e.noteFault(id, kind, err, now)
 		e.announceAccount(id, kind)
@@ -135,34 +135,6 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	}
 	task.Status = StatusPending
 	task.Error = fmt.Sprintf("已换到「%s」：%s", name, faultLabel(kind))
-	return true
-}
-
-// rotateUncertain 在发送没被页面接住时，换一个同平台的空闲账号再试一次。
-// 同一个账号不再发：点击已经发生，重发可能变成两条。没有别的账号就只让这一条失败。
-func (e *Engine) rotateUncertain(task *Task, now time.Time) bool {
-	if e == nil || task == nil || task.submitted || task.altTried || task.Platform == "ChatGPT" {
-		return false
-	}
-	current := task.ranOnOr(task.BrowserID)
-	next, ok := pickHealthy(e.store, e.accountsFor(task.Platform), current, now, e.capNow())
-	if !ok || next == current {
-		return false
-	}
-	name := browserName(e.store, next)
-	logging.Log.Warning("#%d 发送未确认，改用「%s」", task.Index, name)
-	task.Reassigned = name
-	task.avoidSend = current
-	task.BrowserID = next
-	task.submitted = false
-	task.sentURL, task.sentWrap = "", ""
-	task.rotated = true
-	task.altTried = true
-	if task.Attempts > 0 {
-		task.Attempts--
-	}
-	task.Status = StatusPending
-	task.Error = fmt.Sprintf("发送状态未确认，等待「%s」空闲后再试", name)
 	return true
 }
 

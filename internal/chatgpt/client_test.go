@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -202,6 +203,55 @@ func TestSubmissionUncertaintyPreservesOriginalConversation(t *testing.T) {
 				t.Fatalf("state=%+v err=%v", g, err)
 			}
 		})
+	}
+}
+
+func TestResultsWaitsForEveryKnownImage(t *testing.T) {
+	for _, attachment := range []bool{false, true} {
+		for _, neverReady := range []bool{false, true} {
+			t.Run(fmt.Sprintf("attachment=%t/never-ready=%t", attachment, neverReady), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					pendingCalls := 0
+					g := &Generation{ConversationID: "original", Attempted: true, Submitted: true, files: []string{"ready", "pending"}}
+					if attachment {
+						g.files, g.sediments = nil, g.files
+					}
+					client := fixtureClient(func(r *http.Request) (*http.Response, error) {
+						if r.Method != http.MethodGet {
+							t.Fatalf("result recovery attempted a new submission: %s", r.Method)
+						}
+						switch {
+						case strings.HasSuffix(r.URL.Path, "/ready/download"):
+							return reply(200, `{"download_url":"https://files.oaiusercontent.com/ready.png"}`)
+						case strings.HasSuffix(r.URL.Path, "/pending/download"):
+							pendingCalls++
+							if neverReady || pendingCalls == 1 {
+								return reply(404, `{}`)
+							}
+							return reply(200, `{"download_url":"https://files.oaiusercontent.com/pending.png"}`)
+						case r.URL.Path == "/backend-api/conversation/original", r.URL.Path == "/backend-api/tasks":
+							return reply(200, `{}`)
+						default:
+							t.Fatalf("unexpected request %s", r.URL.Path)
+							return nil, nil
+						}
+					})
+					ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+					defer cancel()
+					urls, err := client.Results(ctx, g)
+					if neverReady {
+						if !errors.Is(err, context.DeadlineExceeded) {
+							t.Fatalf("incomplete results reported success: urls=%v err=%v", urls, err)
+						}
+					} else if err != nil || !slices.Equal(urls, []string{"https://files.oaiusercontent.com/ready.png", "https://files.oaiusercontent.com/pending.png"}) {
+						t.Fatalf("known output lost: urls=%v err=%v", urls, err)
+					}
+					if pendingCalls != 2 || g.ConversationID != "original" || !g.Submitted {
+						t.Fatalf("recovery lost the original generation: calls=%d state=%+v", pendingCalls, g)
+					}
+				})
+			})
+		}
 	}
 }
 

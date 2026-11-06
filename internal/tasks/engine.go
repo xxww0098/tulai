@@ -442,8 +442,21 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		}
 		t.Attempts++
 		err := attempt(ctx, &t)
-		if errors.Is(err, errHumanGaveUp) && !errors.Is(ctx.Err(), context.Canceled) {
-			t.submitted = false
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			t.Status = StatusSkipped
+			t.Error = "已停止"
+			return t
+		}
+		// 点击后的错误可能同时含网络、验证码或额度信息，先守住不能重发的边界。
+		if errors.Is(err, strategy.ErrSubmissionUncertain) {
+			t.Status = StatusFailed
+			t.Error = err.Error()
+			if endedByTimeout(ctx, err) {
+				t.Error = "出图超时；" + err.Error()
+			}
+			return t
+		}
+		if errors.Is(err, errHumanGaveUp) {
 			if e.maybeRotate(&t, err, time.Now()) {
 				return t
 			}
@@ -456,17 +469,12 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Error = "出图超时"
 			return t
 		}
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
-			t.Status = StatusSkipped
-			t.Error = "已停止"
-			return t
-		}
 		if err == nil {
 			t.Status = StatusSuccess
 			t.Error = ""
 			return t
 		}
-		if len(t.batch) > 1 && (t.submitted || errors.Is(err, strategy.ErrSubmissionUncertain)) {
+		if len(t.batch) > 1 && t.submitted {
 			if kind := classifyFault(err); kind == faultQuota || kind == faultRate {
 				id := t.ranOnOr(t.BrowserID)
 				e.noteFault(id, kind, err, time.Now())
@@ -477,11 +485,11 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			return t
 		}
 		if errors.Is(err, strategy.ErrPlatformReply) {
+			t.submitted = false
+			t.sentURL, t.sentWrap = "", ""
 			name := e.accountName(t.ranOnOr(t.BrowserID))
 			if !t.replyRetried {
 				t.replyRetried = true
-				t.submitted = false
-				t.sentURL, t.sentWrap = "", ""
 				logging.Log.Warning("#%d %s「%s」回复异常（%s），%d 秒后换新对话重试一次", t.Index, t.Platform, name, err, int(replyBackoff/time.Second))
 				if t.Attempts >= maxAttempts {
 					maxAttempts = t.Attempts + 1
@@ -513,6 +521,10 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		if e.maybeRotate(&t, err, time.Now()) {
 			return t
 		}
+		if t.submitted && isModeration(err) && !errors.Is(err, strategy.ErrModeration) {
+			t.Status, t.Error = StatusFailed, err.Error()
+			return t
+		}
 		if again, stop := e.softenModeration(&t, err); again || stop {
 			if stop {
 				return t
@@ -523,16 +535,6 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		kind := classifyFault(err)
 		if errors.Is(err, captcha.ErrVerificationRequired) {
 			t.Status = StatusNeedsUser
-			return t
-		}
-		if errors.Is(err, strategy.ErrSubmissionUncertain) {
-			if t.ReassignWhy == "" {
-				t.ReassignWhy = err.Error()
-			}
-			if e.rotateUncertain(&t, time.Now()) {
-				return t
-			}
-			t.Status = StatusFailed
 			return t
 		}
 		if errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) {
@@ -987,7 +989,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	if strat != nil {
 		home = strat.HomeURL()
 	}
-	ws, startErr := e.browsers.StartTask(b, e.dataRoot, backend, home)
+	ws, startErr := e.browsers.StartTask(ctx, b, e.dataRoot, backend, home)
 	if startErr != nil {
 		return nil, fmt.Errorf("启动浏览器[%s]: %w", b.Name, startErr)
 	}

@@ -331,7 +331,7 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	if got := LaneHeader(3, done, len(running)); got != "3 个账号同时出图 · 完成 0 / 共 3" {
 		t.Fatal(got)
 	}
-	if got := FormatProgressTally(done, gen, queued, failedN, needs, 0, 3, 3); got != "完成 0 · 进行中 3 · 排队 0 · 失败 0 · 3/3 并发" {
+	if got := FormatProgressTally(done, gen, queued, failedN, needs, 0, 0, 3, 3); got != "完成 0 · 进行中 3 · 排队 0 · 失败 0 · 3/3 并发" {
 		t.Fatal(got)
 	}
 	finished := ProgressCards([]tasks.Task{
@@ -361,7 +361,7 @@ func TestDisplayStatusAndProgressCards(t *testing.T) {
 	failedSend := ProgressCards([]tasks.Task{
 		{Platform: "豆包", Prompt: "油画风格", Status: tasks.StatusFailed, Error: "发送状态未确认，请检查网页后再开始任务: 平台未接受消息"},
 	})
-	if failedSend[0].Status != "失败" || failedSend[0].Reason == "" {
+	if failedSend[0].Status != "失败" || failedSend[0].Reason != "发送状态未确认，请先检查原账号网页" || failedSend[0].Action != "核对后重试" {
 		t.Fatalf("failed send card = %+v", failedSend[0])
 	}
 	failed := FailedTasks([]tasks.Task{
@@ -543,7 +543,7 @@ func TestStopTurnsQueuedItemsIntoStopped(t *testing.T) {
 	}
 	tally := TallyTasks(tasksForPlatform(a.queueItems(), a.stagePlatform()))
 	if tally.Queued != 0 || tally.Stopped != 2 {
-		t.Fatalf("tally %+v header %q", tally, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.runningOn(a.stagePlatform()), a.liveParallel()))
+		t.Fatalf("tally %+v header %q", tally, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Review, tally.Stopped, a.runningOn(a.stagePlatform()), a.liveParallel()))
 	}
 }
 
@@ -557,7 +557,7 @@ func TestTimeoutAndStoppedShareOneTally(t *testing.T) {
 		t.Fatalf("tally %+v", tally)
 	}
 	summary := taskResultSummary(queue)
-	header := FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, 0, 0)
+	header := FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Review, tally.Stopped, 0, 0)
 	if summary != "成功 0 · 失败 1 · 待验证 0 · 未完成 1" || header != "完成 0 · 进行中 0 · 排队 0 · 失败 1 · 未完成 1" {
 		t.Fatalf("summary %q header %q", summary, header)
 	}
@@ -652,10 +652,10 @@ func TestLayoutFlow(t *testing.T) {
 	if skip.Images.Open || skip.Images.State != stepDone || !skip.Prompt.Open || skip.Prompt.State != stepCurrent {
 		t.Fatalf("skip %+v", skip)
 	}
-	if got := FormatProgressTally(1, 1, 1, 1, 0, 0, 1, 1); got != "完成 1 · 进行中 1 · 排队 1 · 失败 1 · 1/1 并发" {
+	if got := FormatProgressTally(1, 1, 1, 1, 0, 0, 0, 1, 1); got != "完成 1 · 进行中 1 · 排队 1 · 失败 1 · 1/1 并发" {
 		t.Fatalf("tally %q", got)
 	}
-	if got := FormatProgressTally(0, 0, 0, 0, 1, 0, 0, 0); got != "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1" {
+	if got := FormatProgressTally(0, 0, 0, 0, 1, 0, 0, 0, 0); got != "完成 0 · 进行中 0 · 排队 0 · 失败 0 · 待验证 1" {
 		t.Fatalf("needs tally %q", got)
 	}
 }

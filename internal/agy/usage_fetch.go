@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	// UsageTimeout 是读额度的上限。命令本来立刻返回，超时就当失败。
+	// UsageTimeout 包含等待切号和查询额度的时间。
 	UsageTimeout = 20 * time.Second
 )
 
@@ -23,6 +23,7 @@ var (
 	errUsageTimeout  = errors.New("超时")
 	errUsageBin      = errors.New("找不到 agy")
 	errUsageEmpty    = errors.New("agy 没有返回额度")
+	errUsageCommand  = errors.New("agy 查询失败")
 	errUsageCanceled = errors.New("context canceled")
 )
 
@@ -50,6 +51,8 @@ func fetchUsage(ctx context.Context, bin, home string, timeout time.Duration) (G
 	if timeout <= 0 {
 		timeout = UsageTimeout
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	work, err := os.MkdirTemp("", "agy-usage-")
 	if err != nil {
 		return GeminiUsage{}, errUsageEmpty
@@ -66,8 +69,6 @@ func fetchUsage(ctx context.Context, bin, home string, timeout time.Duration) (G
 		return GeminiUsage{}, err
 	}
 	defer session.unlock()
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "-p", "/usage", "--output-format", "json")
 	configureCommand(cmd)
 	cmd.Dir = work
@@ -75,10 +76,14 @@ func fetchUsage(ctx context.Context, bin, home string, timeout time.Duration) (G
 	// nil 标准输入接到空设备，不会把授权码或别的内容送进去。
 	cmd.Stdin = nil
 	out, err := captureUsage(ctx, cmd)
-	if bytes.Contains(out, []byte("Authentication required")) {
-		return GeminiUsage{}, ErrNeedLogin
+	saveErr := session.save()
+	if saveErr == nil && errors.Is(ctx.Err(), context.Canceled) {
+		return GeminiUsage{}, errUsageCanceled
 	}
-	if saveErr := session.save(); saveErr != nil {
+	if bytes.Contains(out, []byte("Authentication required")) {
+		return GeminiUsage{}, errors.Join(ErrNeedLogin, saveErr)
+	}
+	if saveErr != nil {
 		return GeminiUsage{}, saveErr
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -86,6 +91,9 @@ func fetchUsage(ctx context.Context, bin, home string, timeout time.Duration) (G
 	}
 	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 		return GeminiUsage{}, errUsageCanceled
+	}
+	if err != nil {
+		return GeminiUsage{}, errUsageCommand
 	}
 	if len(bytes.TrimSpace(out)) == 0 {
 		return GeminiUsage{}, errUsageEmpty
@@ -162,9 +170,9 @@ func captureUsage(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 			_ = cmd.Process.Kill()
 		}
 	}
-	_ = cmd.Wait()
+	err = cmd.Wait()
 	<-done
 	mu.Lock()
 	defer mu.Unlock()
-	return append([]byte(nil), buf.Bytes()...), nil
+	return append([]byte(nil), buf.Bytes()...), err
 }

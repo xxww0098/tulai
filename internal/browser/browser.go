@@ -42,24 +42,34 @@ type Manager struct {
 func NewManager() *Manager { return &Manager{procs: map[int64]*camoufox.Process{}} }
 
 func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, background bool) (string, error) {
-	return m.start(b, dataRoot, startURL, background, false, "")
+	return m.start(context.Background(), b, dataRoot, startURL, background, false, "")
 }
 
 // StartTask uses a headless process even if the account was left open for login.
-func (m *Manager) StartTask(b store.Browser, dataRoot, backend, startURL string) (string, error) {
-	return m.start(b, dataRoot, startURL, true, true, "")
+func (m *Manager) StartTask(ctx context.Context, b store.Browser, dataRoot, backend, startURL string) (string, error) {
+	return m.start(ctx, b, dataRoot, startURL, true, true, "")
 }
 
-func (m *Manager) StartTaskWithAddon(b store.Browser, dataRoot, startURL, addon string) (string, error) {
-	return m.start(b, dataRoot, startURL, true, true, addon)
+func (m *Manager) StartTaskWithAddon(ctx context.Context, b store.Browser, dataRoot, startURL, addon string) (string, error) {
+	return m.start(ctx, b, dataRoot, startURL, true, true, addon)
 }
 
-func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, task bool, addon string) (string, error) {
+func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL string, background, task bool, addon string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
 	m.lifecycle.RLock()
 	defer m.lifecycle.RUnlock()
-	lock, _ := m.starts.LoadOrStore(b.ID, &sync.Mutex{})
-	lock.(*sync.Mutex).Lock()
-	defer lock.(*sync.Mutex).Unlock()
+	lock, _ := m.starts.LoadOrStore(b.ID, make(chan struct{}, 1))
+	gate := lock.(chan struct{})
+	select {
+	case gate <- struct{}{}:
+		defer func() { <-gate }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	m.mu.Lock()
 	running := m.procs[b.ID]
 	quiet := m.quiet[b.ID]
@@ -84,8 +94,6 @@ func (m *Manager) start(b store.Browser, dataRoot, startURL string, background, 
 			return "", errors.New("账号代理地址无效")
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
 	if running.Alive() {
 		running.Close()
 		m.mu.Lock()
@@ -138,9 +146,10 @@ func (m *Manager) StopLogin(id int64) bool {
 }
 
 func (m *Manager) stop(id int64, visibleOnly bool) bool {
-	lock, _ := m.starts.LoadOrStore(id, &sync.Mutex{})
-	lock.(*sync.Mutex).Lock()
-	defer lock.(*sync.Mutex).Unlock()
+	lock, _ := m.starts.LoadOrStore(id, make(chan struct{}, 1))
+	gate := lock.(chan struct{})
+	gate <- struct{}{}
+	defer func() { <-gate }()
 	m.mu.Lock()
 	if visibleOnly && m.quiet[id] {
 		m.mu.Unlock()

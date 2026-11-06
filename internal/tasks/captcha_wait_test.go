@@ -85,7 +85,7 @@ func TestCaptchaBeforeSendResendsAfterVerify(t *testing.T) {
 	}
 }
 
-func TestHumanWaitSurvivesImageDeadlineAndThenRequeues(t *testing.T) {
+func TestHumanWaitSurvivesImageDeadlineAndKeepsSubmittedTask(t *testing.T) {
 	saveCaptchaHooks(t)
 	humanVerifyLimit = 80 * time.Millisecond
 	captchaVisible = func(*cdp.Session) (bool, error) { return true, nil }
@@ -145,10 +145,10 @@ func TestHumanWaitSurvivesImageDeadlineAndThenRequeues(t *testing.T) {
 		t.Fatal(runErr)
 	}
 	queue := eng.View().Snapshot()
-	if len(queue) != 1 || queue[0].Status != StatusSuccess {
-		t.Fatalf("应改派后完成: %+v used=%v", queue, used)
+	if len(queue) != 1 || queue[0].Status != StatusNeedsUser || !queue[0].submitted {
+		t.Fatalf("已提交任务应保留原提交并等待验证: %+v used=%v", queue, used)
 	}
-	if len(used) != 2 || used[0] != first.ID || used[1] != second.ID {
+	if len(used) != 1 || used[0] != first.ID {
 		t.Fatalf("used=%v first=%d second=%d", used, first.ID, second.ID)
 	}
 	health := browserByID(t, st, first.ID)
@@ -186,6 +186,21 @@ func TestCaptchaPausesOuterBudget(t *testing.T) {
 	}
 	if !errors.Is(context.Cause(ctx), context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		t.Fatalf("放开之后时限应继续走: err=%v cause=%v", ctx.Err(), context.Cause(ctx))
+	}
+}
+
+func TestHumanLimitKeepsNeedsUserAfterGenerationDeadline(t *testing.T) {
+	saveCaptchaHooks(t)
+	humanVerifyLimit = 80 * time.Millisecond
+	captchaVisible = func(*cdp.Session) (bool, error) { return true, nil }
+	e := NewEngine(nil, nil, nil, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	got := e.execute(ctx, Task{Index: 1, Platform: "豆包", BrowserID: 7, submitted: true}, func(ctx context.Context, task *Task) error {
+		return e.holdForHuman(ctx, nil, task)
+	})
+	if got.Status != StatusNeedsUser || !got.submitted || got.Error != errHumanGaveUp.Error() {
+		t.Fatalf("human validation was classified as generation timeout: %+v", got)
 	}
 }
 

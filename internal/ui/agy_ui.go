@@ -656,8 +656,6 @@ func (a *App) finishAgyImport(res agy.ImportResult, err error) {
 		}
 		return
 	}
-	a.store.UpdateBrowser(row.ID, false, true)
-	a.store.ResetBrowserHealth(row.ID)
 	a.resetAgyUsage(row.ID)
 	a.refreshBrowsers()
 	if a.engine != nil {
@@ -785,8 +783,6 @@ func (a *App) retryAgyLogin() {
 
 func (a *App) finishAgyLogin(id int64, name string) {
 	if a != nil && a.store != nil && id > 0 {
-		a.store.UpdateBrowser(id, false, true)
-		a.store.ResetBrowserHealth(id)
 		a.resetAgyUsage(id)
 		a.refreshBrowsers()
 	}

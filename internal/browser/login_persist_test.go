@@ -152,7 +152,7 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.StartTaskWithAddon(b, root, server.URL+"/login", addon); err != nil {
+	if _, err := manager.StartTaskWithAddon(context.Background(), b, root, server.URL+"/login", addon); err != nil {
 		t.Fatal(err)
 	}
 	firstPID := manager.pid(b.ID)
@@ -168,7 +168,7 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	if manager.pid(b.ID) != firstPID {
 		t.Fatal("viewing an account with a page bridge must not restart the running task")
 	}
-	if _, err := manager.StartTaskWithAddon(b, root, server.URL+"/check", addon); err != nil {
+	if _, err := manager.StartTaskWithAddon(context.Background(), b, root, server.URL+"/check", addon); err != nil {
 		t.Fatal(err)
 	}
 	if manager.pid(b.ID) != firstPID {
@@ -178,7 +178,7 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	manager.mu.Lock()
 	manager.quiet[b.ID] = false
 	manager.mu.Unlock()
-	ep, err := manager.StartTaskWithAddon(b, root, server.URL+"/check", addon)
+	ep, err := manager.StartTaskWithAddon(context.Background(), b, root, server.URL+"/check", addon)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 	if !manager.StopLogin(b.ID) || manager.IsRunning(b.ID) {
 		t.Fatal("login cleanup did not stop the visible account")
 	}
-	ep, err = manager.StartTask(b, root, KindCamoufox, server.URL+"/check")
+	ep, err = manager.StartTask(context.Background(), b, root, KindCamoufox, server.URL+"/check")
 	if err != nil {
 		t.Fatal(err)
 	}

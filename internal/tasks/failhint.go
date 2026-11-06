@@ -64,12 +64,18 @@ func ParseWords(raw string) []string {
 // 额度、限流、验证码、登录沿用 classifyFault，不另写一套探测。
 // 超时、额度不足、需登录、已停止要写出类别，不能收成一句「出图失败」。
 func ClassifyFailure(status Status, raw string) FailHint {
+	if status == StatusNeedsReview {
+		return FailHint{FailUnknown, "上次任务已中断，请先核对原账号网页和已保存图片", "核对后重新生成"}
+	}
 	if status == StatusNeedsUser {
 		return FailHint{FailCaptcha, "需要在网页里完成验证", "重试"}
 	}
 	text := strings.TrimSpace(raw)
 	if status == StatusSkipped {
 		return FailHint{FailUnknown, "已停止", "重试"}
+	}
+	if strings.Contains(text, "发送状态未确认") {
+		return FailHint{FailUnknown, "发送状态未确认，请先检查原账号网页", "核对后重试"}
 	}
 	if strings.Contains(text, "未匹配结果保存在 ") {
 		return FailHint{FailUnmatched, "结果已放入待核对，请检查", "查看待核对"}

@@ -255,7 +255,7 @@ func statusPill(c *ui.Context, status string) ui.Element {
 		fg, bg = t.Accent, t.Accent.Alpha(0.14)
 	case "排队中":
 		fg, bg = t.TextMuted, t.Text.Alpha(0.08)
-	case "待验证", "需要人工验证":
+	case "待验证", "需要人工验证", "需核对":
 		fg, bg = t.Warning, t.Warning.Alpha(0.16)
 	}
 	pill := ui.Row(c.Key("status")).Padding(1, 6).Radius(999).Shrink(0).AlignItems(ui.Center)

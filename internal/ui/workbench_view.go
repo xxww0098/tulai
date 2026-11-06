@@ -525,7 +525,7 @@ func (a *App) openResultFolder(dir string) {
 func (a *App) queueItems() []tasks.Task {
 	// 引擎只有一份队列。正在跑的这一页看引擎；停下来以后看这一页自己收好的那份。
 	// 新建任务清掉的是这一页的队列，不能再把上一批的引擎快照画出来。
-	if a.running && a.engine != nil && a.ownsRun() {
+	if a.useRunView && a.running && a.engine != nil && a.ownsRun() {
 		if view := a.engine.View(); view != nil {
 			return view.Snapshot()
 		}
@@ -639,11 +639,9 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		opts.Wash = true
 		opts.UseSuffix = false
 	}
-	// 上一批属于别的页时，把它的进度收回那一页再接手引擎。
-	if a.runPage != page && a.engine.View() != nil {
-		snap := a.engine.View().Snapshot()
-		a.onPage(a.runPage, func() { a.queue = snap })
-	}
+	previousView := a.engine.View()
+	previous := a.stateOf(page)
+	previousRunPage, previousUseRunView := a.runPage, a.useRunView
 	a.runPage = page
 	a.running = true
 	a.useRunView = false
@@ -662,17 +660,25 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		a.progress = 0
 		a.progText = ""
 	}
-	a.persistWorkspace(page)
+	if !a.persistWorkspace(page) {
+		a.onPage(page, func() {
+			a.queue, a.progress = previous.queue, previous.progress
+			a.progText = "保存任务记录失败，未开始任务，请检查配置数据库"
+		})
+		a.running = false
+		a.runPage, a.useRunView = previousRunPage, previousUseRunView
+		return
+	}
 	a.engine.SetSolver(captcha.Build(a.captchaConfig()))
 	go func() {
 		onTask := func(tasks.Task) {
-			a.syncUI(func() {
+			a.postUI(func() {
 				a.useRunView = true
 				a.persistWorkspace(page)
 			})
 		}
 		onProgress := func(p tasks.Progress) {
-			a.syncUI(func() {
+			a.postUI(func() {
 				a.useRunView = true
 				a.onPage(page, func() {
 					if p.Total > 0 {
@@ -689,7 +695,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		} else {
 			runErr = a.engine.Run(context.Background(), opts, onTask, onProgress)
 		}
-		a.syncUI(func() {
+		a.postUI(func() {
 			a.running = false
 			a.useRunView = false
 			if a.browserDrawer != nil && a.manager != nil && !a.manager.IsRunning(a.browserDrawer.row.ID) {
@@ -703,8 +709,10 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 				}
 			}
 			a.onPage(page, func() {
-				if view := a.engine.View(); view != nil {
+				if view := a.engine.View(); view != nil && view != previousView {
 					a.queue = view.Snapshot()
+				} else {
+					a.queue, a.progress = previous.queue, previous.progress
 				}
 				if runErr != nil {
 					a.progText = HumanReason(runErr.Error())

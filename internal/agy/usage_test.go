@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -138,6 +140,238 @@ func TestFetchUsageReadsFixture(t *testing.T) {
 	if strings.Contains(args, "--model") {
 		t.Fatalf("usage should not call a model: %s", args)
 	}
+}
+
+func TestFetchUsageRejectsFailedCommandWithValidQuota(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell fixture")
+	}
+	home := t.TempDir()
+	writeToken(t, home)
+	data, err := os.ReadFile(filepath.Join("testdata", "usage.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "usage.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "agy-failed.sh")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat \"$HOME/usage.json\"\nprintf '%s\\n' 'secret-should-not-leak' >&2\nexit 7\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fetchUsage(context.Background(), bin, home, time.Second)
+	if !errors.Is(err, errUsageCommand) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("failed command supplied usable quota or leaked output: %v", err)
+	}
+	if data, readErr := os.ReadFile(TokenPath(home)); readErr != nil || string(data) != testCredential {
+		t.Fatal("failed query changed the account credential", readErr)
+	}
+}
+
+type usageFileCredentials struct {
+	path    string
+	saveErr error
+	writes  int
+	onSave  func()
+}
+
+func (m *usageFileCredentials) Read(context.Context) ([]byte, error) {
+	return os.ReadFile(m.path)
+}
+
+func (m *usageFileCredentials) Write(_ context.Context, data []byte) error {
+	m.writes++
+	if m.writes > 1 && m.onSave != nil {
+		m.onSave()
+	}
+	if m.writes > 1 && m.saveErr != nil {
+		return m.saveErr
+	}
+	return os.WriteFile(m.path, data, 0o600)
+}
+
+func TestFetchUsageAuthSavesRefreshedCredential(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell fixture")
+	}
+	for _, tc := range []struct {
+		name                 string
+		failSave, cancelSave bool
+	}{{"saved", false, false}, {"save-failed", true, false}, {"canceled-after-save", false, true}, {"canceled-save-failed", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeToken(t, home)
+			refreshed := strings.ReplaceAll(testCredential, "test-refresh", "refreshed-refresh")
+			if err := os.WriteFile(filepath.Join(home, "refresh.json"), []byte(refreshed), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			keyring := &usageFileCredentials{path: filepath.Join(t.TempDir(), "keyring.json")}
+			if tc.failSave {
+				keyring.saveErr = errors.New("保存共享凭据失败")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancelSave {
+				keyring.onSave = cancel
+			}
+			if err := os.WriteFile(keyring.path, []byte(testCredential), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			previous := Keyring
+			Keyring = keyring
+			t.Cleanup(func() { Keyring = previous })
+			t.Setenv("TULAI_USAGE_TEST_KEYRING", keyring.path)
+			bin := filepath.Join(t.TempDir(), "agy-auth.sh")
+			script := "#!/bin/sh\ncp \"$HOME/refresh.json\" \"$TULAI_USAGE_TEST_KEYRING\"\nprintf '%s\\n' 'Authentication required'\nexec sleep 30\n"
+			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			_, err := fetchUsage(ctx, bin, home, 5*time.Second)
+			if tc.cancelSave && !tc.failSave {
+				if !errors.Is(err, errUsageCanceled) {
+					t.Fatalf("canceled auth cleanup reported a login failure: %v", err)
+				}
+				if _, ok := ViewFrom(GeminiUsage{}, err, time.Now()); ok {
+					t.Fatal("canceled auth cleanup published a quota view")
+				}
+			} else if !errors.Is(err, ErrNeedLogin) || (tc.failSave && !errors.Is(err, keyring.saveErr)) {
+				t.Fatalf("auth or credential save error lost: %v", err)
+			}
+			if keyring.writes != 2 {
+				t.Fatalf("refreshed credential was not saved: writes=%d", keyring.writes)
+			}
+			if saved, readErr := os.ReadFile(TokenPath(home)); readErr != nil || string(saved) != refreshed {
+				t.Fatal("refreshed credential was not kept in the account snapshot", readErr)
+			}
+		})
+	}
+}
+
+type blockedUsageCredentials struct {
+	readStarted chan struct{}
+	writes      int
+}
+
+func (m *blockedUsageCredentials) Read(ctx context.Context) ([]byte, error) {
+	close(m.readStarted)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (m *blockedUsageCredentials) Write(context.Context, []byte) error {
+	m.writes++
+	return nil
+}
+
+func TestFetchUsageStopsWhileWaitingForCredentials(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "timeout", true: "cancel"}[canceled], func(t *testing.T) {
+			home, bin := t.TempDir(), usageScript(t)
+			writeToken(t, home)
+			synctest.Test(t, func(t *testing.T) {
+				previousGate := cliGate
+				cliGate = make(chan struct{}, 1)
+				t.Cleanup(func() { cliGate = previousGate })
+				previous := Keyring
+				keyring := &blockedUsageCredentials{readStarted: make(chan struct{})}
+				Keyring = keyring
+				t.Cleanup(func() { Keyring = previous })
+				unlock, err := lockCLI(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer unlock()
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() {
+					_, err := fetchUsage(ctx, bin, home, time.Second)
+					done <- err
+				}()
+				synctest.Wait()
+				want := errUsageTimeout
+				if canceled {
+					want = errUsageCanceled
+					cancel()
+				}
+				select {
+				case err := <-done:
+					if !errors.Is(err, want) {
+						t.Fatalf("waiting for credential lock: %v, want %v", err, want)
+					}
+				case <-time.After(2 * time.Second):
+					cancel()
+					<-done
+					t.Fatal("usage budget did not cover the credential lock")
+				}
+				select {
+				case <-keyring.readStarted:
+					t.Fatal("waiting query accessed the shared credential")
+				default:
+				}
+				if keyring.writes != 0 {
+					t.Fatal("waiting query wrote the shared credential")
+				}
+				if data, err := os.ReadFile(TokenPath(home)); err != nil || string(data) != testCredential {
+					t.Fatal("waiting query changed the account credential", err)
+				}
+				if _, err := os.Stat(filepath.Join(home, "seen-args.txt")); !os.IsNotExist(err) {
+					t.Fatal("waiting query started the CLI")
+				}
+			})
+		})
+	}
+}
+
+func TestFetchUsageKeepsRemainingBudgetAfterCredentialLock(t *testing.T) {
+	home, bin := t.TempDir(), usageScript(t)
+	writeToken(t, home)
+	synctest.Test(t, func(t *testing.T) {
+		previousGate := cliGate
+		cliGate = make(chan struct{}, 1)
+		t.Cleanup(func() { cliGate = previousGate })
+		previous := Keyring
+		keyring := &blockedUsageCredentials{readStarted: make(chan struct{})}
+		Keyring = keyring
+		t.Cleanup(func() { Keyring = previous })
+		unlock, err := lockCLI(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		start := time.Now()
+		go func() {
+			_, err := fetchUsage(ctx, bin, home, time.Second)
+			done <- err
+		}()
+		synctest.Wait()
+		time.Sleep(600 * time.Millisecond)
+		unlock()
+		<-keyring.readStarted
+		select {
+		case err := <-done:
+			if !errors.Is(err, errUsageTimeout) || time.Since(start) != time.Second {
+				t.Fatalf("usage budget restarted after locking: elapsed=%v err=%v", time.Since(start), err)
+			}
+		case <-time.After(600 * time.Millisecond):
+			cancel()
+			<-done
+			t.Fatal("credential read did not use the remaining query budget")
+		}
+		if keyring.writes != 0 {
+			t.Fatal("timed-out credential read wrote the shared credential")
+		}
+		if _, err := os.Stat(filepath.Join(home, "seen-args.txt")); !os.IsNotExist(err) {
+			t.Fatal("timed-out credential read started the CLI")
+		}
+		unlock, err = lockCLI(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		unlock()
+	})
 }
 
 func TestFetchUsageKillsAuthAndIgnoresStdin(t *testing.T) {

@@ -143,6 +143,173 @@ func TestAgyPreflightWaitsForExistingQuotaRead(t *testing.T) {
 	}
 }
 
+func TestAgyIdentityResetDiscardsInflightResponse(t *testing.T) {
+	for _, loginError := range []bool{false, true} {
+		t.Run(map[bool]string{false: "old-quota", true: "old-login-error"}[loginError], func(t *testing.T) {
+			st := openUsageStore(t)
+			home := t.TempDir()
+			writeEmptyAgyToken(t, home)
+			row, err := st.AddBrowser(agy.Platform, "新身份", home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.ConfirmLogin(row.ID)
+			started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			a := &App{store: st, agyUsageFetch: func(context.Context, string, string) (agy.GeminiUsage, error) {
+				close(started)
+				<-release
+				if loginError {
+					return agy.GeminiUsage{}, agy.ErrNeedLogin
+				}
+				now := time.Now()
+				return agy.GeminiUsage{FiveHour: agy.UsageWindow{Remaining: 0, Reset: now.Add(time.Hour)}, Weekly: agy.UsageWindow{Remaining: 0.5, Reset: now.Add(24 * time.Hour)}}, nil
+			}}
+			if !a.beginAgyUsage(row.ID, time.Now()) {
+				t.Fatal("旧身份额度读取未开始")
+			}
+			go func() {
+				defer close(finished)
+				defer a.finishAgyUsage(row.ID)
+				a.fetchAgyAccount(context.Background(), row, "")
+			}()
+			<-started
+			a.resetAgyUsage(row.ID)
+			close(release)
+			<-finished
+			if saved, ok := tasks.SavedAgyUsage(st, row.ID); ok {
+				t.Fatalf("旧身份额度覆盖新身份: %+v", saved)
+			}
+			if got := findUsageBrowser(st, row.ID); !got.Usable(time.Now()) || !got.IsLoggedIn {
+				t.Fatalf("旧身份响应使新登录失效: %+v", got)
+			}
+			if view := a.agyUsageView(row.ID); view.State != agy.UsageReading {
+				t.Fatalf("旧身份响应替换读取状态: %+v", view)
+			}
+			if !a.beginAgyUsage(row.ID, time.Now()) {
+				t.Fatal("旧读取结束后不能刷新新身份")
+			}
+			a.finishAgyUsage(row.ID)
+		})
+	}
+}
+
+func TestAgyPreflightWaitsForResetIdentity(t *testing.T) {
+	st := openUsageStore(t)
+	home := t.TempDir()
+	writeEmptyAgyToken(t, home)
+	row, err := st.AddBrowser(agy.Platform, "账号", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.ConfirmLogin(row.ID)
+	started, release, freshStarted, freshRelease := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	finished, preflight := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	a := &App{store: st, agyUsageFetch: func(ctx context.Context, _, _ string) (agy.GeminiUsage, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return agy.GeminiUsage{}, ctx.Err()
+			}
+		} else {
+			close(freshStarted)
+			select {
+			case <-freshRelease:
+			case <-ctx.Done():
+				return agy.GeminiUsage{}, ctx.Err()
+			}
+		}
+		now := time.Now()
+		return agy.GeminiUsage{FiveHour: agy.UsageWindow{Remaining: 0.8, Reset: now.Add(time.Hour)}, Weekly: agy.UsageWindow{Remaining: 0.6, Reset: now.Add(48 * time.Hour)}}, nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if !a.beginAgyUsage(row.ID, time.Now()) {
+		t.Fatal("旧额度读取未开始")
+	}
+	go func() { defer close(finished); defer a.finishAgyUsage(row.ID); a.fetchAgyAccount(ctx, row, "") }()
+	<-started
+	waiting := make(chan struct{}, 1)
+	a.agyUsageBusy = func(int64) bool {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
+		return false
+	}
+	go func() { defer close(preflight); a.refreshAgyUsageBeforeRun(ctx) }()
+	<-waiting
+	a.resetAgyUsage(row.ID)
+	close(release)
+	select {
+	case <-freshStarted:
+	case <-preflight:
+		t.Fatal("首单没有等待新身份额度")
+	case <-ctx.Done():
+		t.Fatal("新身份额度读取未开始")
+	}
+	a.pullDueAgyUsage(ctx)
+	select {
+	case <-preflight:
+		t.Fatal("新身份额度未完成时首单已放行")
+	default:
+	}
+	close(freshRelease)
+	select {
+	case <-preflight:
+	case <-ctx.Done():
+		t.Fatal("新身份额度完成后首单仍未放行")
+	}
+	<-finished
+	if view, ok := tasks.SavedAgyUsage(st, row.ID); !ok || view.Usage.Weekly.Remaining != 0.6 || calls.Load() != 2 {
+		t.Fatalf("新身份额度未正确保存: view=%+v ok=%v calls=%d", view, ok, calls.Load())
+	}
+}
+
+func TestAgyCanceledResponseKeepsQuotaAndHealth(t *testing.T) {
+	for _, loginError := range []bool{false, true} {
+		t.Run(map[bool]string{false: "quota", true: "login-error"}[loginError], func(t *testing.T) {
+			st := openUsageStore(t)
+			home := t.TempDir()
+			writeEmptyAgyToken(t, home)
+			row, err := st.AddBrowser(agy.Platform, "账号", home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st.ConfirmLogin(row.ID)
+			now := time.Now()
+			usage := agy.GeminiUsage{FiveHour: agy.UsageWindow{Remaining: 0.8, Reset: now.Add(time.Hour)}, Weekly: agy.UsageWindow{Remaining: 0.6, Reset: now.Add(48 * time.Hour)}}
+			tasks.NoteAgyQuota(st, row.ID, usage, now)
+			before, _ := tasks.SavedAgyUsage(st, row.ID)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			a := &App{store: st, agyUsageFetch: func(context.Context, string, string) (agy.GeminiUsage, error) {
+				cancel()
+				if loginError {
+					return agy.GeminiUsage{}, agy.ErrNeedLogin
+				}
+				return agy.GeminiUsage{FiveHour: agy.UsageWindow{Remaining: 0, Reset: now.Add(time.Hour)}, Weekly: usage.Weekly}, nil
+			}}
+			if !a.beginAgyUsage(row.ID, now) {
+				t.Fatal("额度读取未开始")
+			}
+			a.fetchAgyAccount(ctx, row, "")
+			a.finishAgyUsage(row.ID)
+			if view, ok := tasks.SavedAgyUsage(st, row.ID); !ok || view.Usage != before.Usage {
+				t.Fatalf("已取消的响应替换了旧额度: %+v ok=%v", view, ok)
+			}
+			if got := findUsageBrowser(st, row.ID); !got.IsLoggedIn || !got.Usable(now) {
+				t.Fatalf("已取消的响应改写了账号健康: %+v", got)
+			}
+			if view := a.agyUsageView(row.ID); view.State != agy.UsageOK || view.Usage != before.Usage {
+				t.Fatalf("已取消的响应替换了界面额度: %+v", view)
+			}
+		})
+	}
+}
+
 func TestAgyQuotaDashReasons(t *testing.T) {
 	now := time.Now()
 	fail := "读取额度失败：超时"

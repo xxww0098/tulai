@@ -183,9 +183,9 @@ func EnsureOutputDir(path string) (string, error) {
 	return path, nil
 }
 
-// DisplayStatus 把一批任务收成出图页上的四个状态。待验证单独保留。
+// DisplayStatus 把一批任务收成出图页上的状态。
 func DisplayStatus(statuses []tasks.Status) string {
-	var running, pending, needs, failed, success, awaiting, skipped bool
+	var running, pending, needs, review, failed, success, awaiting, skipped bool
 	for _, status := range statuses {
 		switch status {
 		case tasks.StatusRunning, tasks.StatusRetry:
@@ -196,6 +196,8 @@ func DisplayStatus(statuses []tasks.Status) string {
 			awaiting = true
 		case tasks.StatusNeedsUser:
 			needs = true
+		case tasks.StatusNeedsReview:
+			review = true
 		case tasks.StatusFailed:
 			failed = true
 		case tasks.StatusSkipped:
@@ -211,6 +213,8 @@ func DisplayStatus(statuses []tasks.Status) string {
 		return "生成中"
 	case pending:
 		return "排队中"
+	case review:
+		return "需核对"
 	case needs:
 		return "待验证"
 	case failed:
@@ -347,7 +351,7 @@ func ProgressTally(cards []ProgressCard) (done, running, queued, failed, needs i
 
 // TaskTally 是左栏进度和右栏「出图进度」共用的计数。已停止算未完成，不算失败。
 type TaskTally struct {
-	Done, Running, Queued, Failed, Needs, Stopped int
+	Done, Running, Queued, Failed, Needs, Review, Stopped int
 }
 
 // TallyTasks 统计一批任务。调用方不要再各写一套成败判断。
@@ -365,6 +369,8 @@ func TallyTasks(items []tasks.Task) TaskTally {
 			tally.Failed++
 		case tasks.StatusNeedsUser:
 			tally.Needs++
+		case tasks.StatusNeedsReview:
+			tally.Review++
 		case tasks.StatusSkipped:
 			tally.Stopped++
 		default:
@@ -374,7 +380,7 @@ func TallyTasks(items []tasks.Task) TaskTally {
 	return tally
 }
 
-// Incomplete 是还没成功、也没失败、也不是待验证的任务，含已停止。
+// Incomplete 是还没成功、也没失败、也不是待验证或需核对的任务，含已停止。
 func (t TaskTally) Incomplete() int {
 	return t.Running + t.Queued + t.Stopped
 }
@@ -393,7 +399,7 @@ func RunSummary(images int, prompts bool) string {
 
 // FormatProgressTally 是一个平台的进度。并发上限写在同一行，不再另起一条「同时出图」。
 // limit 是这一页实际能同时跑的账号数；Antigravity 一次只跑一个。没有可用账号时不写。
-func FormatProgressTally(done, running, queued, failed, needs, stopped, active, limit int) string {
+func FormatProgressTally(done, running, queued, failed, needs, review, stopped, active, limit int) string {
 	parts := []string{
 		fmt.Sprintf("完成 %d", done),
 		fmt.Sprintf("进行中 %d", running),
@@ -402,6 +408,9 @@ func FormatProgressTally(done, running, queued, failed, needs, stopped, active, 
 	}
 	if needs > 0 {
 		parts = append(parts, fmt.Sprintf("待验证 %d", needs))
+	}
+	if review > 0 {
+		parts = append(parts, fmt.Sprintf("需核对 %d", review))
 	}
 	if stopped > 0 {
 		parts = append(parts, fmt.Sprintf("未完成 %d", stopped))
@@ -457,7 +466,7 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 				card.MoveWhy = HumanReason(task.ReassignWhy)
 			}
 			switch task.Status {
-			case tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser:
+			case tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser, tasks.StatusNeedsReview:
 				card.Retry = append(card.Retry, task)
 				if !haveFailed {
 					failed = task
@@ -492,6 +501,9 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)
 			card.Reason = hint.Sentence
 			card.Action = hint.Button
+		} else if card.Status == "需核对" {
+			hint := tasks.ClassifyFailure(tasks.StatusNeedsReview, failed.Error)
+			card.Reason, card.Action = hint.Sentence, hint.Button
 		} else if card.Status == "失败" {
 			hint := tasks.ClassifyFailure(failed.Status, failed.Error)
 			card.Reason = hint.Sentence

@@ -360,18 +360,16 @@ func TestOneFailedWorkerDoesNotCancelTheOther(t *testing.T) {
 			t.Fatalf("queue: %+v", queue)
 		}
 		for _, task := range queue {
-			if task.Status != StatusSuccess || task.Error == "已停止" {
+			want := StatusSuccess
+			if task.BrowserID == second.ID {
+				want = StatusFailed
+			}
+			if task.Status != want || task.Error == "已停止" {
 				t.Fatalf("一条失败不能取消另一条: first=%d second=%d task=%+v", first.ID, second.ID, task)
 			}
 		}
-		retried := 0
-		for len(started) > 0 {
-			if id := <-started; id == first.ID {
-				retried++
-			}
-		}
-		if retried < 1 {
-			t.Fatal("未确认的发送应改到另一个空闲账号再试一次")
+		if len(started) != 0 {
+			t.Fatal("未确认的发送不能改到另一个账号重发")
 		}
 	})
 }

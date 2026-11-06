@@ -102,7 +102,7 @@ func (a *App) resultsHead(c *ui.Context) {
 				ui.Text(c, "当前服务商："+a.stagePlatform()).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine()
 			})
 			if len(items) > 0 {
-				ui.Text(c, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Stopped, a.runningOn(a.stagePlatform()), a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+				ui.Text(c, FormatProgressTally(tally.Done, tally.Running, tally.Queued, tally.Failed, tally.Needs, tally.Review, tally.Stopped, a.runningOn(a.stagePlatform()), a.liveParallel())).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 			}
 		})
 		if len(failed) > 0 {
@@ -276,7 +276,7 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 		}
 		if reason, action, retry := tileFailure(task); reason != "" {
 			color := tok.danger
-			if task.Status == tasks.StatusNeedsUser || task.Status == tasks.StatusAwaitUser {
+			if task.Status == tasks.StatusNeedsUser || task.Status == tasks.StatusAwaitUser || task.Status == tasks.StatusNeedsReview {
 				color = tok.warning
 			}
 			ui.Text(c.Key("reason"), reason).FontSize(tok.caption).TextColor(color).SingleLine().Tooltip(reason)
@@ -420,7 +420,7 @@ func tileStatus(task tasks.Task) string {
 
 func tileFailure(task tasks.Task) (reason, action string, retry []tasks.Task) {
 	switch task.Status {
-	case tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser:
+	case tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser, tasks.StatusNeedsReview:
 		hint := tasks.ClassifyFailure(task.Status, task.Error)
 		label := hint.Button
 		if label == "" {

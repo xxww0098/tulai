@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,108 @@ func TestWorkspaceRestoresAfterRestart(t *testing.T) {
 	}
 	if len(b.queue) != 1 || b.queue[0].Status != tasks.StatusFailed || b.queue[0].Error != "上传失败" || b.queue[0].Images[0] != img {
 		t.Fatalf("洗图任务恢复失败 %+v", b.queue)
+	}
+}
+
+func TestInterruptedWorkspaceRestoresForReview(t *testing.T) {
+	for _, page := range []int{pageHome, pageWash} {
+		t.Run(workspacePageKey(page), func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "config.db")
+			st, err := store.Open(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var items []store.SessionTask
+			statuses := []tasks.Status{tasks.StatusPending, tasks.StatusRunning, tasks.StatusRetry, tasks.StatusAwaitUser, "", "未知状态", "需核对", tasks.StatusSuccess, tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser}
+			for i, status := range statuses {
+				items = append(items, store.SessionTask{Ord: i + 1, Platform: "豆包", AccountID: 42,
+					Prompt: "原提示词", Source: "原图.png", Outputs: "已保存.png", Status: string(status), Error: "原始错误"})
+			}
+			_, err = st.SaveActive(store.Session{Page: workspacePageKey(page), Progress: 0.9, ProgText: "正在生成旧任务"}, items)
+			st.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, err = store.Open(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			a := &App{store: st}
+			a.loadSettings()
+			state := a.stateOf(page)
+			if a.running || len(state.queue) != len(items) {
+				t.Fatalf("恢复历史不应启动任务: running=%v queue=%+v", a.running, state.queue)
+			}
+			for i, task := range state.queue {
+				want := statuses[i]
+				if i < 7 {
+					want = "需核对"
+				}
+				if task.Status != want || task.BrowserID != 42 || task.Prompt != "原提示词" || len(task.Images) != 1 || task.Images[0] != "原图.png" || len(task.Results) != 1 || task.Results[0] != "已保存.png" || !strings.Contains(task.Error, "原始错误") {
+					t.Fatalf("历史状态或记录丢失: item=%+v task=%+v want=%q", items[i], task, want)
+				}
+				if i < 7 {
+					if tileStatus(task) != "需核对" {
+						t.Fatalf("中断任务仍显示活动态: %+v", task)
+					}
+					reason, action, retry := tileFailure(task)
+					if reason == "" || action != "核对后重新生成" || len(retry) != 1 {
+						t.Fatalf("缺少核对后的恢复入口: reason=%q action=%q retry=%+v", reason, action, retry)
+					}
+				}
+			}
+			if strings.Contains(state.progText, "正在生成") || !strings.Contains(state.progText, "需核对 7") || state.progress != 4.0/11 {
+				t.Fatalf("恢复了旧的运行进度: text=%q progress=%v", state.progText, state.progress)
+			}
+			if len(FailedTasks(state.queue)) != 2 {
+				t.Fatalf("批量失败重试包含了需核对的任务: %+v", FailedTasks(state.queue))
+			}
+			if !a.persistWorkspace(page) {
+				t.Fatal("保存归一化历史失败")
+			}
+			b := &App{store: st}
+			b.loadSettings()
+			for i, task := range b.stateOf(page).queue {
+				if task.Status != state.queue[i].Status || task.Error != state.queue[i].Error {
+					t.Fatalf("反复恢复改变了核对状态: before=%+v after=%+v", state.queue[i], task)
+				}
+			}
+		})
+	}
+}
+
+func TestReviewCardRequiresExplicitRegeneration(t *testing.T) {
+	review := tasks.Task{Index: 1, Platform: "豆包", BrowserID: 42, Prompt: "原提示词", Status: tasks.StatusNeedsReview, Results: []string{"已保存.png"}}
+	for _, status := range []tasks.Status{tasks.StatusSuccess, tasks.StatusFailed, tasks.StatusSkipped, tasks.StatusNeedsUser} {
+		items := []tasks.Task{{Index: 2, Platform: "千问", Prompt: review.Prompt, Status: status}, review}
+		cards := ProgressCards(items)
+		if len(cards) != 1 || cards[0].Status != "需核对" || cards[0].Action != "核对后重新生成" || cards[0].Reason == "" || len(cards[0].Shots) != 1 {
+			t.Fatalf("混合卡片绕过了核对提示: status=%s cards=%+v", status, cards)
+		}
+	}
+	queue := tasks.RebuildRetry([]tasks.Task{review})
+	if len(queue) != 1 || queue[0].Status != tasks.StatusPending || queue[0].Prompt != review.Prompt || queue[0].BrowserID != 0 || len(queue[0].Results) != 0 {
+		t.Fatalf("主动重新生成没有创建新任务: %+v", queue)
+	}
+}
+
+func TestRestoredReviewIsVisible(t *testing.T) {
+	for _, width := range []int{980, 1280} {
+		a := &App{platformAuto: true, stagePicked: true,
+			queue: queueFromSession([]store.SessionTask{{Ord: 1, Platform: "豆包", Prompt: "原提示词", Status: string(tasks.StatusRunning)}})}
+		tt := ui.NewTester(a.view, width, 900)
+		tt.Advance(200 * time.Millisecond)
+		for _, text := range []string{"需核对", "核对后重新生成", "上次任务已中断，请先核对原账号网页和已保存图片"} {
+			if !tt.HasText(text) {
+				t.Fatalf("恢复界面缺少 %q: %v", text, tt.Texts())
+			}
+		}
+		for _, text := range []string{"生成中", "排队中", "全部重试失败项"} {
+			if tt.HasText(text) {
+				t.Fatalf("恢复界面仍保留活动态或批量重发入口 %q: %v", text, tt.Texts())
+			}
+		}
 	}
 }
 
@@ -163,6 +266,77 @@ func TestNewTaskDisabledWhileRunning(t *testing.T) {
 	}
 	if wash.prompts != DefaultWashPrompt || len(wash.queue) != 0 {
 		t.Fatalf("wash reset = %q queue=%d", wash.prompts, len(wash.queue))
+	}
+}
+
+func TestNewTaskKeepsDraftWhenDatabaseClosed(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{store: st, prompts: "未保存草稿", historyOpen: true}
+	if !a.persistWorkspace(pageHome) {
+		t.Fatal("保存初始草稿失败")
+	}
+	id := a.genSession
+	a.prompts = "刚修改的草稿"
+	st.Close()
+	a.newWorkspace()
+	if a.prompts != "刚修改的草稿" || a.genSession != id || !a.historyOpen {
+		t.Fatalf("保存失败后草稿被清空: prompts=%q id=%d history=%v", a.prompts, a.genSession, a.historyOpen)
+	}
+}
+
+func TestWorkspaceSwitchKeepsDraftWhenWriteFails(t *testing.T) {
+	for _, reopen := range []bool{false, true} {
+		for _, stage := range []string{"保存", "收起"} {
+			name := "新建/" + stage
+			if reopen {
+				name = "恢复/" + stage
+			}
+			t.Run(name, func(t *testing.T) {
+				st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer st.Close()
+				history, err := st.SaveActive(store.Session{Page: store.PageGen, Prompts: "历史提示词"}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				a := &App{store: st, prompts: "当前提示词", historyOpen: true}
+				if !a.persistWorkspace(pageHome) {
+					t.Fatal("保存初始草稿失败")
+				}
+				id := a.genSession
+				a.prompts = "刚修改的草稿"
+				a.queue = []tasks.Task{{Index: 1, Platform: "豆包", Prompt: a.prompts, Status: tasks.StatusFailed, Error: "原始错误"}}
+				db, err := sql.Open("sqlite", st.File())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				when := "NEW.active=1"
+				if stage == "收起" {
+					when = "NEW.active=0 AND OLD.active=1"
+				}
+				if _, err := db.Exec("CREATE TRIGGER fail_workspace_write BEFORE UPDATE ON sessions WHEN " + when + " BEGIN SELECT RAISE(FAIL, 'write failed'); END"); err != nil {
+					t.Fatal(err)
+				}
+				if reopen {
+					a.reopenSession(history)
+				} else {
+					a.newWorkspace()
+				}
+				if a.prompts != "刚修改的草稿" || a.genSession != id || !a.historyOpen || len(a.queue) != 1 || a.queue[0].Error != "原始错误" {
+					t.Fatalf("写入失败后切换了工作区: prompts=%q id=%d history=%v queue=%+v", a.prompts, a.genSession, a.historyOpen, a.queue)
+				}
+				current, _, ok, err := st.ActiveSession(store.PageGen)
+				if err != nil || !ok || current.ID != id {
+					t.Fatalf("活动会话改变: %+v ok=%v err=%v", current, ok, err)
+				}
+			})
+		}
 	}
 }
 
@@ -509,16 +683,11 @@ func TestFailedRetryRequeues(t *testing.T) {
 	if err := tt.Click("重试"); err != nil {
 		t.Fatal(err)
 	}
-	if len(a.queue) != 1 || a.queue[0].Status != tasks.StatusPending || a.queue[0].Prompt != "一只猫" {
-		t.Fatalf("retry did not requeue: %+v", a.queue)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for eng.IsRunning() && time.Now().Before(deadline) {
-		time.Sleep(15 * time.Millisecond)
-	}
-	if eng.IsRunning() {
-		eng.Stop()
-		t.Fatal("retry engine did not finish")
+	finishRecoveryRun(t, a)
+	if view := eng.View(); view == nil {
+		t.Fatal("retry did not create a run")
+	} else if queue := view.Snapshot(); len(queue) != 1 || queue[0].Prompt != "一只猫" || queue[0].Attempts != 1 {
+		t.Fatalf("retry did not execute the original prompt: %+v", queue)
 	}
 }
 
