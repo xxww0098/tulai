@@ -222,6 +222,8 @@ func TestBackgroundTaskReusesHeadlessAndPreservesLoginOnRestart(t *testing.T) {
 
 func TestCamoufoxAccountIsolationAndRestart(t *testing.T) {
 	config := camoufoxtest.ConfigDir(t)
+	t.Setenv("CAMOU_CONFIG_1", "{}")
+	t.Setenv("CAMOU_PREFS_1", "{}")
 	for _, key := range proxyEnvKeys {
 		t.Setenv(key, "")
 	}
@@ -324,6 +326,27 @@ func TestCamoufoxAccountIsolationAndRestart(t *testing.T) {
 	if got := checkVisibleDevice(t, p2, second.UserDataDir); got == deviceBefore {
 		t.Fatalf("accounts expose the same device fingerprint: %s", got)
 	}
+	const rendering = `(async()=>{
+ const canvas=document.createElement('canvas');canvas.width=240;canvas.height=60;
+ const ctx=canvas.getContext('2d');ctx.fillStyle='#f60';ctx.fillRect(5,5,90,30);ctx.fillStyle='#067';ctx.font='18px Arial';ctx.fillText('tulai fingerprint 文字',10,25);
+ const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;let hash=2166136261;for(const value of pixels)hash=Math.imul(hash^value,16777619);
+ const gl=document.createElement('canvas').getContext('webgl');const ext=gl?.getExtension('WEBGL_debug_renderer_info');
+ let adapter=null;try{adapter=navigator.gpu ? await navigator.gpu.requestAdapter() : null}catch{}
+ return {canvas:hash,webgl:gl && [gl.getParameter(gl.VENDOR),gl.getParameter(gl.RENDERER),ext && gl.getParameter(ext.UNMASKED_VENDOR_WEBGL),ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL),gl.getParameter(gl.MAX_TEXTURE_SIZE)],webgpu:!!adapter};})()`
+	type renderingFingerprint struct {
+		Canvas int32
+		WebGL  json.RawMessage
+		WebGPU bool
+	}
+	readRendering := func() renderingFingerprint {
+		t.Helper()
+		var value renderingFingerprint
+		if err := json.Unmarshal(evaluate(p1, rendering), &value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	renderingBefore, renderingRepeat := readRendering(), readRendering()
 	consistency := evaluate(p1, `(async()=>{
  const snapshot=()=>({ua:navigator.userAgent,platform:navigator.platform,language:navigator.language,languages:Array.from(navigator.languages),cores:navigator.hardwareConcurrency,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone});
  const source='postMessage(('+snapshot.toString()+')())';const url=URL.createObjectURL(new Blob([source],{type:'application/javascript'}));
@@ -363,6 +386,11 @@ func TestCamoufoxAccountIsolationAndRestart(t *testing.T) {
 	}
 	if got := checkVisibleDevice(t, p1, first.UserDataDir); got != deviceBefore {
 		t.Fatalf("device fingerprint changed across restart:\n%s\n%s", deviceBefore, got)
+	}
+	renderingAfter := readRendering()
+	if string(renderingAfter.WebGL) != string(renderingBefore.WebGL) || renderingAfter.WebGPU != renderingBefore.WebGPU ||
+		(renderingBefore.Canvas == renderingRepeat.Canvas && renderingAfter.Canvas != renderingBefore.Canvas) {
+		t.Fatalf("rendering fingerprint changed across restart:\n%+v\n%+v", renderingBefore, renderingAfter)
 	}
 	manager.StopAll()
 	if manager.IsRunning(first.ID) || manager.IsRunning(second.ID) {

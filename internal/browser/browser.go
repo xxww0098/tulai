@@ -86,12 +86,18 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	if configDir == "" {
 		configDir = ConfigDir()
 	}
-	proxy := CurrentProxyServer()
+	var proxy string
 	if b.Proxy != "" {
 		var ok bool
 		proxy, ok = NormalizeProxy(b.Proxy)
 		if !ok {
 			return "", errors.New("账号代理地址无效")
+		}
+	} else {
+		var err error
+		proxy, err = ResolveCurrentProxy()
+		if err != nil {
+			return "", err
 		}
 	}
 	if running.Alive() {

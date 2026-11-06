@@ -339,3 +339,15 @@ func TestDownloadBrowserProxyDoesNotCloseExisting(t *testing.T) {
 		t.Fatalf("代理不可用时不应关闭已有浏览器: browser=%v alive=%v err=%q", a.dlBrowser, old.Alive(), a.dlBrowserErr)
 	}
 }
+
+func TestDownloadBrowserRejectsInvalidProxy(t *testing.T) {
+	a, _ := newDownloadApp(t)
+	browser.SetProxy("ftp://127.0.0.1:21")
+	t.Cleanup(func() { browser.SetProxy("") })
+	old := &fakeDownloadBrowser{}
+	a.dlBrowser, a.dlBrowserURL = old, "https://example.test/first"
+	a.openDownloadBrowserURL("https://example.test/second")
+	if a.dlBrowser != old || !old.Alive() || !strings.Contains(a.dlBrowserErr, "代理地址无效") {
+		t.Fatalf("无效代理不应关闭或直接使用已有浏览器: browser=%v alive=%v err=%q", a.dlBrowser, old.Alive(), a.dlBrowserErr)
+	}
+}

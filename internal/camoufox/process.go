@@ -254,7 +254,16 @@ func Find(endpoint string) (*Process, error) {
 }
 
 func runtimeEnv(proxy, dir string) []string {
-	env := os.Environ()
+	inherited := os.Environ()
+	env := make([]string, 0, len(inherited)+6)
+	for _, item := range inherited {
+		key, _, _ := strings.Cut(item, "=")
+		key = strings.ToUpper(key)
+		if strings.HasPrefix(key, "CAMOU_CONFIG_") || strings.HasPrefix(key, "CAMOU_PREFS_") || key == "FONTCONFIG_FILE" {
+			continue
+		}
+		env = append(env, item)
+	}
 	if proxy != "" {
 		env = append(env, "HTTPS_PROXY="+proxy, "HTTP_PROXY="+proxy, "npm_config_proxy="+proxy, "npm_config_https_proxy="+proxy)
 	}

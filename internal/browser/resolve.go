@@ -55,6 +55,10 @@ func InstalledCamoufox(dataDir string) (Runtime, bool) {
 	return Runtime{Kind: KindCamoufox, Path: rt.Executable, Version: camoufox.Version}, ok
 }
 func EnsureCamoufox(ctx context.Context, dataDir string, progress func(camoufox.Progress)) (Runtime, error) {
-	rt, err := camoufox.Ensure(ctx, dataDir, CurrentProxyServer(), progress)
+	proxy, err := ResolveCurrentProxy()
+	if err != nil {
+		return Runtime{}, err
+	}
+	rt, err := camoufox.Ensure(ctx, dataDir, proxy, progress)
 	return Runtime{Kind: KindCamoufox, Path: rt.Executable, Version: camoufox.Version}, err
 }

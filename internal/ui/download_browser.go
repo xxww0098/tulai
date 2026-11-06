@@ -87,7 +87,11 @@ func (a *App) openDownloadBrowserURL(target string) {
 			return
 		}
 	}
-	proxy := browser.CurrentProxyServer()
+	proxy, err := browser.ResolveCurrentProxy()
+	if err != nil {
+		a.dlBrowserErr = err.Error()
+		return
+	}
 	if proxy != "" {
 		a.dlBrowserErr = "下载浏览器暂不支持代理，请先关闭全局或系统代理后重试"
 		return

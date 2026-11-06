@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
 import { request as playwrightRequest } from 'playwright-core';
-import { createIdentity, prepareIdentity, preserveVoices } from './identity.mjs';
+import { createIdentity, prepareIdentity, prepareRendering, preserveVoices } from './identity.mjs';
 
 // Camoufox resolves its cache at import time; restore the real environment before launching Firefox.
 const cacheKey = { darwin: 'HOME', win32: 'LOCALAPPDATA', linux: 'XDG_CACHE_HOME' }[process.platform];
@@ -283,10 +283,20 @@ async function start(params) {
   try { saved = JSON.parse(fs.readFileSync(identityPath, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw new Error(`账号指纹文件无法读取：${error.message}`); }
   const config = prepareIdentity(saved, installedVerStr(path.dirname(params.executable)).split('.')[0], Boolean(params.proxy));
+  let rendering = [true, null];
+  if (config?.['webGl:vendor'] && config['webGl:renderer'] && (params.headless || process.platform === 'darwin')) {
+    try {
+      rendering = await utils.planRendering(utils.getTargetOs(config), undefined, false, false,
+        () => utilsDeps.hostGpu(params.executable, Boolean(params.headless), process.env, {}));
+    } catch (error) {
+      process.stderr.write(`无法确认 Canvas 渲染设备，保留 Camoufox 默认保护：${error.message}\n`);
+    }
+  }
   const generate = async (identityConfig = config) => {
+    const prepared = prepareRendering(identityConfig, ...rendering);
     const options = await launchOptions({
       os: hostOS, headless: Boolean(params.headless), main_world_eval: true,
-      config: identityConfig, i_know_what_im_doing: Boolean(saved),
+      config: prepared.config, canvas_noise: prepared.canvasNoise, i_know_what_im_doing: Boolean(saved),
       addons: params.addons || undefined,
       proxy: proxyOptions(params.proxy),
       geoip: params.proxy ? params.geoip !== false : undefined,

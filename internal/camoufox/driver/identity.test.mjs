@@ -5,9 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {promisify} from 'node:util';
-import {createIdentity, prepareIdentity, preserveVoices} from './identity.mjs';
+import {createIdentity, prepareIdentity, prepareRendering, preserveVoices} from './identity.mjs';
 
 const device={'navigator.userAgent':'Mozilla/5.0 (Macintosh; rv:150.0) Gecko/20100101 Firefox/150.0','navigator.platform':'MacIntel','navigator.oscpu':'Intel Mac OS X 10.15','navigator.hardwareConcurrency':8,'canvas:seed':42,'screen.width':1920,'screen.height':1080,'screen.availWidth':1920,'screen.availHeight':1004,'screen.colorDepth':24};
+
+test('reuse host rendering only when it is compatible with the saved GPU',()=>{
+ const saved={...device,'webGl:vendor':'Apple','webGl:renderer':'Apple M1'};
+ assert.deepEqual(prepareRendering(saved,true,['Apple','Apple M1']),{config:saved});
+ assert.deepEqual(prepareRendering(saved,false,['Other','GPU']),{config:saved});
+ assert.deepEqual(prepareRendering(saved,false,null),{config:saved,canvasNoise:false});
+ assert.deepEqual(prepareRendering(saved,false,['Apple','Apple M1']),{config:device});
+ assert.equal(saved['webGl:renderer'],'Apple M1');
+});
 
 test('restarts retain the device; upgrades track the real Firefox version',()=>{
  const saved={...device};
@@ -23,7 +32,10 @@ test('addon paths are configured afresh instead of persisted as device identity'
  assert.deepEqual(saved.addons,['/old/download-helper']);
 });
 test('changing or clearing a proxy cannot retain the previous exit location',()=>{
- const saved={...device,'webrtc:ipv4':'1.1.1.1','timezone':'old','locale:language':'old','geolocation:latitude':10,'voices':['old'],'headers.Accept-Language':'old'};
+ const saved={...device,'webrtc:ipv4':'1.1.1.1','webrtc:ipv6':'2001:db8::1','network:ipv4Only':true,
+  'timezone':'old','locale:language':'old','locale:region':'old','locale:script':'old',
+  'geolocation:latitude':10,'geolocation:longitude':20,'navigator.language':'old','navigator.languages':['old'],
+  'voices':['old'],'headers.Accept-Language':'old'};
  for (const proxy of [true,false]) assert.deepEqual(prepareIdentity(saved,'150',proxy),{...device,voices:['old']});
 });
 test('voices stay stable for the same locale and refresh when it changes',async()=>{

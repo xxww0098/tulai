@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.13
+# 发布 tulai 0.1.14
 
-当前桌面端版本是 **0.1.13**，标签 **`v0.1.13`**。页面桥扩展是 **0.3.14**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.14**，标签 **`v0.1.14`**。页面桥扩展是 **0.3.14**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.14
+
+改进 Camoufox 渲染连续性，隔离外部指纹配置，并在代理配置无效时明确报错。整理项目首页和使用指南。本版继续只发布 Windows 安装包，页面桥扩展仍为 0.3.14。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.13
 
@@ -76,8 +80,8 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.13` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.13` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.13` 之后，模块版本就是这个标签。 |
+| 桌面端 | `0.1.14` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.14` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.14` 之后，模块版本就是这个标签。 |
 | 页面桥扩展 | `0.3.14` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
@@ -111,16 +115,16 @@ git push origin vX.Y.Z
 
 ## 附件
 
-新流水线只发布 Windows。以下以桌面版本 `0.1.13` 为例展示命名；此前发布的 0.1.10 仍保留原有的 macOS 和 Linux 附件。
+新流水线只发布 Windows。以下以桌面版本 `0.1.14` 为例展示命名；此前发布的 0.1.10 仍保留原有的 macOS 和 Linux 附件。
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows | `tulai Setup 0.1.13 amd64.exe`、`tulai Setup 0.1.13 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.13-windows-amd64.exe` 和 `tulai-0.1.13-windows-arm64.exe`。 |
+| Windows | `tulai Setup 0.1.14 amd64.exe`、`tulai Setup 0.1.14 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.14-windows-amd64.exe` 和 `tulai-0.1.14-windows-arm64.exe`。 |
 | 扩展 | `tulai-extension-0.3.14.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
 
 新版本还包含 `update-windows-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。
 
-`dpkg` 把程序装到 `/opt/tulai`，并在 `/usr/bin/tulai` 放命令。配置库位置见 README 的「运行」和「Windows 支持」。
+`dpkg` 把程序装到 `/opt/tulai`，并在 `/usr/bin/tulai` 放命令。配置库位置见[使用指南](USAGE.md#本地数据与迁移)。
 
 ## 签名限制
 

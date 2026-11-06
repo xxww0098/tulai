@@ -6,9 +6,30 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestRuntimeEnvIsolatesFingerprintConfiguration(t *testing.T) {
+	for _, key := range []string{"CAMOU_CONFIG_1", "camou_prefs_2", "FONTCONFIG_FILE"} {
+		t.Setenv(key, "foreign")
+	}
+	t.Setenv("TULAI_RUNTIME_ENV_TEST", "preserved")
+	got := map[string]string{}
+	for _, item := range runtimeEnv("", t.TempDir()) {
+		key, value, _ := strings.Cut(item, "=")
+		got[strings.ToUpper(key)] = value
+	}
+	for _, key := range []string{"CAMOU_CONFIG_1", "CAMOU_PREFS_2", "FONTCONFIG_FILE"} {
+		if _, ok := got[key]; ok {
+			t.Fatalf("inherited fingerprint setting %s", key)
+		}
+	}
+	if got["TULAI_RUNTIME_ENV_TEST"] != "preserved" {
+		t.Fatal("unrelated environment was removed")
+	}
+}
 
 func TestCallReplyCancellationAndExit(t *testing.T) {
 	life, cancel := context.WithCancel(context.Background())

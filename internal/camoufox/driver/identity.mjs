@@ -76,6 +76,17 @@ export async function preserveVoices(saved, config, generate) {
   return generate(refreshed);
 }
 
+export function prepareRendering(config, covered, host) {
+  if (!config || covered) return {config};
+  if (!host) return {config, canvasNoise: false};
+  if (host[0] !== config['webGl:vendor'] || host[1] !== config['webGl:renderer']) return {config};
+  // Let Camoufox recognize the same host GPU and retain its first-launch rendering policy.
+  const copy = {...config};
+  delete copy['webGl:vendor'];
+  delete copy['webGl:renderer'];
+  return {config: copy};
+}
+
 // Persist device identity, but refresh browser version and proxy-derived location.
 export function prepareIdentity(saved, firefoxVersion, hasProxy) {
   if (saved === undefined) return undefined;

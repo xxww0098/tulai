@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -36,6 +37,23 @@ func savedProxy() string {
 // CurrentProxyServer 是这一次启动浏览器或安装 Camoufox时用的代理。
 func CurrentProxyServer() string {
 	return ProxyServer(savedProxy(), os.Getenv)
+}
+
+func ResolveCurrentProxy() (string, error) {
+	custom := savedProxy()
+	proxy := ProxyServer(custom, os.Getenv)
+	if proxy != "" {
+		return proxy, nil
+	}
+	if custom != "" {
+		return "", errors.New("全局代理地址无效")
+	}
+	for _, key := range proxyEnvKeys {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return "", errors.New("系统代理地址无效")
+		}
+	}
+	return "", nil
 }
 
 // ProxyServer 把自定义代理或环境变量规范为 Camoufox 可用的代理地址。
