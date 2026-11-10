@@ -304,6 +304,19 @@ func tasksForPlatform(items []tasks.Task, platform string) []tasks.Task {
 // logLineH 是运行日志一行的高度。跟视口对齐后，贴底滚动不会把第一行切掉半个字。
 const logLineH float32 = 20
 
+// logCardMinHeight 窗口矮时放宽运行日志的最小高度，
+// 让左栏放得下开始卡片：保存路径和「开始洗图」按钮不会被顶出窗口。
+func logCardMinHeight(winH float32) float32 {
+	switch {
+	case winH < 520:
+		return 0
+	case winH < 640:
+		return 80
+	default:
+		return 140
+	}
+}
+
 // logTailPad 让内容高度减去视口之后正好是整行。贴底时视口顶部落在行边界上。
 func logTailPad(viewport float32) float32 {
 	if viewport <= 1 {
@@ -323,7 +336,8 @@ func (a *App) runLog(c *ui.Context, fill bool) {
 		Background(tok.card).Border(1, tok.border)
 	limit := 6
 	if fill {
-		card.Grow(1).Shrink(0).MinHeight(140)
+		_, winH := c.Size()
+		card.Grow(1).Shrink(0).MinHeight(logCardMinHeight(winH))
 		limit = 300
 	}
 	card.Children(func() {

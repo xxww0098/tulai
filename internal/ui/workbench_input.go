@@ -45,14 +45,11 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 func (a *App) workSide(c *ui.Context, input func()) {
 	_, winH := c.Size()
 	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).Height(columnHeight(winH)).Gap(10).Padding(0, 0, 8, 0).Children(func() {
-		// 洗图的原图在卡片里自己滚动，指令、开始和日志留在外面，避免缩略图把它们顶出窗口。
-		if a != nil && a.washing() {
-			ui.Column(c.Key("work-side-input")).FillWidth().Shrink(0).Gap(10).Children(input)
-		} else {
-			ui.Scroll(c.Key("work-side-input")).FillWidth().Shrink(1).MinHeight(0).Children(func() {
-				ui.Column(c).FillWidth().Gap(10).Children(input)
-			})
-		}
+		// 洗图的缩略图网格在卡片里限高；窗口矮时输入区（连同生图参考图）在这里滚动，
+		// 开始卡片和保存路径行不会被顶出窗口。
+		ui.Scroll(c.Key("work-side-input")).FillWidth().Shrink(1).MinHeight(0).Children(func() {
+			ui.Column(c).FillWidth().Gap(10).Children(input)
+		})
 		a.runCard(c)
 		a.runLog(c, true)
 	})
