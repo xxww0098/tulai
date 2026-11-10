@@ -7,8 +7,17 @@ import (
 
 func TestBuiltinsContainOnlyWash(t *testing.T) {
 	items := Builtins()
-	if len(items) != 1 || items[0].ID != IDWash || items[0].Label != "默认洗图" || items[0].Kind != KindWash || !items[0].Builtin || items[0].Body != DefaultWashPrompt {
+	want := []Template{
+		{ID: IDWash, Label: "默认洗图", Body: DefaultWashPrompt, Kind: KindWash, Builtin: true},
+		{ID: IDDoubaoWash, Label: "豆包洗图", Body: DoubaoWashPrompt, Kind: KindWash, Builtin: true},
+	}
+	if len(items) != len(want) {
 		t.Fatalf("builtins: %+v", items)
+	}
+	for i, item := range items {
+		if item != want[i] {
+			t.Fatalf("builtins[%d] = %+v, want %+v", i, item, want[i])
+		}
 	}
 	for _, id := range []string{"oil", "art", "circle"} {
 		if _, ok := Builtin(id); ok {

@@ -8,6 +8,7 @@ globalThis.TULAI = {
     helloAck: 'helloAck',
     upload: 'upload',
     setPrompt: 'setPrompt',
+    setRatio: 'setRatio',
     send: 'send',
     waitResult: 'waitResult',
     download: 'download',
@@ -17,7 +18,7 @@ globalThis.TULAI = {
     status: 'status',
     reload: 'reload',
   },
-  pageCommands: ['upload', 'setPrompt', 'send', 'waitResult', 'download', 'captchaAssist', 'washChat'],
+  pageCommands: ['upload', 'setPrompt', 'setRatio', 'send', 'waitResult', 'download', 'captchaAssist', 'washChat'],
   errors: {
     E_NOT_CONNECTED: 'E_NOT_CONNECTED',
     E_NO_TAB: 'E_NO_TAB',
@@ -62,7 +63,7 @@ globalThis.TULAI.envelope = function envelope(type, fields) {
 // account 是这个浏览器配置文件的稳定 id，旧扩展可以不传。
 // loggedIn 只有布尔值才写上。没探测到登录时不要传，桌面端不会因此建账号。
 globalThis.TULAI.hello = function hello(token, platform, account, loggedIn) {
-  const payload = { token: token || '', version: '0.3.14' }
+  const payload = { token: token || '', version: '0.3.15' }
   if (account) payload.account = String(account)
   if (typeof loggedIn === 'boolean') payload.loggedIn = loggedIn
   const env = globalThis.TULAI.envelope('hello', { payload })

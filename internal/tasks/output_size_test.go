@@ -104,6 +104,38 @@ func TestOutputSizePixelsRatioAndFit(t *testing.T) {
 	}
 }
 
+func TestOutputSizeNativeRatio(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		platform string
+		size     OutputSize
+		want     string
+	}{
+		{"doubao native", "豆包", OutputSize{Ratio: "4:3"}, "4:3"},
+		{"doubao native pixels", "豆包", OutputSize{Width: 1200, Height: 1200}, "1:1"},
+		{"doubao not native", "豆包", OutputSize{Ratio: "5:4"}, ""},
+		{"doubao disabled", "豆包", OutputSize{}, ""},
+		{"other platform", "千问", OutputSize{Ratio: "4:3"}, ""},
+	} {
+		if got := tc.size.NativeRatio(tc.platform); got != tc.want {
+			t.Errorf("%s: NativeRatio=%q want %q", tc.name, got, tc.want)
+		}
+	}
+	if w, h, err := ParseRatioLine("4:3"); w != 4 || h != 3 || err != nil {
+		t.Fatalf("ParseRatioLine: %d %d %v", w, h, err)
+	}
+	if _, _, err := ParseRatioLine("宽高比"); err == nil {
+		t.Fatal("ParseRatioLine should reject malformed ratio")
+	}
+	if got := AppendRatioLine("商品图", 4, 3); got != sizePromptLine("商品图", 4, 3) {
+		t.Fatalf("AppendRatioLine: %q", got)
+	}
+}
+
+func sizePromptLine(prompt string, w, h int) string {
+	return strings.TrimSpace(fmt.Sprintf("%s\n请让每张输出图片的画面宽高比为 %d:%d，完整呈现主体。", prompt, w, h))
+}
+
 func TestOutputSizeKeepsShuffledWashResultsMatched(t *testing.T) {
 	dir := t.TempDir()
 	e := NewEngine(nil, nil, nil, "")

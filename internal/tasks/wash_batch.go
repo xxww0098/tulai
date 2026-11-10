@@ -110,6 +110,8 @@ func (e *Engine) saveUnmatchedWash(ctx context.Context, t *Task, results []strat
 	backup := &Engine{opts: e.opts, srcHashes: e.srcHashes}
 	backup.opts.OutputPath = filepath.Join(e.opts.OutputPath, "待核对")
 	backup.opts.OutputSize = OutputSize{}
+	// 待核对结果保留「批次N_未匹配」词根，不参与自动编号，方便人工核对。
+	backup.opts.Numbering = Numbering{}
 	dir := backup.opts.ResultDir(time.Now())
 	count := 0
 	var resultErr error

@@ -306,15 +306,46 @@ async function testImageMode() {
 
   const unchanged = surface()
   const entry = unchanged.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
-  assert.strictEqual((await Page.ensureImageMode(unchanged.doc)).code, 'E_SELECTOR_MISS', '只有点击、没有选中证据时必须停止')
+  assert.strictEqual((await Page.ensureImageMode(unchanged.doc, null, 250)).code, 'E_SELECTOR_MISS', '只有点击、没有选中证据时必须停止')
   assert.strictEqual(entry.clicked, 1, '等待模式生效时不能反复点击')
+
+  // 点击后 2 秒多才出现已选标签（2026-11 冷加载实测）：默认窗口要等到它。
+  const slow = surface()
+  const slowEntry = slow.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  slowEntry.click = function () {
+    slowEntry.clicked = (slowEntry.clicked || 0) + 1
+    setTimeout(function () {
+      slow.box.parentElement.append(new El('span')).addText('图像生成')
+    }, 2200)
+  }
+  assert.strictEqual((await Page.ensureImageMode(slow.doc)).ok, true, '慢页面在默认窗口内生效')
+  assert.strictEqual(slowEntry.clicked, 1)
+
+  // 页面没挂载完时第一次点击会被吞掉（2026-11 冷加载实测）：间隔 3.5 秒补点。
+  const swallowed = surface()
+  const swallowEntry = swallowed.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  swallowEntry.click = function () {
+    swallowEntry.clicked = (swallowEntry.clicked || 0) + 1
+    if (swallowEntry.clicked < 2) return
+    setTimeout(function () {
+      swallowed.box.parentElement.append(new El('span')).addText('图像生成')
+    }, 10)
+  }
+  assert.strictEqual((await Page.ensureImageMode(swallowed.doc)).ok, true, '被吞掉的点击要在补点后生效')
+  assert.strictEqual(swallowEntry.clicked, 2, '只允许一次补点')
 
   const missing = surface()
   missing.doc.body.append(new El('span')).addText('图像生成')
-  assert.strictEqual((await Page.ensureImageMode(missing.doc)).code, 'E_SELECTOR_MISS', '输入区外的文字不能代表模式已选中')
+  assert.strictEqual((await Page.ensureImageMode(missing.doc, null, 250)).code, 'E_SELECTOR_MISS', '输入区外的文字不能代表模式已选中')
   assert.strictEqual((await Page.ensureImageMode(missing.doc, () => true)).code, 'E_CANCELLED')
   missing.doc.body.append(new El('button', { 'data-testid': 'to_login_button' }))
   assert.strictEqual((await Page.ensureImageMode(missing.doc)).code, 'E_NOT_LOGGED_IN')
+
+  // 2026-11 起已选模式挂固定 testid 的退出按钮，是最直接的「已进入图像模式」证据。
+  const exitChip = surface()
+  exitChip.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button', 'data-value': '3' })).addText('图像生成')
+  assert.strictEqual(Page.imageModeActive(exitChip.doc), true, '退出按钮代表图像模式已选中')
+  assert.strictEqual((await Page.ensureImageMode(exitChip.doc, null, 250)).ok, true, '已有退出按钮时不再点击入口')
 }
 
 {
@@ -745,4 +776,53 @@ console.log('doubao page.js anchors ok')
   assert.deepStrictEqual(Array.from(live.images, (image) => image.url), ['https://cdn.example/new.png'])
 }
 
-testImageMode().then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })
+async function testSetOutputRatio() {
+  // 图像模式激活后的「比例」触发按钮与下拉菜单（2026-11 页面结构）。
+  const { doc, box } = surface()
+  box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button', 'data-value': '3' })).addText('图像生成')
+  const trigger = box.parentElement.append(new El('button', { 'aria-haspopup': 'menu' }))
+  trigger.addText('比例 自动')
+  let open = false
+  const menu = doc.body.append(new El('div', { role: 'menu', 'data-state': 'closed' }))
+  const setOpen = function (value) {
+    open = value
+    menu.attrs['data-state'] = open ? 'open' : 'closed'
+  }
+  trigger.click = function () {
+    trigger.clicked = (trigger.clicked || 0) + 1
+    setOpen(!open)
+  }
+  const items = ['自动', '9:16', '2:3', '3:4', '1:1', '4:3', '3:2', '16:9'].map(function (text) {
+    const item = menu.append(new El('button'))
+    item.addText(text)
+    item.rect = { width: 64, height: 56, left: 0, top: 0 }
+    item.click = function () {
+      item.clicked = (item.clicked || 0) + 1
+      setOpen(false)
+      trigger.innerText = '比例 ' + text
+    }
+    return item
+  })
+  menu.rect = { width: 368, height: 240, left: 0, top: 0 }
+
+  assert.strictEqual(Page.ratioControl(doc), trigger, '比例入口按文本与 aria-haspopup 识别')
+  assert.strictEqual(Page.ratioValue(trigger), '', '「自动」不返回具体比例')
+  let out = await Page.setOutputRatio(doc, '4:5', null, 3000)
+  assert.strictEqual(out.error, '「比例」菜单没有 4:5', '菜单没有的比例要明确报错')
+  assert.strictEqual(menu.attrs['data-state'], 'closed', '报错后菜单必须关上')
+
+  out = await Page.setOutputRatio(doc, '4:3')
+  assert.strictEqual(out.ok, true, '选中 4:3 后以触发按钮标签确认')
+  assert.strictEqual(Page.ratioValue(Page.ratioControl(doc)), '4:3')
+
+  out = await Page.setOutputRatio(doc, '4:3')
+  assert.strictEqual(out.ok && out.already, true, '已是目标比例时不再点开菜单')
+
+  const none = surface()
+  assert.strictEqual((await Page.setOutputRatio(none.doc, '1:1', null, 250)).error, '未找到「比例」入口', '图像模式未激活时没有比例入口')
+
+  const malformed = surface()
+  assert.strictEqual((await Page.setOutputRatio(malformed.doc, '宽高比 4:3', null, 250)).error, '比例格式应为 4:3')
+}
+
+testImageMode().then(testSetOutputRatio).then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })

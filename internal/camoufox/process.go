@@ -259,7 +259,7 @@ func runtimeEnv(proxy, dir string) []string {
 	for _, item := range inherited {
 		key, _, _ := strings.Cut(item, "=")
 		key = strings.ToUpper(key)
-		if strings.HasPrefix(key, "CAMOU_CONFIG_") || strings.HasPrefix(key, "CAMOU_PREFS_") || key == "FONTCONFIG_FILE" {
+		if strings.HasPrefix(key, "CAMOU_CONFIG_") || strings.HasPrefix(key, "CAMOU_PREFS_") || key == "FONTCONFIG_FILE" || key == "TULAI_CAMOUFOX_MIRROR" {
 			continue
 		}
 		env = append(env, item)

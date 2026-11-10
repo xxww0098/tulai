@@ -458,6 +458,93 @@ func TestExtensionDoubaoHappyPath(t *testing.T) {
 	}
 }
 
+func TestExtensionDoubaoNativeRatio(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		applied bool
+		broken  bool
+	}{
+		{"applied", true, false},
+		{"not applied", false, false},
+		{"old extension", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := openTaskStore(t)
+			port := freePort(t)
+			st.Set(extbridge.SettingBrowserBackend, "extension")
+			st.Set("extBridgePort", port)
+			st.Set("extBridgeToken", "dev-token")
+			dir := t.TempDir()
+			data := outputMarkerPNG(t, color.NRGBA{R: 220, A: 255 })
+
+			var mu sync.Mutex
+			ratios := []string{}
+			prompts := []string{}
+			go serveFakeExt("127.0.0.1:"+port, "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+				name, _ := env.Name()
+				switch name {
+				case extbridge.CmdSetRatio:
+					var payload struct {
+						Ratio string `json:"ratio"`
+					}
+					_ = json.Unmarshal(env.Payload, &payload)
+					mu.Lock()
+					ratios = append(ratios, payload.Ratio)
+					mu.Unlock()
+					if tc.broken {
+						return ackFail(env, extbridge.EProtocol, "unknown command")
+					}
+					return ackOK(env, map[string]any{"ok": true, "applied": tc.applied})
+				case extbridge.CmdSetPrompt:
+					var payload struct {
+						Prompt string `json:"prompt"`
+					}
+					_ = json.Unmarshal(env.Payload, &payload)
+					mu.Lock()
+					prompts = append(prompts, payload.Prompt)
+					mu.Unlock()
+					return ackOK(env, nil)
+				case extbridge.CmdCaptchaAssist, extbridge.CmdSend:
+					return ackOK(env, nil)
+				case extbridge.CmdWaitResult:
+					return ackOK(env, map[string]any{"images": []map[string]string{{"url": "https://cdn.example/native.png"}}})
+				case extbridge.CmdDownload:
+					return chunkAck(env, data, len(data))
+				default:
+					return ackFail(env, extbridge.EProtocol, name)
+				}
+			})
+
+			e := NewEngine(st, nil, nil, dir)
+			defer e.CloseSessions()
+			var last Task
+			err := e.Run(context.Background(), Options{
+				Platforms: []string{"豆包"}, Prompts: []string{"商品图"}, OutputPath: filepath.Join(dir, "out"),
+				WaitResult: true, WaitResultSeconds: 30, Concurrency: 1,
+				OutputSize: OutputSize{Ratio: "4:3"},
+			}, func(task Task) { last = task }, func(Progress) {})
+			if err != nil || last.Status != StatusSuccess || len(last.Results) != 1 {
+				t.Fatalf("task=%+v err=%v", last, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(ratios) != 1 || ratios[0] != "4:3" {
+				t.Fatalf("setRatio calls: %v", ratios)
+			}
+			if len(prompts) == 0 {
+				t.Fatal("bridge did not receive a prompt")
+			}
+			if tc.applied {
+				if prompts[0] != "商品图" {
+					t.Fatalf("native ratio applied, prompt must stay clean: %q", prompts[0])
+				}
+			} else if !strings.Contains(prompts[0], "4:3") || !strings.Contains(prompts[0], "商品图") {
+				t.Fatalf("native ratio missing, prompt must carry ratio line: %q", prompts[0])
+			}
+		})
+	}
+}
+
 func TestExtensionWashSavesResultsForEachSource(t *testing.T) {
 	st := openTaskStore(t)
 	port := freePort(t)

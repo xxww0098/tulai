@@ -88,6 +88,45 @@ var nodeArtifacts = map[string]nodeArtifact{
 
 func Supported(goos, goarch string) bool { _, ok := nodeArtifacts[goos+"/"+goarch]; return ok }
 
+// nodeDistBases 是 Node 启动环境的下载源，依次尝试；镜像与官方发布内容一致，SHA-256 校验兜底。
+var nodeDistBases = []string{
+	"https://nodejs.org/dist/" + nodeVersion,
+	"https://cdn.npmmirror.com/binaries/node/" + nodeVersion,
+}
+
+// npmMirrorRegistry 是 npm 依赖的镜像 registry。npm 默认的 replace-registry-host
+// 会把 lock 文件里 npmjs.org 的地址改写到当前 registry，包完整性仍由 integrity 校验。
+const npmMirrorRegistry = "https://registry.npmmirror.com"
+
+// kernelMirrorDefault 是内核下载失败后重试用的 GitHub 加速镜像（ghproxy 形式，
+// base + '/' + 原 URL）。下载内容由固定 sha256 校验，镜像只能加速、无法篡改。
+const kernelMirrorDefault = "https://gh-proxy.com"
+
+// kernelMirror 返回内核镜像 base，以及它是否由环境变量显式指定。
+// TULAI_CAMOUFOX_MIRROR 指定自建镜像并优先使用，设为 off/none 时关闭镜像重试。
+func kernelMirror() (string, bool) {
+	value := strings.TrimSpace(os.Getenv("TULAI_CAMOUFOX_MIRROR"))
+	if value == "" {
+		return kernelMirrorDefault, false
+	}
+	if strings.EqualFold(value, "off") || strings.EqualFold(value, "none") {
+		return "", false
+	}
+	return strings.TrimRight(value, "/"), true
+}
+
+// kernelAttempts 排列内核安装的尝试环境：默认直连失败后用镜像重试，显式配置镜像时优先。
+func kernelAttempts(mirror string, explicit bool) [][]string {
+	switch {
+	case mirror == "":
+		return [][]string{nil}
+	case explicit:
+		return [][]string{{"TULAI_CAMOUFOX_MIRROR=" + mirror}, nil}
+	default:
+		return [][]string{nil, {"TULAI_CAMOUFOX_MIRROR=" + mirror}}
+	}
+}
+
 func runtimeDir(dataDir string) string { return filepath.Join(dataDir, "runtime", "camoufox", Version) }
 func nodePath(dir string) string {
 	if runtime.GOOS == "windows" {
@@ -169,14 +208,8 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 		}
 	}
 	note(StageRuntime)
-	var nodeProgress func(done, total int64)
-	if progress != nil {
-		nodeProgress = func(done, total int64) {
-			progress(Progress{Stage: StageRuntime, Text: stageText(StageRuntime), Done: done, Total: total})
-		}
-	}
 	archive := filepath.Join(stage, artifact.File)
-	if err := downloadNode(ctx, archive, artifact, proxy, nodeProgress); err != nil {
+	if err := downloadNode(ctx, archive, artifact, proxy, progress); err != nil {
 		return Runtime{}, err
 	}
 	if err := extractNode(archive, filepath.Join(stage, "node")); err != nil {
@@ -189,8 +222,17 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 		return Runtime{}, err
 	}
 	note(StagePackages)
-	if _, err := runInstall(ctx, stage, proxy, nil, npmPath(stage), "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"); err != nil {
-		return Runtime{}, err
+	npmArgs := append([]string{npmPath(stage)}, "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund")
+	if _, err := runInstall(ctx, stage, proxy, nil, nil, npmArgs...); err != nil {
+		if ctx.Err() != nil {
+			return Runtime{}, err
+		}
+		if progress != nil {
+			progress(Progress{Stage: StagePackages, Text: "官方源安装启动库失败，正在通过国内镜像重试…"})
+		}
+		if _, err := runInstall(ctx, stage, proxy, nil, nil, append(npmArgs, "--registry="+npmMirrorRegistry)...); err != nil {
+			return Runtime{}, err
+		}
 	}
 	note(StageBrowser)
 	var browserProgress func(Progress)
@@ -208,7 +250,16 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 			progress(p)
 		}
 	}
-	out, err := runInstall(ctx, stage, proxy, browserProgress, filepath.Join(stage, "bridge.mjs"), "install")
+	var out []byte
+	for i, extraEnv := range kernelAttempts(kernelMirror()) {
+		if i > 0 && progress != nil {
+			progress(Progress{Stage: StageBrowser, Text: "正在通过镜像重试下载 Camoufox 内核和指纹数据…"})
+		}
+		out, err = runInstall(ctx, stage, proxy, extraEnv, browserProgress, filepath.Join(stage, "bridge.mjs"), "install")
+		if err == nil || ctx.Err() != nil {
+			break
+		}
+	}
 	if err != nil {
 		return Runtime{}, err
 	}
@@ -277,9 +328,9 @@ func writeDriver(dir string) error {
 	return nil
 }
 
-func runInstall(ctx context.Context, dir, proxy string, onProgress func(Progress), args ...string) ([]byte, error) {
+func runInstall(ctx context.Context, dir, proxy string, extraEnv []string, onProgress func(Progress), args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, nodePath(dir), args...)
-	cmd.Dir, cmd.Env = dir, runtimeEnv(proxy, dir)
+	cmd.Dir, cmd.Env = dir, append(runtimeEnv(proxy, dir), extraEnv...)
 	configureCommand(cmd)
 	cmd.Cancel = func() error { killCommand(cmd); return nil }
 	cmd.WaitDelay = 3 * time.Second
@@ -371,7 +422,34 @@ func (l *limitedLog) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-func downloadNode(ctx context.Context, dest string, artifact nodeArtifact, proxy string, progress func(done, total int64)) error {
+// downloadNode 依次尝试 nodeDistBases 里的下载源；官方源失败后换镜像重试，
+// 重试前报告换源状态，内容始终用固定 SHA-256 校验。
+func downloadNode(ctx context.Context, dest string, artifact nodeArtifact, proxy string, progress func(Progress)) error {
+	var errs []error
+	for i, base := range nodeDistBases {
+		text := stageText(StageRuntime)
+		var report func(done, total int64)
+		if progress != nil {
+			if i > 0 {
+				text = "官方源下载启动环境失败，正在通过国内镜像重试…"
+				progress(Progress{Stage: StageRuntime, Text: text})
+			}
+			finalText := text
+			report = func(done, total int64) {
+				progress(Progress{Stage: StageRuntime, Text: finalText, Done: done, Total: total})
+			}
+		}
+		_ = os.Remove(dest)
+		if err := fetchNodeArchive(ctx, dest, base+"/"+artifact.File, artifact, proxy, report); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", base, err))
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("下载启动环境失败: %w", errors.Join(errs...))
+}
+
+func fetchNodeArchive(ctx context.Context, dest, downloadURL string, artifact nodeArtifact, proxy string, report func(done, total int64)) error {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if proxy != "" {
 		u, err := url.Parse(proxy)
@@ -382,7 +460,7 @@ func downloadNode(ctx context.Context, dest string, artifact nodeArtifact, proxy
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Minute}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://nodejs.org/dist/"+nodeVersion+"/"+artifact.File, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return err
 	}
@@ -400,12 +478,12 @@ func downloadNode(ctx context.Context, dest string, artifact nodeArtifact, proxy
 	}
 	hash := sha256.New()
 	total := max(resp.ContentLength, 0)
-	if progress != nil {
-		progress(0, total)
+	if report != nil {
+		report(0, total)
 	}
 	body := io.Reader(resp.Body)
-	if progress != nil {
-		body = &progressReader{r: resp.Body, total: total, report: progress}
+	if report != nil {
+		body = &progressReader{r: resp.Body, total: total, report: report}
 	}
 	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(body, 128<<20+1))
 	err = errors.Join(err, f.Close())

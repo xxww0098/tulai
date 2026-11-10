@@ -1447,7 +1447,8 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 				}
 				backup := e.opts
 				backup.OutputPath = filepath.Join(backup.OutputPath, "待核对")
-				original, saveErr := writeNumberedFile(ctx, backup.ResultDir(time.Now()), backup.resultStem(t.Prompt, resultSource(t)), ext, data)
+				backupStem, backupStyle := backup.resultName(t.Prompt, resultSource(t))
+				original, saveErr := writeNumberedFile(ctx, backup.ResultDir(time.Now()), backupStem, backupStyle, ext, data)
 				if saveErr != nil {
 					return saved, errors.Join(fmt.Errorf("调整输出尺寸失败: %w", sizeErr), fmt.Errorf("保留未调整尺寸的图片失败: %w", saveErr))
 				}
@@ -1456,7 +1457,8 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			data = adjusted
 		}
 		dir := e.opts.ResultDir(time.Now())
-		path, err := writeNumberedFile(ctx, dir, e.opts.resultStem(t.Prompt, resultSource(t)), ext, data)
+		stem, style := e.opts.resultName(t.Prompt, resultSource(t))
+		path, err := writeNumberedFile(ctx, dir, stem, style, ext, data)
 		if err != nil {
 			return saved, err
 		}
@@ -1495,7 +1497,7 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 			var repairPath string
 			repairPath, repairErr = writeResultFile(ctx, dir, repairBase, ".png", repairData)
 			if errors.Is(repairErr, os.ErrExist) {
-				repairPath, repairErr = writeNumberedFile(ctx, dir, repairBase, ".png", repairData)
+				repairPath, repairErr = writeNumberedFile(ctx, dir, repairBase, defaultNumberFmt, ".png", repairData)
 			}
 			if repairErr == nil {
 				saved[len(saved)-1] = repairPath
@@ -1515,17 +1517,27 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 	return saved, nil
 }
 
+// numberFmt 是文件名里序号的拼法。默认「词根_01」，自动编号时前缀直接拼补零序号（前缀001）。
+type numberFmt struct {
+	sep   string // 词根和序号之间的分隔符
+	width int    // 补零位数，0 不补零
+	start int    // 起始序号，目录里已有更大的号时让位
+}
+
+var defaultNumberFmt = numberFmt{sep: "_", width: 2, start: 1}
+
 // fileSlot 串行分配同一个目录、同一个词根的序号。
 // 两个任务同时保存同一个名字时，必须先占住下一个号再写，避免写到同一个文件。
 type fileSlot struct {
-	mu   sync.Mutex
-	next int
+	mu    sync.Mutex
+	next  int
+	start int // 上次校准用的起始值；起始值变了就重新对表，保证每次运行都生效
 }
 
 var fileSlots sync.Map
 
-func slotFor(dir, stem string) *fileSlot {
-	key := dir + "\x00" + stem
+func slotFor(dir, stem, sep string) *fileSlot {
+	key := dir + "\x00" + stem + "\x00" + sep
 	if v, ok := fileSlots.Load(key); ok {
 		return v.(*fileSlot)
 	}
@@ -1533,28 +1545,32 @@ func slotFor(dir, stem string) *fileSlot {
 	return v.(*fileSlot)
 }
 
-// writeNumberedFile 写成 stem_01、stem_02……同一天已有的号继续往后排，不覆盖。
-func writeNumberedFile(ctx context.Context, dir, stem, ext string, data []byte) (string, error) {
+// writeNumberedFile 按词根和序号格式写成「词根_01」或「前缀001」……同一天已有的号继续往后排，不覆盖。
+func writeNumberedFile(ctx context.Context, dir, stem string, style numberFmt, ext string, data []byte) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(stem) == "" {
+	if strings.TrimSpace(stem) == "" && style.sep != "" {
 		stem = "文生图"
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("创建结果目录失败: %w", err)
 	}
-	slot := slotFor(dir, stem)
+	slot := slotFor(dir, stem, style.sep)
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
-	if slot.next < 1 {
-		slot.next = highestNumber(dir, stem) + 1
+	if slot.next < 1 || slot.start != style.start {
+		slot.next = highestNumber(dir, stem, style.sep) + 1
+		if style.start > slot.next {
+			slot.next = style.start
+		}
+		slot.start = style.start
 	}
 	for slot.next <= 100000 {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		path := filepath.Join(dir, fmt.Sprintf("%s_%02d%s", stem, slot.next, ext))
+		path := filepath.Join(dir, stem+style.sep+padNumber(slot.next, style.width)+ext)
 		err := createExclusive(ctx, path, data)
 		if errors.Is(err, os.ErrExist) {
 			slot.next++
@@ -1569,13 +1585,22 @@ func writeNumberedFile(ctx context.Context, dir, stem, ext string, data []byte) 
 	return "", errors.New("结果序号已用尽")
 }
 
-// highestNumber 是目录里 stem_序号 的最大序号。去水印副本带别的后缀，不占这个号。
-func highestNumber(dir, stem string) int {
+// padNumber 按位数补零。位数是 0 或数字已经不小于位数时原样返回。
+func padNumber(n, width int) string {
+	value := strconv.Itoa(n)
+	if width > len(value) {
+		return strings.Repeat("0", width-len(value)) + value
+	}
+	return value
+}
+
+// highestNumber 是目录里按「词根+序号」拼法的最大序号。去水印副本带别的后缀，不占这个号。
+func highestNumber(dir, stem, sep string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0
 	}
-	prefix := stem + "_"
+	prefix := stem + sep
 	max := 0
 	for _, entry := range entries {
 		if entry.IsDir() {

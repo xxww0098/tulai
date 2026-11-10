@@ -210,7 +210,24 @@ func (a *App) outputSettings(c *ui.Context) {
 		wash := tasks.Options{OutputPath: root, Wash: true}.ResultDir(time.Now())
 		a.outputPathLine(c, "生图保存到 "+gen, gen)
 		a.outputPathLine(c, "洗图保存到 "+wash, wash)
-		ui.Text(c, "同一天的结果放进同一个日期文件夹，文件从 _01 起编，不覆盖已有文件。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Checkbox(c, &a.genAutoNumber, "生图自动编号").Disabled(a.running)
+			ui.Checkbox(c, &a.washAutoNumber, "洗图自动编号").Disabled(a.running)
+		})
+		if a.genAutoNumber || a.washAutoNumber {
+			ui.Field(c, "序号前缀", func() {
+				ui.TextInput(c, &a.numPrefix).Grow(1).MinWidth(0).Placeholder("留空则只存序号，如 001.png").Disabled(a.running)
+			})
+			ui.Field(c, "编号设置", func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.NumberInput(c, &a.numStart, 0, 9_000_000_000_000_000, 1).Label("编号起始值").Disabled(a.running)
+					ui.NumberInput(c, &a.numWidth, 0, 16, 1).Label("补零位数").Disabled(a.running)
+				})
+			})
+			ui.Text(c, "开启自动编号后，文件按「前缀+序号」命名（如图001.png），同一天同前缀接着排号，起始值只在没有更大的号时生效，不覆盖已有文件。").FontSize(12).TextColor(c.Theme().TextMuted)
+		} else {
+			ui.Text(c, "同一天的结果放进同一个日期文件夹，文件从 _01 起编，不覆盖已有文件。").FontSize(12).TextColor(c.Theme().TextMuted)
+		}
 		if a.outputNote != "" {
 			ui.Text(c, a.outputNote).FontSize(12).TextColor(c.Theme().Danger)
 		}
@@ -635,6 +652,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	opts := a.taskOptions(platforms, promptList, paths)
 	opts.OutputPath = dir
 	page := a.statePage
+	opts.Numbering = a.numberingFor(page)
 	if page == pageWash {
 		opts.Wash = true
 		opts.UseSuffix = false

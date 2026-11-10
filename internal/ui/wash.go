@@ -192,7 +192,13 @@ func (a *App) washPromptCard(c *ui.Context) {
 		})
 		ui.TextArea(c, &a.prompts).Height(promptHeight).MinHeight(promptHeight).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
 		hint := "每张图单独发一次，结果存成「原文件名_01.png」"
-		if a.store != nil && a.store.Get("browserBackend") == "camoufox_extension" && a.waitResult && a.stagePlatform() == "豆包" {
+		batch := a.store != nil && a.store.Get("browserBackend") == "camoufox_extension" && a.waitResult && a.stagePlatform() == "豆包"
+		switch {
+		case a.washAutoNumber && batch:
+			hint = "每批最多 10 张一起发送，结果按「前缀+序号」自动编号保存"
+		case a.washAutoNumber:
+			hint = "每张图单独发一次，结果按「前缀+序号」自动编号保存"
+		case batch:
 			hint = "每批最多 10 张一起发送，结果按源文件名保存"
 		}
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {

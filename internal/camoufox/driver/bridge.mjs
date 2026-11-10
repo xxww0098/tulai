@@ -88,10 +88,19 @@ function scopedInit(source) {
     if(!event.done)throw Error('页面脚本环境不可用');if(event.failed)throw event.error})()`;
 }
 
-if (process.platform === 'darwin') {
-  // shortcut: matching headed/headless GPUs are verified on macOS; validate before extending to other platforms.
+if (process.platform === 'darwin' || process.platform === 'win32') {
+  // shortcut: matching headed/headless GPUs are verified on macOS and Windows; the
+  // probe must always run headless or a fresh identity flashes a visible window
+  // before the account browser opens. Validate before extending to other platforms.
   const hostGpu = utilsDeps.hostGpu;
   utilsDeps.hostGpu = (executable, _headless, env, prefs) => hostGpu(executable, true, env, prefs);
+}
+
+// GitHub 加速镜像 base（ghproxy 形式：base + '/' + 原 URL）。未设置或不是
+// http(s) 地址时返回空串，镜像模式关闭。
+function mirrorBase(value) {
+  const base = String(value ?? '').trim().replace(/\/+$/, '');
+  return /^https?:\/\//i.test(base) ? base : '';
 }
 
 if (process.argv[2] === 'install') {
@@ -99,6 +108,7 @@ if (process.argv[2] === 'install') {
   // The official launcher downloads the kernel through its own package. Wrap
   // that one download so tulai can show bytes, percent and speed; the install
   // path itself stays the official one.
+  const mirror = mirrorBase(process.env.TULAI_CAMOUFOX_MIRROR);
   try {
     const { CamoufoxFetcher } = await import('camoufox');
     const { webdl } = await import('camoufox/dist/pkgman.js');
@@ -119,15 +129,44 @@ if (process.argv[2] === 'install') {
           'lin.arm64':'60e25f6eb95e13d9ec655bc02913d51057e669cb31542e6ace9d2190ab5380af',
         };
         const base = `https://github.com/${pin.repo}/releases/download/${pin.tag}`;
-        const assets = Object.entries(hashes).map(([platform, hash]) => {
+        // rewrite maps a kernel's GitHub URL to its download source (mirror or direct).
+        const kernelAssets = rewrite => Object.entries(hashes).map(([platform, hash]) => {
           const name = `camoufox-${version}-${platform}.zip`;
-          return {name, browser_download_url:`${base}/${name}`, digest:`sha256:${hash}`};
+          return {name, browser_download_url:rewrite(`${base}/${name}`), digest:`sha256:${hash}`};
         });
+        const assets = kernelAssets(url => url);
         assets.push({name:'manifest.json', browser_download_url:`${base}/manifest.json`});
+        // No manifest asset leaves the interface check at 1, the interface this
+        // pinned release ships, so mirror mode never touches github.com at all.
+        const mirrorAssets = kernelAssets(url => `${mirror}/${url}`);
+        // The GitHub API does not publish asset digests; attach the pinned ones
+        // so every kernel download is verified, direct or mirrored.
+        const digests = new Map(kernelAssets(url => url).map(asset => [asset.name, asset.digest]));
+        const withDigests = releases => {
+          for (const release of releases ?? []) {
+            for (const asset of release.assets ?? []) {
+              const digest = digests.get(asset.name);
+              if (digest) asset.digest = digest;
+            }
+          }
+          return releases;
+        };
+        // Recover from rate limits (403), unreachable or hijacked API routes
+        // (404 from DNS pollution, network failures), which otherwise fall
+        // through to the launcher's fallback repo camoufox/camoufox — an org
+        // that does not exist yet, whose genuine 404 then masks the real error.
+        const recoverable = message => /^40[34]\b/.test(message) || message.startsWith('Could not download ');
         CamoufoxFetcher.prototype.getReleases = async function(repo) {
-          try { return await getReleases.call(this, repo); }
-          catch (error) {
-            if (repo !== pin.repo || !/^403\b/.test(error?.message || '')) throw error;
+          // A configured mirror usually means api.github.com is unreachable too;
+          // serve the pinned release straight from it instead of calling out.
+          if (repo === pin.repo && mirror) {
+            return [{tag_name:pin.tag, prerelease:false, assets:mirrorAssets}];
+          }
+          try {
+            const releases = await getReleases.call(this, repo);
+            return repo === pin.repo ? withDigests(releases) : releases;
+          } catch (error) {
+            if (repo !== pin.repo || !recoverable(error?.message || '')) throw error;
             return [{tag_name:pin.tag, prerelease:false, assets}];
           }
         };

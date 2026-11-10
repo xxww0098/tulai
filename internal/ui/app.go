@@ -117,6 +117,11 @@ type App struct {
 	switchCount      float64
 	startBrowserIdx  float64
 	outputPath       string
+	genAutoNumber    bool
+	washAutoNumber   bool
+	numPrefix        string
+	numStart         float64
+	numWidth         float64
 	outputSizeMode   string
 	outputSizePreset string
 	outputRatio      string
@@ -394,8 +399,8 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 	mygo.App.WhenReady(func() {
 		a.window = mygo.NewWindow(mygo.WindowOptions{
 			Title:   "tulai",
-			Width:   1280,
-			Height:  900,
+			Width:   1080,
+			Height:  720,
 			Content: ui.View(a.view),
 		})
 		// 窗口初始化后再发布后台回调，避免读到尚未赋值的 window。
@@ -506,6 +511,17 @@ func (a *App) loadSettings() {
 	a.switchCount = float64(clampInt(s.GetInt("task_switching_count"), 1, 9999))
 	a.startBrowserIdx = float64(clampInt(s.GetInt("start_browser_index"), 1, 999))
 	a.outputPath = s.Get("output_path")
+	a.genAutoNumber = s.GetBool("gen_auto_number")
+	a.washAutoNumber = s.GetBool("wash_auto_number")
+	a.numPrefix = s.Get("number_prefix")
+	a.numStart = 1
+	if raw := s.Get("number_start"); raw != "" {
+		a.numStart = float64(clampInt(s.GetInt("number_start"), 0, 9_000_000_000_000_000))
+	}
+	a.numWidth = 3
+	if raw := s.Get("number_width"); raw != "" {
+		a.numWidth = float64(clampInt(s.GetInt("number_width"), 0, 16))
+	}
 	a.loadOutputSize()
 	a.dlURLs = s.Get("download_urls")
 	a.dlDir = strings.TrimSpace(s.Get("download_dir"))
@@ -649,6 +665,11 @@ func (a *App) saveSettings() {
 	s.SetInt("task_switching_count", int(a.switchCount))
 	s.SetInt("start_browser_index", int(a.startBrowserIdx))
 	s.Set("output_path", a.outputPath)
+	s.SetInt("gen_auto_number", boolInt(a.genAutoNumber))
+	s.SetInt("wash_auto_number", boolInt(a.washAutoNumber))
+	s.Set("number_prefix", a.numPrefix)
+	s.SetInt("number_start", clampInt(int(a.numStart), 0, 9_000_000_000_000_000))
+	s.SetInt("number_width", clampInt(int(a.numWidth), 0, 16))
 	a.saveOutputSize()
 	s.Set("download_urls", redactQzoneURLs(a.dlURLs))
 	s.Set("download_dir", strings.TrimSpace(a.dlDir))
@@ -866,6 +887,20 @@ func (a *App) flushUIUpdates() {
 	a.mu.Unlock()
 	for _, fn := range pending {
 		fn()
+	}
+}
+
+// numberingFor 按页面取自动编号设置：生图、洗图各自勾选，前缀和序号参数共用。
+func (a *App) numberingFor(page int) tasks.Numbering {
+	enabled := a.genAutoNumber
+	if page == pageWash {
+		enabled = a.washAutoNumber
+	}
+	return tasks.Numbering{
+		Enabled: enabled,
+		Prefix:  a.numPrefix,
+		Start:   clampInt(int(a.numStart), 0, 9_000_000_000_000_000),
+		Width:   clampInt(int(a.numWidth), 0, 16),
 	}
 }
 

@@ -199,30 +199,134 @@ globalThis.TULAIPage = (function () {
 
   function imageModeActive(doc) {
     const scope = imageModeScope(doc)
+    // 2026-11 起已选技能在输入区挂固定 testid 的退出按钮，文本就是技能名。
+    if (all(scope, '[data-testid="skill_input_exit_button"]').some(function (el) {
+      return visible(el) && exactText(el, '图像生成')
+    })) return true
     return all(scope, 'button,[role="button"],span,div').some(function (el) {
       if (!visible(el) || !exactText(el, '图像生成')) return false
       if (el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true') return true
       // 普通工具栏始终有同名入口，只有输入区里的已选模式标签才算切换成功。
       return !closest(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]') &&
-        !all(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"]').length
+        !all(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]').length
     })
   }
 
-  async function ensureImageMode(doc, cancelled) {
-    const deadline = Date.now() + 2000
-    let clicked = false
+  // 2026-11 实测：冷加载页面点击「图像生成」后，输入区要 2 秒多才重绘出已选标签；
+  // 页面还没挂载完时第一次点击也会被吞掉。默认窗口 12 秒，未生效时每 3.5 秒补点
+  // 一次（最多 3 次），每轮先查已选证据，已经生效就不再点。失败夹具传短 timeoutMs。
+  async function ensureImageMode(doc, cancelled, timeoutMs) {
+    const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 12000)
+    let clicks = 0
+    let lastClick = 0
     while (Date.now() < deadline) {
       if (cancelled && cancelled()) return { error: '切换图像生成模式已取消', code: 'E_CANCELLED' }
       if (loginWall(doc)) return { error: '请先登录平台账号', code: 'E_NOT_LOGGED_IN' }
       if (imageModeActive(doc)) return { ok: true }
       const control = imageModeControl(doc)
-      if (!clicked && control && enabled(control)) {
+      if (control && enabled(control) && clicks < 3 && (clicks === 0 || Date.now() - lastClick >= 3500)) {
         if (!activate(control)) return { error: '无法点击「图像生成」，未开始任务', code: 'E_SELECTOR_MISS' }
-        clicked = true
+        clicks++
+        lastClick = Date.now()
       }
       await new Promise(function (resolve) { setTimeout(resolve, 100) })
     }
-    return { error: clicked ? '点击「图像生成」后模式未生效，未开始任务' : '未找到「图像生成」入口，未开始任务', code: 'E_SELECTOR_MISS' }
+    return { error: clicks ? '点击「图像生成」后模式未生效，未开始任务' : '未找到「图像生成」入口，未开始任务', code: 'E_SELECTOR_MISS' }
+  }
+
+  // 图像模式的「比例」入口（触发按钮文本形如「比例 自动」「比例 4:3」）。
+  function ratioControl(doc) {
+    const scope = imageModeScope(doc)
+    return all(scope, 'button,[role="button"]').find(function (el) {
+      if (!enabled(el)) return false
+      const text = normalize(el.innerText)
+      if (!/^比例\s/.test(text)) return false
+      return el.getAttribute('aria-haspopup') !== null || /^(自动|\d+:\d+)$/.test(text.slice(3).trim())
+    }) || null
+  }
+
+  // 当前已选比例，如 "4:3"；「自动」或读不到时返回 ""。
+  function ratioValue(el) {
+    const m = /^比例\s+(自动|\d+:\d+)\s*$/.exec(normalize(el && el.innerText))
+    return m ? (m[1] === '自动' ? '' : m[1]) : ''
+  }
+
+  // 打开中的比例菜单：radix 下拉里同时有「自动」和若干 a:b 选项。
+  function ratioMenu(doc) {
+    return all(doc, '[role="menu"][data-state="open"],[role="listbox"][data-state="open"]').find(function (menu) {
+      if (!visible(menu)) return false
+      const items = all(menu, 'button,[role="menuitemradio"],[role="menuitem"],[role="option"]')
+      const auto = items.some(function (el) { return normalize(el.innerText) === '自动' })
+      const pairs = items.some(function (el) { return /^\d+:\d+$/.test(normalize(el.innerText)) })
+      return auto && pairs
+    }) || null
+  }
+
+  function closeRatioMenu(doc, control) {
+    if (ratioMenu(doc) && control) {
+      try { activate(control) } catch (e) {}
+    }
+    try {
+      (doc || document).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    } catch (e) {}
+  }
+
+  // 把图像模式的输出比例设成 ratio（如 "4:3"）。菜单选项来自 2026-11 的豆包页面：
+  // 自动 / 9:16 / 2:3 / 3:4 / 1:1 / 4:3 / 3:2 / 16:9。选中与否以触发按钮标签为准。
+  // 工具栏随 React 重绘，节点可能被换掉：菜单没开就重取按钮再点；点完只看标签确认。
+  async function setOutputRatio(doc, ratio, cancelled) {
+    const want = normalize(ratio)
+    if (!/^\d+:\d+$/.test(want)) return { error: '比例格式应为 4:3', code: 'E_SELECTOR_MISS' }
+    const deadline = Date.now() + 12000
+    let control = null
+    while (Date.now() < deadline) {
+      if (cancelled && cancelled()) return { error: '设置比例已取消', code: 'E_CANCELLED' }
+      control = ratioControl(doc)
+      if (control) break
+      await new Promise(function (resolve) { setTimeout(resolve, 120) })
+    }
+    if (!control) return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS' }
+    if (ratioValue(control) === want) return { ok: true, already: true }
+    let lastOpen = 0
+    let menu = null
+    while (Date.now() < deadline) {
+      if (cancelled && cancelled()) { closeRatioMenu(doc, control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
+      // 已选成目标（点击在上一轮就生效）也算完成。
+      control = ratioControl(doc) || control
+      if (control && ratioValue(control) === want) {
+        closeRatioMenu(doc, control)
+        return { ok: true }
+      }
+      menu = ratioMenu(doc)
+      if (menu) break
+      if (lastOpen === 0 || Date.now() - lastOpen >= 2500) {
+        if (!activate(control)) return { error: '无法点击「比例」', code: 'E_SELECTOR_MISS' }
+        lastOpen = Date.now()
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 120) })
+    }
+    if (!menu) return { error: '「比例」菜单未出现', code: 'E_SELECTOR_MISS' }
+    const item = all(menu, 'button,[role="menuitemradio"],[role="menuitem"],[role="option"]').find(function (el) {
+      return enabled(el) && normalize(el.innerText) === want
+    })
+    if (!item) {
+      closeRatioMenu(doc, control)
+      return { error: '「比例」菜单没有 ' + want, code: 'E_SELECTOR_MISS' }
+    }
+    if (!activate(item)) {
+      closeRatioMenu(doc, control)
+      return { error: '无法点击比例 ' + want, code: 'E_SELECTOR_MISS' }
+    }
+    while (Date.now() < deadline) {
+      if (cancelled && cancelled()) return { error: '设置比例已取消', code: 'E_CANCELLED' }
+      const again = ratioControl(doc)
+      if (again && ratioValue(again) === want) {
+        if (ratioMenu(doc)) closeRatioMenu(doc, again)
+        return { ok: true }
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 120) })
+    }
+    return { error: '比例 ' + want + ' 未生效', code: 'E_SELECTOR_MISS' }
   }
 
   function fileInputs(scope) {
@@ -944,6 +1048,9 @@ globalThis.TULAIPage = (function () {
     uploadImageItem,
     imageModeActive,
     ensureImageMode,
+    ratioControl,
+    ratioValue,
+    setOutputRatio,
     unsentBlocksUpload,
     sendButton,
     activate,

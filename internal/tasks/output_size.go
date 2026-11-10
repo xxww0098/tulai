@@ -65,6 +65,50 @@ func (o OutputSize) Validate() error {
 	return err
 }
 
+// NativeRatios 是豆包图像模式「比例」菜单提供的选项（2026-11 校准）。
+var NativeRatios = []string{"9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9"}
+
+// NativeRatio 返回应改用豆包原生「比例」控件的设置（如 "4:3"）。
+// 折算比例命中原生菜单时返回该选项；未启用、非豆包、比例非法或不在菜单里都返回空。
+func (o OutputSize) NativeRatio(platform string) string {
+	if platform != "豆包" {
+		return ""
+	}
+	w, h, err := o.ratio()
+	if err != nil || w == 0 {
+		return ""
+	}
+	want := fmt.Sprintf("%d:%d", w, h)
+	for _, native := range NativeRatios {
+		if native == want {
+			return native
+		}
+	}
+	return ""
+}
+
+// AppendRatioLine 是提示词里的比例兜底说明，豆包原生比例不可用时使用。
+func AppendRatioLine(prompt string, w, h int) string {
+	return strings.TrimSpace(prompt + fmt.Sprintf("\n请让每张输出图片的画面宽高比为 %d:%d，完整呈现主体。", w, h))
+}
+
+// ParseRatioLine 把 "4:3" 这类比例折成宽高整数。
+func ParseRatioLine(ratio string) (int, int, error) {
+	parts := strings.Split(strings.TrimSpace(strings.ReplaceAll(ratio, "：", ":")), ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("比例格式应为 5:4")
+	}
+	w, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("比例格式应为 5:4")
+	}
+	h, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("比例格式应为 5:4")
+	}
+	return w, h, nil
+}
+
 func (o OutputSize) prompt(platform, prompt string) string {
 	if platform != "豆包" {
 		return prompt
@@ -73,7 +117,7 @@ func (o OutputSize) prompt(platform, prompt string) string {
 	if err != nil || w == 0 {
 		return prompt
 	}
-	return strings.TrimSpace(prompt + fmt.Sprintf("\n请让每张输出图片的画面宽高比为 %d:%d，完整呈现主体。", w, h))
+	return AppendRatioLine(prompt, w, h)
 }
 
 func (o OutputSize) process(ctx context.Context, data []byte, cfg image.Config) ([]byte, error) {

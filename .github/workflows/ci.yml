@@ -129,6 +129,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # The smoke install downloads Node, the launcher packages and the ~250MB
+      # kernel into the user config dir; cache it keyed on the pinned version
+      # (install.go) and the dependency lock so runs skip the downloads.
+      - name: Cache Camoufox runtime
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/AppData/Roaming/tulai/runtime/camoufox
+            ~/Library/Application Support/tulai/runtime/camoufox
+          key: camoufox-runtime-${{ matrix.os }}-${{ hashFiles('internal/camoufox/install.go', 'internal/camoufox/driver/package-lock.json') }}
+          restore-keys: camoufox-runtime-${{ matrix.os }}-
       - name: Install and smoke-test Camoufox
         env:
           GITHUB_TOKEN: ${{ github.token }}

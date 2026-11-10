@@ -86,6 +86,7 @@ const (
 	CmdHelloAck      = "helloAck"
 	CmdUpload        = "upload"
 	CmdSetPrompt     = "setPrompt"
+	CmdSetRatio      = "setRatio"
 	CmdSend          = "send"
 	CmdWaitResult    = "waitResult"
 	CmdDownload      = "download"
@@ -175,7 +176,7 @@ func NormalizeBrowserBackend(v string) string {
 // Commands 按协议固定顺序列出命令名。
 func Commands() []string {
 	return []string{
-		CmdPing, CmdHelloAck, CmdUpload, CmdSetPrompt, CmdSend,
+		CmdPing, CmdHelloAck, CmdUpload, CmdSetPrompt, CmdSetRatio, CmdSend,
 		CmdWaitResult, CmdDownload, CmdCaptchaAssist, CmdWashChat, CmdCancel, CmdStatus, CmdReload,
 	}
 }

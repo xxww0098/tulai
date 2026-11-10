@@ -2,8 +2,14 @@ package camoufox
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -189,5 +195,115 @@ func TestRuntimeCacheIsSharedByInstallAndLaunch(t *testing.T) {
 		if env[len(env)-1] != want {
 			t.Fatalf("cache for %s = %q, want %q", dir, env[len(env)-1], want)
 		}
+	}
+}
+
+func TestRuntimeEnvDropsInheritedMirrorOverride(t *testing.T) {
+	t.Setenv("TULAI_CAMOUFOX_MIRROR", "https://leak.example")
+	for _, item := range runtimeEnv("", t.TempDir()) {
+		if strings.HasPrefix(item, "TULAI_CAMOUFOX_MIRROR=") {
+			t.Fatalf("inherited mirror override: %q", item)
+		}
+	}
+}
+
+func TestKernelMirrorAttempts(t *testing.T) {
+	if base, explicit := kernelMirror(); base != kernelMirrorDefault || explicit {
+		t.Fatalf("default mirror = %q explicit=%v", base, explicit)
+	}
+	if got, want := kernelAttempts(kernelMirrorDefault, false),
+		[][]string{nil, {"TULAI_CAMOUFOX_MIRROR=" + kernelMirrorDefault}}; !equalAttempts(got, want) {
+		t.Fatalf("default attempts = %v, want %v", got, want)
+	}
+	t.Setenv("TULAI_CAMOUFOX_MIRROR", "https://mirror.example/")
+	base, explicit := kernelMirror()
+	if base != "https://mirror.example" || !explicit {
+		t.Fatalf("explicit mirror = %q explicit=%v", base, explicit)
+	}
+	if got, want := kernelAttempts(base, explicit),
+		[][]string{{"TULAI_CAMOUFOX_MIRROR=https://mirror.example"}, nil}; !equalAttempts(got, want) {
+		t.Fatalf("explicit attempts = %v, want %v", got, want)
+	}
+	t.Setenv("TULAI_CAMOUFOX_MIRROR", "off")
+	if base, _ := kernelMirror(); base != "" {
+		t.Fatalf("disabled mirror = %q", base)
+	}
+	if got, want := kernelAttempts("", false), [][]string{nil}; !equalAttempts(got, want) {
+		t.Fatalf("disabled attempts = %v, want %v", got, want)
+	}
+}
+
+func equalAttempts(got, want [][]string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if len(got[i]) != len(want[i]) {
+			return false
+		}
+		for j := range got[i] {
+			if got[i][j] != want[i][j] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func TestDownloadNodeFallsBackToMirror(t *testing.T) {
+	payload := []byte("node archive")
+	digest := sha256.Sum256(payload)
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer primary.Close()
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer mirror.Close()
+	restore := nodeDistBases
+	nodeDistBases = []string{primary.URL, mirror.URL}
+	defer func() { nodeDistBases = restore }()
+
+	dest := filepath.Join(t.TempDir(), "node.zip")
+	var texts []string
+	err := downloadNode(context.Background(), dest, nodeArtifact{File: "node.zip", SHA256: hex.EncodeToString(digest[:])}, "",
+		func(p Progress) {
+			if p.Text != "" {
+				texts = append(texts, p.Text)
+			}
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(data, payload) {
+		t.Fatalf("downloaded %d bytes: %v", len(data), err)
+	}
+	if len(texts) == 0 || texts[len(texts)-1] != "官方源下载启动环境失败，正在通过国内镜像重试…" {
+		t.Fatalf("mirror retry not reported: %v", texts)
+	}
+}
+
+func TestDownloadNodeTriesEveryBaseBeforeFailing(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer primary.Close()
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer mirror.Close()
+	restore := nodeDistBases
+	nodeDistBases = []string{primary.URL, mirror.URL}
+	defer func() { nodeDistBases = restore }()
+
+	dest := filepath.Join(t.TempDir(), "node.zip")
+	err := downloadNode(context.Background(), dest, nodeArtifact{File: "node.zip", SHA256: strings.Repeat("0", 64)}, "", nil)
+	if err == nil || !strings.Contains(err.Error(), primary.URL) || !strings.Contains(err.Error(), mirror.URL) {
+		t.Fatalf("error = %v, want failures from both bases", err)
+	}
+	if _, statErr := os.Stat(dest); statErr == nil {
+		t.Fatal("failed download left a partial archive behind")
 	}
 }

@@ -41,6 +41,9 @@ type QianwenJob struct {
 	TaskID            string
 	IdempotencyPrefix string
 	Prompt            string
+	// Ratio 是豆包图像模式的原生比例（如 4:3）。非空时先试原生「比例」菜单，
+	// 设不上再在提示词里补比例说明；调用方此时传入的 Prompt 不带比例行。
+	Ratio             string
 	Images            []string
 	Wait              time.Duration
 	SkipSubmit        bool
@@ -82,6 +85,7 @@ type extAck struct {
 	Ready        bool     `json:"ready"`
 	Reusable     bool     `json:"reusable"`
 	Attachments  []string `json:"attachments"`
+	Applied      bool    `json:"applied"`
 }
 
 func (e *Engine) useExtension(platform string) bool {
@@ -687,6 +691,12 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		wait = time.Duration(secs) * time.Second
 	}
 	prompt := e.opts.OutputSize.prompt(t.Platform, t.Prompt)
+	nativeRatio := ""
+	if ratio := e.opts.OutputSize.NativeRatio(t.Platform); ratio != "" {
+		// 原生比例交给豆包「比例」菜单，提示词里不再重复；设不上时 runExtension 会补回比例行。
+		prompt = strings.TrimSpace(t.Prompt)
+		nativeRatio = ratio
+	}
 	if len(t.batch) > 1 {
 		prompt += fmt.Sprintf("\n请将以上 %d 张图片分别进行洗图，严格按照附件顺序依次生成 %d 张独立结果图，每张结果只对应同位置的原图。不要拼图、合并或遗漏。", len(t.batch), len(t.batch))
 	}
@@ -694,6 +704,7 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		TaskID:            strconv.Itoa(t.Index),
 		IdempotencyPrefix: e.currentExtBatch() + ":" + strconv.Itoa(t.Index),
 		Prompt:            prompt,
+		Ratio:             nativeRatio,
 		Images:            t.Images,
 		Wait:              wait,
 		SkipSubmit:        t.submitted,
@@ -829,6 +840,28 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		return out, err
 	}
 	if !job.SkipSubmit {
+		// 豆包原生比例：设不上不算失败，回退到提示词里写比例（旧扩展没有这条命令也一样走兜底）。
+		if platform == "豆包" && job.Ratio != "" {
+			applied := false
+			body, err := extCall(ctx, sess, extbridge.CmdSetRatio, job.TaskID, "", map[string]any{"ratio": job.Ratio}, 25*time.Second, platform)
+			if err != nil {
+				logging.Log.Info("扩展任务 %s 原生比例未设置（%v），改用提示词比例", job.TaskID, err)
+			} else {
+				applied = body.Applied
+				if applied {
+					logging.Log.Info("扩展任务 %s 已设置豆包原生比例 %s", job.TaskID, job.Ratio)
+				} else if body.Message != "" {
+					logging.Log.Info("扩展任务 %s 原生比例未设置（%s），改用提示词比例", job.TaskID, body.Message)
+				} else {
+					logging.Log.Info("扩展任务 %s 原生比例未设置，改用提示词比例", job.TaskID)
+				}
+			}
+			if !applied {
+				if w, h, err := ParseRatioLine(job.Ratio); err == nil {
+					job.Prompt = AppendRatioLine(job.Prompt, w, h)
+				}
+			}
+		}
 		if err := extUpload(ctx, sess, job, platform); err != nil {
 			return out, err
 		}

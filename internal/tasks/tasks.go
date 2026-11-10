@@ -59,6 +59,15 @@ type Task struct {
 	noUse              bool   // 确认还未尝试发送，不占账号每日次数
 }
 
+// Numbering 是输出文件自动编号的设置。开启后结果按「前缀+补零序号」命名（如图001.png），
+// 生图不用提示词、洗图不用原文件名做词根。
+type Numbering struct {
+	Enabled bool
+	Prefix  string // 序号前的固定前缀，留空则文件只有序号
+	Start   int    // 起始值；同一天同前缀已有更大的号时从已有的号接着排
+	Width   int    // 补零位数，0 不补零
+}
+
 // Options 引擎运行参数（由设置表构造）。
 type Options struct {
 	Platforms          []string
@@ -88,6 +97,8 @@ type Options struct {
 	ChatGPTModel       string
 	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
 	Wash bool
+	// Numbering 开启后结果文件按「前缀+补零序号」自动编号命名，替代默认词根。
+	Numbering Numbering
 	// 结果图不经页面、直接按地址下载时的设置。并发按站点算，整批任务共用。
 	DownloadConcurrency int // 每个站点同时下载几个，0 按 2
 	DownloadRetries     int // 失败重试次数
@@ -232,8 +243,18 @@ func promptFileName(prompt string) string {
 	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
 		line = strings.TrimSpace(line[:i])
 	}
+	name := sanitizeNamePart(line, 40)
+	if name == "" || name == "." || name == ".." {
+		name = "文生图"
+	}
+	return name + ".png"
+}
+
+// sanitizeNamePart 把一段文字收成能进文件名的部分：替换路径非法字符和不可见字符，
+// 去掉首尾的空格和点号，超过 maxRunes 个字符则截断。收成空串时原样返回，由调用方兜底。
+func sanitizeNamePart(s string, maxRunes int) string {
 	var b strings.Builder
-	for _, r := range line {
+	for _, r := range s {
 		switch r {
 		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
 			b.WriteByte('_')
@@ -246,13 +267,10 @@ func promptFileName(prompt string) string {
 		}
 	}
 	name := strings.Trim(b.String(), " .")
-	if rs := []rune(name); len(rs) > 40 {
-		name = strings.Trim(string(rs[:40]), " .")
+	if rs := []rune(name); len(rs) > maxRunes {
+		name = strings.Trim(string(rs[:maxRunes]), " .")
 	}
-	if name == "" || name == "." || name == ".." {
-		name = "文生图"
-	}
-	return name + ".png"
+	return name
 }
 
 // resultStem 是序号前面的名字。生图用提示词，洗图用源文件名。
@@ -261,6 +279,25 @@ func (o Options) resultStem(prompt, source string) string {
 		return sourceStem(source)
 	}
 	return strings.TrimSuffix(promptFileName(prompt), ".png")
+}
+
+// resultName 是结果文件的词根和序号格式。默认沿用 resultStem，序号用「词根_01」；
+// 开自动编号后词根是用户前缀（留空合法），序号直接拼在后面（前缀001.png）。
+func (o Options) resultName(prompt, source string) (string, numberFmt) {
+	if !o.Numbering.Enabled {
+		return o.resultStem(prompt, source), defaultNumberFmt
+	}
+	style := numberFmt{start: o.Numbering.Start, width: o.Numbering.Width}
+	if style.start < 0 {
+		style.start = 0
+	}
+	if style.width < 0 {
+		style.width = 0
+	}
+	if style.width > 16 {
+		style.width = 16
+	}
+	return sanitizeNamePart(strings.TrimSpace(o.Numbering.Prefix), 40), style
 }
 
 func sourceStem(source string) string {

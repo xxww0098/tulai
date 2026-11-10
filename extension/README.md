@@ -99,6 +99,8 @@ google-chrome \
 
 豆包发送按钮和千问一样要先 pointer 再 click（`Page.activate`）；只调用 `HTMLElement.click()` 时页面常常不收下。 后台标签页时豆包也常不收下，后台在下发页内命令前会 `tabs.update({active:true})` 把目标页拉到前台。附件就绪看输入区是否出现可见的 `attachment-image-card`（卡内 blob 预览经常长期不解码，不能干等 `naturalWidth`）。
 
+豆包图像模式的「比例」走 `setRatio` 页面命令（0.3.15 起）：打开「比例 自动」触发按钮的 radix 菜单点选原生比例，以触发按钮标签变成「比例 4:3」这类文本确认。设不上时回 `applied:false`，不算任务失败，桌面端改在提示词里写比例。工具栏节点会被 React 换掉，菜单没开时须重取按钮再点。
+
 豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。千问和豆包等待结果时都会把还没换成 http(s) 实图的生成卡滚进视口并改掉 `loading=lazy`；灰占位、blob、SVG 和很小的 data 图不算结果。
 
 ## 保活

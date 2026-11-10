@@ -1572,6 +1572,113 @@ func TestSaveResultsWashUsesSourceNameInDayFolder(t *testing.T) {
 	}
 }
 
+func TestSaveResultsAutoNumberNamesGenOutput(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{OutputPath: dir, Numbering: Numbering{Enabled: true, Prefix: "图", Width: 3}}
+	saved, err := e.saveResults(context.Background(), &Task{Prompt: "画一只猫"}, nil, nil, []strategy.Result{
+		{Data: resultPNG(t, 1)},
+		{Data: resultPNG(t, 2)},
+	})
+	if err != nil || len(saved) != 2 {
+		t.Fatalf("自动编号保存: %v %v", saved, err)
+	}
+	day := e.opts.ResultDir(time.Now())
+	if saved[0] != filepath.Join(day, "图001.png") || saved[1] != filepath.Join(day, "图002.png") {
+		t.Fatalf("自动编号路径: %v", saved)
+	}
+}
+
+func TestSaveResultsWashAutoNumberIgnoresSourceName(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{OutputPath: dir, Wash: true, Numbering: Numbering{Enabled: true, Prefix: "洗", Width: 3}}
+	saved, err := e.saveResults(context.Background(), &Task{Prompt: "提取主体", Images: []string{"/in/海报 A.jpg"}}, nil, nil, []strategy.Result{
+		{Data: resultPNG(t, 5)},
+		{Data: resultPNG(t, 6)},
+	})
+	if err != nil || len(saved) != 2 {
+		t.Fatalf("洗图自动编号保存: %v %v", saved, err)
+	}
+	day := e.opts.ResultDir(time.Now())
+	if saved[0] != filepath.Join(day, "洗001.png") || saved[1] != filepath.Join(day, "洗002.png") {
+		t.Fatalf("洗图自动编号路径: %v", saved)
+	}
+}
+
+func TestSaveResultsAutoNumberEmptyPrefixAndWidthZero(t *testing.T) {
+	dir := t.TempDir()
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{OutputPath: dir, Numbering: Numbering{Enabled: true, Width: 0}}
+	saved, err := e.saveResults(context.Background(), &Task{Prompt: "画一只猫"}, nil, nil, []strategy.Result{{Data: resultPNG(t, 7)}})
+	if err != nil || len(saved) != 1 {
+		t.Fatalf("空前缀保存: %v %v", saved, err)
+	}
+	day := e.opts.ResultDir(time.Now())
+	if saved[0] != filepath.Join(day, "1.png") {
+		t.Fatalf("空前缀应只存序号: %v", saved)
+	}
+}
+
+func TestAutoNumberStartHonoredAndContinuesFromExisting(t *testing.T) {
+	dir := t.TempDir()
+	day := Options{OutputPath: dir}.ResultDir(time.Now())
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(day, "图005.png"), []byte("seed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	save := func(seed byte, start int) string {
+		t.Helper()
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputPath: dir, Numbering: Numbering{Enabled: true, Prefix: "图", Width: 3, Start: start}}
+		saved, err := e.saveResults(context.Background(), &Task{Prompt: "x"}, nil, nil, []strategy.Result{{Data: resultPNG(t, seed)}})
+		if err != nil || len(saved) != 1 {
+			t.Fatalf("起始值 %d 保存: %v %v", start, saved, err)
+		}
+		return saved[0]
+	}
+	// 目录里已有 图005，起始值让位，从 006 接着排。
+	if got := save(1, 1); got != filepath.Join(day, "图006.png") {
+		t.Fatalf("已有号时应接着排: %s", got)
+	}
+	// 起始值比已有的号大，从起始值开始。
+	if got := save(2, 100); got != filepath.Join(day, "图100.png") {
+		t.Fatalf("起始值应生效: %s", got)
+	}
+}
+
+func TestResultNameAutoNumberPrefixSanitized(t *testing.T) {
+	opts := Options{Numbering: Numbering{Enabled: true, Prefix: "a/b:c*", Width: 3, Start: 2}}
+	stem, style := opts.resultName("画一只猫", "/in/cat.png")
+	if stem != "a_b_c_" || style != (numberFmt{width: 3, start: 2}) {
+		t.Fatalf("前缀清理: %q %+v", stem, style)
+	}
+	opts.Numbering.Prefix = " . "
+	if stem, _ = opts.resultName("", ""); stem != "" {
+		t.Fatalf("空前缀应保持为空: %q", stem)
+	}
+	opts.Numbering.Enabled = false
+	if stem, style = opts.resultName("画一只猫", ""); stem != "画一只猫" || style != defaultNumberFmt {
+		t.Fatalf("未开启时应走默认词根: %q %+v", stem, style)
+	}
+}
+
+func TestUnmatchedWashKeepsBatchNameWhenAutoNumber(t *testing.T) {
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{Wash: true, OutputPath: t.TempDir(), Numbering: Numbering{Enabled: true, Prefix: "图", Width: 3}}
+	task := Task{Index: 3, Platform: "豆包", Images: []string{"/a/product.png"}}
+	count, dir, err := e.saveUnmatchedWash(context.Background(), &task, []strategy.Result{{Data: resultPNG(t, 9), WatermarkRemoved: true}})
+	if err != nil || count != 1 {
+		t.Fatalf("待核对保存: %d %s %v", count, dir, err)
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*.png"))
+	if err != nil || len(files) != 1 || filepath.Base(files[0]) != "批次3_未匹配_01.png" {
+		t.Fatalf("待核对文件不应自动编号: %v err=%v", files, err)
+	}
+}
+
 func TestWashConcurrentResultsMatchTheirSources(t *testing.T) {
 	st := openRotateStore(t)
 	st.Set("browserBackend", "camoufox")

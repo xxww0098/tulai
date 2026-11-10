@@ -56,6 +56,8 @@ async function handleCommand(env) {
       return upload(env, payload)
     case TULAI.commands.setPrompt:
       return setPrompt(env, payload)
+    case TULAI.commands.setRatio:
+      return setRatio(env, payload)
     case TULAI.commands.send:
       networkTask = String(env.taskId || '')
       networkFault = ''
@@ -338,6 +340,21 @@ async function setPrompt(env, payload) {
     return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '输入区内容与本次提示词不一致，未发送')
   }
   return TULAI.ack(env, { name: payload.name, ok: true })
+}
+
+// 把豆包图像模式的「比例」设成原生选项。设不上不算任务失败：
+// 桌面端按 applied=false 回退到提示词里写比例。
+async function setRatio(env, payload) {
+  if (typeof Page.setOutputRatio !== 'function') {
+    return TULAI.ack(env, { name: payload.name, ok: true, applied: false, message: '页面脚本不支持原生比例' })
+  }
+  const ready = await readyComposer(8000)
+  if (ready === 'cancel') return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待输入框已取消')
+  if (!ready || ready === 'login') return loginOrMiss(env, payload.name, '未找到可写入提示词的输入框')
+  if (ready.error) return TULAI.fail(env, ready.code, ready.error)
+  const out = await Page.setOutputRatio(document, String(payload.ratio || ''), function () { return cancelRequested })
+  if (out.error) return TULAI.ack(env, { name: payload.name, ok: true, applied: false, message: out.error })
+  return TULAI.ack(env, { name: payload.name, ok: true, applied: true, ratio: out.already ? 'already' : String(payload.ratio || '') })
 }
 
 async function sendPrompt(env, payload) {

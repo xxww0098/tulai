@@ -85,7 +85,8 @@ func (e *Engine) saveAgyImage(ctx context.Context, t *Task, path string) error {
 		data, ext = png, ".png"
 	}
 	dir := e.opts.ResultDir(time.Now())
-	saved, err := writeNumberedFile(ctx, dir, e.opts.resultStem(t.Prompt, resultSource(t)), ext, data)
+	stem, style := e.opts.resultName(t.Prompt, resultSource(t))
+	saved, err := writeNumberedFile(ctx, dir, stem, style, ext, data)
 	if err != nil {
 		return err
 	}

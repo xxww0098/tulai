@@ -82,6 +82,25 @@ async function sendThenWait(page) {
 }
 
 async function main() {
+  {
+    // setRatio：设上与否都回 ok，区别在 applied；页面脚本不支持时也算未设上。
+    const ok = load(composerPage({
+      doubaoHost() { return true },
+      async ensureImageMode() { return { ok: true } },
+      async setOutputRatio(doc, ratio) { return ratio === '4:3' ? { ok: true } : { error: '「比例」菜单没有 ' + ratio, code: 'E_SELECTOR_MISS' } },
+    }))
+    const applied = await ok({ name: 'setRatio', ratio: '4:3' })
+    assert.strictEqual(applied.payload.ok, true)
+    assert.strictEqual(applied.payload.applied, true)
+    const missed = await ok({ name: 'setRatio', ratio: '5:4' })
+    assert.strictEqual(missed.payload.ok, true)
+    assert.strictEqual(missed.payload.applied, false)
+    assert.match(missed.payload.message, /菜单没有/)
+    const legacy = load(composerPage({}))
+    const noSupport = await legacy({ name: 'setRatio', ratio: '4:3' })
+    assert.strictEqual(noSupport.payload.ok, true)
+    assert.strictEqual(noSupport.payload.applied, false)
+  }
   for (const withImage of [false, true]) {
     let active = false
     let switches = 0
