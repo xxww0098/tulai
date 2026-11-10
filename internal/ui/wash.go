@@ -65,6 +65,8 @@ func (a *App) syncPage() {
 	if a.statePage == want {
 		return
 	}
+	// 换页后左栏输入区从顶部开始，不沿用另一页的滚动位置。
+	a.workInputScroll.Y = 0
 	a.historyOpen = false
 	cur := a.capturePage()
 	a.restorePage(a.parked)

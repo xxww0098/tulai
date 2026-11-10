@@ -47,7 +47,8 @@ func (a *App) workSide(c *ui.Context, input func()) {
 	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).Height(columnHeight(winH)).Gap(10).Padding(0, 0, 8, 0).Children(func() {
 		// 洗图的缩略图网格在卡片里限高；窗口矮时输入区（连同生图参考图）在这里滚动，
 		// 开始卡片和保存路径行不会被顶出窗口。
-		ui.Scroll(c.Key("work-side-input")).FillWidth().Shrink(1).MinHeight(0).Children(func() {
+		ui.Scroll(c.Key("work-side-input")).FillWidth().Shrink(1).MinHeight(0).
+			TrackScroll(&a.workInputScroll).Children(func() {
 			ui.Column(c).FillWidth().Gap(10).Children(input)
 		})
 		a.runCard(c)
