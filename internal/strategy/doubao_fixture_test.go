@@ -117,6 +117,75 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 		}
 	})
 
+	t.Run("image mode before send", func(t *testing.T) {
+		prompt := "雪山下的小木屋，油画风格"
+		sess := openFixture(t, client, srv.URL+"/9337-1", hook, composer)
+		defer sess.Close()
+		if err := PrepareDoubaoTurns(sess); err != nil {
+			t.Fatal(err)
+		}
+		if !sess.EvaluateBool(`(() => {
+			var entry = document.querySelector('[data-testid="skill_bar_button_3"]');
+			var area = window.__tulaiWashPage.composer(document);
+			var btn = document.querySelector('button[data-testid="chat_input_send_button"]');
+			if (!entry || !area || !btn) return false;
+			window.__modeClicks = 0;
+			window.__bubbles = 0;
+			entry.addEventListener('click', function () {
+				window.__modeClicks++;
+				setTimeout(function () {
+					var live = window.__tulaiWashPage.composer(document) || document.querySelector('textarea[data-testid="chat_input_input"]');
+					var replacement = live.cloneNode(true);
+					replacement.id = 'redrawn-composer';
+					live.replaceWith(replacement);
+					var selected = document.createElement('span');
+					selected.setAttribute('data-fixture', 'mode-evidence');
+					selected.textContent = '图像生成';
+					replacement.parentElement.appendChild(selected);
+				}, 50);
+			});
+			btn.addEventListener('click', function () {
+				window.__bubbles++;
+				var bubble = document.createElement('div');
+				bubble.setAttribute('data-testid', 'send_message');
+				bubble.setAttribute('data-message-role', 'user');
+				var live = document.querySelector('textarea[data-testid="chat_input_input"]');
+				bubble.textContent = live ? live.value : '';
+				document.body.appendChild(bubble);
+			});
+			return true;
+		})()`) {
+			t.Fatal("保存的豆包页面缺少图像生成入口、输入框或发送按钮")
+		}
+		strat := Doubao{}
+		if err := strat.CleanComposer(sess); err != nil {
+			t.Fatal(err)
+		}
+		// 文生图：清理时已切好模式，发送前保持选中，不能再点一次技能按钮。
+		if err := strat.SendPrompt(sess, prompt); err != nil {
+			t.Fatalf("已选中模式下发送: %v", err)
+		}
+		if clicks := sess.EvaluateInt(`window.__modeClicks`); clicks != 1 {
+			t.Fatalf("模式已选中时发送不能重复点击技能按钮，点击=%d", clicks)
+		}
+		if !sess.EvaluateBool(`window.__bubbles === 1 && Array.from(document.querySelectorAll('[data-testid="send_message"][data-message-role="user"]')).some(function (el) { return el.textContent.indexOf('雪山下的小木屋') !== -1 })`) {
+			t.Fatal("第一次发送没有出现用户气泡")
+		}
+		// 图生图：上传源图后页面可能重绘输入区、丢掉已选技能，发送前必须重新进入图像模式。
+		if !sess.EvaluateBool(`(() => { document.querySelectorAll('[data-fixture="mode-evidence"]').forEach(function (el) { el.remove() }); return true })()`) {
+			t.Fatal("清除已选证据失败")
+		}
+		if err := strat.SendPrompt(sess, prompt); err != nil {
+			t.Fatalf("模式丢失后发送: %v", err)
+		}
+		if clicks := sess.EvaluateInt(`window.__modeClicks`); clicks != 2 {
+			t.Fatalf("发送前必须重新进入图像模式，点击=%d", clicks)
+		}
+		if bubbles := sess.EvaluateInt(`window.__bubbles`); bubbles != 2 {
+			t.Fatalf("第二次发送应产生新用户气泡，气泡=%d", bubbles)
+		}
+	})
+
 	t.Run("send", func(t *testing.T) {
 		prompt := "雪山下的小木屋，油画风格"
 		sess := openFixture(t, client, srv.URL+"/9336-0", hook, composer)

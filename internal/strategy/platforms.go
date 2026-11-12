@@ -18,11 +18,8 @@ func (Doubao) Platform() string { return "豆包" }
 // HomeURL 豆包图像生成入口。
 func (Doubao) HomeURL() string { return "https://www.doubao.com/chat/" }
 
-// CleanComposer 在新对话或复用对话中先进入图像模式，之后才上传或填词。
-func (d Doubao) CleanComposer(s *cdp.Session) error {
-	if err := d.base.CleanComposer(s); err != nil {
-		return err
-	}
+// ensureDoubaoImageMode 确认输入区处于「图像生成」模式；已选中时不点击。
+func ensureDoubaoImageMode(s *cdp.Session) error {
 	out, err := s.EvaluateAsync(`(async () => {
 		if (!window.__tulaiWashPage) {` + extbundle.DoubaoPageJS() + `
 			window.__tulaiWashPage = window.TULAIPage;
@@ -43,6 +40,26 @@ func (d Doubao) CleanComposer(s *cdp.Session) error {
 		return fmt.Errorf("进入豆包图像生成模式: %s", mode.Error)
 	}
 	return nil
+}
+
+// CleanComposer 在新对话或复用对话中先进入图像模式，之后才上传或填词。
+func (d Doubao) CleanComposer(s *cdp.Session) error {
+	if err := d.base.CleanComposer(s); err != nil {
+		return err
+	}
+	return ensureDoubaoImageMode(s)
+}
+
+// SendPrompt 发送前再确认图像模式：文生图只靠清理时切一次不够，
+// 图生图上传源图后输入区可能被页面重绘掉已选技能，两种任务都以
+// 发送瞬间处于图像生成模式为准，未选中就先补点再写词发送。
+func (d Doubao) SendPrompt(s *cdp.Session, prompt string) error {
+	if !s.IsEgo() {
+		if err := ensureDoubaoImageMode(s); err != nil {
+			return err
+		}
+	}
+	return d.base.SendPrompt(s, prompt)
 }
 
 // FetchResultBytes 豆包覆盖：先要原图地址，再按页面 referer 和浏览器登录态去拉。

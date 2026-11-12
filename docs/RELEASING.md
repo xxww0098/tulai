@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.16
+# 发布 tulai 0.1.17
 
-当前桌面端版本是 **0.1.16**，标签 **`v0.1.16`**。页面桥扩展是 **0.3.15**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.17**，标签 **`v0.1.17`**。页面桥扩展是 **0.3.15**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.17
+
+豆包发送前重新确认「图像生成」模式：图生图上传源图后页面可能重绘输入区、丢失已选技能，发送前未选中会先补点再写词发送；文生图已选中时不重复点击。内置「豆包洗图」提示词把重绘强度调整为 0.7。页面桥扩展仍为 0.3.15。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.16
 
@@ -88,8 +92,8 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.16` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.16` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.16` 之后，模块版本就是这个标签。 |
+| 桌面端 | `0.1.17` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.17` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.17` 之后，模块版本就是这个标签。 |
 | 页面桥扩展 | `0.3.15` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
