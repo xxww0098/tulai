@@ -789,6 +789,10 @@ func TestCamoufoxQianwenWithoutAccountCannotStart(t *testing.T) {
 	if err := tt.Click("浏览器"); err != nil {
 		t.Fatal(err)
 	}
+	// 切到浏览器页会重新探测本机的 Camoufox。这个测试用「已就绪」当夹具，
+	// 免得空机器上只剩安装入口，断言不到没有浏览器的提示。
+	a.detectedNote, a.camoufoxStatus, a.camoufoxReady = "Camoufox 已就绪", "Camoufox 已就绪", true
+	tt.Frame()
 	if a.tab != pageBrowser || !tt.HasText(hint) {
 		t.Fatal("browser page did not show the empty-state hint")
 	}
