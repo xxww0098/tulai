@@ -418,6 +418,12 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		a.startAgyUsage()
 		if a.engine != nil {
 			go a.engine.WatchLogins(loginCtx)
+			// 查看面板正盯着的账号不做空闲关闭，免得看到一半断开。
+			a.engine.SetIdleGuard(func(id int64) bool {
+				a.mu.Lock()
+				defer a.mu.Unlock()
+				return a.browserViewingID == id
+			})
 		}
 		applyAppIcon(a.window)
 		if a.manager != nil {

@@ -370,7 +370,16 @@ func TestInstallDebIsManual(t *testing.T) {
 
 func TestWindowsReplaceScript(t *testing.T) {
 	script := WindowsScript()
-	for _, needle := range []string{"Get-Process", "Move-Item -LiteralPath $Source", "Start-Process -FilePath $Destination", "Start-Process -FilePath $Installer", ".previous", "-ArgumentList '/S'"} {
+	for _, needle := range []string{
+		"Get-Process", "Move-Item -LiteralPath $Source", "Start-Process -FilePath $Destination",
+		"Start-Process -FilePath $Installer", ".previous",
+		// The wait gives up instead of chasing a recycled process id.
+		"$tries -lt 300",
+		// The silent install goes over the copy the user runs, and the app
+		// is opened again: a silent install skips the finish page.
+		"$installArgs = @('/S', ('/D=' + $dir))",
+		"if ($Destination -ne '' -and (Test-Path -LiteralPath $Destination)) { Start-Process -FilePath $Destination }",
+	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("script missing %s:\n%s", needle, script)
 		}

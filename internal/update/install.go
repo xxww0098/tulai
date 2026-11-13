@@ -204,7 +204,7 @@ func installWindowsExe(opts Options) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	msg := fmt.Sprintf("已下载 %s。退出后会替换 %s。新的程序没有代码签名，SmartScreen 可能报警。\n%s", opts.Version, opts.Executable, UnsignedWarning)
+	msg := fmt.Sprintf("已下载 %s。退出后会替换 %s 并重新打开。新的程序没有代码签名，SmartScreen 可能报警。\n%s", opts.Version, opts.Executable, UnsignedWarning)
 	return Outcome{
 		Message:       msg,
 		InstalledPath: opts.Executable,
@@ -219,14 +219,22 @@ func installWindowsSetup(opts Options) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	msg := fmt.Sprintf("已下载 %s 的安装器。退出后会打开它。安装器没有代码签名，若 SmartScreen 拦截，请选择仍要运行。\n%s", opts.Version, UnsignedWarning)
+	msg := fmt.Sprintf("已下载 %s 的安装器。退出后静默安装到 %s 并重新打开。安装器没有代码签名，若 SmartScreen 拦截，请选择仍要运行。\n%s", opts.Version, installDirOf(opts.Executable), UnsignedWarning)
 	return Outcome{
 		Message:       msg,
 		InstalledPath: opts.AssetPath,
 		Quit:          true,
 		Helper:        "powershell.exe",
-		HelperArgs:    WindowsHelperArgs(script, opts.PID, "", "", opts.AssetPath),
+		HelperArgs:    WindowsHelperArgs(script, opts.PID, "", opts.Executable, opts.AssetPath),
 	}, nil
+}
+
+// installDirOf is the folder to name in messages and to install over.
+func installDirOf(executable string) string {
+	if executable == "" {
+		return "默认位置"
+	}
+	return filepath.Dir(executable)
 }
 
 func installMac(opts Options) (Outcome, error) {
@@ -609,10 +617,24 @@ func scriptArgs(script string) []string {
 func WindowsScript() string {
 	return strings.Join([]string{
 		"param([int]$ProcessId, [string]$Source, [string]$Destination, [string]$Installer)",
-		"while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 400 }",
+		"# Give up waiting after 2 minutes: Windows recycles process ids, and one",
+		"# handed to another process must not hold the update back forever. A silent",
+		"# installer closes the app itself when it really is still running.",
+		"$tries = 0",
+		"while ((Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) -and ($tries -lt 300)) { Start-Sleep -Milliseconds 400; $tries = $tries + 1 }",
 		"if ($Installer -ne '') {",
-		"  $p = Start-Process -FilePath $Installer -ArgumentList '/S' -PassThru -Wait",
-		"  if ($null -ne $p -and $p.ExitCode -ne 0) { Start-Process -FilePath $Installer }",
+		"  # /D installs over the copy the user runs, not wherever an older installer",
+		"  # was last pointed at, and must stay the last argument, unquoted.",
+		"  $installArgs = '/S'",
+		"  $dir = Split-Path -Parent $Destination",
+		"  if ($dir -and (Test-Path -LiteralPath $dir)) { $installArgs = @('/S', ('/D=' + $dir)) }",
+		"  $p = Start-Process -FilePath $Installer -ArgumentList $installArgs -PassThru -Wait",
+		"  if ($null -ne $p -and $p.ExitCode -ne 0) {",
+		"    Start-Process -FilePath $Installer",
+		"    exit 0",
+		"  }",
+		"  # A silent install skips the finish page, so the app is opened here.",
+		"  if ($Destination -ne '' -and (Test-Path -LiteralPath $Destination)) { Start-Process -FilePath $Destination }",
 		"  exit 0",
 		"}",
 		"$backup = \"$Destination.previous\"",

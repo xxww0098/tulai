@@ -45,6 +45,12 @@ func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, bac
 	return m.start(context.Background(), b, dataRoot, startURL, background, false, "")
 }
 
+// StartViewWithAddon opens a background view with the bound page-bridge addon
+// preinstalled, so a task requesting the same addon reuses this browser.
+func (m *Manager) StartViewWithAddon(b store.Browser, dataRoot, startURL, addon string) (string, error) {
+	return m.start(context.Background(), b, dataRoot, startURL, true, false, addon)
+}
+
 // StartTask uses a headless process even if the account was left open for login.
 func (m *Manager) StartTask(ctx context.Context, b store.Browser, dataRoot, backend, startURL string) (string, error) {
 	return m.start(ctx, b, dataRoot, startURL, true, true, "")
@@ -76,6 +82,9 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	loadedAddon := m.addons[b.ID]
 	m.mu.Unlock()
 	if running.Alive() && (!task || quiet && loadedAddon == addon) {
+		if task {
+			logging.Log.Info("账号[%s] 复用已打开的浏览器", b.Name)
+		}
 		return camoufox.Endpoint(b.Port), nil
 	}
 	dir := accountProfilePath(dataRoot, KindCamoufox, b)
@@ -118,7 +127,8 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 		return "", err
 	}
 	if strings.TrimSpace(startURL) != "" && startURL != "about:blank" {
-		if err := proc.Call(ctx, proc.Page, "Page.navigate", map[string]any{"url": startURL}, nil); err != nil {
+		// 只等导航提交：绑定模式由扩展轮询页面就绪，CDP 模式随后会再导航一次。
+		if err := proc.Call(ctx, proc.Page, "Page.navigate", map[string]any{"url": startURL, "wait": "commit"}, nil); err != nil {
 			proc.Close()
 			return "", fmt.Errorf("打开账号页面: %w", err)
 		}

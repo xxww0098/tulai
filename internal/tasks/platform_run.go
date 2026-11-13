@@ -126,6 +126,9 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 	done := 0
 	total := len(queue)
 	var runErr error
+	// 停止后成千上万个排队项逐条记「跳过: 已停止」只会刷屏；收成每平台一条汇总。
+	// 真正跑到一半被打断的任务另有「#N 账号 结束」一行，不会丢线索。
+	skipped := map[string]int{}
 	for ev := range events {
 		if onTask != nil && ev.task.Status != StatusRunning {
 			onTask(ev.task)
@@ -139,6 +142,10 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 		}
 		if onProgress != nil {
 			onProgress(Progress{Done: done, Total: total})
+		}
+		if ev.task.Status == StatusSkipped {
+			skipped[ev.task.Platform]++
+			continue
 		}
 		line := logging.Line{
 			TaskID: ev.task.Index, Platform: ev.task.Platform, Account: e.accountName(ev.task.BrowserID), Port: e.accountPort(ev.task.BrowserID),
@@ -154,6 +161,16 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 			line.Msg = fmt.Sprintf("#%d [%s] %s: %s", ev.task.Index, ev.task.Platform, ev.task.Status, ev.task.Error)
 			logging.Emit(logging.Warning, line)
 		}
+	}
+	for _, name := range order {
+		n := skipped[name]
+		if n == 0 {
+			continue
+		}
+		logging.Event(logging.Line{
+			Platform: name, Stage: "fail", Error: "已停止",
+			Msg: fmt.Sprintf("已停止：%s %d 个任务跳过", name, n),
+		})
 	}
 	return runErr
 }

@@ -758,6 +758,45 @@ func waitBoundPage(ctx context.Context, sess *extbridge.Session, taskID, platfor
 	}
 }
 
+// boundAddonDir 取或建该绑定账号的 Firefox 页面桥目录。目录串同时是浏览器复用的键：
+// 查看面板用同一目录预装页面桥后，任务开始即可复用已打开的浏览器。
+func (e *Engine) boundAddonDir(row store.Browser) (string, error) {
+	if _, err := e.extensionServer(); err != nil {
+		return "", err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cancelIdleCloseLocked(row.ID)
+	if dir := e.firefoxAddons[row.ID]; dir != "" {
+		return dir, nil
+	}
+	dir, err := os.MkdirTemp("", "tulai-firefox-bridge-")
+	if err == nil {
+		info := e.pairInfo()
+		_, err = extbundle.InstallFirefoxBridge(dir, info.Port, info.Token, "tulai-bound-"+strconv.FormatInt(row.ID, 10))
+	}
+	if err != nil {
+		if dir != "" {
+			_ = os.RemoveAll(dir)
+		}
+		return "", fmt.Errorf("准备 Firefox 页面桥: %w", err)
+	}
+	if e.firefoxAddons == nil {
+		e.firefoxAddons = map[int64]string{}
+	}
+	e.firefoxAddons[row.ID] = dir
+	return dir, nil
+}
+
+// BoundAddonDir 给界面预装页面桥：绑定模式下的账号用它打开，任务随后直接复用。
+// 不适用绑定模式时返回空串；失败返回错误，调用方回退普通打开。
+func (e *Engine) BoundAddonDir(row store.Browser) (string, error) {
+	if e == nil || e.browsers == nil || e.store == nil || row.ExtAccount != "" || !e.useBoundExtension(row.Platform) {
+		return "", nil
+	}
+	return e.boundAddonDir(row)
+}
+
 func (e *Engine) startBoundExtension(ctx context.Context, t *Task) error {
 	if e.browsers == nil || e.store == nil {
 		return fmt.Errorf("没有可用的指纹浏览器")
@@ -766,31 +805,10 @@ func (e *Engine) startBoundExtension(ctx context.Context, t *Task) error {
 	if !ok || row.ExtAccount != "" {
 		return fmt.Errorf("绑定账号不存在")
 	}
-	if _, err := e.extensionServer(); err != nil {
+	dir, err := e.boundAddonDir(row)
+	if err != nil {
 		return err
 	}
-	e.mu.Lock()
-	dir := e.firefoxAddons[row.ID]
-	if dir == "" {
-		var err error
-		dir, err = os.MkdirTemp("", "tulai-firefox-bridge-")
-		if err == nil {
-			info := e.pairInfo()
-			_, err = extbundle.InstallFirefoxBridge(dir, info.Port, info.Token, "tulai-bound-"+strconv.FormatInt(row.ID, 10))
-		}
-		if err != nil {
-			if dir != "" {
-				_ = os.RemoveAll(dir)
-			}
-			e.mu.Unlock()
-			return fmt.Errorf("准备 Firefox 页面桥: %w", err)
-		}
-		if e.firefoxAddons == nil {
-			e.firefoxAddons = map[int64]string{}
-		}
-		e.firefoxAddons[row.ID] = dir
-	}
-	e.mu.Unlock()
 	strat := strategy.Factory(t.Platform)
 	if strat == nil {
 		return fmt.Errorf("不支持的平台 %s", t.Platform)

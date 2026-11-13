@@ -520,6 +520,17 @@ func (a *App) downloadAndInstall() {
 		a.tellUpdate(mygo.MessageInfo, "已下载安装包", out.Message)
 		return
 	}
+	if out.Quit && !a.confirmUpdateQuit(out.Message) {
+		// 稍后：保留已校验的下载，浮窗里的「立即更新」可以再次安装。
+		a.onUI(func() {
+			a.updatePending = false
+			a.updateDeferred = false
+			a.updateDownloading = false
+			a.updateProgressText = ""
+		})
+		logging.Log.Info("用户选择稍后安装更新")
+		return
+	}
 	if out.Helper != "" {
 		if err := update.StartDetached(out.Helper, out.HelperArgs...); err != nil {
 			a.failUpdate(err)
@@ -533,6 +544,29 @@ func (a *App) downloadAndInstall() {
 	if out.Relaunch {
 		mygo.App.Relaunch()
 	}
+}
+
+// confirmUpdateQuit asks before the helper closes the app: quitting without
+// a word right after a download looks like a crash. Windows only; the other
+// systems restart the app from their own helpers at once.
+func (a *App) confirmUpdateQuit(detail string) bool {
+	if runtime.GOOS != "windows" {
+		return true
+	}
+	res, err := mygo.Dialog.Message(mygo.MessageOptions{
+		Parent:        a.window,
+		Type:          mygo.MessageInfo,
+		Title:         "安装更新",
+		Message:       "更新已下载，退出后自动安装并重新打开。",
+		Detail:        firstLine(detail),
+		Buttons:       []string{"现在安装", "稍后"},
+		DefaultButton: 0,
+		CancelButton:  1,
+	})
+	if err != nil {
+		return true
+	}
+	return res.Button == 0
 }
 
 func (a *App) failUpdate(err error) {

@@ -51,7 +51,11 @@ type Engine struct {
 	extWashChats  map[int64]extensionWashChat
 	firefoxAddons map[int64]string
 	runBrowsers   map[int64]struct{}
-	srcHashes     map[string]string // 源图路径 → SHA256（当前任务的回声过滤）
+	idleClose     map[int64]*time.Timer // 保活浏览器到点关闭
+	idleGuard     func(id int64) bool   // 界面还在用的账号不做空闲关闭
+	idleAfter     time.Duration         // 测试把空闲窗口缩短；空则用 browserIdleClose
+	keepHeadless  func(id int64) bool   // 测试替换的保活判定；空则查浏览器管理器
+	srcHashes     map[string]string     // 源图路径 → SHA256（当前任务的回声过滤）
 	dataRoot      string
 	active        map[int64]bool
 	manual        map[int64]bool
@@ -1039,6 +1043,27 @@ func (e *Engine) closeRunBrowsers() {
 	e.mu.Lock()
 	ids := e.runBrowsers
 	e.runBrowsers = nil
+	// 无头且已装页面桥的绑定浏览器保活：下一批任务直接复用，不再整轮冷启动。
+	var headless func(int64) bool
+	if e.keepHeadless != nil {
+		headless = e.keepHeadless
+	} else if e.browsers != nil {
+		headless = e.browsers.IsHeadless
+	}
+	var kept []int64
+	for id := range ids {
+		if headless != nil && headless(id) && e.firefoxAddons[id] != "" {
+			kept = append(kept, id)
+			delete(ids, id)
+		}
+	}
+	var dirs []string
+	for id := range ids {
+		if dir := e.firefoxAddons[id]; dir != "" {
+			dirs = append(dirs, dir)
+			delete(e.firefoxAddons, id)
+		}
+	}
 	e.mu.Unlock()
 	var wg sync.WaitGroup
 	for id := range ids {
@@ -1055,13 +1080,90 @@ func (e *Engine) closeRunBrowsers() {
 		}()
 	}
 	wg.Wait()
-	e.mu.Lock()
-	addons := e.firefoxAddons
-	e.firefoxAddons = nil
-	e.mu.Unlock()
-	for _, dir := range addons {
+	for _, dir := range dirs {
 		_ = os.RemoveAll(dir)
 	}
+	for _, id := range kept {
+		e.armIdleClose(id)
+	}
+}
+
+// browserIdleClose 是保活浏览器的空闲关闭窗口。
+const browserIdleClose = 15 * time.Minute
+
+// SetIdleGuard 注册「账号正被界面使用」的判断；查看面板盯着时不做空闲关闭。
+func (e *Engine) SetIdleGuard(fn func(id int64) bool) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.idleGuard = fn
+	e.mu.Unlock()
+}
+
+func (e *Engine) armIdleClose(id int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delay := e.idleAfter
+	if delay <= 0 {
+		delay = browserIdleClose
+	}
+	e.cancelIdleCloseLocked(id)
+	if e.idleClose == nil {
+		e.idleClose = map[int64]*time.Timer{}
+	}
+	e.idleClose[id] = time.AfterFunc(delay, func() { e.idleExpired(id) })
+}
+
+func (e *Engine) cancelIdleCloseLocked(id int64) {
+	if t := e.idleClose[id]; t != nil {
+		t.Stop()
+		delete(e.idleClose, id)
+	}
+}
+
+// idleExpired 关掉保活超时的浏览器；引擎在跑或界面还在看就顺延。
+func (e *Engine) idleExpired(id int64) {
+	e.mu.Lock()
+	if e.running {
+		e.mu.Unlock()
+		return
+	}
+	guard := e.idleGuard
+	e.mu.Unlock()
+	if guard != nil && guard(id) {
+		e.armIdleClose(id)
+		return
+	}
+	e.mu.Lock()
+	if e.running {
+		e.mu.Unlock()
+		return
+	}
+	e.cancelIdleCloseLocked(id)
+	dir := e.firefoxAddons[id]
+	delete(e.firefoxAddons, id)
+	e.mu.Unlock()
+	e.dropSessions(id)
+	if e.browsers != nil {
+		e.browsers.Stop(id)
+		if e.store != nil {
+			e.store.SetRunning(id, e.browsers.IsRunning(id))
+		}
+	}
+	if dir != "" {
+		_ = os.RemoveAll(dir)
+	}
+	name := strconv.FormatInt(id, 10)
+	if e.store != nil {
+		for _, b := range e.store.Browsers() {
+			if b.ID == id {
+				name = b.Name
+				break
+			}
+		}
+	}
+	logging.Log.Info("账号[%s] 空闲超时，已关闭浏览器", name)
 }
 
 type failedSession interface {

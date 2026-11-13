@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -790,4 +792,38 @@ func TestFourInFlightAcrossPlatforms(t *testing.T) {
 			t.Fatalf("同一账号跑了两条: %v", got)
 		}
 	}
+}
+
+// 停止后成千上万个排队项不应逐条刷「跳过: 已停止」，只留每平台一条汇总。
+func TestRunStopSkipsCollapseIntoSummary(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	addBrowsers(t, st, "豆包")
+	synctest.Test(t, func(t *testing.T) {
+		e := NewEngine(st, nil, nil, "")
+		opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png"}, Concurrency: 4, SendWait: 60}
+		time.AfterFunc(time.Second, e.Stop)
+		before := len(logging.Log.Entries())
+		err := e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var summaries, perTask int
+		for _, entry := range logging.Log.Entries()[before:] {
+			if strings.Contains(entry.Text, "已停止：豆包 2 个任务跳过") {
+				summaries++
+			}
+			if strings.Contains(entry.Text, "跳过: 已停止") {
+				perTask++
+			}
+		}
+		if summaries != 1 || perTask != 0 {
+			t.Fatalf("应只有一条跳过汇总且没有逐条跳过: summaries=%d perTask=%d", summaries, perTask)
+		}
+	})
 }

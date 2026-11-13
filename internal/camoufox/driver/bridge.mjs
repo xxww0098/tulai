@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
 import { request as playwrightRequest } from 'playwright-core';
@@ -94,6 +94,38 @@ if (process.platform === 'darwin' || process.platform === 'win32') {
   // before the account browser opens. Validate before extending to other platforms.
   const hostGpu = utilsDeps.hostGpu;
   utilsDeps.hostGpu = (executable, _headless, env, prefs) => hostGpu(executable, true, env, prefs);
+}
+
+// The GPU probe launches a whole second Firefox; the launcher only caches it in
+// memory, so every bridge start pays it again. Hardware rarely changes - keep
+// one reading per executable (keyed by mtime+size, upgrades invalidate) in the
+// tulai cache dir. Any cache miss or write failure falls back to the live probe.
+function gpuCacheFile(executable) {
+  const dir = process.env.TULAI_CAMOUFOX_CACHE;
+  if (!dir) return '';
+  let stat;
+  try { stat = fs.statSync(executable); } catch { return ''; }
+  const key = createHash('sha256').update(`${process.platform}|${executable}|${stat.mtimeMs}|${stat.size}`).digest('hex').slice(0, 24);
+  return path.join(dir, `host-gpu-${key}.json`);
+}
+async function cachedHostGpu(executable) {
+  const file = gpuCacheFile(executable);
+  if (file) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (cached === null || Array.isArray(cached)) return cached;
+    } catch { /* 没有缓存或已损坏就实测 */ }
+  }
+  const gpu = await utilsDeps.hostGpu(executable, true, process.env, {});
+  if (file) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(gpu));
+      fs.renameSync(tmp, file);
+    } catch { /* 缓存写不上不影响启动 */ }
+  }
+  return gpu;
 }
 
 // GitHub 加速镜像 base（ghproxy 形式：base + '/' + 原 URL）。未设置或不是
@@ -326,7 +358,7 @@ async function start(params) {
   if (config?.['webGl:vendor'] && config['webGl:renderer'] && (params.headless || process.platform === 'darwin')) {
     try {
       rendering = await utils.planRendering(utils.getTargetOs(config), undefined, false, false,
-        () => utilsDeps.hostGpu(params.executable, Boolean(params.headless), process.env, {}));
+        () => cachedHostGpu(params.executable));
     } catch (error) {
       process.stderr.write(`无法确认 Canvas 渲染设备，保留 Camoufox 默认保护：${error.message}\n`);
     }
@@ -528,7 +560,7 @@ async function dispatch(method, params, target, signal) {
       return {};
     case 'Page.addScriptToEvaluateOnNewDocument':
       await page.addInitScript({ content: mainWorld(scopedInit(params.source)) }); return { identifier: 'tulai' };
-    case 'Page.navigate': await page.goto(params.url, { waitUntil: 'domcontentloaded', timeout: 60000 }); return {};
+    case 'Page.navigate': await page.goto(params.url, { waitUntil: params.wait === 'commit' ? 'commit' : 'domcontentloaded', timeout: 60000 }); return {};
     case 'Page.reload': await page.reload({ waitUntil: 'domcontentloaded' }); return {};
     case 'Page.close': await page.close(); return {};
     case 'Page.bringToFront': await page.bringToFront(); return {};

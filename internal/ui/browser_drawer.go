@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -68,7 +69,7 @@ func (a *App) openBrowserDrawer(row store.Browser) {
 			a.browserDrawerUpdate(s, func() { s.loading, s.err = false, "无法启动浏览器" })
 			return
 		}
-		ws, err := a.manager.Start(row, root, backend, accountHomeURL(row), true)
+		ws, err := a.startDrawerBrowser(row, root, backend)
 		if err != nil || ctx.Err() != nil {
 			if err != nil {
 				a.browserDrawerUpdate(s, func() { s.loading, s.err = false, "打开失败："+err.Error() })
@@ -93,6 +94,20 @@ func (a *App) openBrowserDrawer(row store.Browser) {
 		defer page.Close()
 		a.runBrowserDrawer(ctx, s, page)
 	}()
+}
+
+// startDrawerBrowser 打开账号的无头查看浏览器。绑定模式下预装页面桥，
+// 让随后的任务直接复用这个浏览器，而不是关掉重开一遍。
+func (a *App) startDrawerBrowser(row store.Browser, root, backend string) (string, error) {
+	addon, err := a.engine.BoundAddonDir(row)
+	if err != nil {
+		logging.Log.Info("账号[%s] 预装页面桥失败，任务开始时会重开浏览器：%v", row.Name, err)
+		addon = ""
+	}
+	if addon != "" {
+		return a.manager.StartViewWithAddon(row, root, accountHomeURL(row), addon)
+	}
+	return a.manager.Start(row, root, backend, accountHomeURL(row), true)
 }
 
 func (s *browserDrawerState) releaseManual(engine *tasks.Engine) {
