@@ -151,15 +151,15 @@ func TestBrowserTableRefreshesDailyUsageAtMidnight(t *testing.T) {
 	}
 	a.store.UpdateBrowserHealth(b.ID, store.HealthExhausted, midnight.Unix(), "今日额度已用尽")
 	tt := ui.NewTester(a.view, 1280, 840)
-	if !tt.HasText("2 / 100") || !tt.HasText("已用尽") {
+	if !tt.HasText("2 / 不限") || !tt.HasText("已用尽") {
 		t.Fatalf("before midnight: %v", tt.Texts())
 	}
 	tt.Advance(midnight.Sub(tt.Now()) - time.Second)
-	if !tt.HasText("2 / 100") || !tt.HasText("已用尽") {
+	if !tt.HasText("2 / 不限") || !tt.HasText("已用尽") {
 		t.Fatalf("just before midnight: %v", tt.Texts())
 	}
 	tt.Advance(time.Second)
-	if !tt.HasText("0 / 100") || !tt.HasText("未启动") || tt.HasText("今日额度已用尽") {
+	if !tt.HasText("0 / 不限") || !tt.HasText("未启动") || tt.HasText("今日额度已用尽") {
 		t.Fatalf("at midnight: %v", tt.Texts())
 	}
 }
@@ -201,13 +201,20 @@ func TestBrowserTableEmptyAndScaledStates(t *testing.T) {
 			tt := ui.NewTester(a.view, 1000, 720)
 			tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1.25})
 			tt.Advance(400 * time.Millisecond)
-			for _, label := range []string{"添加环境", "刷新列表", "全选", "批量启动", "批量停止", "清空", "删除当前"} {
+			for _, label := range []string{"添加环境", "刷新列表"} {
 				assertVisible(t, tt, label, 1000, 720)
 			}
-			if count == 0 && !tt.HasText("添加第一个浏览器环境") {
-				t.Fatal("empty state did not explain how to create an environment")
-			}
-			if count > 0 {
+			if count == 0 {
+				assertVisible(t, tt, "添加第一个浏览器环境", 1000, 720)
+				for _, label := range []string{"全选", "批量启动", "批量停止", "清空", "删除当前", "选择环境以配置代理"} {
+					if tt.HasText(label) {
+						t.Fatalf("empty state shows unavailable action %q", label)
+					}
+				}
+			} else {
+				for _, label := range []string{"全选", "批量启动", "批量停止", "清空", "删除当前"} {
+					assertVisible(t, tt, label, 1000, 720)
+				}
 				assertVisible(t, tt, "启动 主力工作号", 1000, 720)
 				assertVisible(t, tt, "保存账号代理", 1000, 720)
 			}

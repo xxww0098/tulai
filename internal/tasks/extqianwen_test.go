@@ -475,7 +475,7 @@ func TestExtensionDoubaoNativeRatio(t *testing.T) {
 			st.Set("extBridgePort", port)
 			st.Set("extBridgeToken", "dev-token")
 			dir := t.TempDir()
-			data := outputMarkerPNG(t, color.NRGBA{R: 220, A: 255 })
+			data := outputMarkerPNG(t, color.NRGBA{R: 220, A: 255})
 
 			var mu sync.Mutex
 			ratios := []string{}

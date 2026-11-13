@@ -65,6 +65,9 @@ func ParseWords(raw string) []string {
 // 超时、额度不足、需登录、已停止要写出类别，不能收成一句「出图失败」。
 func ClassifyFailure(status Status, raw string) FailHint {
 	if status == StatusNeedsReview {
+		if strings.HasPrefix(raw, "裂变相似度") {
+			return FailHint{FailUnknown, raw, "重新生成"}
+		}
 		return FailHint{FailUnknown, "上次任务已中断，请先核对原账号网页和已保存图片", "核对后重新生成"}
 	}
 	if status == StatusNeedsUser {
@@ -174,11 +177,16 @@ func SoftenPrompt(prompt string, words []string) string {
 	return out + "。" + mildPhrase
 }
 
-func (e *Engine) capNow() int {
-	if e != nil && e.opts.DailyCap > 0 {
-		return e.opts.DailyCap
+func (e *Engine) caps() CapFor {
+	if e == nil {
+		return FlatCap(DefaultDailyCap)
 	}
-	return DefaultDailyCap
+	return CapsFrom(e.opts.DailyCaps, e.opts.DailyCap)
+}
+
+// capFor 是这个供应商每个账号的每日上限。
+func (e *Engine) capFor(platform string) int {
+	return e.caps().For(platform)
 }
 
 func (e *Engine) softenModeration(t *Task, err error) (again, stop bool) {

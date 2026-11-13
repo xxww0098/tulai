@@ -12,6 +12,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -114,6 +115,74 @@ func TestWashPromptAndImagesPersist(t *testing.T) {
 	}
 }
 
+func TestWashProgressRestoresAndContinuesOnlyPendingImages(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	done := filepath.Join(dir, "done.png")
+	pending := filepath.Join(dir, "pending.png")
+	out := filepath.Join(dir, "done_01.png")
+	for _, path := range []string{done, pending, out} {
+		if err := os.WriteFile(path, tinyPNG(t), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	a := &App{store: st, engine: tasks.NewEngine(st, nil, nil, ""), platformAuto: true}
+	a.loadSettings()
+	a.tab = pageWash
+	a.syncPage()
+	a.prompts = "去掉水印"
+	a.sources = []sourceImage{{Path: done}, {Path: pending}}
+	a.queue = []tasks.Task{
+		{Index: 1, Platform: "豆包", Status: tasks.StatusSuccess, Prompt: "去掉水印", Images: []string{done}, Results: []string{out}},
+		{Index: 2, Platform: "豆包", Status: tasks.StatusFailed, Prompt: "去掉水印", Images: []string{pending}, Error: "出图超时"},
+	}
+	a.saveSettings()
+
+	b := &App{store: st, engine: tasks.NewEngine(st, nil, nil, ""), platformAuto: true}
+	b.loadSettings()
+	if len(b.sources) != 2 || !b.sources[0].Washed || b.sources[1].Washed {
+		t.Fatalf("wash progress not restored: %+v", b.sources)
+	}
+	if got := b.washPendingPaths(); len(got) != 1 || got[0] != pending {
+		t.Fatalf("resume should only submit pending image: %v", got)
+	}
+	tt := ui.NewTester(b.view, 1280, 900)
+	tt.Advance(200 * time.Millisecond)
+	for _, text := range []string{"已洗 1 · 待洗 1", "已洗", "未洗", "继续洗图"} {
+		if !tt.HasText(text) {
+			t.Fatalf("wash progress UI missing %q: %v", text, tt.Texts())
+		}
+	}
+
+	b.applyWashTask(tasks.Task{
+		Status: tasks.StatusSuccess, Images: []string{pending},
+		Results: []string{filepath.Join(dir, "pending_01.png")},
+	})
+	b.queue = []tasks.Task{{
+		Index: 1, Platform: "豆包", Status: tasks.StatusSuccess, Prompt: "去掉水印",
+		Images: []string{pending}, Results: []string{filepath.Join(dir, "pending_01.png")},
+	}}
+	b.persistWorkspace(pageWash)
+	c := &App{store: st, engine: tasks.NewEngine(st, nil, nil, ""), platformAuto: true}
+	c.loadSettings()
+	if washed, left := c.washCounts(); washed != 2 || left != 0 {
+		t.Fatalf("completed wash progress did not persist: washed=%d pending=%d", washed, left)
+	}
+	if got := c.washPendingPaths(); len(got) != 0 {
+		t.Fatalf("completed wash still queues images: %v", got)
+	}
+	ct := ui.NewTester(c.view, 1280, 900)
+	ct.Advance(200 * time.Millisecond)
+	if !ct.HasText("已全部洗完") {
+		t.Fatalf("completed wash button missing: %v", ct.Texts())
+	}
+}
+
 func TestWashDefaultUpgradeKeepsCustomPrompts(t *testing.T) {
 	const oldDefault = "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变"
 	for _, tc := range []struct {
@@ -122,6 +191,16 @@ func TestWashDefaultUpgradeKeepsCustomPrompts(t *testing.T) {
 		{"empty", "", DefaultWashPrompt},
 		{"old default", oldDefault, DefaultWashPrompt},
 		{"edited old default", oldDefault + "，保留标签", oldDefault + "，保留标签"},
+		{"old doubao template", prompts.LegacyDoubaoWashPrompt, prompts.DoubaoWashPrompt},
+		{"edited doubao template", prompts.LegacyDoubaoWashPrompt + "\n保留标识", prompts.LegacyDoubaoWashPrompt + "\n保留标识"},
+		{"previous doubao template", prompts.PreviousDoubaoWashPrompt, prompts.DoubaoWashPrompt},
+		{"edited previous doubao template", prompts.PreviousDoubaoWashPrompt + "\n保留标识", prompts.PreviousDoubaoWashPrompt + "\n保留标识"},
+		{"reviewed doubao template", prompts.ReviewedDoubaoWashPrompt, prompts.DoubaoWashPrompt},
+		{"edited reviewed doubao template", prompts.ReviewedDoubaoWashPrompt + "\n保留标识", prompts.ReviewedDoubaoWashPrompt + "\n保留标识"},
+		{"pixel review doubao template", prompts.PixelReviewDoubaoWashPrompt, prompts.DoubaoWashPrompt},
+		{"edited pixel review template", prompts.PixelReviewDoubaoWashPrompt + "\n保留标识", prompts.PixelReviewDoubaoWashPrompt + "\n保留标识"},
+		{"frame review doubao template", prompts.FrameReviewDoubaoWashPrompt, prompts.DoubaoWashPrompt},
+		{"edited frame review template", prompts.FrameReviewDoubaoWashPrompt + "\n保留标识", prompts.FrameReviewDoubaoWashPrompt + "\n保留标识"},
 		{"custom", "我的洗图指令", "我的洗图指令"},
 	} {
 		for _, active := range []bool{false, true} {
@@ -166,8 +245,8 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 	for _, tc := range []struct {
 		n, height, visibleRows int
 	}{
-		{3, 700, 1}, {6, 700, 1}, {9, 700, 1},
-		{9, 760, 1}, {9, 800, 2},
+		{3, 700, 1}, {6, 700, 2}, {9, 700, 2},
+		{9, 600, 1}, {9, 760, 2}, {9, 800, 2},
 	} {
 		t.Run(fmt.Sprintf("%d/%d", tc.n, tc.height), func(t *testing.T) {
 			n := tc.n
@@ -189,10 +268,16 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 					t.Fatalf("%s not fully visible: ok=%v rect=%v", label, ok, r)
 				}
 			}
+			if err := tt.Click("运行日志"); err != nil {
+				t.Fatal(err)
+			}
+			tt.Advance(150 * time.Millisecond)
 			logCard, ok := tt.Find("运行日志区")
-			if !ok || logCard.H < 140 || logCard.Y < 0 || logCard.Y+logCard.H > float32(tc.height+1) {
+			if !ok || logCard.H < 140*interfaceZoom-1 || logCard.Y < 0 || logCard.Y+logCard.H > float32(tc.height+1) {
 				t.Fatalf("运行日志 card %+v", logCard)
 			}
+			_ = tt.Click("运行日志")
+			tt.Advance(150 * time.Millisecond)
 			prompt, _ := tt.Find("洗图指令")
 			start, _ := tt.Find("开始洗图")
 			if prompt.Y >= start.Y {
@@ -204,7 +289,7 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 				r, found := tt.Find(name)
 				row := (i - 1) / washThumbCols
 				if row < tc.visibleRows {
-					if !found || r.H < washThumbSize-4 {
+					if !found || r.H < (washThumbSize-4)*interfaceZoom {
 						t.Fatalf("row %d thumb %s clipped: ok=%v %+v", row, name, found, r)
 					}
 					if prev, ok := rows[row]; ok && (r.Y < prev-1 || r.Y > prev+1) {
@@ -213,14 +298,14 @@ func TestWashManyImagesKeepsPromptAndWholeRows(t *testing.T) {
 					rows[row] = r.Y
 					continue
 				}
-				if found && r.H > 4 && r.H < washThumbSize-4 {
+				if found && r.H > 4 && r.H < (washThumbSize-4)*interfaceZoom {
 					t.Fatalf("thumb %s cut mid-row: %+v", name, r)
 				}
-				if found && r.H >= washThumbSize-4 {
+				if found && r.H >= (washThumbSize-4)*interfaceZoom {
 					t.Fatalf("thumb %s should stay in the scroll, not an extra full row: %+v", name, r)
 				}
 			}
-			if y0, y1 := rows[0], rows[1]; n > washThumbCols && len(rows) > 1 && y1 < y0+washThumbSize-1 {
+			if y0, y1 := rows[0], rows[1]; n > washThumbCols && len(rows) > 1 && y1 < y0+washThumbSize*interfaceZoom-1 {
 				t.Fatalf("rows overlap %v %v", y0, y1)
 			}
 		})

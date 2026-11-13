@@ -4,6 +4,8 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { request as playwrightRequest } from 'playwright-core';
 import { createIdentity, prepareIdentity, prepareRendering, preserveVoices } from './identity.mjs';
+import { watchDownload } from './download-watch.mjs';
+import { prepareWindowsExecutable } from './windows-compat.mjs';
 
 // Camoufox resolves its cache at import time; restore the real environment before launching Firefox.
 const cacheKey = { darwin: 'HOME', win32: 'LOCALAPPDATA', linux: 'XDG_CACHE_HOME' }[process.platform];
@@ -206,19 +208,39 @@ if (process.argv[2] === 'install') {
     }
     let last = 0;
     CamoufoxFetcher.downloadFile = async (file, url) => {
-      await webdl(url, undefined, false, file, {
+      await watchDownload(progress => webdl(url, undefined, false, file, {
         progressCallback: (done, total) => {
+          progress();
           const now = Date.now();
           if (done !== total && now - last < 200) return;
           last = now;
           emit({ event: 'progress', stage: 'browser', done, total });
         },
-      });
+      }));
     };
   } catch {
     // A future launcher may move this seam; install without live progress.
   }
-  const options = await launchOptions({ os: hostOS, headless: true });
+  // launchOptions also prepares fpgen and probes a browser after extracting the
+  // kernel. Report those phases separately so extraction does not appear stuck.
+  for (const [name, stage] of [['generateFingerprint', 'model'], ['hostGpu', 'verify']]) {
+    if (typeof utilsDeps[name] !== 'function') continue;
+    const original = utilsDeps[name];
+    utilsDeps[name] = function(...args) {
+      emit({event: 'progress', stage});
+      return original.apply(this, args);
+    };
+  }
+  let options;
+  try {
+    options = await launchOptions({ os: hostOS, headless: true });
+  } catch (error) {
+    if (process.platform !== 'win32' || !/spawn UNKNOWN/.test(String(error?.message)) || typeof utilsDeps.launchPath !== 'function') throw error;
+    const original = utilsDeps.launchPath();
+    const compatible = prepareWindowsExecutable(original);
+    if (compatible === original) throw error;
+    options = await launchOptions({ os: hostOS, headless: true, executable_path: compatible });
+  }
   emit({ executable: options.executablePath });
   process.exit(0);
 }

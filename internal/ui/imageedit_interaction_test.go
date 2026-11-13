@@ -50,7 +50,7 @@ func newEditInteractionApp(t *testing.T, sizes ...[2]int) *App {
 	return a
 }
 
-// editScreenPoint 把源图像素坐标换成窗口坐标：绘制和指针用的是同一套。
+// editScreenPoint 把绘制用的内容坐标换成 Tester 指针使用的窗口坐标。
 func editScreenPoint(t *testing.T, a *App, srcX, srcY float64) (float32, float32) {
 	t.Helper()
 	st := &a.edit
@@ -59,7 +59,7 @@ func editScreenPoint(t *testing.T, a *App, srcX, srcY float64) (float32, float32
 	}
 	sx := st.imageRect.W / float32(st.srcW)
 	sy := st.imageRect.H / float32(st.srcH)
-	return st.imageRect.X + float32(srcX)*sx, st.imageRect.Y + float32(srcY)*sy
+	return (st.imageRect.X + float32(srcX)*sx) * interfaceZoom, (st.imageRect.Y + float32(srcY)*sy) * interfaceZoom
 }
 
 func editNear(t *testing.T, name string, got, want, tol float64) {
@@ -182,7 +182,8 @@ func TestImageEditWheelZoomAndDoubleClickReset(t *testing.T) {
 	if err := tt.Click("1:1"); err != nil {
 		t.Fatal(err)
 	}
-	editNear(t, "1:1 缩放", a.edit.zoom, float64(1600/base), 0.02)
+	editNear(t, "1:1 缩放", a.edit.zoom, float64(1600/(base*interfaceZoom)), 0.02)
+	editNear(t, "1:1 窗口宽度", float64(a.edit.imageRect.W*interfaceZoom), 1600, 2)
 	atOneToOne := a.edit.zoom
 
 	if err := tt.Click("−"); err != nil {
@@ -215,11 +216,11 @@ func TestImageEditCompareToggleAndSplitDrag(t *testing.T) {
 	}
 
 	img := a.edit.imageRect
-	sx := img.X + img.W*0.5
-	sy := img.Y + img.H*0.5
+	sx := (img.X + img.W*0.5) * interfaceZoom
+	sy := (img.Y + img.H*0.5) * interfaceZoom
 	tt.Press(sx, sy)
-	tt.Move(img.X+img.W*0.25, sy)
-	tt.Release(img.X+img.W*0.25, sy)
+	tt.Move((img.X+img.W*0.25)*interfaceZoom, sy)
+	tt.Release((img.X+img.W*0.25)*interfaceZoom, sy)
 	editNear(t, "分割位置", a.edit.split, 25, 1)
 }
 
@@ -453,9 +454,10 @@ func TestImageEditThumbModifierClickPicks(t *testing.T) {
 	if st.stripRect.W <= 0 {
 		t.Fatal("缩略图条还没排版")
 	}
-	y := st.stripRect.Y + st.stripRect.H/2
+	y := (st.stripRect.Y + st.stripRect.H/2) * interfaceZoom
 	at := func(i int) float32 {
-		return st.stripRect.X + float32(i)*72 + 32 - st.stripScroll.X
+		stride := editThumbSize + editThumbGap
+		return (st.stripRect.X + float32(i)*stride + editThumbSize/2 - st.stripScroll.X) * interfaceZoom
 	}
 
 	tt.ClickAtWith(ui.Cmd, at(0), y)
@@ -492,8 +494,9 @@ func TestImageEditThumbnailClickSelects(t *testing.T) {
 	if st.stripRect.W <= 0 {
 		t.Fatal("缩略图条还没排版")
 	}
-	x := st.stripRect.X + 72 + 32 - st.stripScroll.X
-	y := st.stripRect.Y + st.stripRect.H/2
+	stride := editThumbSize + editThumbGap
+	x := (st.stripRect.X + stride + editThumbSize/2 - st.stripScroll.X) * interfaceZoom
+	y := (st.stripRect.Y + st.stripRect.H/2) * interfaceZoom
 	tt.ClickAt(x, y)
 	if a.edit.selected != 1 {
 		t.Fatalf("点第二张缩略图应选中它，实际 %d", a.edit.selected)

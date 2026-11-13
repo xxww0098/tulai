@@ -210,6 +210,9 @@ func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask 
 }
 
 func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
+	if opts.Fission && (len(opts.Images) != 1 || len(opts.Prompts) != 4 || len(opts.Platforms) != 1) {
+		return fmt.Errorf("裂变图片需要一张母图、四个方向和一个服务商")
+	}
 	for _, platform := range opts.Platforms {
 		if platform == "豆包" {
 			if err := opts.OutputSize.Validate(); err != nil {
@@ -260,6 +263,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	e.washChats = nil
 	e.extWashChats = nil
 	e.dlFetch = newResultFetcher(opts)
+	e.starts.Clear()
 	e.agyNoted = false
 	e.noAccountNoted = false
 	e.view = NewQueueView(queue)
@@ -277,6 +281,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	e.runBrowsers = make(map[int64]struct{})
 	e.wake = nudge
 	e.mu.Unlock()
+	started := time.Now()
 	e.rotateExtBatch()
 	e.beginLanes()
 
@@ -284,7 +289,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		cancel()
 		e.closeRunBrowsers()
 		e.finishLanes()
-		logging.Event(logging.Line{Stage: "queue", Msg: "任务结束"})
+		logging.Event(logging.Line{Stage: "queue", Msg: "任务结束", Elapsed: time.Since(started)})
 		e.mu.Lock()
 		e.running = false
 		e.washChats = nil
@@ -296,7 +301,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		e.mu.Unlock()
 	}()
 
-	logging.SetRun(time.Now().Format("20060102T150405.000"))
+	logging.SetRun(started.Format("20060102T150405.000"))
 	logging.Event(logging.Line{Stage: "queue", Msg: fmt.Sprintf("任务开始：共 %d 个", len(queue)), Images: len(queue)})
 	onProgress(Progress{Done: 0, Total: len(queue)})
 	e.mu.Lock()
@@ -348,7 +353,7 @@ func (e *Engine) dispatchLimit(now time.Time) int {
 		seen[platform] = true
 		rows = append(rows, e.accountsFor(platform)...)
 	}
-	usable := ParallelSlots(rows, now, e.capNow())
+	usable := ParallelSlotsCaps(rows, now, e.caps())
 	if e.opts.Concurrency > 0 {
 		if usable > 0 {
 			return min(e.opts.Concurrency, usable)
@@ -385,7 +390,7 @@ func (e *Engine) pickIdleAccountExcept(platform string, preferred, avoid int64, 
 	var best *store.Browser
 	bestUsed := -1.0
 	for _, b := range e.accountsFor(platform) {
-		if b.ID == avoid || excluded[b.ID] || !openAccount(b, now, e.capNow()) {
+		if b.ID == avoid || excluded[b.ID] || !openAccount(b, now, e.capFor(platform)) {
 			continue
 		}
 		slot := accountSlot(all, b.ID)
@@ -549,7 +554,15 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Status = StatusFailed
 			return t
 		}
-		logging.Log.Warning("#%d 第 %d 次尝试失败: %s", t.Index, t.Attempts, err)
+		switched := ""
+		if kind == faultNone && t.Attempts < maxAttempts && e.rotateOnFailure(&t, time.Now()) {
+			switched = e.accountName(t.BrowserID)
+		}
+		if switched != "" {
+			logging.Log.Warning("#%d 第 %d 次尝试失败: %s，改用「%s」", t.Index, t.Attempts, err, switched)
+		} else {
+			logging.Log.Warning("#%d 第 %d 次尝试失败: %s", t.Index, t.Attempts, err)
+		}
 		if t.Attempts >= maxAttempts {
 			break
 		}
@@ -1404,9 +1417,16 @@ func (e *Engine) fetchViaDownload(ctx context.Context, rawURL string) ([]byte, e
 // saveResults 校验 + 去重 + 按日期目录落盘。
 func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) ([]string, error) {
 	t.matchedSavedResult = false
+	if e.opts.Fission && len(t.Results) > 0 {
+		t.matchedSavedResult = true
+		return nil, nil
+	}
 	var saved []string
 	batched := prefetchResults(strat, sess, results)
 	for i, r := range results {
+		if e.opts.Fission && len(saved) > 0 {
+			break
+		}
 		if err := ctx.Err(); err != nil {
 			return saved, err
 		}

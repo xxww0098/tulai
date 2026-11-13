@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-func TestBuiltinsContainOnlyWash(t *testing.T) {
+func TestBuiltinsContainOnlyDoubaoWash(t *testing.T) {
 	items := Builtins()
 	want := []Template{
-		{ID: IDWash, Label: "默认洗图", Body: DefaultWashPrompt, Kind: KindWash, Builtin: true},
 		{ID: IDDoubaoWash, Label: "豆包洗图", Body: DoubaoWashPrompt, Kind: KindWash, Builtin: true},
 	}
 	if len(items) != len(want) {
@@ -19,7 +18,7 @@ func TestBuiltinsContainOnlyWash(t *testing.T) {
 			t.Fatalf("builtins[%d] = %+v, want %+v", i, item, want[i])
 		}
 	}
-	for _, id := range []string{"oil", "art", "circle"} {
+	for _, id := range []string{"oil", "art", "circle", IDWash, IDDoubaoPixelWash} {
 		if _, ok := Builtin(id); ok {
 			t.Fatalf("retired builtin %q is still available", id)
 		}
@@ -46,8 +45,8 @@ func TestImportTextKeepsLinesAndBlankParagraphs(t *testing.T) {
 }
 
 func TestTemplateIsOnePromptAndLinesStaySplit(t *testing.T) {
-	wash, _ := Builtin(IDWash)
-	got := TaskPrompts(IDWash, wash.Body)
+	wash, _ := Builtin(IDDoubaoWash)
+	got := TaskPrompts(IDDoubaoWash, wash.Body)
 	if len(got) != 1 || got[0] != wash.Body || !strings.Contains(got[0], "\n") {
 		t.Fatalf("builtin was split: %#v", got)
 	}
@@ -55,31 +54,31 @@ func TestTemplateIsOnePromptAndLinesStaySplit(t *testing.T) {
 	if len(lines) != 2 || lines[0] != "画一只猫" || lines[1] != "画一条鱼" {
 		t.Fatalf("line mode: %#v", lines)
 	}
-	if TaskPrompts(IDWash, "  \n") != nil {
+	if TaskPrompts(IDDoubaoWash, "  \n") != nil {
 		t.Fatal("blank template should not send")
 	}
 }
 
 func TestUserCopyDoesNotReplaceBuiltin(t *testing.T) {
 	users := []UserPrompt{{
-		ID: "u1", Label: UniqueLabel("默认洗图", nil), Body: DefaultWashPrompt + "\n加一句", From: IDWash,
+		ID: "u1", Label: UniqueLabel("豆包洗图", nil), Body: DoubaoWashPrompt + "\n加一句", From: IDDoubaoWash,
 	}}
-	if users[0].Label != "默认洗图 副本" {
+	if users[0].Label != "豆包洗图 副本" {
 		t.Fatalf("label %q", users[0].Label)
 	}
-	wash, _ := Builtin(IDWash)
+	wash, _ := Builtin(IDDoubaoWash)
 	if strings.Contains(wash.Body, "加一句") {
 		t.Fatal("builtin was overwritten")
 	}
 	if NormalizePick("u1", users) != "u1" || NormalizePick("missing", users) != "" {
 		t.Fatal("pick normalization")
 	}
-	if LabelFor("u1", users) != "默认洗图 副本" {
+	if LabelFor("u1", users) != "豆包洗图 副本" {
 		t.Fatalf("label for user: %q", LabelFor("u1", users))
 	}
 	raw := FormatUser(users)
 	again := ParseUser(raw)
-	if len(again) != 1 || again[0].Body != users[0].Body || again[0].From != IDWash {
+	if len(again) != 1 || again[0].Body != users[0].Body || again[0].From != IDDoubaoWash {
 		t.Fatalf("round trip: %+v", again)
 	}
 	if ParseUser("{") != nil {
@@ -104,21 +103,21 @@ func TestPromptKindsKeepLegacyEntriesShared(t *testing.T) {
 }
 
 func TestDuplicateUserLabelGetsID(t *testing.T) {
-	users := []UserPrompt{{ID: "u1", Label: "默认洗图", Body: "自定义"}}
+	users := []UserPrompt{{ID: "u1", Label: "豆包洗图", Body: "自定义"}}
 	labels := Labels(users)
-	if labels[0] != LabelCustom || labels[1] != "默认洗图" {
+	if labels[0] != LabelCustom || labels[1] != "豆包洗图" {
 		t.Fatalf("labels: %#v", labels)
 	}
 	found := false
 	for _, label := range labels {
-		if label == "默认洗图（u1）" {
+		if label == "豆包洗图（u1）" {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("user label not disambiguated: %#v", labels)
 	}
-	if IDForLabel("默认洗图（u1）", users) != "u1" || IDForLabel("没有", users) != "" {
+	if IDForLabel("豆包洗图（u1）", users) != "u1" || IDForLabel("没有", users) != "" {
 		t.Fatal("id for label")
 	}
 }

@@ -14,6 +14,7 @@ func TestRotatorSlicesByDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer r.Close()
 	if _, err := r.Write([]byte("day3 行\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -54,9 +55,11 @@ func TestRotatorPrunesOldSlicesOnly(t *testing.T) {
 		}
 	}
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.Local)
-	if _, err := newRotator(dir, "tulai", 7, func() time.Time { return now }); err != nil {
+	r, err := newRotator(dir, "tulai", 7, func() time.Time { return now })
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer r.Close()
 	for name, want := range files {
 		_, err := os.Stat(filepath.Join(dir, name))
 		if want && err != nil {
@@ -73,6 +76,7 @@ func TestOpenWritesToTodaysSlice(t *testing.T) {
 	if err := Open(dir); err != nil {
 		t.Fatal(err)
 	}
+	defer Close()
 	Log.Info("按天切片")
 	data, err := os.ReadFile(Path())
 	if err != nil {

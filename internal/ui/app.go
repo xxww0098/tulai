@@ -83,55 +83,63 @@ type App struct {
 	camoufoxReady    bool
 
 	// 任务设置（与 settings 表一一对应）
-	platDoubao       bool
-	platQianwen      bool
-	platAntigravity  bool
-	platChatGPT      bool
-	chatGPTModel     string
-	agyBin           string
-	agyHomeRoot      string
-	agyModel         string
-	agyTimeoutMin    float64
-	agySaved         string
-	agyLogin         *agyLoginState
-	agyChooser       *agyChooserState
-	agyUsageMu       sync.Mutex
-	agyUsage         map[int64]agyUsageSlot
-	agyUsageForce    map[int64]bool
-	agyUsageStop     context.CancelFunc
-	agyUsageWake     chan struct{}
-	agyUsageSync     bool
-	agyUsageFetch    func(context.Context, string, string) (agy.GeminiUsage, error)
-	agyUsageBusy     func(int64) bool
-	sendStrategy     string
-	concurrencyAuto  bool
-	retryCount       float64
-	sendWait         float64
-	dailyCap         float64
-	riskyWords       string
-	pickFile         func() (string, error)
-	waitBefore       float64
-	waitResult       bool
-	waitResultS      float64
-	taskSwitch       bool
-	switchCount      float64
-	startBrowserIdx  float64
-	outputPath       string
-	genAutoNumber    bool
-	washAutoNumber   bool
-	numPrefix        string
-	numStart         float64
-	numWidth         float64
-	outputSizeMode   string
-	outputSizePreset string
-	outputRatio      string
-	outputWidth      string
-	outputHeight     string
-	outputCrop       bool
-	removeWatermark  bool
-	downloadConc     float64
-	downloadRetries  float64
-	downloadRateKB   float64
+	platDoubao         bool
+	platQianwen        bool
+	platAntigravity    bool
+	platChatGPT        bool
+	chatGPTModel       string
+	agyBin             string
+	agyHomeRoot        string
+	agyModel           string
+	agyTimeoutMin      float64
+	agySaved           string
+	agyLogin           *agyLoginState
+	agyChooser         *agyChooserState
+	agyUsageMu         sync.Mutex
+	agyUsage           map[int64]agyUsageSlot
+	agyUsageForce      map[int64]bool
+	agyUsageStop       context.CancelFunc
+	agyUsageWake       chan struct{}
+	agyUsageSync       bool
+	agyUsageFetch      func(context.Context, string, string) (agy.GeminiUsage, error)
+	agyUsageBusy       func(int64) bool
+	sendStrategy       string
+	concurrencyAuto    bool
+	retryCount         float64
+	sendWait           float64
+	dailyCap           float64 // 豆包每日上限；旧配置的全局值也读到这里
+	dailyCapSet        bool
+	dailyCapQianwen    float64
+	dailyCapQianwenSet bool
+	dailyCapAgy        float64
+	dailyCapAgySet     bool
+	dailyCapChatGPT    float64
+	dailyCapChatGPTSet bool
+	riskyWords         string
+	pickFile           func() (string, error)
+	waitBefore         float64
+	waitResult         bool
+	waitResultS        float64
+	taskSwitch         bool
+	switchCount        float64
+	startBrowserIdx    float64
+	outputPath         string
+	genAutoNumber      bool
+	washAutoNumber     bool
+	numPrefix          string
+	numStart           float64
+	numWidth           float64
+	outputSizeMode     string
+	outputSizePreset   string
+	outputRatio        string
+	outputWidth        string
+	outputHeight       string
+	outputCrop         bool
+	washStyle          string
+	removeWatermark    bool
+	downloadConc       float64
+	downloadRetries    float64
+	downloadRateKB     float64
 
 	// 下载页
 	dlURLs           string
@@ -203,12 +211,17 @@ type App struct {
 	look             tokens
 	flowPin          int
 	skipImages       bool
+	galleryOn        bool
+	galleryTitle     string
+	gallerySelected  map[string]bool
+	galleryDrag      *galleryDragState
 	previewOn        bool
 	previewPath      string
 	previewBmp       *ui.Bitmap
-	statePage        int       // App 字段里装的是哪一页：pageHome 或 pageWash
-	parked           pageState // 另一页的图片、提示词和进度
-	runPage          int       // 引擎这一批属于哪一页
+	statePage        int               // App 字段里装的是哪一页的工作区
+	parked           map[int]pageState // 其他工作区的图片、提示词和进度
+	fissionRetryBase []tasks.Task      // 重试时保留同一组中未重试的结果
+	runPage          int               // 引擎这一批属于哪一页
 
 	// 验证码设置
 	captchaEnabled bool
@@ -257,23 +270,28 @@ type App struct {
 	extTokenNote     string
 
 	// 队列与日志
-	queue         []tasks.Task
-	queueTbl      ui.ListState
-	logs          []logging.Entry
-	progress      float64
-	progText      string
-	running       bool
-	useRunView    bool
-	genSession    int64
-	washSession   int64
-	workspacePage string // 上次停留的生图或洗图，gen / wash
-	historyOpen   bool
-	genList       ui.ListState
-	washList      ui.ListState
-	stamps        map[string]int64
+	queue          []tasks.Task
+	queueTbl       ui.ListState
+	logs           []logging.Entry
+	progress       float64
+	progText       string
+	running        bool
+	useRunView     bool
+	genSession     int64
+	washSession    int64
+	fissionSession int64
+	workspacePage  string // 上次停留的图片生成模式
+	historyOpen    bool
+	genList        ui.ListState
+	washList       ui.ListState
+	fissionList    ui.ListState
+	stamps         map[string]int64
 
 	tab          int
 	settingsTab  int
+	navCollapsed bool
+	navManual    bool
+	logOpen      bool
 	tabSeen      int
 	tabTracked   bool
 	tabDir       int
@@ -337,9 +355,12 @@ type App struct {
 }
 
 type sourceImage struct {
-	Path  string
-	Thumb *ui.Bitmap
-	Hash  string
+	Path       string
+	Thumb      *ui.Bitmap
+	Hash       string
+	Washed     bool
+	Washing    bool
+	WashOutput string
 }
 
 // Run 启动应用（主 goroutine）。
@@ -384,7 +405,13 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 	defer a.stopAgyUsage()
 	loginCtx, loginStop := context.WithCancel(context.Background())
 	defer loginStop()
-	mygo.App.SetMenu(a.installMenu())
+	// 窗口里不要菜单栏：检查更新和帮助在侧栏与设置页里，WebView 自己处理编辑快捷键。
+	// macOS 的菜单栏在屏幕顶部，没有它连 Cmd+Q 和复制粘贴都会失效，所以只在那儿留最少的菜单。
+	if runtime.GOOS == "darwin" {
+		mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{{Role: mygo.RoleAppMenu}, {Role: mygo.RoleEditMenu}}))
+	} else {
+		mygo.App.SetMenu(nil)
+	}
 	a.updateStop = make(chan struct{})
 	offQuit := mygo.App.OnQuit(func() {
 		a.closeBrowserDrawer()
@@ -504,7 +531,18 @@ func (a *App) loadSettings() {
 	a.concurrencyAuto = s.GetInt("concurrency") != 1
 	a.retryCount = float64(clampInt(s.GetInt("retry_count"), 0, 20))
 	a.sendWait = float64(clampInt(s.GetInt("send_wait_seconds"), 0, 600))
-	a.dailyCap = float64(clampInt(s.GetInt("daily_cap"), 1, 200))
+	a.dailyCap = float64(clampInt(s.GetInt("daily_cap"), 0, 200))
+	a.dailyCapSet = true
+	capOr := func(key string, fallback float64) (float64, bool) {
+		if strings.TrimSpace(s.Get(key)) == "" {
+			// 旧配置没有分供应商字段时，按当时的全局值初始化一次，之后各自独立。
+			return fallback, true
+		}
+		return float64(clampInt(s.GetInt(key), 0, 200)), true
+	}
+	a.dailyCapQianwen, a.dailyCapQianwenSet = capOr("daily_cap_qianwen", a.dailyCap)
+	a.dailyCapAgy, a.dailyCapAgySet = capOr("daily_cap_agy", a.dailyCap)
+	a.dailyCapChatGPT, a.dailyCapChatGPTSet = capOr("daily_cap_chatgpt", a.dailyCap)
 	a.riskyWords = s.Get("risky_words")
 	if strings.TrimSpace(a.riskyWords) == "" {
 		a.riskyWords = tasks.RiskySetting()
@@ -530,6 +568,7 @@ func (a *App) loadSettings() {
 		a.numWidth = float64(clampInt(s.GetInt("number_width"), 0, 16))
 	}
 	a.loadOutputSize()
+	a.loadWashStyle()
 	a.dlURLs = s.Get("download_urls")
 	a.dlDir = strings.TrimSpace(s.Get("download_dir"))
 	a.dlDepth = float64(clampInt(s.GetInt("download_depth"), 1, 32767))
@@ -560,7 +599,7 @@ func (a *App) loadSettings() {
 		oldPick := strings.TrimSpace(a.promptPick)
 		a.promptPick = prompts.NormalizePick(a.promptPick, a.userPrompts)
 		// 下架模板的正文仍在工作区，保持整段发送。
-		if a.promptPick == "" && (oldPick == "oil" || oldPick == "art" || oldPick == "circle") {
+		if a.promptPick == "" && (oldPick == "oil" || oldPick == "art" || oldPick == "circle" || oldPick == prompts.IDWash || oldPick == prompts.IDDoubaoPixelWash) {
 			a.promptPick = detachedPromptID
 		}
 	}
@@ -604,7 +643,7 @@ func (a *App) loadSettings() {
 		}
 		wash.sources = append(wash.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
 	}
-	a.parked = wash
+	a.parked = map[int]pageState{pageWash: wash, pageFission: {srcSel: -1, prompts: DefaultFissionPrompt}}
 	a.loadDedupSettings(s)
 	a.autoCheck = update.AutoOn(s.Get(update.KeyAutoCheck))
 	a.updateMirror = strings.TrimSpace(s.Get(update.KeyMirror))
@@ -622,6 +661,7 @@ func (a *App) loadSettings() {
 	}
 	a.restoreWorkspace(pageHome)
 	a.restoreWorkspace(pageWash)
+	a.restoreWorkspace(pageFission)
 	a.onPage(pageHome, func() {
 		a.stageTab = s.GetInt("gen_stage")
 		a.stagePicked = s.Get("gen_stage_picked") == "1"
@@ -630,14 +670,23 @@ func (a *App) loadSettings() {
 		// 只升级未经修改的旧默认，保留用户改过的内容。
 		if strings.TrimSpace(a.prompts) == "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变" {
 			a.prompts = DefaultWashPrompt
+		} else if prompts.SameText(a.prompts, prompts.LegacyDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PreviousDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.ReviewedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PixelReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FrameReviewDoubaoWashPrompt) {
+			a.prompts = prompts.DoubaoWashPrompt
 		}
 		a.stageTab = s.GetInt("wash_stage")
 		a.stagePicked = s.Get("wash_stage_picked") == "1"
+	})
+	a.onPage(pageFission, func() {
+		a.stageTab = s.GetInt("fission_stage")
+		a.stagePicked = s.Get("fission_stage_picked") == "1"
 	})
 	a.workspacePage = store.PageGen
 	if s.Get("workspace_page") == store.PageWash {
 		a.tab = pageWash
 		a.workspacePage = store.PageWash
+	} else if s.Get("workspace_page") == store.PageFission {
+		a.tab = pageFission
+		a.workspacePage = store.PageFission
 	}
 	a.loadDownloadRecords()
 	a.syncPage()
@@ -660,6 +709,13 @@ func (a *App) saveSettings() {
 	s.SetInt("retry_count", int(a.retryCount))
 	s.SetInt("send_wait_seconds", int(a.sendWait))
 	s.SetInt("daily_cap", a.shownDailyCap())
+	s.SetInt("daily_cap_qianwen", a.shownDailyCapFor("千问"))
+	s.SetInt("daily_cap_agy", a.shownDailyCapFor(agy.Platform))
+	s.SetInt("daily_cap_chatgpt", a.shownDailyCapFor("ChatGPT"))
+	a.dailyCapSet = true
+	a.dailyCapQianwenSet = true
+	a.dailyCapAgySet = true
+	a.dailyCapChatGPTSet = true
 	words := strings.TrimSpace(a.riskyWords)
 	if words == "" {
 		words = tasks.RiskySetting()
@@ -678,6 +734,7 @@ func (a *App) saveSettings() {
 	s.SetInt("number_start", clampInt(int(a.numStart), 0, 9_000_000_000_000_000))
 	s.SetInt("number_width", clampInt(int(a.numWidth), 0, 16))
 	a.saveOutputSize()
+	a.saveWashStyle()
 	s.Set("download_urls", redactQzoneURLs(a.dlURLs))
 	s.Set("download_dir", strings.TrimSpace(a.dlDir))
 	s.SetInt("download_depth", clampInt(int(a.dlDepth), 1, 32767))
@@ -695,14 +752,16 @@ func (a *App) saveSettings() {
 	a.noteWorkspacePage()
 	a.saveImageEditSettings()
 	a.savePromptParts()
-	if a.workspacePage == store.PageGen || a.workspacePage == store.PageWash {
+	if a.workspacePage == store.PageGen || a.workspacePage == store.PageWash || a.workspacePage == store.PageFission {
 		s.Set("workspace_page", a.workspacePage)
 	}
-	gen, wash := a.stateOf(pageHome), a.stateOf(pageWash)
+	gen, wash, fission := a.stateOf(pageHome), a.stateOf(pageWash), a.stateOf(pageFission)
 	s.SetInt("gen_stage", gen.stageTab)
 	s.SetInt("gen_stage_picked", boolInt(gen.stagePicked))
 	s.SetInt("wash_stage", wash.stageTab)
 	s.SetInt("wash_stage_picked", boolInt(wash.stagePicked))
+	s.SetInt("fission_stage", fission.stageTab)
+	s.SetInt("fission_stage_picked", boolInt(fission.stagePicked))
 	s.Set("prompts", gen.prompts)
 	s.Set("wash_prompt", strings.TrimSpace(wash.prompts))
 	s.Set("wash_images", joinPaths(sourcePaths(wash.sources)))
@@ -729,6 +788,7 @@ func (a *App) saveSettings() {
 	a.persistUpdatePrefs()
 	a.persistWorkspace(pageHome)
 	a.persistWorkspace(pageWash)
+	a.persistWorkspace(pageFission)
 }
 
 func (a *App) pushProxy() {
@@ -771,6 +831,7 @@ func (a *App) captchaConfig() captcha.Config {
 // view 主视图。向导盖住全部页面；否则是出图、浏览器、提示词或设置。
 // 向导和主界面之间淡入，页面切换沿侧栏方向轻移；页内状态不变。
 func (a *App) view(c *ui.Context) {
+	c.SetZoom(interfaceZoom)
 	a.flushUIUpdates()
 	a.look = applyWorkbenchTheme(c)
 	a.updateBanner(c)
@@ -783,20 +844,23 @@ func (a *App) view(c *ui.Context) {
 	a.noteTab()
 	a.syncPage()
 	ui.Column(c.Key("screen-main")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
+		a.topbar(c)
 		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 			a.navRail(c)
 			pageKey := a.tab
-			if pageKey == pageWash {
+			if pageKey == pageWash || pageKey == pageFission {
 				pageKey = pageHome
 			}
 			page := ui.Column(c.Key(fmt.Sprintf("page-%d", pageKey))).Grow(1).MinWidth(0).MinHeight(0).Transition(a.pageMotion())
 			if a.tab != pageRename && a.tab != pageImageEdit {
-				page.Padding(12, pagePadX, 12, pagePadX)
+				page.Padding(6, pagePadX, 6, pagePadX)
 			}
 			page.Children(func() {
 				switch a.tab {
 				case pageWash:
 					a.washPage(c)
+				case pageFission:
+					a.fissionPage(c)
 				case pageDedup:
 					a.dedupPage(c)
 				case pageBrowser:
@@ -917,7 +981,7 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		Prompts:             prompts,
 		PromptSuffix:        a.promptSuffix,
 		UseSuffix:           a.useSuffix,
-		StructuredPrompt:    a.currentPromptParts().text(),
+		StructuredPrompt:    a.promptExtras(a.statePage, a.currentPromptParts()),
 		Images:              paths,
 		Concurrency:         a.taskConcurrency(),
 		RetryCount:          int(a.retryCount),
@@ -935,6 +999,7 @@ func (a *App) taskOptions(platforms, prompts, paths []string) tasks.Options {
 		DownloadRetries:     int(a.downloadRetries),
 		DownloadRateKBps:    int(a.downloadRateKB),
 		DailyCap:            a.shownDailyCap(),
+		DailyCaps:           a.dailyCaps(),
 		RiskyWords:          tasks.ParseWords(a.riskyWords),
 		AgyBin:              a.agyBin,
 		AgyModel:            a.agyModel,
@@ -968,7 +1033,7 @@ func (a *App) addImages() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
 			Parent:   window,
 			Title:    "选择源图片",
-			Multiple: true,
+			Multiple: page != pageFission,
 			Filters:  []mygo.FileFilter{{Name: "图片", Extensions: []string{"png", "jpg", "jpeg", "webp", "gif"}}},
 		})
 		if err != nil {

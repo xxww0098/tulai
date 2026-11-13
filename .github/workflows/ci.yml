@@ -147,8 +147,32 @@ jobs:
       - name: Account isolation, persistence and page operations
         run: go test -count=1 -timeout 30m -p 1 ${{ matrix.suite.packages }}
 
-  package:
+  camoufox-bundle:
     needs: guard
+    name: prepare Windows Camoufox runtime
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Prepare pinned Node and launcher dependencies
+        run: go run ./cmd/tulai-camoufox-bundle
+      - name: Verify bundled runtime on Windows
+        run: go test -tags=tulai_camoufox_bundle -run '^TestEmbeddedWindowsRuntimeLoadsWithoutNetwork$' -count=1 ./internal/camoufox
+      - uses: actions/upload-artifact@v7
+        with:
+          name: camoufox-runtime-windows-amd64
+          if-no-files-found: error
+          retention-days: 1
+          path: internal/camoufox/bundled/windows-amd64.zip
+
+  package:
+    needs: [guard, camoufox-bundle]
     name: package windows
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -160,9 +184,14 @@ jobs:
           cache: true
       - name: Install NSIS
         run: sudo apt-get update && sudo apt-get install -y nsis
+      - uses: actions/download-artifact@v7
+        with:
+          name: camoufox-runtime-windows-amd64
+          path: internal/camoufox/bundled
       - name: Package
         env:
           CGO_ENABLED: "0"
+          GOFLAGS: "-tags=tulai_camoufox_bundle"
           MYGO_UPDATER_PRIVATE_KEY: ${{ github.ref_type == 'tag' && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag && -z "$MYGO_UPDATER_PRIVATE_KEY" ]]; then

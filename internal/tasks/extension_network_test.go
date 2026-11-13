@@ -3,6 +3,8 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,65 @@ import (
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
+
+func TestBoundExtensionNetworkLogsIdentifyAccountAndTask(t *testing.T) {
+	if err := logging.Open(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	defer logging.Close()
+	st := openRotateStore(t)
+	first := addNamed(t, st, "豆包", "甲")
+	second := addNamed(t, st, "豆包", "乙")
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	port := freePort(t)
+	st.Set(extbridge.SettingExtPort, port)
+	st.Set(extbridge.SettingExtToken, "test-token")
+	e := NewEngine(st, nil, nil, t.TempDir())
+	defer e.CloseSessions()
+	if _, err := e.extensionServer(); err != nil {
+		t.Fatal(err)
+	}
+	loggedIn := true
+	addr := "127.0.0.1:" + port
+	firstConn := dialExtensionHello(t, addr, "test-token", extbridge.PlatformDoubao, e.extensionAccountKey(first.ID), &loggedIn)
+	defer firstConn.Close()
+	secondConn := dialExtensionHello(t, addr, "test-token", extbridge.PlatformDoubao, e.extensionAccountKey(second.ID), &loggedIn)
+	defer secondConn.Close()
+	raw, _ := json.Marshal(map[string]any{"name": "network", "status": 429, "message": "private-response-text"})
+	for i, conn := range []struct {
+		name string
+		send func(extbridge.Envelope) error
+	}{
+		{"first", func(env extbridge.Envelope) error { return writeClient(firstConn, env) }},
+		{"second", func(env extbridge.Envelope) error { return writeClient(secondConn, env) }},
+	} {
+		env := extbridge.Envelope{V: extbridge.Version, ID: conn.name, Type: extbridge.TypeEvent, TS: time.Now().UnixMilli(), Platform: extbridge.PlatformDoubao, TaskID: fmt.Sprint(i + 7), Payload: raw}
+		if err := conn.send(env); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(logging.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		firstFound, secondFound := false, false
+		for _, line := range strings.Split(text, "\n") {
+			firstFound = firstFound || strings.Contains(line, "[豆包/甲:") && strings.Contains(line, "task_id=7") && strings.Contains(line, "HTTP 429")
+			secondFound = secondFound || strings.Contains(line, "[豆包/乙:") && strings.Contains(line, "task_id=8") && strings.Contains(line, "HTTP 429")
+		}
+		if strings.Contains(text, "private-response-text") {
+			t.Fatal("network response text must remain private")
+		}
+		if firstFound && secondFound {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("network events did not retain the correct account and task")
+}
 
 func TestExtensionNetworkEventsOnlyCoolMatchingAccount(t *testing.T) {
 	st := openTaskStore(t)

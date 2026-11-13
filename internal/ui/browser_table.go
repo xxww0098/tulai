@@ -35,7 +35,7 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 	if w >= 1000 {
 		columns = append(columns, ui.TableColumn{ID: "usage", Title: "今日用量", Width: 88, Fixed: true})
 	}
-	columns = append(columns, ui.TableColumn{ID: "actions", Title: "操作", Width: 146, Fixed: true})
+	columns = append(columns, ui.TableColumn{ID: "actions", Title: "操作", Width: 76, Fixed: true})
 	a.browserList.Selected = &a.browserSel
 	a.browserList.Selection = &a.browserChecked
 	a.browserList.Key = func(i int) any { return a.browserRows[i].ID }
@@ -102,25 +102,32 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 					ui.Text(c, protocol).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
 				})
 			case "usage":
-				ui.Text(c, fmt.Sprintf("%d / %d", b.UsedToday(c.Now()), a.shownDailyCap())).FontSize(12).FontFeatures("tnum").SingleLine()
+				used, capN := b.UsedToday(c.Now()), a.shownDailyCapFor(b.Platform)
+				label := fmt.Sprintf("%d / 不限", used)
+				if capN > 0 {
+					label = fmt.Sprintf("%d / %d", used, capN)
+				}
+				ui.Text(c, label).FontSize(12).FontFeatures("tnum").SingleLine()
 			case "actions":
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 					label := "启动"
+					ico := iconPlay
+					activeAct := false
 					if b.IsRunning {
 						label = "停止"
+						ico = iconStop
+						activeAct = true
 					}
 					if op, pending := a.browserPending[b.ID]; pending {
+						ico = iconClock
 						label = "启动中"
 						if op.stopping {
 							label = "停止中"
 						}
 					}
-					button := ui.Button(c, label).Width(62).Height(30).Padding(0, 8).FontSize(12).Label(label + " " + b.Name).
-						Disabled(a.running || len(a.browserPending) > 0 || active[b.ID] || b.ExtAccount != "")
-					if !b.IsRunning {
-						button.Background(palette.Accent.Alpha(0.10)).TextColor(actionInk)
-					}
-					button.OnClick(func() {
+					disabled := a.running || len(a.browserPending) > 0 || active[b.ID] || b.ExtAccount != ""
+					uiIconBtn(c, "act", label+" "+b.Name, label, ico, 22, !b.IsRunning && !disabled && activeAct == false, false, a.look).
+						Disabled(disabled).OnClick(func() {
 						a.selectBrowserID(b.ID)
 						if b.IsRunning {
 							a.stopBrowser()
@@ -128,7 +135,8 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 							a.launchBrowser()
 						}
 					})
-					ui.Button(c, "配置").Width(56).Height(30).FontSize(12).Label("配置 " + b.Name).OnClick(func() { a.selectBrowserID(b.ID) })
+					uiIconBtn(c, "cfg", "配置 "+b.Name, "配置代理与参数", iconSliders, 22, false, false, a.look).
+						OnClick(func() { a.selectBrowserID(b.ID) })
 				})
 			}
 		}).Grow(1).MinHeight(120).FillWidth().Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(8).Label("浏览器环境列表")

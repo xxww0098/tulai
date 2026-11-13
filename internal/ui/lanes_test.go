@@ -61,7 +61,7 @@ func TestLaneHeaderAndIdlePanel(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
 	tt.Advance(500 * time.Millisecond)
-	for _, label := range []string{"豆包主力", "空闲", "1 个账号空闲", "今日", "0/100"} {
+	for _, label := range []string{"豆包主力", "空闲", "1 个账号空闲", "今日", "0/不限"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
@@ -119,13 +119,13 @@ func TestDailyResultsRefreshAtMidnight(t *testing.T) {
 	b.DayCount, b.DaySuccess, b.DayFailed = 2, 1, 1
 	a := &App{platformAuto: true, browserRows: []store.Browser{b}}
 	tt := ui.NewTester(a.view, 1280, 900)
-	if !tt.HasText("2/100") || !tt.HasText("今日成功 1") || !tt.HasText("今日失败 1") {
+	if !tt.HasText("2/不限") || !tt.HasText("今日成功 1") || !tt.HasText("今日失败 1") {
 		t.Fatalf("before midnight: %v", tt.Texts())
 	}
 	now := tt.Now()
 	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 	tt.Advance(midnight.Sub(now))
-	if !tt.HasText("0/100") || !tt.HasText("今日成功 0") || !tt.HasText("今日失败 0") {
+	if !tt.HasText("0/不限") || !tt.HasText("今日成功 0") || !tt.HasText("今日失败 0") {
 		t.Fatalf("at midnight: %v", tt.Texts())
 	}
 }
@@ -163,7 +163,7 @@ func TestRunButtonStaysCompactAndCrossfadesToStop(t *testing.T) {
 	}
 	day := time.Now().Format("2006-01-02")
 	saveLine := "保存到 " + filepath.Join("图片/输出结果", "生图", day)
-	for _, label := range []string{"1 张图", "图片/输出结果", "1 个账号空闲"} {
+	for _, label := range []string{"1 张图", filepath.Clean("图片/输出结果"), "1 个账号空闲"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
@@ -257,9 +257,6 @@ func TestBlockedAccountsDisableStart(t *testing.T) {
 	}
 	if a.running || a.wizardOn {
 		t.Fatal("disabled start still ran")
-	}
-	if !tt.HasText("还没有可用账号。先去设置登录，再开始出图。") {
-		t.Fatal("logged-out tab should still say to log in")
 	}
 	left, okL := tt.Find("车道豆包没登录")
 	if !okL {
@@ -535,14 +532,14 @@ func TestBrowserProviderTableKeepsTaskAndActionsReadable(t *testing.T) {
 				assertVisible(t, tt, platform+" 账号", float32(size[0]), float32(size[1]))
 				row := assertVisible(t, tt, "车道设计主力", float32(size[0]), float32(size[1]))
 				task := assertVisible(t, tt, "生成春日海报", float32(size[0]), float32(size[1]))
-				if row.H < 44 || row.H > 56 || (size[0] < 1150 && (task.Y < row.Y+18 || task.Y+task.H > row.Y+row.H)) {
+				if row.H < 34*interfaceZoom-1 || row.H > 42*interfaceZoom+1 || (float32(size[0])/interfaceZoom < 1150 && (task.Y < row.Y+14*interfaceZoom || task.Y+task.H > row.Y+row.H)) {
 					t.Fatalf("账号信息与当前任务排版错误: row=%v task=%v", row, task)
 				}
 				outRow := assertVisible(t, tt, "车道待登录账号", float32(size[0]), float32(size[1]))
 				view := assertVisible(t, tt, "查看浏览器 待登录账号", float32(size[0]), float32(size[1]))
 				login := assertVisible(t, tt, "去重登 待登录账号", float32(size[0]), float32(size[1]))
 				pen := assertVisible(t, tt, "改名 待登录账号", float32(size[0]), float32(size[1]))
-				if view.H < 28 || login.H < 28 || pen.H < 28 || view.X+view.W > login.X || login.X+login.W > pen.X || pen.X+pen.W > outRow.X+outRow.W+1 {
+				if view.H < 20*interfaceZoom-1 || login.H < 20*interfaceZoom-1 || pen.H < 20*interfaceZoom-1 || view.X+view.W > login.X || login.X+login.W > pen.X || pen.X+pen.W > outRow.X+outRow.W+1 {
 					t.Fatalf("操作按钮被挤压或重叠: view=%v login=%v pen=%v row=%v", view, login, pen, outRow)
 				}
 			})

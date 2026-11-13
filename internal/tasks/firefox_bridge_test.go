@@ -3,8 +3,10 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,6 +131,60 @@ func TestBoundFirefoxWaitsForPageBeforeSending(t *testing.T) {
 	defer cancel()
 	if err := waitBoundPage(ctx, sess, "1", "豆包"); err != nil || calls != 3 {
 		t.Fatalf("wait err=%v, calls=%d", err, calls)
+	}
+}
+
+func TestBoundFirefoxRetriesReadinessTimeoutButStopsOnOtherErrors(t *testing.T) {
+	for _, tc := range []struct {
+		code      string
+		wantCalls int
+		wantError bool
+	}{
+		{extbridge.ETimeout, 2, false},
+		{extbridge.ENotConnected, 1, true},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			calls := 0
+			sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+				calls++
+				if calls == 1 {
+					return ackFail(env, tc.code, "not ready")
+				}
+				return ackOK(env, nil)
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			err := waitBoundPage(ctx, sess, "1", "豆包")
+			if (err != nil) != tc.wantError || calls != tc.wantCalls {
+				t.Fatalf("calls=%d err=%v", calls, err)
+			}
+		})
+	}
+}
+
+func TestBoundFirefoxRetriesWhenReadinessProbeActuallyTimesOut(t *testing.T) {
+	var calls atomic.Int32
+	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		if calls.Add(1) == 1 {
+			time.Sleep(3200 * time.Millisecond)
+		}
+		return ackOK(env, nil)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := waitBoundPage(ctx, sess, "1", "豆包"); err != nil || calls.Load() != 2 {
+		t.Fatalf("calls=%d err=%v", calls.Load(), err)
+	}
+}
+
+func TestBoundFirefoxReadinessRetryHonorsCancellation(t *testing.T) {
+	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		return ackFail(env, extbridge.ETimeout, "not ready")
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := waitBoundPage(ctx, sess, "1", "豆包"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline exceeded, got %v", err)
 	}
 }
 

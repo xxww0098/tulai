@@ -274,6 +274,58 @@ func TestBusyAccountProbeCannotLogOut(t *testing.T) {
 	}
 }
 
+func TestFirstProbeBeforeLoginStaysQuiet(t *testing.T) {
+	st := openRotateStore(t)
+	row := addNamed(t, st, "豆包", "豆包1")
+	e := NewEngine(st, nil, nil, "")
+	var focused int64
+	e.SetLoginFocus(func(_ context.Context, b store.Browser) error {
+		focused = b.ID
+		return nil
+	})
+
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	held := browserByID(t, st, row.ID)
+	if held.IsLoggedIn || held.Health == store.HealthExhausted || focused != 0 {
+		t.Fatalf("an unfinished first login was treated as a logout: %+v focus=%d", held, focused)
+	}
+	if _, _, ok := e.Attention(); ok {
+		t.Fatal("an unfinished first login should not raise a relogin banner")
+	}
+
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateIn)
+	if held = browserByID(t, st, row.ID); !held.IsLoggedIn {
+		t.Fatalf("login confirmation = %+v", held)
+	}
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	text, id, ok := e.Attention()
+	if !ok || id != row.ID || text != "豆包1 需要重新扫码登录" {
+		t.Fatalf("a confirmed account should report a real logout: %q id=%d ok=%v", text, id, ok)
+	}
+}
+
+func TestConfirmedLoginClearsStaleAttention(t *testing.T) {
+	st := openRotateStore(t)
+	row := addNamed(t, st, "豆包", "豆包1")
+	st.UpdateBrowser(row.ID, true, true)
+	e := NewEngine(st, nil, nil, "")
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	if _, _, ok := e.Attention(); !ok {
+		t.Fatal("real logout should raise attention")
+	}
+
+	st.ConfirmLogin(row.ID)
+	e.NoteLoginConfirmed(row.ID)
+	if text, _, ok := e.Attention(); ok {
+		t.Fatalf("stale relogin banner remained after login: %q", text)
+	}
+
+	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	if text, _, ok := e.Attention(); !ok || text != "豆包1 需要重新扫码登录" {
+		t.Fatalf("logout after a confirmed login was lost: %q ok=%v", text, ok)
+	}
+}
+
 func TestLogoutProbeRestoresWithoutManualReset(t *testing.T) {
 	st := openRotateStore(t)
 	row := addNamed(t, st, "豆包", "账号2")

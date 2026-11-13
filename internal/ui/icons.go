@@ -149,8 +149,31 @@ var (
 		<path d="M14 2v6h6"/>
 		<circle cx="9" cy="12" r="1.3"/>
 		<path d="m20 17-3.5-3.5L9 21"/>`)
-	iconChevronLeft = mustIcon(`<path d="m15 18-6-6 6-6"/>`)
-	iconStop        = mustIcon(`<rect x="6" y="6" width="12" height="12" rx="2"/>`)
-	iconChevronsLR  = mustIcon(`
+	iconChevronLeft  = mustIcon(`<path d="m15 18-6-6 6-6"/>`)
+	iconChevronUp    = mustIcon(`<path d="m18 15-6-6-6 6"/>`)
+	iconStop         = mustIcon(`<rect x="6" y="6" width="12" height="12" rx="2"/>`)
+	iconChevronsLR   = mustIcon(`
 		<path d="m9 7-5 5 5 5M15 7l5 5-5 5"/>`)
+	iconPanelLeft    = mustIcon(`
+		<rect width="18" height="18" x="3" y="3" rx="2"/>
+		<path d="M9 3v18"/>`)
+	iconEye          = mustIcon(`
+		<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+		<circle cx="12" cy="12" r="3"/>`)
+	iconInfo         = mustIcon(`
+		<circle cx="12" cy="12" r="10"/>
+		<path d="M12 16v-4M12 8h.01"/>`)
+	iconKey          = mustIcon(`
+		<circle cx="7.5" cy="15.5" r="5.5"/>
+		<path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>`)
+	iconExternalLink = mustIcon(`
+		<path d="M15 3h6v6M10 14 21 3"/>
+		<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`)
+	iconFilter       = mustIcon(`<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>`)
+	iconZoomIn       = mustIcon(`
+		<circle cx="11" cy="11" r="8"/>
+		<path d="m21 21-4.3-4.3M11 8v6M8 11h6"/>`)
+	iconZoomOut      = mustIcon(`
+		<circle cx="11" cy="11" r="8"/>
+		<path d="m21 21-4.3-4.3M8 11h6"/>`)
 )

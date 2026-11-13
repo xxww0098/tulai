@@ -64,15 +64,15 @@ func (a *App) liveParallel() int {
 }
 
 func (a *App) accountBoard(now time.Time) tasks.Board {
-	capN := 20
+	caps := tasks.FlatCap(20)
 	if a != nil {
-		capN = a.shownDailyCap()
+		caps = tasks.CapsFrom(a.dailyCaps(), a.shownDailyCap())
 	}
 	var board tasks.Board
 	if a != nil && a.engine != nil {
-		board = a.engine.AccountBoard(now, capN)
+		board = a.engine.AccountBoardCaps(now, caps)
 	} else {
-		board = tasks.BoardFrom(a.laneBrowsers(), a.queueItems(), capN, now)
+		board = tasks.BoardFromCaps(a.laneBrowsers(), a.queueItems(), caps, now)
 	}
 	return a.attachAgyLanes(board)
 }
@@ -197,16 +197,15 @@ func (a *App) laneHeader(c *ui.Context) {
 	default:
 		line = fmt.Sprintf("%d 个账号空闲", idle)
 	}
-	row := ui.Row(c.Key("lane-title")).FillWidth().AlignItems(ui.Center).Gap(8)
+	row := ui.Row(c.Key("lane-title")).FillWidth().AlignItems(ui.Center).Gap(6)
 	row.Children(func() {
 		platform := a.stagePlatform()
-		platformIcon(c, platform, 24, tok)
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, platform+" 账号").FontSize(tok.body).FontWeight(600).SingleLine()
-			ui.Text(c.Key("lane-header"), line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line).ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
-		})
+		platformIcon(c, platform, 14, tok)
+		ui.Text(c, platform+" 账号").FontSize(tok.body).FontWeight(600).SingleLine().Shrink(0)
+		ui.Text(c.Key("lane-header"), line).FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0).
+			SingleLine().Tooltip(line).ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 		ui.Text(c, "并发").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
-		ui.Switch(c.Key("concurrency"), &a.concurrencyAuto).Size(32, 18).Radius(9).
+		ui.Switch(c.Key("concurrency"), &a.concurrencyAuto).Size(24, 14).Radius(7).
 			Label("启用并发").Tooltip("此设置对所有服务商生效。" + ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots())).
 			Disabled(a.running).OnChange(func() {
 			if a.store != nil {
@@ -218,7 +217,7 @@ func (a *App) laneHeader(c *ui.Context) {
 }
 
 func (a *App) addAccountButton(c *ui.Context) {
-	ui.PrimaryButton(c, "+ 添加账号").Shrink(0).FontSize(12).Height(32).Padding(0, 12).Radius(a.look.radiusS).Disabled(a.running).OnClick(func() {
+	ui.PrimaryButton(c, "+ 添加账号").Shrink(0).FontSize(a.look.caption).Height(22).Padding(0, 8).Radius(a.look.radiusS).Disabled(a.running).OnClick(func() {
 		a.addAccountHere()
 	})
 }
@@ -240,7 +239,7 @@ func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
 		label = "登录"
 	}
 	id := ln.ID
-	ui.Button(c.Key("act"), label).Label(label+" "+ln.Name).FontSize(12).Height(28).Padding(0, 8).Radius(a.look.radiusS).Shrink(0).OnClick(func() { a.openLane(id) })
+	ui.Button(c.Key("act"), label).Label(label+" "+ln.Name).FontSize(a.look.caption).Height(20).Padding(0, 6).Radius(a.look.radiusS).Shrink(0).OnClick(func() { a.openLane(id) })
 }
 
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {

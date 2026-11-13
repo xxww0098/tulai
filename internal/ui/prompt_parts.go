@@ -125,7 +125,7 @@ func (a *App) promptPartsPreview(parts *promptParts) string {
 	if !a.washing() && a.useSuffix && a.promptSuffix != "" {
 		text = strings.TrimSpace(text + "\n" + a.promptSuffix)
 	}
-	if extra := parts.text(); extra != "" {
+	if extra := a.promptExtras(a.structuredPage, parts); extra != "" {
 		if text == "" {
 			text = extra
 		} else {
@@ -139,7 +139,8 @@ func (a *App) promptPartsPreview(parts *promptParts) string {
 }
 
 func (a *App) promptPartsButton(c *ui.Context) {
-	a.quietButton(c, "组合参数").Tooltip("勾选参数后自动附加到每条提示词").OnClick(func() {
+	uiIconBtn(c, "prompt-parts-btn", "组合参数", "组合提示词参数", iconSliders, 22, a.structuredOpen, false, a.look).
+		Disabled(a.running).OnClick(func() {
 		a.structuredPage = a.statePage
 		a.structuredOpen = true
 	})
@@ -152,9 +153,9 @@ func (a *App) promptPartsModal(c *ui.Context) {
 	parts := a.promptPartsFor(a.structuredPage)
 	w, h := c.Size()
 	ui.Modal(c, &a.structuredOpen, func() {
-		ui.Column(c.Key("prompt-parts")).Width(max(280, min(620, w-50))).Gap(10).Children(func() {
-			ui.Text(c, "组合提示词参数").FontSize(18).Bold()
-			ui.Text(c, "勾选后自动附加到每条提示词；内容可以修改。").FontSize(12).TextColor(c.Theme().TextMuted).Wrap()
+		ui.Column(c.Key("prompt-parts")).Width(max(260, min(540, w-40))).Gap(8).Children(func() {
+			ui.Text(c, "组合提示词参数").FontSize(a.look.title).Bold()
+			ui.Text(c, "勾选后自动附加到每条提示词；内容可以修改。").FontSize(a.look.caption).TextColor(c.Theme().TextMuted).Wrap()
 			ui.Scroll(c.Key("prompt-parts-scroll")).FillWidth().MaxHeight(max(160, h-260)).Children(func() {
 				ui.Column(c).FillWidth().Gap(8).Children(func() {
 					for _, row := range parts.rows() {
@@ -164,7 +165,10 @@ func (a *App) promptPartsModal(c *ui.Context) {
 								ui.Checkbox(c, &row.part.Enabled, row.name).Label("勾选" + row.name).Width(74).Disabled(a.running)
 								ui.TextInput(c, &row.part.Value).Grow(1).MinWidth(0).Label(row.name + "参数内容").Placeholder("输入要求").Disabled(a.running || !row.part.Enabled)
 							})
-							if row.part.Enabled && strings.TrimSpace(row.part.Value) == "" {
+							styleOverridden := row.name == "风格" && a.structuredPage == pageWash && washStyleInstruction(a.washStyle) != ""
+							if styleOverridden {
+								ui.Text(c, "当前洗图风格预设优先，此项暂不发送").FontSize(12).TextColor(c.Theme().TextMuted).Margin(0, 0, 0, 82)
+							} else if row.part.Enabled && strings.TrimSpace(row.part.Value) == "" {
 								ui.Text(c, row.name+"参数不能为空").FontSize(12).TextColor(c.Theme().Danger).Margin(0, 0, 0, 82)
 							}
 						})
@@ -174,7 +178,8 @@ func (a *App) promptPartsModal(c *ui.Context) {
 						ui.Text(c, a.promptPartsPreview(parts)).FontSize(12).TextColor(c.Theme().TextMuted).Wrap()
 					})
 					ui.Text(c, "如果参数与原提示词冲突，请修改后再发送。平台的比例和批量要求会在发送时另行补充。").FontSize(12).TextColor(c.Theme().TextMuted).Wrap()
-					if err := parts.validate(); err != nil {
+					effective := a.effectivePromptParts(a.structuredPage, parts)
+					if err := effective.validate(); err != nil {
 						ui.Text(c, err.Error()).FontSize(12).TextColor(c.Theme().Danger).Wrap()
 					}
 				})
@@ -185,7 +190,8 @@ func (a *App) promptPartsModal(c *ui.Context) {
 						row.part.Enabled = false
 					}
 				})
-				ui.PrimaryButton(c, "完成").Disabled(parts.validate() != nil).OnClick(func() {
+				effective := a.effectivePromptParts(a.structuredPage, parts)
+				ui.PrimaryButton(c, "完成").Disabled(effective.validate() != nil).OnClick(func() {
 					a.savePromptParts()
 					a.structuredOpen = false
 				})

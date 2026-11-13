@@ -301,9 +301,6 @@ func TestAntigravityAddAccountStaysInAccountTable(t *testing.T) {
 					return table, add
 				}
 				check()
-				if !tester.HasText("还没有可用账号。在右上角账号表格点「+ 添加账号」登录。") {
-					t.Fatal("缺少添加账号的位置提示")
-				}
 				a.agyChooser = &agyChooserState{hint: agy.MsgKeychain, canImport: true}
 				table, add := check()
 				panel := assertVisible(t, tester, "agy-add-chooser", float32(width), 900)
@@ -341,7 +338,7 @@ func TestAntigravityTableKeepsQuotaAndRunningTaskReadable(t *testing.T) {
 			tester.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
 			tester.Advance(300 * time.Millisecond)
 			row := assertVisible(t, tester, "车道账号1", float32(size[0]), float32(size[1]))
-			if row.H < 44 || row.H > 56 {
+			if row.H < 34*interfaceZoom-1 || row.H > 42*interfaceZoom+1 {
 				t.Fatalf("账号行不适合双行信息: %v", row)
 			}
 			list := assertVisible(t, tester, "账号列表", float32(size[0]), float32(size[1]))
@@ -353,7 +350,7 @@ func TestAntigravityTableKeepsQuotaAndRunningTaskReadable(t *testing.T) {
 				t.Fatalf("用量条过窄: %v", bar)
 			}
 			task := assertVisible(t, tester, "正在处理的插画", float32(size[0]), float32(size[1]))
-			if size[0] < 1150 && (task.Y < row.Y+18 || task.Y+task.H > row.Y+row.H) {
+			if float32(size[0])/interfaceZoom < 1150 && (task.Y < row.Y+14*interfaceZoom || task.Y+task.H > row.Y+row.H) {
 				t.Fatal("窄窗口的当前任务没有放在账号下方")
 			}
 		})

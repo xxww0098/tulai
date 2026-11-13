@@ -10,20 +10,46 @@ import (
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
+// parallelWashBatchLimit balances one prompt across idle accounts while retaining
+// full batches when another prompt can already occupy the second account.
+func (e *Engine) parallelWashBatchLimit(pending []Task, index int, first Task, limit int) int {
+	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || !freshWashItem(first) {
+		return limit
+	}
+	matching := 1
+	for i := index + 1; i < len(pending); i++ {
+		item := pending[i]
+		if item.Platform != first.Platform || !freshWashItem(item) {
+			continue
+		}
+		if item.Prompt != first.Prompt {
+			return limit
+		}
+		matching++
+	}
+	return min(limit, (matching+1)/2)
+}
+
+func freshWashItem(item Task) bool {
+	return item.Attempts == 0 && !item.submitted && item.Error == "" && len(item.Images) == 1 && len(item.batch) == 0
+}
+
 // bundleWashTasks 只合并尚未发送、提示词相同的豆包洗图。
 func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImages int, now time.Time) (Task, []int) {
 	indices := []int{index}
-	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || first.Attempts != 0 || first.submitted || first.Error != "" || len(first.Images) != 1 || len(first.batch) != 0 {
+	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || !freshWashItem(first) {
 		return first, indices
 	}
 	if row, ok := e.browserByID(first.BrowserID); ok {
-		maxImages = min(maxImages, max(1, e.capNow()-row.UsedToday(now)))
+		if cap := e.capFor(first.Platform); cap > 0 {
+			maxImages = min(maxImages, max(1, cap-row.UsedToday(now)))
+		}
 	}
 	maxImages = min(maxImages, washChatTasks)
 	batch := []Task{first}
 	for i := index + 1; i < len(pending) && len(batch) < maxImages; i++ {
 		item := pending[i]
-		if item.Platform != first.Platform || item.Prompt != first.Prompt || item.Attempts != 0 || item.submitted || item.Error != "" || len(item.Images) != 1 || len(item.batch) != 0 {
+		if item.Platform != first.Platform || item.Prompt != first.Prompt || !freshWashItem(item) {
 			continue
 		}
 		batch = append(batch, item)

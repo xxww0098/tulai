@@ -31,28 +31,66 @@ func (a *App) browserPane(c *ui.Context) {
 	if a.detectedNote == "" && !a.camoufoxBusy {
 		a.refreshDetected()
 	}
-	ui.Column(c).Grow(1).MinHeight(0).FillWidth().Gap(16).Children(func() {
+	active := a.syncBrowserRows()
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().Gap(8).Children(func() {
 		a.browserSetup(c)
-		a.downloadBrowserEnvironment(c)
-		a.browserInstances(c)
+		if !a.camoufoxReady && len(a.browserRows) == 0 {
+			a.browserInstallPrompt(c)
+		}
+		// 已保存的账号仍可查看和管理；首次安装时先只显示安装入口。
+		if a.camoufoxReady || len(a.browserRows) > 0 {
+			a.downloadBrowserEnvironment(c)
+			a.browserInstances(c, active)
+		}
 	})
 }
 
 func (a *App) browserSetup(c *ui.Context) {
-	ui.Row(c).FillWidth().Gap(20).AlignItems(ui.Center).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
-			ui.Text(c, "Camoufox 账号环境").FontSize(18).Bold()
-			ui.Text(c, "集中管理独立环境，登录与验证在打开的网页中完成。").FontSize(12).
-				TextColor(c.Theme().TextMuted).SingleLine().Tooltip(browserInstanceHint)
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Grow(1).MinWidth(0).Gap(5).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Camoufox 账号环境").FontSize(a.look.title).Bold().SingleLine()
+			ui.Box(c).Shrink(0).Tooltip(browserInstanceHint).Children(func() {
+				ui.Icon(c, iconInfo).FontSize(12).TextColor(a.look.muted)
+			})
 		})
-		ui.Column(c).Width(260).Shrink(0).Gap(6).AlignItems(ui.End).Children(func() {
-			a.camoufoxSection(c)
-		})
+		if a.camoufoxReady || len(a.browserRows) > 0 {
+			ui.Column(c).Width(210).Shrink(0).Gap(2).AlignItems(ui.End).Children(func() {
+				a.camoufoxSection(c)
+			})
+		}
 	})
 }
 
-func (a *App) browserInstances(c *ui.Context) {
-	a.followStagePlatform()
+func (a *App) browserInstallPrompt(c *ui.Context) {
+	ui.Column(c.Key("browser-install-prompt")).FillWidth().MaxWidth(680).Padding(12).Gap(8).
+		Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(a.look.radiusM).Children(func() {
+		ui.Text(c, "安装 Camoufox 浏览器").FontSize(a.look.title).Bold()
+		ui.Text(c, "首次使用需下载浏览器及指纹数据；安装后可添加账号，也可用于网页图片下载。\n添加账号后，请在打开的网页中登录。").
+			FontSize(a.look.caption).TextColor(c.Theme().TextMuted)
+		if a.camoufoxStatus != "" && a.camoufoxStatus != "安装后即可添加服务商账号" {
+			ink := c.Theme().TextMuted
+			if strings.HasPrefix(a.camoufoxStatus, "安装失败") {
+				ink = c.Theme().Danger
+			}
+			ui.Text(c, a.camoufoxStatus).FontSize(12).TextColor(ink).SingleLine().Tooltip(a.camoufoxStatus)
+		}
+		label := "安装 Camoufox"
+		if a.camoufoxBusy {
+			label = "正在安装…"
+		} else if strings.HasPrefix(a.camoufoxStatus, "安装失败") {
+			label = "重试安装"
+		}
+		ui.Button(c, label).AlignSelf(ui.Start).FontSize(12).
+			Background(c.Theme().Accent).TextColor(c.Theme().AccentText).
+			Disabled(a.running || a.camoufoxBusy || a.renameUpdateActive() || !browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH)).
+			OnClick(func() { a.installCamoufox() })
+		if a.camoufoxBusy {
+			a.camoufoxCompactProgress(c, "camoufox-progress")
+		}
+	})
+}
+
+func (a *App) syncBrowserRows() map[int64]bool {
 	active := map[int64]bool{}
 	if a.engine != nil {
 		active = a.engine.ActiveAccounts()
@@ -78,53 +116,62 @@ func (a *App) browserInstances(c *ui.Context) {
 		a.browserRows = shown
 	}
 	a.pruneBrowserSelection()
-	ui.Column(c).Grow(1).MinHeight(0).FillWidth().Gap(12).Children(func() {
+	return active
+}
+
+func (a *App) browserInstances(c *ui.Context, active map[int64]bool) {
+	a.followStagePlatform()
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().Gap(6).Children(func() {
 		running := 0
 		for _, b := range a.browserRows {
 			if b.IsRunning {
 				running++
 			}
 		}
-		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "浏览器实例").FontSize(14).Bold()
-			ui.Text(c, fmt.Sprintf("共 %d 个账号环境 · %d 个运行中", len(a.browserRows), running)).FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "浏览器实例").FontSize(a.look.body).Bold()
+			if len(a.browserRows) > 0 {
+				ui.Text(c, fmt.Sprintf("共 %d 个账号环境 · %d 个运行中", len(a.browserRows), running)).FontSize(a.look.caption).TextColor(c.Theme().TextMuted)
+			}
 			if hint := missingBrowserHint(a.missingBrowserNames()); hint != "" {
-				ui.Text(c, hint).FontSize(12).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(hint)
+				ui.Text(c, hint).FontSize(a.look.caption).TextColor(c.Theme().TextMuted).Grow(1).MinWidth(0).SingleLine().Tooltip(hint)
 			}
 		})
-		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问", "ChatGPT"}).Width(100).Shrink(0).Label("浏览器平台")
-			ui.TextInput(c, &a.newBrowserName).Grow(1).MaxWidth(280).MinWidth(0).Placeholder("环境名称（可选）").Label("浏览器名称")
-			ui.Button(c, "添加环境").Shrink(0).Disabled(a.running || len(a.browserPending) > 0).Background(c.Theme().Accent).TextColor(c.Theme().AccentText).OnClick(func() { a.addBrowser() })
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			motionSelect(c, &a.newBrowserPlat, []string{"豆包", "千问", "ChatGPT"}).Width(84).Shrink(0).Label("浏览器平台")
+			ui.TextInput(c, &a.newBrowserName).Grow(1).MaxWidth(240).MinWidth(0).Placeholder("环境名称（可选）").Label("浏览器名称")
+			uiBtn(ui.Button(c, "添加环境"), a.look).Disabled(a.running || len(a.browserPending) > 0).Background(c.Theme().Accent).TextColor(c.Theme().AccentText).OnClick(func() { a.addBrowser() })
 			ui.Box(c).Grow(1)
-			ui.Button(c, "刷新列表").Shrink(0).OnClick(func() { a.refreshBrowsers() })
+			uiIconBtn(c, "browser-refresh", "刷新列表", "刷新环境列表", iconRefresh, 24, false, false, a.look).
+				OnClick(func() { a.refreshBrowsers() })
 		})
-		a.browserBatchToolbar(c)
 		if len(a.browserRows) == 0 {
-			ui.Column(c).Grow(1).FillWidth().Center().Gap(8).Border(1, c.Theme().Border).Radius(8).Children(func() {
-				ui.Icon(c, iconGlobe).FontSize(28).TextColor(c.Theme().TextMuted)
-				ui.Text(c, "添加第一个浏览器环境").FontSize(15).Bold()
-				ui.Text(c, "选择服务商并点击「添加环境」，在打开的页面中登录账号。").FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Column(c).Grow(1).FillWidth().Center().Gap(6).Children(func() {
+				ui.Icon(c, iconGlobe).FontSize(22).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "添加第一个浏览器环境").FontSize(a.look.title).Bold()
+				ui.Text(c, "选择服务商并点击「添加环境」，在打开的页面中登录账号。").FontSize(a.look.caption).TextColor(c.Theme().TextMuted)
 			})
 		} else {
+			a.browserBatchToolbar(c)
 			a.browserEnvironmentTable(c, active)
-		}
-		selected, hasSelection := a.selectedBrowser()
-		ui.Column(c).FillWidth().Padding(12, 14).Gap(8).Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(8).Children(func() {
-			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-				title := "选择环境以配置代理"
-				if hasSelection {
-					title = "环境配置 · " + selected.Name
-				}
-				ui.Text(c, title).FontSize(13).Bold().Grow(1).MinWidth(0).SingleLine()
-				ui.Button(c, "恢复当前").FontSize(12).Shrink(0).Disabled(!hasSelection || len(a.browserPending) > 0).OnClick(func() { a.restoreBrowser() })
-				ui.Button(c, "删除当前").FontSize(12).Shrink(0).Disabled(a.running || !hasSelection || len(a.browserPending) > 0).TextColor(c.Theme().Danger).OnClick(func() { a.deleteBrowser() })
-			})
-			if hasSelection && selected.ExtAccount == "" && selected.Platform != "Antigravity" {
-				a.accountProxySettings(c, selected)
+			if selected, hasSelection := a.selectedBrowser(); hasSelection {
+				ui.Column(c).FillWidth().Padding(6, 9).Gap(4).Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(a.look.radiusM).Children(func() {
+					ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "环境配置 · "+selected.Name).FontSize(a.look.body).Bold().Grow(1).MinWidth(0).SingleLine()
+						uiIconBtn(c, "browser-restore", "恢复当前", "重新安装或恢复当前环境", iconRotateCcw, 20, false, false, a.look).
+							Disabled(len(a.browserPending) > 0).OnClick(func() { a.restoreBrowser() })
+						uiIconBtn(c, "browser-delete", "删除当前", "删除当前环境", iconTrash, 20, false, false, a.look).
+							Disabled(a.running || len(a.browserPending) > 0).OnClick(func() { a.deleteBrowser() })
+					})
+					if selected.ExtAccount == "" && selected.Platform != "Antigravity" {
+						a.accountProxySettings(c, selected)
+					}
+				})
+			} else {
+				ui.Text(c, "选择环境以配置代理").FontSize(a.look.caption).TextColor(c.Theme().TextMuted)
 			}
-		})
-		ui.Text(c, "勾选环境可批量启停；新账号登录后窗口自动关闭，手动启动的环境保持打开。").FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+			ui.Text(c, "勾选环境可批量启停；新账号登录后窗口自动关闭，手动启动的环境保持打开。").FontSize(a.look.caption).TextColor(c.Theme().TextMuted).SingleLine()
+		}
 	})
 }
 
@@ -302,6 +349,21 @@ func (a *App) clearLoginHold(id int64) {
 	delete(a.loginFresh, id)
 }
 
+// acceptLogin 收下页面已经确认的登录。关闭登录窗口前同步引擎，
+// 避免浏览器关掉后引擎只能读到 unknown，旧的重登提示一直留着。
+func (a *App) acceptLogin(id int64) {
+	if a == nil || id <= 0 {
+		return
+	}
+	if a.store != nil {
+		a.store.ConfirmLogin(id)
+	}
+	a.clearLoginHold(id)
+	if a.engine != nil {
+		a.engine.NoteLoginConfirmed(id)
+	}
+}
+
 // dropAbandoned 只删两类本机档案：这一轮新建后放弃的（走 abandonUnlogged），
 // 或探测明确返回 out 的未登录档案。标志是 0、窗口没开、探测失败、地区或验证，都留下。
 // 扩展行同样不能凭 is_logged_in=0 删，要等 hello 明确说没登录。
@@ -330,8 +392,7 @@ func (a *App) dropAbandoned() {
 			continue
 		}
 		if a.loginShot(b.ID).state == wizard.ProbeIn {
-			a.store.ConfirmLogin(b.ID)
-			a.clearLoginHold(b.ID)
+			a.acceptLogin(b.ID)
 			continue
 		}
 		if _, held := keep[b.ID]; held {
@@ -339,8 +400,7 @@ func (a *App) dropAbandoned() {
 		}
 		switch a.accountLoginState(b) {
 		case wizard.ProbeIn:
-			a.store.ConfirmLogin(b.ID)
-			a.clearLoginHold(b.ID)
+			a.acceptLogin(b.ID)
 		case wizard.ProbeOut:
 			confirmedOut = append(confirmedOut, b.ID)
 		}
@@ -447,7 +507,11 @@ func (a *App) camoufoxSection(c *ui.Context) {
 	if a.camoufoxReady {
 		label = "检查 Camoufox"
 	}
-	ui.Button(c, label).AlignSelf(ui.End).FontSize(12).Disabled(a.running || a.camoufoxBusy || a.renameUpdateActive() || !browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH)).OnClick(func() { a.installCamoufox() })
+	button := ui.Button(c, label).AlignSelf(ui.End).FontSize(12).Disabled(a.running || a.camoufoxBusy || a.renameUpdateActive() || !browser.CamoufoxSupported(runtime.GOOS, runtime.GOARCH))
+	if !a.camoufoxReady {
+		button.Background(c.Theme().Accent).TextColor(c.Theme().AccentText)
+	}
+	button.OnClick(func() { a.installCamoufox() })
 	if a.camoufoxBusy {
 		a.camoufoxCompactProgress(c, "camoufox-progress")
 	}
@@ -561,7 +625,7 @@ func (a *App) selectedBrowser() (store.Browser, bool) {
 
 func (a *App) accountRow(c *ui.Context, b store.Browser) {
 	shot := a.loginShot(b.ID)
-	ui.Column(c).FillWidth().MinWidth(0).MinHeight(44).Justify(ui.Center).Gap(3).Children(func() {
+	ui.Column(c).FillWidth().MinWidth(0).MinHeight(36).Justify(ui.Center).Gap(2).Children(func() {
 		ui.Row(c).FillWidth().MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
 			a.accountNameField(c, b)
 		})

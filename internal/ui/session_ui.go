@@ -27,10 +27,15 @@ func (a *App) noteWorkspacePage() {
 		a.workspacePage = store.PageGen
 	case pageWash:
 		a.workspacePage = store.PageWash
+	case pageFission:
+		a.workspacePage = store.PageFission
 	}
 }
 
 func workspacePageKey(page int) string {
+	if page == pageFission {
+		return store.PageFission
+	}
 	if page == pageWash {
 		return store.PageWash
 	}
@@ -38,6 +43,9 @@ func workspacePageKey(page int) string {
 }
 
 func (a *App) sessionID(page int) int64 {
+	if page == pageFission {
+		return a.fissionSession
+	}
 	if page == pageWash {
 		return a.washSession
 	}
@@ -45,6 +53,10 @@ func (a *App) sessionID(page int) int64 {
 }
 
 func (a *App) setSessionID(page int, id int64) {
+	if page == pageFission {
+		a.fissionSession = id
+		return
+	}
 	if page == pageWash {
 		a.washSession = id
 		return
@@ -57,6 +69,9 @@ func promptMeansContent(page int, prompts string) bool {
 	if page == pageWash {
 		return p != "" && p != DefaultWashPrompt
 	}
+	if page == pageFission {
+		return p != "" && p != DefaultFissionPrompt
+	}
 	return p != ""
 }
 
@@ -68,44 +83,10 @@ func (a *App) workspaceHasContent(page int) bool {
 	return promptMeansContent(page, st.prompts)
 }
 
-// workspaceBar 是这一页右上角的历史和新建任务。按钮按内容收缩。
-func (a *App) workspaceBar(c *ui.Context) {
-	tok := a.look
-	w, _ := c.Size()
-	ui.Row(c.Key("workspace-bar")).FillWidth().Height(workspaceBarH).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, "图片生成").FontSize(tok.title).Bold().Shrink(0)
-		labels := []string{"自由生图", "批量洗图"}
-		tabs := ui.TabsBase(c.Key("workspace-modes"), &a.tab, len(labels))
-		tabs.List.Row().Height(32).Padding(2).Radius(8).Background(tok.sunken).
-			AlignItems(ui.Stretch).Disabled(a.running).Children(func() {
-			for i, label := range labels {
-				tab := tabs.Tab(i).Padding(0, 10).Radius(6).Center().Label(label).Disabled(a.running)
-				if i == a.tab {
-					tab.Background(tok.card).TextColor(tok.text)
-				} else {
-					tab.TextColor(tok.muted)
-				}
-				if !a.running {
-					tab.Cursor(ui.CursorPointer)
-				}
-				tab.Children(func() { ui.Text(c, label).FontSize(tok.caption).SingleLine() })
-			}
-		})
-		if homeSplit(w) {
-			ui.Row(c).Grow(1).MinWidth(0).Margin(0, 0, 0, 8).AlignItems(ui.Center).Children(func() { a.platformPicker(c) })
-		} else {
-			ui.Spacer(c)
-		}
-		a.historyControl(c)
-		ui.Button(c.Key("new-task"), "新建任务").FontSize(tok.caption).Padding(3, 8).Radius(tok.radiusS).Shrink(0).
-			Disabled(a.running).OnClick(func() { a.newWorkspace() })
-	})
-}
-
 func (a *App) historyControl(c *ui.Context) {
 	open := a.historyOpen
-	btn := ui.Button(c.Key("history"), "历史").FontSize(a.look.caption).Padding(3, 8).Radius(a.look.radiusS).Shrink(0)
-	btn.OnClick(func() { a.historyOpen = !open })
+	uiIconBtn(c, "history", "历史", "历史任务", iconClock, 24, open, false, a.look).
+		OnClick(func() { a.historyOpen = !open })
 }
 
 // historyPanel 在工作区标题和平台页签之间展开。列表占右栏自己的高度，把页签和账号表往下推，不盖住账号行、添加账号或运行日志。
@@ -114,7 +95,7 @@ func (a *App) historyPanel(c *ui.Context) {
 		return
 	}
 	tok := a.look
-	ui.Column(c.Key("history-panel")).Label("历史任务").FillWidth().Shrink(0).Gap(6).Padding(8, 10).
+	ui.Column(c.Key("history-panel")).Label("历史任务").FillWidth().Shrink(0).Gap(4).Padding(6, 8).
 		Radius(tok.radiusM).Background(tok.card).Border(1, tok.border).Children(func() {
 		ui.Text(c, "历史任务").FontSize(tok.caption).Bold().TextColor(tok.muted).SingleLine()
 		a.historyBody(c)
@@ -136,8 +117,8 @@ func (a *App) historyBody(c *ui.Context) {
 		ui.Text(c, "还没有历史任务").FontSize(tok.caption).TextColor(tok.muted)
 		return
 	}
-	ui.Scroll(c.Key("history-scroll")).FillWidth().MaxHeight(168).Children(func() {
-		ui.Column(c).FillWidth().Gap(6).Children(func() {
+	ui.Scroll(c.Key("history-scroll")).FillWidth().MaxHeight(132).Children(func() {
+		ui.Column(c).FillWidth().Gap(4).Children(func() {
 			for _, row := range rows {
 				a.historyRow(c, row)
 			}
@@ -149,18 +130,18 @@ func (a *App) historyRow(c *ui.Context, sess store.Session) {
 	tok := a.look
 	shown, full := sessionPreview(sess)
 	id := sess.ID
-	ui.Column(c.Key(id)).FillWidth().Gap(4).Padding(4, 6).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
-		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+	ui.Column(c.Key(id)).FillWidth().Gap(3).Padding(4, 6).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 			if when := sessionWhen(sess.Updated); when != "" {
 				ui.Text(c, when).FontSize(tok.caption).TextColor(tok.muted).Shrink(0).SingleLine()
 			}
 			ui.Text(c, sessionCountText(sess)).FontSize(tok.caption).TextColor(tok.muted).Shrink(0).SingleLine()
 			ui.Text(c, shown).FontSize(tok.caption).Grow(1).MinWidth(0).SingleLine().Tooltip(full)
 		})
-		ui.Row(c).Gap(6).Children(func() {
-			ui.Button(c.Key("restore"), "恢复").FontSize(tok.caption).Padding(2, 8).Radius(tok.radiusS).Shrink(0).
+		ui.Row(c).Gap(5).Children(func() {
+			ui.Button(c.Key("restore"), "恢复").FontSize(tok.caption).Padding(1, 7).Radius(tok.radiusS).Shrink(0).
 				Disabled(a.running).OnClick(func() { a.reopenSession(id) })
-			ui.Button(c.Key("delete"), "删除").FontSize(tok.caption).Padding(2, 8).Radius(tok.radiusS).Shrink(0).
+			ui.Button(c.Key("delete"), "删除").FontSize(tok.caption).Padding(1, 7).Radius(tok.radiusS).Shrink(0).
 				OnClick(func() { a.deleteSession(id) })
 		})
 	})
@@ -168,7 +149,7 @@ func (a *App) historyRow(c *ui.Context, sess store.Session) {
 
 func sessionPreview(sess store.Session) (shown, full string) {
 	var raw string
-	if sess.Page == store.PageWash {
+	if sess.Page == store.PageWash || sess.Page == store.PageFission {
 		if img := sessionFirstLine(sess.Images); img != "" {
 			raw = filepath.Base(img)
 		}
@@ -260,11 +241,13 @@ func (a *App) clearWorkspace(page int) {
 		a.skipImages = false
 		if page == pageWash {
 			a.prompts = DefaultWashPrompt
+		} else if page == pageFission {
+			a.prompts = DefaultFissionPrompt
 		} else {
 			a.prompts = ""
 		}
 	})
-	if page != pageWash {
+	if page == pageHome {
 		a.freeformPrompts = ""
 		a.promptPick = ""
 		a.promptChoice = prompts.LabelCustom
@@ -274,6 +257,8 @@ func (a *App) clearWorkspace(page int) {
 	a.dropStamps(page)
 	if page == pageWash {
 		a.washList = ui.ListState{}
+	} else if page == pageFission {
+		a.fissionList = ui.ListState{}
 	} else {
 		a.genList = ui.ListState{}
 	}
@@ -319,6 +304,8 @@ func (a *App) reopenSession(id int64) {
 	a.historyOpen = false
 	if page == pageWash {
 		a.washList = ui.ListState{}
+	} else if page == pageFission {
+		a.fissionList = ui.ListState{}
 	} else {
 		a.genList = ui.ListState{}
 	}
@@ -330,7 +317,7 @@ func (a *App) deleteSession(id int64) {
 	if a == nil || a.store == nil || id <= 0 {
 		return
 	}
-	if id == a.genSession || id == a.washSession {
+	if id == a.genSession || id == a.washSession || id == a.fissionSession {
 		return
 	}
 	if err := a.store.DeleteSession(id); err != nil {
@@ -357,6 +344,7 @@ func (a *App) persistWorkspace(page int) bool {
 		Images:   joinPaths(sourcePaths(st.sources)),
 		Progress: st.progress,
 		ProgText: st.progText,
+		Sources:  a.washSourcesForSave(page, st),
 	}, a.tasksForSession(page, items))
 	if err != nil {
 		logging.Log.Errorf("保存任务记录失败: %v", err)
@@ -364,6 +352,22 @@ func (a *App) persistWorkspace(page int) bool {
 	}
 	a.setSessionID(page, saved)
 	return true
+}
+
+// washSourcesForSave 只给洗图会话保存原图进度。生图参考图不参与已洗/未洗记录。
+func (a *App) washSourcesForSave(page int, st pageState) []store.SessionSource {
+	if page != pageWash {
+		return nil
+	}
+	out := make([]store.SessionSource, 0, len(st.sources))
+	for _, src := range st.sources {
+		out = append(out, store.SessionSource{
+			Path:   src.Path,
+			Washed: src.Washed,
+			Output: src.WashOutput,
+		})
+	}
+	return out
 }
 
 func (a *App) restoreWorkspace(page int) {
@@ -387,14 +391,22 @@ func (a *App) applySession(page int, sess store.Session, items []store.SessionTa
 		a.prompts = sess.Prompts
 		if page == pageWash && strings.TrimSpace(a.prompts) == "" {
 			a.prompts = DefaultWashPrompt
+		} else if page == pageFission && strings.TrimSpace(a.prompts) == "" {
+			a.prompts = DefaultFissionPrompt
 		}
 		a.sources = sourcesFromRaw(sess.Images)
+		if page == pageFission && len(a.sources) > 1 {
+			a.sources = a.sources[:1]
+		}
 		if len(a.sources) == 0 {
 			a.srcSel = -1
 		} else if a.srcSel < 0 || a.srcSel >= len(a.sources) {
 			a.srcSel = 0
 		}
 		a.queue = queueFromSession(items)
+		if page == pageWash {
+			a.applyWashSession(sess, items)
+		}
 		a.progress = sess.Progress
 		a.progText = sess.ProgText
 		if tally := TallyTasks(a.queue); tally.Review > 0 {
@@ -402,10 +414,10 @@ func (a *App) applySession(page int, sess store.Session, items []store.SessionTa
 			a.progText = taskResultSummary(a.queue)
 		}
 	})
-	if page != pageWash && (resetPick || a.promptPick == "") {
+	if page == pageHome && (resetPick || a.promptPick == "") {
 		a.freeformPrompts = sess.Prompts
 	}
-	if resetPick && page != pageWash {
+	if resetPick && page == pageHome {
 		a.promptPick = ""
 		a.promptChoice = prompts.LabelCustom
 		a.promptNote = ""
@@ -413,10 +425,57 @@ func (a *App) applySession(page int, sess store.Session, items []store.SessionTa
 	a.rememberStamps(page, items)
 }
 
+// applyWashSession 把持久化进度和旧版任务记录合并到原图上。
+// 旧存档没有 session_sources 时，成功且已保存结果的任务仍然能恢复成「已洗」。
+func (a *App) applyWashSession(sess store.Session, items []store.SessionTask) {
+	states := make(map[string]store.SessionSource, len(sess.Sources))
+	for _, src := range sess.Sources {
+		if strings.TrimSpace(src.Path) == "" {
+			continue
+		}
+		states[filepath.Clean(src.Path)] = src
+	}
+	for _, item := range items {
+		if item.Status != string(tasks.StatusSuccess) || strings.TrimSpace(item.Source) == "" {
+			continue
+		}
+		outputs := splitLines(item.Outputs)
+		if len(outputs) == 0 {
+			continue
+		}
+		states[filepath.Clean(item.Source)] = store.SessionSource{
+			Path: item.Source, Washed: true, Output: outputs[0],
+		}
+	}
+	for i := range a.sources {
+		src := &a.sources[i]
+		state, ok := states[filepath.Clean(src.Path)]
+		src.Washed = ok && state.Washed
+		src.WashOutput = ""
+		if src.Washed {
+			src.WashOutput = state.Output
+		}
+		src.Washing = false
+	}
+}
+
 func (a *App) tasksToSave(page int) []tasks.Task {
 	if a.useRunView && a.running && a.runPage == page && a.engine != nil {
 		if view := a.engine.View(); view != nil {
-			return view.Snapshot()
+			items := view.Snapshot()
+			if page == pageFission && a.fissionRetryBase != nil {
+				items = mergeFissionRetry(a.fissionRetryBase, items)
+			}
+			if page == pageFission {
+				// 进程中断时，尚未执行最终相似度检查的结果不能被恢复为成功。
+				for i := range items {
+					if items[i].Status == tasks.StatusSuccess {
+						items[i].Status = tasks.StatusNeedsReview
+						items[i].Error = "裂变相似度尚未完成检查，请核对后重新生成"
+					}
+				}
+			}
+			return items
 		}
 	}
 	return a.stateOf(page).queue

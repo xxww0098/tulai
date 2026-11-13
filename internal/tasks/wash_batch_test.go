@@ -58,6 +58,118 @@ func TestBoundWashDispatchesTenThenOneAndKeepsSources(t *testing.T) {
 	}
 }
 
+func TestBoundWashUsesBothIdleAccountsConcurrently(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	addNamed(t, st, "豆包", "甲")
+	addNamed(t, st, "豆包", "乙")
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started := make(chan Task, 2)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- e.RunObserved(ctx, Options{
+			Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: []string{"1.png", "2.png", "3.png", "4.png"},
+			Wash: true, Concurrency: 2, WaitResult: true,
+		}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+			started <- *task
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			for i := range task.batch {
+				task.batch[i].Results = []string{task.batch[i].Images[0] + ".out"}
+			}
+			return nil
+		})
+	}()
+	var batches []Task
+	for len(batches) < 2 {
+		select {
+		case task := <-started:
+			batches = append(batches, task)
+		case <-ctx.Done():
+			t.Fatal("both accounts did not start before either batch finished")
+		}
+	}
+	if batches[0].BrowserID == batches[1].BrowserID || len(batches[0].Images) != 2 || len(batches[1].Images) != 2 {
+		t.Fatalf("expected two independent batches of two: %+v", batches)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range e.View().Snapshot() {
+		if task.Status != StatusSuccess || len(task.Results) != 1 || task.Results[0] != task.Images[0]+".out" {
+			t.Fatalf("source or result lost: %+v", task)
+		}
+	}
+}
+
+func TestParallelWashBatchBalancesOnlyMatchingWork(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	e := NewEngine(st, nil, nil, "")
+	e.opts = Options{Wash: true, WaitResult: true}
+	for _, tc := range []struct {
+		count int
+		want  int
+	}{{1, 1}, {2, 1}, {4, 2}, {11, 6}, {20, 10}, {21, 10}} {
+		var pending []Task
+		for i := 0; i < tc.count; i++ {
+			pending = append(pending, Task{Platform: "豆包", Prompt: "洗图", Images: []string{fmt.Sprint(i)}})
+		}
+		if got := e.parallelWashBatchLimit(pending, 0, pending[0], 10); got != tc.want {
+			t.Errorf("%d images: got %d, want %d", tc.count, got, tc.want)
+		}
+	}
+	pending := []Task{
+		{Platform: "豆包", Prompt: "甲", Images: []string{"1"}},
+		{Platform: "豆包", Prompt: "甲", Images: []string{"2"}},
+		{Platform: "豆包", Prompt: "乙", Images: []string{"3"}},
+	}
+	if got := e.parallelWashBatchLimit(pending, 0, pending[0], 10); got != 10 {
+		t.Fatalf("another prompt can fill the second lane; batch limit=%d", got)
+	}
+}
+
+func TestBoundWashKeepsFullBatchWhenConcurrencyUnavailable(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprint("disabled=", disabled), func(t *testing.T) {
+			st := openRotateStore(t)
+			st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+			st.Set(extbridge.SettingExtPort, freePort(t))
+			addNamed(t, st, "豆包", "甲")
+			second := addNamed(t, st, "豆包", "乙")
+			concurrency := 1
+			if disabled {
+				concurrency = 2
+				if err := st.SetBrowserDisabled(second.ID, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e := NewEngine(st, nil, nil, "")
+			defer e.CloseSessions()
+			var sizes []int
+			err := e.RunObserved(context.Background(), Options{Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: []string{"1", "2", "3", "4"}, Wash: true, WaitResult: true, Concurrency: concurrency}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+				sizes = append(sizes, len(task.Images))
+				for i := range task.batch {
+					task.batch[i].Results = []string{"ok"}
+				}
+				return nil
+			})
+			if err != nil || !reflect.DeepEqual(sizes, []int{4}) {
+				t.Fatalf("sizes=%v err=%v", sizes, err)
+			}
+		})
+	}
+}
+
 func TestWashBatchRespectsRemainingDailyAndSwitchLimits(t *testing.T) {
 	st := openRotateStore(t)
 	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")

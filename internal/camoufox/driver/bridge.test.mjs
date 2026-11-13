@@ -36,7 +36,7 @@ test('official fetcher matches the current system and architecture', async () =>
 test('installer isolates each platform cache and restores the real environment', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-platform-'));
   t.after(() => fs.rmSync(root, {recursive:true, force:true}));
-  for (const file of ['bridge.mjs', 'identity.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
+  for (const file of ['bridge.mjs', 'identity.mjs', 'download-watch.mjs', 'windows-compat.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
   const pkg = path.join(root, 'node_modules', 'camoufox');
   fs.mkdirSync(path.join(pkg, 'dist'), {recursive:true});
   fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({type:'module', exports:{'.':'./index.js','./dist/utils.js':'./dist/utils.js','./dist/pkgman.js':'./dist/pkgman.js'}}));
@@ -81,7 +81,7 @@ test('installer isolates each platform cache and restores the real environment',
 test('installer recovers from GitHub API failures with verified pinned releases', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-release-fallback-'));
   t.after(() => fs.rmSync(root, {recursive:true, force:true}));
-  for (const file of ['bridge.mjs', 'identity.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
+  for (const file of ['bridge.mjs', 'identity.mjs', 'download-watch.mjs', 'windows-compat.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
   const realDist = fileURLToPath(new URL('./node_modules/camoufox/dist/', import.meta.url));
   const real = file => pathToFileURL(path.join(realDist, file)).href;
   const pin = JSON.parse(fs.readFileSync(path.join(realDist, 'data-files', 'browser-pin.json'), 'utf8'));
@@ -184,7 +184,7 @@ test('installer recovers from GitHub API failures with verified pinned releases'
 test('installer serves the pinned kernel from a configured mirror without touching GitHub', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-mirror-'));
   t.after(() => fs.rmSync(root, {recursive:true, force:true}));
-  for (const file of ['bridge.mjs', 'identity.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
+  for (const file of ['bridge.mjs', 'identity.mjs', 'download-watch.mjs', 'windows-compat.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
   const realDist = fileURLToPath(new URL('./node_modules/camoufox/dist/', import.meta.url));
   const real = file => pathToFileURL(path.join(realDist, file)).href;
   const pkg = path.join(root, 'node_modules', 'camoufox');
@@ -265,7 +265,7 @@ test('installer serves the pinned kernel from a configured mirror without touchi
 test('GPU probe never opens a visible window before the account browser', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-gpu-probe-'));
   t.after(() => fs.rmSync(root, {recursive:true, force:true}));
-  for (const file of ['bridge.mjs', 'identity.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
+  for (const file of ['bridge.mjs', 'identity.mjs', 'download-watch.mjs', 'windows-compat.mjs']) fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
   const pkg = path.join(root, 'node_modules', 'camoufox');
   fs.mkdirSync(path.join(pkg, 'dist'), {recursive:true});
   fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({type:'module', exports:{'.':'./index.js','./dist/utils.js':'./dist/utils.js'}}));

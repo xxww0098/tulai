@@ -150,7 +150,7 @@ func (a *App) agyPauseLine(now time.Time) string {
 			rows = append(rows, b)
 		}
 	}
-	until, ok := tasksAgyPaused(rows, now, a.shownDailyCap())
+	until, ok := tasksAgyPaused(rows, now, a.shownDailyCapFor(agy.Platform))
 	if !ok {
 		return ""
 	}
@@ -218,10 +218,10 @@ func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
 				}
 				a.agyChooserHint(c, hint)
 			})
-			ui.Row(c).Shrink(0).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Button(c, "选择文件夹…").Label("agy-pick-folder").Shrink(0).Height(36).AlignSelf(ui.Center).
+			ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Button(c, "选择文件夹…").Label("agy-pick-folder").Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).
 					Disabled(s.busy || a.running).OnClick(func() { a.pickAgyFolder() })
-				ui.Button(c, "导入").Label("agy-import-go").Shrink(0).Height(36).AlignSelf(ui.Center).
+				ui.Button(c, "导入").Label("agy-import-go").Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).
 					Disabled(s.busy || a.running || !s.canImport).OnClick(func() { a.startAgyImport() })
 			})
 		})
@@ -236,7 +236,7 @@ func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
 		}
 		if s.retry && !s.busy {
 			ui.Row(c).Children(func() {
-				ui.Button(c, "重试").Shrink(0).Height(36).AlignSelf(ui.Center).Disabled(a.running).OnClick(func() { a.startAgyImport() })
+				ui.Button(c, "重试").Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).Disabled(a.running).OnClick(func() { a.startAgyImport() })
 			})
 		}
 	})
@@ -250,9 +250,9 @@ func (a *App) agyBox(c *ui.Context, key, label string, roomy bool) ui.Element {
 		box = box.Label(label)
 	}
 	if roomy {
-		return wizardCard(box.Gap(12).Padding(16, 20), tok)
+		return wizardCard(box.Gap(8).Padding(12, 14), tok)
 	}
-	return box.Gap(12).Padding(12, 0).BorderWidth(1, 0, 0, 0).BorderColor(tok.border)
+	return box.Gap(8).Padding(8, 0).BorderWidth(1, 0, 0, 0).BorderColor(tok.border)
 }
 
 // agyChooserHint 把「已检查 <路径>」单独放在一行。路径不换行，放不下就在行尾省略。
@@ -293,7 +293,7 @@ func (a *App) agyMethodRow(c *ui.Context, title, hint, button, label string, bus
 			ui.Text(c, title).FontSize(tok.body).Bold().SingleLine().MinWidth(0)
 			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(hint)
 		})
-		ui.Button(c, button).Label(label).Shrink(0).Height(36).AlignSelf(ui.Center).
+		ui.Button(c, button).Label(label).Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).
 			Disabled(busy || a.running).OnClick(click)
 	})
 }
@@ -324,11 +324,11 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 			if s.url != "" && link.Clicked() {
 				a.openAgyAuthURL()
 			}
-			ui.Row(c).Gap(8).Children(func() {
-				ui.Button(c, "打开浏览器").Height(36).Disabled(s.url == "" || s.opening).OnClick(func() {
+			ui.Row(c).Gap(6).Children(func() {
+				ui.Button(c, "打开浏览器").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(s.url == "" || s.opening).OnClick(func() {
 					a.openAgyAuthURL()
 				})
-				ui.Button(c, "复制链接").Height(36).Disabled(s.url == "").OnClick(func() {
+				ui.Button(c, "复制链接").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(s.url == "").OnClick(func() {
 					if s.url == "" {
 						return
 					}
@@ -343,12 +343,12 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 		ui.Field(c, "授权码", func() {
 			ui.TextInput(c.Key("agy-code"), &s.code).Disabled(s.busy)
 		})
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Button(c, "提交").Height(36).Disabled(s.busy || strings.TrimSpace(s.code) == "").OnClick(func() {
+		ui.Row(c).Gap(6).Children(func() {
+			ui.Button(c, "提交").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(s.busy || strings.TrimSpace(s.code) == "").OnClick(func() {
 				a.submitAgyCode()
 			})
 			if s.retry {
-				ui.Button(c, "重试").Height(36).Disabled(a.running).OnClick(func() { a.retryAgyLogin() })
+				ui.Button(c, "重试").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(a.running).OnClick(func() { a.retryAgyLogin() })
 			}
 		})
 		if s.err != "" {

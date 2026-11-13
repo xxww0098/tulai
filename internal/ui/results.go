@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	resultTileMin = 96
-	resultTileMax = 168
-	resultTileGap = 8
+	// 图片保持合适的最小物理尺寸，避免缩得过小影响辨识。
+	resultTileMin = 108 / interfaceZoom
+	resultTileMax = 152 / interfaceZoom
+	resultTileGap = 6
 )
 
 // resultTile 是结果格里的一张图，或还没有文件时的一条状态。
@@ -36,6 +37,9 @@ type resultRow struct {
 }
 
 func (a *App) resultList() *ui.ListState {
+	if a.fissioning() {
+		return &a.fissionList
+	}
 	if a.washing() {
 		return &a.washList
 	}
@@ -47,7 +51,7 @@ func (a *App) resultsPane(c *ui.Context) {
 	tok := a.look
 	w, _ := c.Size()
 	rows, tileW := a.buildResultRows(w)
-	pane := ui.Column(c.Key("results")).FillWidth().Padding(10, 12).Gap(8).Radius(tok.radiusL).
+	pane := ui.Column(c.Key("results")).Label("出图结果区").FillWidth().Padding(8, 10).Gap(5).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border)
 	if homeSplit(w) {
 		pane.Grow(1).MinHeight(0)
@@ -106,7 +110,7 @@ func (a *App) resultsHead(c *ui.Context) {
 			}
 		})
 		if len(failed) > 0 {
-			ui.Button(c, "全部重试失败项").FontSize(tok.caption).Padding(3, 8).Radius(tok.radiusS).Shrink(0).
+			uiIconTextBtn(c, "retry-failed", "全部重试失败项", "全部重试失败项", iconRotate, 20, false, tok).
 				Disabled(a.running).OnClick(func() { a.retryTasks(failed) })
 		}
 	})
@@ -117,6 +121,8 @@ func (a *App) resultsEmpty(c *ui.Context) {
 	text := "出图结果会出现在这里"
 	if a.washing() {
 		text = "洗图结果会出现在这里"
+	} else if a.fissioning() {
+		text = "4 张裂变结果会出现在这里"
 	}
 	ui.Row(c.Key("stage-empty")).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, iconImages).FontSize(16).TextColor(tok.muted)
@@ -125,7 +131,7 @@ func (a *App) resultsEmpty(c *ui.Context) {
 }
 
 func (a *App) buildResultRows(windowW float32) ([]resultRow, float32) {
-	cols, tileW := resultLayout(windowW)
+	cols, tileW := resultLayoutForStage(a.homeStageW(windowW))
 	items := tasksForPlatform(a.queueItems(), a.stagePlatform())
 	type group struct {
 		key, title string
@@ -158,7 +164,7 @@ func (a *App) buildResultRows(windowW float32) ([]resultRow, float32) {
 		}
 	}
 	var rows []resultRow
-	if a.washing() {
+	if a.washing() || a.fissioning() {
 		var tiles []resultTile
 		for _, key := range order {
 			tiles = append(tiles, groups[key].tiles...)
@@ -190,7 +196,7 @@ func (a *App) buildResultRows(windowW float32) ([]resultRow, float32) {
 
 // resultGroup 生图按提示词分组，洗图按源图分组。
 func (a *App) resultGroup(task tasks.Task) (key, title string) {
-	if a != nil && a.washing() {
+	if a != nil && (a.washing() || a.fissioning()) {
 		if src := taskSource(task); src != "" {
 			return "img:" + src, filepath.Base(src)
 		}
@@ -211,9 +217,13 @@ func taskSource(task tasks.Task) string {
 	return strings.TrimSpace(task.Images[0])
 }
 
-// resultLayout 按右栏宽度排 1 到 5 列。单张不拉成整栏宽。
+// resultLayout 按默认窗口宽度排 1 到 5 列。单张不拉成整栏宽。
 func resultLayout(windowW float32) (cols int, tile float32) {
-	inner := homeStageW(windowW) - 28
+	return resultLayoutForStage(homeStageWDefault(windowW))
+}
+
+func resultLayoutForStage(stageW float32) (cols int, tile float32) {
+	inner := stageW - 24
 	if inner < resultTileMin {
 		inner = resultTileMin
 	}
@@ -283,8 +293,7 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 			if action != "" && len(retry) > 0 {
 				label := action
 				card := ProgressCard{Action: action, Retry: retry}
-				ui.Button(c.Key("retry"), label).FontSize(tok.caption).Padding(2, 8).Radius(tok.radiusS).Shrink(0).
-					Disabled(a.running).OnClick(func() { a.failAction(card) })
+				uiMiniBtn(ui.Button(c.Key("retry"), label), tok).Disabled(a.running).OnClick(func() { a.failAction(card) })
 			}
 		}
 	})
@@ -293,7 +302,7 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 // revealButton 是文件名旁边的文件夹图标，按内容收缩，不拉成缩略图那么宽。
 func (a *App) revealButton(c *ui.Context, path string) {
 	tok := a.look
-	b := ui.ButtonBase(c.Key("folder")).Size(24, 24).Radius(6).Shrink(0).Center().
+	b := ui.ButtonBase(c.Key("folder")).Size(20, 20).Radius(5).Shrink(0).Center().
 		Label("在文件夹中显示").Tooltip("在文件夹中显示").Cursor(ui.CursorPointer)
 	ink := tok.muted
 	switch {
@@ -309,7 +318,7 @@ func (a *App) revealButton(c *ui.Context, path string) {
 	}
 	b.OnClick(func() { a.revealResult(path) })
 	b.Children(func() {
-		ui.Icon(c, iconFolder).FontSize(14).TextColor(ink)
+		ui.Icon(c, iconFolder).FontSize(12).TextColor(ink)
 	})
 }
 
@@ -374,7 +383,7 @@ func (a *App) resultFrame(c *ui.Context, tile resultTile, tileW float32) {
 			if badge := shotBadge(tile.task.Platform, a.accountName(tile.task.BrowserID)); badge != "" {
 				ui.Row(c).Label("产出"+badge).Absolute().Bottom(4).Left(4).Padding(1, 4).Radius(4).
 					Background(tok.accent.Alpha(0.92)).Children(func() {
-					ui.Text(c, badge).FontSize(12).TextColor(tok.onAccent).SingleLine()
+					ui.Text(c, badge).FontSize(10).TextColor(tok.onAccent).SingleLine()
 				})
 			}
 		}

@@ -12,49 +12,49 @@ func (a *App) promptsPage(c *ui.Context) {
 	if a.promptFilter == "" {
 		a.promptFilter = "全部"
 	}
-	ui.Column(c).Grow(1).MinHeight(0).Gap(14).Children(func() {
-		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-				ui.Text(c, "提示词").FontSize(22).Bold()
-				ui.Text(c, "按用途管理模板，在图片生成页的对应模式中快速选择。通用模板两边都可使用。").FontSize(12).TextColor(a.look.muted).SingleLine()
-			})
-			ui.PrimaryButton(c, "新建提示词").Shrink(0).Disabled(a.running).OnClick(func() {
-				a.promptEditChoice = newPromptLabel
-				a.applyPromptChoice()
-				if a.promptEditText == "" && a.promptEditName == "" && a.promptFilter != "全部" {
-					a.promptEditKind = a.promptFilter
-				}
-			})
-		})
+	ui.Column(c).Grow(1).MinHeight(0).Gap(6).Children(func() {
 		a.promptFilters(c)
-		if homeSplit(w) {
-			ui.Row(c).Grow(1).MinHeight(0).Gap(14).AlignItems(ui.Stretch).Children(func() {
-				a.promptTable(c).Grow(1).Basis(0).MinWidth(0)
+		if w >= 720 {
+			tableW := float32(246)
+			if w < 900 {
+				tableW = 216
+			}
+			ui.Row(c).Grow(1).MinHeight(0).Gap(8).AlignItems(ui.Stretch).Children(func() {
+				a.promptTable(c).Width(tableW).Shrink(0)
 				a.promptEditor(c).Grow(1).Basis(0).MinWidth(0)
 			})
 			return
 		}
 		ui.Scroll(c.Key("prompt-page-scroll")).Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(14).Children(func() {
-				a.promptTable(c).FillWidth().Height(250)
-				a.promptEditor(c).FillWidth().Height(430)
+			ui.Column(c).FillWidth().Gap(8).Children(func() {
+				a.promptTable(c).FillWidth().Height(190)
+				a.promptEditor(c).FillWidth().MinHeight(340)
 			})
 		})
 	})
 }
 
 func (a *App) promptFilters(c *ui.Context) {
-	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+	tok := a.look
+	ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
 		for _, label := range []string{"全部", "生图", "洗图", "通用"} {
 			selected := a.promptFilter == label
-			b := ui.Button(c, label).Label("筛选"+label).FontSize(12).Padding(5, 12).Disabled(a.running)
+			b := uiMiniBtn(ui.Button(c, label), tok).Label("筛选" + label).Disabled(a.running)
 			if selected {
-				b.Background(a.look.accent.Alpha(0.12)).TextColor(a.look.accent).Border(1, a.look.accent.Alpha(0.35))
+				b.Background(tok.accent.Alpha(0.12)).TextColor(tok.accent).Border(1, tok.accent.Alpha(0.35))
 			}
 			b.OnClick(func() { a.promptFilter = label })
 		}
 		ui.Spacer(c)
-		ui.Text(c, fmt.Sprintf("%d 条", len(a.promptTableItems()))).FontSize(12).TextColor(a.look.muted).Shrink(0)
+		ui.Text(c, fmt.Sprintf("%d 条", len(a.promptTableItems()))).FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
+		uiIconBtn(c, "prompt-new", "新建提示词", "新建提示词", iconPlus, 22, true, false, tok).
+			Disabled(a.running).OnClick(func() {
+			a.promptEditChoice = newPromptLabel
+			a.applyPromptChoice()
+			if a.promptEditText == "" && a.promptEditName == "" && a.promptFilter != "全部" {
+				a.promptEditKind = a.promptFilter
+			}
+		})
 	})
 }
 
@@ -70,20 +70,19 @@ func (a *App) promptTableItems() []prompts.Template {
 
 func (a *App) promptTable(c *ui.Context) ui.Element {
 	tok := a.look
-	panel := ui.Column(c.Key("prompt-table")).MinHeight(0).Radius(tok.radiusL).
-		Background(tok.card).Border(1, tok.border).Clip()
+	panel := uiCard(c, "prompt-table", tok).MinHeight(0).Clip()
 	panel.Children(func() {
-		ui.Row(c).FillWidth().Padding(11, 14).Gap(8).AlignItems(ui.Center).
+		ui.Row(c).FillWidth().Padding(4, 8).Gap(6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
-			ui.Text(c, "名称").Grow(1).MinWidth(0).FontSize(12).TextColor(tok.muted)
-			ui.Text(c, "类型").Width(58).Shrink(0).FontSize(12).TextColor(tok.muted)
-			ui.Text(c, "来源").Width(40).Shrink(0).FontSize(12).TextColor(tok.muted)
+			ui.Text(c, "名称").Grow(1).MinWidth(0).FontSize(tok.caption).TextColor(tok.muted)
+			ui.Text(c, "类型").Width(38).Shrink(0).FontSize(tok.caption).TextColor(tok.muted)
+			ui.Text(c, "来源").Width(32).Shrink(0).FontSize(tok.caption).TextColor(tok.muted)
 		})
 		items := a.promptTableItems()
 		if len(items) == 0 {
-			ui.Column(c).Grow(1).FillWidth().Center().Gap(4).Children(func() {
-				ui.Text(c, "没有此类型的提示词").FontSize(13).TextColor(tok.text)
-				ui.Text(c, "选择其他类型，或新建提示词。").FontSize(12).TextColor(tok.muted)
+			ui.Column(c).Grow(1).FillWidth().Center().Gap(3).Padding(12).Children(func() {
+				ui.Text(c, "没有此类型的提示词").FontSize(tok.body).TextColor(tok.text)
+				ui.Text(c, "选择其他类型，或新建提示词。").FontSize(tok.caption).TextColor(tok.muted)
 			})
 			return
 		}
@@ -101,8 +100,8 @@ func (a *App) promptTable(c *ui.Context) ui.Element {
 func (a *App) promptTableRow(c *ui.Context, item prompts.Template) {
 	tok := a.look
 	selected := a.promptEditPick == item.ID
-	row := ui.ButtonBase(c.Key("prompt-row-"+item.ID)).FillWidth().MinHeight(44).
-		Padding(8, 14).Gap(8).AlignItems(ui.Center).Label("编辑 "+item.Label).
+	row := ui.ButtonBase(c.Key("prompt-row-"+item.ID)).FillWidth().MinHeight(26).
+		Padding(4, 8).Gap(6).AlignItems(ui.Center).Label("编辑 "+item.Label).
 		BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Disabled(a.running)
 	if selected {
 		row.Background(tok.accent.Alpha(0.09))
@@ -116,7 +115,7 @@ func (a *App) promptTableRow(c *ui.Context, item prompts.Template) {
 		})
 	}
 	row.Children(func() {
-		name := ui.Text(c, item.Label).Grow(1).MinWidth(0).FontSize(13).SingleLine().Tooltip(item.Label)
+		name := ui.Text(c, item.Label).Grow(1).MinWidth(0).FontSize(tok.body).SingleLine().Tooltip(item.Label)
 		if selected {
 			name.Bold().TextColor(tok.accent)
 		}
@@ -127,12 +126,12 @@ func (a *App) promptTableRow(c *ui.Context, item prompts.Template) {
 		} else if kind == "洗图" {
 			color = tok.text
 		}
-		ui.Text(c, kind).Width(58).Shrink(0).FontSize(12).TextColor(color)
+		ui.Text(c, kind).Width(38).Shrink(0).FontSize(tok.caption).TextColor(color)
 		source := "我的"
 		if item.Builtin {
 			source = "内置"
 		}
-		ui.Text(c, source).Width(40).Shrink(0).FontSize(12).TextColor(tok.muted)
+		ui.Text(c, source).Width(32).Shrink(0).FontSize(tok.caption).TextColor(tok.muted)
 	})
 }
 
@@ -141,43 +140,44 @@ func (a *App) promptEditor(c *ui.Context) ui.Element {
 	if !containsStr([]string{"生图", "洗图", "通用"}, a.promptEditKind) {
 		a.promptEditKind = "通用"
 	}
-	panel := ui.Column(c.Key("prompt-editor")).MinHeight(0).Gap(12).Padding(16).
-		Radius(tok.radiusL).Background(tok.card).Border(1, tok.border)
+	panel := uiCard(c, "prompt-editor", tok).MinHeight(0).Gap(6).Padding(8, 10)
 	panel.Children(func() {
 		title := "新建提示词"
 		if a.promptEditPick != "" {
 			title = "编辑提示词"
 		}
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-			ui.Text(c, title).FontSize(15).Bold().Grow(1)
+			ui.Text(c, title).FontSize(tok.title).Bold().Grow(1)
 			if prompts.IsBuiltin(a.promptEditPick) {
-				ui.Text(c, "内置 · 修改后另存为副本").FontSize(12).TextColor(tok.muted)
+				ui.Text(c, "内置 · 修改后另存为副本").FontSize(tok.caption).TextColor(tok.muted)
 			}
 		})
-		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.End).Children(func() {
-			ui.Column(c).Grow(1).MinWidth(0).Gap(5).Children(func() {
-				ui.Text(c, "名称").FontSize(12).TextColor(tok.muted)
-				ui.TextInput(c.Key("prompt-name"), &a.promptEditName).FillWidth().Label("提示词名称").
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.End).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				ui.Text(c, "名称").FontSize(tok.caption).TextColor(tok.muted)
+				ui.TextInput(c.Key("prompt-name"), &a.promptEditName).Height(26).FillWidth().Label("提示词名称").
 					Placeholder("留空时取正文第一行").Disabled(a.running)
 			})
-			ui.Column(c).Width(132).Shrink(0).Gap(5).Children(func() {
-				ui.Text(c, "适用类型").FontSize(12).TextColor(tok.muted)
+			ui.Column(c).Width(98).Shrink(0).Gap(3).Children(func() {
+				ui.Text(c, "适用类型").FontSize(tok.caption).TextColor(tok.muted)
 				motionSelect(c.Key("prompt-kind"), &a.promptEditKind, []string{"生图", "洗图", "通用"}).
-					FillWidth().Label("提示词类型").Disabled(a.running)
+					Height(26).FillWidth().Label("提示词类型").Disabled(a.running)
 			})
 		})
-		ui.Text(c, "正文").FontSize(12).TextColor(tok.muted)
-		ui.TextArea(c.Key("prompt-body"), &a.promptEditText).Grow(1).MinHeight(140).FillWidth().
+		ui.Text(c, "正文").FontSize(tok.caption).TextColor(tok.muted)
+		ui.TextArea(c.Key("prompt-body"), &a.promptEditText).Grow(1).MinHeight(120).FillWidth().
 			Label("提示词内容").Placeholder("输入提示词内容").Disabled(a.running)
 		if a.promptEditNote != "" {
-			ui.Text(c, a.promptEditNote).FontSize(12).TextColor(tok.muted)
+			ui.Text(c, a.promptEditNote).FontSize(tok.caption).TextColor(tok.muted)
 		}
-		ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
-			ui.PrimaryButton(c, "保存提示词").Disabled(a.running).OnClick(func() { a.saveCurrentPrompt() })
+		ui.Row(c).FillWidth().Gap(4).Wrap().AlignItems(ui.Center).Children(func() {
+			uiBtn(ui.PrimaryButton(c, "保存提示词"), tok).Disabled(a.running).OnClick(func() { a.saveCurrentPrompt() })
 			if prompts.IsBuiltin(a.promptEditPick) {
-				ui.Button(c, "恢复内置").Disabled(a.running).OnClick(func() { a.restoreBuiltinPrompt() })
+				uiIconBtn(c, "prompt-restore", "恢复内置", "恢复内置默认正文", iconRotateCcw, 24, false, false, tok).
+					Disabled(a.running).OnClick(func() { a.restoreBuiltinPrompt() })
 			} else if a.promptEditPick != "" {
-				ui.Button(c, "删除提示词").Disabled(a.running).OnClick(func() { a.deleteUserPrompt() })
+				uiIconBtn(c, "prompt-delete", "删除提示词", "删除此提示词", iconTrash, 24, false, false, tok).
+					Disabled(a.running).OnClick(func() { a.deleteUserPrompt() })
 			}
 		})
 	})

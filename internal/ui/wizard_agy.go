@@ -83,7 +83,7 @@ func (a *App) wizardLandOnChoice() {
 		return
 	}
 	idx := stageIndex(a.wizardChoice)
-	for _, page := range []int{pageHome, pageWash} {
+	for _, page := range []int{pageHome, pageWash, pageFission} {
 		a.onPage(page, func() {
 			a.stageTab = idx
 			a.stagePicked = true
@@ -264,11 +264,11 @@ func (a *App) wizardInstallStep(c *ui.Context) {
 	if st.found {
 		title, detail, pill, pillColor = "已找到 agy", st.path, "已就绪", tok.success
 	}
-	wizardCard(ui.Row(c.Key("agy-card")).FillWidth().Gap(16).AlignItems(ui.Center).Padding(20), tok).Children(func() {
-		wizardTile(c, "agy-tile", iconTerminal, 48, tok)
-		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-			ui.Text(c, title).FontSize(18).Bold()
-			ui.Text(c, detail).FontSize(13).TextColor(tok.muted).SingleLine().Tooltip(detail)
+	wizardCard(ui.Row(c.Key("agy-card")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(12, 14), tok).Children(func() {
+		wizardTile(c, "agy-tile", iconTerminal, 36, tok)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+			ui.Text(c, title).FontSize(tok.title).Bold()
+			ui.Text(c, detail).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(detail)
 		})
 		wizardPill(c, "agy-pill", pill, pillColor)
 	})
@@ -277,14 +277,14 @@ func (a *App) wizardInstallStep(c *ui.Context) {
 	}
 	cmd := agy.InstallCommand(runtime.GOOS)
 	shell := agy.InstallShell(runtime.GOOS)
-	wizardCard(ui.Column(c.Key("agy-install")).FillWidth().Gap(12).Padding(16, 20), tok).Children(func() {
-		ui.Text(c, "在"+shell+"里运行这一行").FontSize(15).Bold()
-		ui.Row(c.Key("agy-cmd")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 14).Radius(tok.radiusM).Background(tok.sunken).Children(func() {
-			ui.Icon(c, iconTerminal).FontSize(16).TextColor(tok.muted).Shrink(0)
-			ui.Text(c, cmd).Font("monospace").FontSize(13).Selectable().Grow(1).MinWidth(0)
+	wizardCard(ui.Column(c.Key("agy-install")).FillWidth().Gap(8).Padding(12, 14), tok).Children(func() {
+		ui.Text(c, "在"+shell+"里运行这一行").FontSize(tok.body).Bold()
+		ui.Row(c.Key("agy-cmd")).FillWidth().Gap(8).AlignItems(ui.Center).Padding(6, 10).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
+			ui.Icon(c, iconTerminal).FontSize(13).TextColor(tok.muted).Shrink(0)
+			ui.Text(c, cmd).Font("monospace").FontSize(12).Selectable().Grow(1).MinWidth(0)
 		})
-		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Button(c, "复制命令").OnClick(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			uiBtn(ui.Button(c, "复制命令"), tok).OnClick(func() {
 				c.Services().WriteClipboard(cmd)
 				a.wizardAgy.copied = true
 			})
@@ -293,10 +293,10 @@ func (a *App) wizardInstallStep(c *ui.Context) {
 			}
 		})
 	})
-	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Button(c, "打开官方下载页").OnClick(func() { c.OpenURL(agy.InstallPage) })
-		ui.Button(c, "我装在别处…").OnClick(func() { a.pickAgyBinary() })
-		ui.Button(c, "重新检测").OnClick(func() { a.checkAgyInstall() })
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		uiBtn(ui.Button(c, "打开官方下载页"), tok).OnClick(func() { c.OpenURL(agy.InstallPage) })
+		uiBtn(ui.Button(c, "我装在别处…"), tok).OnClick(func() { a.pickAgyBinary() })
+		uiBtn(ui.Button(c, "重新检测"), tok).OnClick(func() { a.checkAgyInstall() })
 	})
 	ui.Text(c, "官方脚本把 agy 装到 "+agy.DefaultBin()+"。").FontSize(tok.caption).TextColor(tok.muted).Selectable()
 }
@@ -310,7 +310,7 @@ func (a *App) wizardAgyAccountStep(c *ui.Context) {
 	case a.agyChooser != nil:
 		a.agyChooserCard(c, true)
 	default:
-		ui.Button(c, "重新选择登录方式").OnClick(func() { a.wizardEnterAgyAccount(a.wizardExtra) })
+		uiBtn(ui.Button(c, "重新选择登录方式"), tok).OnClick(func() { a.wizardEnterAgyAccount(a.wizardExtra) })
 	}
 	if runtime.GOOS == "windows" {
 		ui.Text(c, "Windows 上暂时不能在这里直接授权。先在 PowerShell 里运行 agy 登录一次，再选「导入」。").

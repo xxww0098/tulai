@@ -293,6 +293,7 @@ func TestDownloadBrowserCannotResumeOldTaskDuringSiteSwitch(t *testing.T) {
 func TestDownloadDedicatedEnvironmentOpensComposer(t *testing.T) {
 	a, st := newDownloadApp(t)
 	a.tab, a.detectedNote, a.camoufoxStatus = pageBrowser, "已检测", "Camoufox 已就绪"
+	a.camoufoxReady = true
 	a.dlURLs = "https://example.test/gallery"
 	tt := ui.NewTester(a.view, 1024, 700)
 	for _, label := range []string{"网页图片下载专用环境", "使用下载环境", "未打开"} {

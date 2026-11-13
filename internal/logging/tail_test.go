@@ -25,6 +25,7 @@ func TestBindPutsPlatformOnEveryLine(t *testing.T) {
 	if err := Open(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
+	defer Close()
 	stop := Bind("千问", "千问1", 9338, 1)
 	Log.Warning("#1 第 1 次尝试失败: 出图超时，没有可保存的图片")
 	stop()
@@ -34,10 +35,10 @@ func TestBindPutsPlatformOnEveryLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "platform=千问") || !strings.Contains(text, "account=千问1") || !strings.Contains(text, "port=9338") || !strings.Contains(text, "task_id=1") {
+	if !strings.Contains(text, "[千问/千问1:9338]") || !strings.Contains(text, "task_id=1") {
 		t.Fatalf("失败日志没有账号: %s", text)
 	}
-	if strings.Count(text, "account=千问1") != 1 {
+	if strings.Count(text, "千问1") != 1 {
 		t.Fatalf("绑定结束后的日志不该再带账号: %s", text)
 	}
 }

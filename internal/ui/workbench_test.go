@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"database/sql"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/store"
@@ -229,7 +231,7 @@ func TestPlatformAutoDefaultsOn(t *testing.T) {
 	if !a.platformAuto {
 		t.Fatal("platform auto should default on")
 	}
-	if int(a.dailyCap) != tasks.DefaultDailyCap || a.riskyWords != tasks.RiskySetting() {
+	if int(a.dailyCap) != 0 || a.shownDailyCapFor("千问") != tasks.DefaultDailyCap || a.riskyWords != tasks.RiskySetting() {
 		t.Fatalf("safe defaults cap=%v words=%q", a.dailyCap, a.riskyWords)
 	}
 	a.platformAuto = false
@@ -243,6 +245,88 @@ func TestPlatformAutoDefaultsOn(t *testing.T) {
 	}
 	if int(again.dailyCap) != 12 || again.riskyWords != "血腥,武器" {
 		t.Fatalf("cap/words not restored: %v %q", again.dailyCap, again.riskyWords)
+	}
+}
+
+func TestDailyCapsPerProviderPersistAndReachTasks(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	a.loadSettings()
+	a.dailyCap, a.dailyCapQianwen, a.dailyCapAgy, a.dailyCapChatGPT = 30, 0, 50, 60
+	for _, platform := range []string{"豆包", "千问", agy.Platform, "ChatGPT"} {
+		a.markDailyCapSet(platform)
+	}
+	a.saveSettings()
+	if got := a.shownDailyCapFor("千问"); got != 0 {
+		t.Fatalf("0 should mean unlimited, got cap %d", got)
+	}
+
+	again := &App{store: st}
+	again.loadSettings()
+	if again.dailyCap != 30 || again.dailyCapQianwen != 0 || again.dailyCapAgy != 50 || again.dailyCapChatGPT != 60 {
+		t.Fatalf("cap settings not restored: %v %v %v %v", again.dailyCap, again.dailyCapQianwen, again.dailyCapAgy, again.dailyCapChatGPT)
+	}
+	opts := again.taskOptions(nil, nil, nil)
+	for platform, want := range map[string]int{"豆包": 30, "千问": 0, agy.Platform: 50, "ChatGPT": 60} {
+		if got := opts.DailyCaps[platform]; got != want {
+			t.Fatalf("%s cap = %d, want %d", platform, got, want)
+		}
+	}
+
+	// 旧配置只写了全局 daily_cap 时，四个供应商都沿用它。
+	legacyPath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+		INSERT INTO settings(key,value) VALUES('daily_cap','15')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := store.Open(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	old := &App{store: legacy}
+	old.loadSettings()
+	for _, platform := range []string{"豆包", "千问", agy.Platform, "ChatGPT"} {
+		if got := old.shownDailyCapFor(platform); got != 15 {
+			t.Fatalf("legacy %s cap = %d", platform, got)
+		}
+	}
+}
+
+func TestDailyCapsAreIndependentPerProvider(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	a.loadSettings()
+	a.dailyCap = 30
+	if got := a.shownDailyCapFor("千问"); got != tasks.DefaultDailyCap {
+		t.Fatalf("改豆包上限不应连带改千问: %d", got)
+	}
+	a.saveSettings()
+
+	again := &App{store: st}
+	again.loadSettings()
+	if got := again.shownDailyCapFor("豆包"); got != 30 {
+		t.Fatalf("豆包 cap = %d", got)
+	}
+	for _, platform := range []string{"千问", agy.Platform, "ChatGPT"} {
+		if got := again.shownDailyCapFor(platform); got != tasks.DefaultDailyCap {
+			t.Fatalf("%s 上限被豆包影响了: %d", platform, got)
+		}
 	}
 }
 
@@ -676,7 +760,7 @@ func TestDropZoneAddsAndRemovesImages(t *testing.T) {
 	if len(a.sources) != 2 {
 		t.Fatalf("sources = %+v", a.sources)
 	}
-	assertVisible(t, tt, "已选 2 张", 1280, 840)
+	assertVisible(t, tt, "2 张", 1280, 840)
 	if err := tt.Click("移除"); err != nil {
 		t.Fatal(err)
 	}
@@ -693,7 +777,7 @@ func TestDropTxtLoadsLineAndParagraphPrompts(t *testing.T) {
 	}
 	a := &App{platformAuto: true}
 	tt := ui.NewTester(a.view, 1280, 840)
-	r := assertVisible(t, tt, "每行一条；导入段落会合并", 1280, 840)
+	r := assertVisible(t, tt, "提示词内容", 1280, 840)
 	if !tt.DropFiles(r.X+8, r.Y+4, path, filepath.Join(dir, "skip.png")) {
 		t.Fatal("提示词卡片没有接住文件")
 	}

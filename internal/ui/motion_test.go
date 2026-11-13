@@ -208,10 +208,10 @@ func TestUpdateNoticeStaysClickable(t *testing.T) {
 func TestPromptSelectChoosesWhileOpening(t *testing.T) {
 	a := &App{tab: pagePrompts}
 	tt := ui.NewTester(a.view, 1280, 840)
-	if err := tt.Click("编辑 默认洗图"); err != nil {
+	if err := tt.Click("编辑 豆包洗图"); err != nil {
 		t.Fatal(err)
 	}
-	if a.promptEditChoice != "默认洗图" || a.promptEditPick == "" {
+	if a.promptEditChoice != "豆包洗图" || a.promptEditPick == "" {
 		t.Fatalf("choice=%q pick=%q", a.promptEditChoice, a.promptEditPick)
 	}
 }
@@ -301,7 +301,7 @@ func TestExportMotionFrames(t *testing.T) {
 	work.tab = pagePrompts
 	wt.Frame()
 	wt.Advance(motionUI)
-	if err := wt.Click("编辑 默认洗图"); err != nil {
+	if err := wt.Click("编辑 豆包洗图"); err != nil {
 		t.Fatal(err)
 	}
 	wt.Advance(80 * time.Millisecond)

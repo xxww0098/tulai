@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/appdata"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -46,10 +47,15 @@ func main() {
 	}
 	if err := logging.Open("."); err != nil {
 		log.Printf("打开日志文件失败: %v", err)
+		logging.Log.Errorf("打开日志文件失败: %v", err)
+	} else {
+		defer logging.Close()
 	}
 	dataRoot := "BrowserData"
 	db, err := store.Open(filepath.Join("database", "config.db"))
 	if err != nil {
+		logging.Log.Errorf("打开配置库失败: %v", err)
+		_ = logging.Close()
 		log.Fatalf("打开配置库失败: %v", err)
 	}
 	bm := browser.NewManager()
@@ -59,7 +65,13 @@ func main() {
 
 	engine := tasks.NewEngine(db, bm, nil, dataRoot)
 	// mygo build 会把 mygo.json 的版本链进二进制；go run 没有这段链接信息。
-	logging.Log.Info("tulai %s 启动（数据目录: %s）", runningVersion(), dataRoot)
+	if dataDir == "" {
+		dataDir, err = os.Getwd()
+		if err != nil {
+			dataDir = "."
+		}
+	}
+	logging.Log.Info("tulai %s 启动（数据目录: %s）", runningVersion(), dataDir)
 	defer bm.StopAll()
 	defer engine.CloseSessions()
 	defer db.Close()
@@ -75,9 +87,5 @@ func packagedDataDir(goos, executable string) (string, error) {
 			return "", nil
 		}
 	}
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(configDir, "tulai"), nil
+	return appdata.Dir()
 }

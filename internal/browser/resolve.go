@@ -3,10 +3,9 @@ package browser
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"runtime"
 
+	"github.com/xxww0098/tulai/internal/appdata"
 	"github.com/xxww0098/tulai/internal/camoufox"
 )
 
@@ -20,11 +19,11 @@ func NormalizeStoredBackend(string, string) string { return KindCamoufox }
 func ChoiceLabel(string) string                    { return KindCamoufox }
 func CamoufoxSupported(goos, goarch string) bool   { return camoufox.Supported(goos, goarch) }
 func ConfigDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil || dir == "" {
+	dir, err := appdata.Dir()
+	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "tulai")
+	return dir
 }
 
 func Resolve(goos, backend, dataDir string) (Runtime, error) {

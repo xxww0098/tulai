@@ -122,11 +122,35 @@ func fakeInstalledCamoufox(t *testing.T) {
 		node = filepath.Join(dir, "node", "node.exe")
 	}
 	exe := filepath.Join(dir, "browser")
-	for _, path := range []string{node, exe, filepath.Join(dir, "node_modules", "camoufox", "package.json")} {
+	files := []string{node, exe, filepath.Join(dir, "node_modules", "camoufox", "package.json")}
+	native := map[string]string{
+		"windows/amd64": "impit-win32-x64-msvc",
+		"darwin/amd64":  "impit-darwin-x64",
+		"darwin/arm64":  "impit-darwin-arm64",
+		"linux/amd64":   "impit-linux-x64-gnu",
+		"linux/arm64":   "impit-linux-arm64-gnu",
+	}[runtime.GOOS+"/"+runtime.GOARCH]
+	if native != "" {
+		files = append(files, filepath.Join(dir, "node_modules", native, "package.json"))
+		files = append(files, filepath.Join(dir, "node_modules", "impit", "package.json"))
+		if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+			files = append(files, filepath.Join(dir, "node_modules", native, "impit-node.win32-x64-msvc.node"))
+		}
+	}
+	for _, path := range files {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if native != "" {
+		impitMeta, _ := json.Marshal(map[string]any{"optionalDependencies": map[string]string{native: "0.14.8"}})
+		if err := os.WriteFile(filepath.Join(dir, "node_modules", "impit", "package.json"), impitMeta, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "node_modules", native, "package.json"), []byte(`{"version":"0.14.8"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}

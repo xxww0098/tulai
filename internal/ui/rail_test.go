@@ -16,6 +16,20 @@ func TestRailIconsHaveTooltipsAndActions(t *testing.T) {
 	tt := ui.NewTester(a.view, 1280, 800)
 	tt.Advance(80 * time.Millisecond)
 
+	// 默认宽屏展开侧栏；点击顶栏「收起侧栏」应折叠为图标栏并显示右侧悬浮提示。
+	rail, ok := tt.Find("nav-rail")
+	if !ok || rail.W < sidebarExpandedW-1 {
+		t.Fatalf("expected expanded sidebar >= %v, got ok=%v rect=%v", sidebarExpandedW, ok, rail)
+	}
+	if err := tt.Click("收起侧栏"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(120 * time.Millisecond)
+	collapsedRail, ok := tt.Find("nav-rail")
+	if !ok || collapsedRail.W > sidebarCollapsedW+1 {
+		t.Fatalf("expected collapsed sidebar <= %v, got ok=%v rect=%v", sidebarCollapsedW, ok, collapsedRail)
+	}
+
 	steps := []struct {
 		tip  string
 		prep func()
@@ -97,6 +111,41 @@ func TestRailIconsHaveTooltipsAndActions(t *testing.T) {
 			t.Fatal(err)
 		}
 		step.done()
+	}
+	if err := tt.Click("展开侧栏"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(120 * time.Millisecond)
+	expandedAgain, ok := tt.Find("nav-rail")
+	if !ok || expandedAgain.W < sidebarExpandedW-1 {
+		t.Fatalf("expected re-expanded sidebar >= %v, got ok=%v rect=%v", sidebarExpandedW, ok, expandedAgain)
+	}
+}
+
+func TestRailSwitchesPagesWhileRunning(t *testing.T) {
+	a := &App{platformAuto: true, running: true}
+	tt := ui.NewTester(a.view, 1280, 800)
+	tt.Advance(80 * time.Millisecond)
+
+	for _, step := range []struct {
+		label string
+		page  int
+	}{
+		{"浏览器", pageBrowser},
+		{"提示词", pagePrompts},
+		{"下载", pageDownload},
+		{"设置", pageSettings},
+		{"图片生成", pageHome},
+	} {
+		if err := tt.Click(step.label); err != nil {
+			t.Fatal(err)
+		}
+		if a.tab != step.page {
+			t.Fatalf("运行中点击 %s 后 tab=%d，想切到 %d", step.label, a.tab, step.page)
+		}
+	}
+	if !a.running || a.runPage != pageHome {
+		t.Fatalf("切页改变了运行状态: running=%v runPage=%d", a.running, a.runPage)
 	}
 }
 

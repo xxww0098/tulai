@@ -32,8 +32,19 @@ func TestLoginBannerAndAutoLog(t *testing.T) {
 	assertVisible(t, tt, "账号2 需要重新扫码登录", width, height)
 	assertVisible(t, tt, "去处理", width, height)
 	tt.Advance(250 * time.Millisecond)
-	scrollIntoView(t, tt, "运行日志", width, height)
-	scrollIntoView(t, tt, "账号1 浏览器崩溃，已自动重启", width, height)
+	logBtn := assertVisible(t, tt, "运行日志", width, height)
+	if logBtn.X <= float32(width)/2 || logBtn.Y+logBtn.H > topbarH+2 {
+		t.Fatalf("运行日志 trigger not in topbar right: %v", logBtn)
+	}
+	if err := tt.Click("运行日志"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(150 * time.Millisecond)
+	assertVisible(t, tt, "账号1 浏览器崩溃，已自动重启", width, height)
+	if err := tt.Click("运行日志"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(150 * time.Millisecond)
 	scrollIntoView(t, tt, "去处理", width, height)
 	if err := tt.Click("去处理"); err != nil {
 		t.Fatal(err)

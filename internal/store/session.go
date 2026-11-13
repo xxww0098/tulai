@@ -1,9 +1,11 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -12,7 +14,13 @@ const (
 	PageGen = "gen"
 	// PageWash 是洗图页的会话。
 	PageWash = "wash"
+	// PageFission 是裂变图片页的会话。
+	PageFission = "fission"
 )
+
+func validSessionPage(page string) bool {
+	return page == PageGen || page == PageWash || page == PageFission
+}
 
 const historyLimit = 100
 
@@ -28,6 +36,15 @@ type Session struct {
 	ProgText string
 	Active   bool
 	Tasks    int
+	Sources  []SessionSource
+}
+
+// SessionSource 记录一张原图在会话里的洗图进度。
+// 没有记录或 Washed=false 都算未洗，成功后同时保留第一张结果路径。
+type SessionSource struct {
+	Path   string
+	Washed bool
+	Output string
 }
 
 // SessionTask 是会话里的一条任务。Outputs 用换行分隔结果路径。
@@ -52,7 +69,7 @@ func (s *Store) SaveActive(sess Session, items []SessionTask) (int64, error) {
 	if s == nil {
 		return 0, fmt.Errorf("配置库未打开")
 	}
-	if sess.Page != PageGen && sess.Page != PageWash {
+	if !validSessionPage(sess.Page) {
 		return 0, fmt.Errorf("任务页无效")
 	}
 	s.mu.Lock()
@@ -93,6 +110,9 @@ func (s *Store) SaveActive(sess Session, items []SessionTask) (int64, error) {
 	if _, err = tx.Exec(`DELETE FROM session_tasks WHERE session_id=?`, id); err != nil {
 		return 0, fmt.Errorf("保存任务记录失败: %w", err)
 	}
+	if _, err = tx.Exec(`DELETE FROM session_sources WHERE session_id=?`, id); err != nil {
+		return 0, fmt.Errorf("保存洗图进度失败: %w", err)
+	}
 	for i, item := range items {
 		ord := item.Ord
 		if ord <= 0 {
@@ -102,6 +122,19 @@ func (s *Store) SaveActive(sess Session, items []SessionTask) (int64, error) {
 			VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 			id, ord, item.Prompt, item.Source, item.Platform, item.AccountID, item.AccountName, item.Status, item.Outputs, item.Error, item.At); err != nil {
 			return 0, fmt.Errorf("保存任务记录失败: %w", err)
+		}
+	}
+	for _, item := range sess.Sources {
+		if strings.TrimSpace(item.Path) == "" {
+			continue
+		}
+		washed := 0
+		if item.Washed {
+			washed = 1
+		}
+		if _, err = tx.Exec(`INSERT OR REPLACE INTO session_sources(session_id, path, washed, output, updated_at)
+			VALUES(?,?,?,?,?)`, id, item.Path, washed, item.Output, now); err != nil {
+			return 0, fmt.Errorf("保存洗图进度失败: %w", err)
 		}
 	}
 	if err = tx.Commit(); err != nil {
@@ -115,12 +148,17 @@ func (s *Store) ActiveSession(page string) (Session, []SessionTask, bool, error)
 	if s == nil {
 		return Session{}, nil, false, fmt.Errorf("配置库未打开")
 	}
-	if page != PageGen && page != PageWash {
+	if !validSessionPage(page) {
 		return Session{}, nil, false, fmt.Errorf("任务页无效")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess, err := scanOne(s.db, `SELECT id, page, created_at, updated_at, prompts, images, progress, prog_text, active
+	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Session{}, nil, false, fmt.Errorf("读取任务记录失败: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanOne(tx, `SELECT id, page, created_at, updated_at, prompts, images, progress, prog_text, active
 		FROM sessions WHERE page=? AND active=1 ORDER BY updated_at DESC LIMIT 1`, page)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, nil, false, nil
@@ -128,11 +166,19 @@ func (s *Store) ActiveSession(page string) (Session, []SessionTask, bool, error)
 	if err != nil {
 		return Session{}, nil, false, fmt.Errorf("读取任务记录失败: %w", err)
 	}
-	items, err := loadTasks(s.db, sess.ID)
+	sources, err := loadSources(tx, sess.ID)
+	if err != nil {
+		return Session{}, nil, false, err
+	}
+	sess.Sources = sources
+	items, err := loadTasks(tx, sess.ID)
 	if err != nil {
 		return Session{}, nil, false, err
 	}
 	sess.Tasks = len(items)
+	if err := tx.Commit(); err != nil {
+		return Session{}, nil, false, fmt.Errorf("读取任务记录失败: %w", err)
+	}
 	return sess, items, true, nil
 }
 
@@ -141,7 +187,7 @@ func (s *Store) History(page string) ([]Session, error) {
 	if s == nil {
 		return nil, fmt.Errorf("配置库未打开")
 	}
-	if page != PageGen && page != PageWash {
+	if !validSessionPage(page) {
 		return nil, fmt.Errorf("任务页无效")
 	}
 	s.mu.Lock()
@@ -178,7 +224,12 @@ func (s *Store) Session(id int64) (Session, []SessionTask, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess, err := scanOne(s.db, `SELECT id, page, created_at, updated_at, prompts, images, progress, prog_text, active
+	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Session{}, nil, fmt.Errorf("读取任务记录失败: %w", err)
+	}
+	defer tx.Rollback()
+	sess, err := scanOne(tx, `SELECT id, page, created_at, updated_at, prompts, images, progress, prog_text, active
 		FROM sessions WHERE id=?`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, nil, fmt.Errorf("任务记录不存在")
@@ -186,11 +237,19 @@ func (s *Store) Session(id int64) (Session, []SessionTask, error) {
 	if err != nil {
 		return Session{}, nil, fmt.Errorf("读取任务记录失败: %w", err)
 	}
-	items, err := loadTasks(s.db, sess.ID)
+	sources, err := loadSources(tx, sess.ID)
+	if err != nil {
+		return Session{}, nil, err
+	}
+	sess.Sources = sources
+	items, err := loadTasks(tx, sess.ID)
 	if err != nil {
 		return Session{}, nil, err
 	}
 	sess.Tasks = len(items)
+	if err := tx.Commit(); err != nil {
+		return Session{}, nil, fmt.Errorf("读取任务记录失败: %w", err)
+	}
 	return sess, items, nil
 }
 
@@ -269,6 +328,9 @@ func (s *Store) DeleteSession(id int64) error {
 	if _, err = tx.Exec(`DELETE FROM session_tasks WHERE session_id=?`, id); err != nil {
 		return fmt.Errorf("删除历史记录失败: %w", err)
 	}
+	if _, err = tx.Exec(`DELETE FROM session_sources WHERE session_id=?`, id); err != nil {
+		return fmt.Errorf("删除历史记录失败: %w", err)
+	}
 	if _, err = tx.Exec(`DELETE FROM sessions WHERE id=?`, id); err != nil {
 		return fmt.Errorf("删除历史记录失败: %w", err)
 	}
@@ -328,6 +390,28 @@ func loadTasks(q rowQuery, sessionID int64) ([]SessionTask, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("读取任务记录失败: %w", err)
+	}
+	return out, nil
+}
+
+func loadSources(q rowQuery, sessionID int64) ([]SessionSource, error) {
+	rows, err := q.Query(`SELECT path, washed, output FROM session_sources WHERE session_id=? ORDER BY path`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("读取洗图进度失败: %w", err)
+	}
+	defer rows.Close()
+	var out []SessionSource
+	for rows.Next() {
+		var item SessionSource
+		var washed int
+		if err := rows.Scan(&item.Path, &washed, &item.Output); err != nil {
+			return nil, fmt.Errorf("读取洗图进度失败: %w", err)
+		}
+		item.Washed = washed != 0
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("读取洗图进度失败: %w", err)
 	}
 	return out, nil
 }

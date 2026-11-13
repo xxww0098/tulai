@@ -15,21 +15,21 @@ import (
 
 // 账号表每列的宽度。账号和当前任务分剩下的宽度。
 const (
-	laneColState = 96
-	laneColQuota = 148
-	laneColOps   = 136
-	laneRowH     = 48
+	laneColState = 74
+	laneColQuota = 132
+	laneColOps   = 96
+	laneRowH     = 34
 )
 
 func laneColumns(winW float32, mail bool) (state, quota, ops, accountGrow, taskGrow float32) {
 	if mail {
 		if winW < 1150 {
-			return 0, 132, 76, 1, 0
+			return 0, 126, 72, 1, 0
 		}
-		return 72, laneColQuota, 76, 2, 1
+		return 64, laneColQuota, 72, 2, 1
 	}
 	if winW < 1150 {
-		return 0, 132, laneColOps, 1, 0
+		return 0, 128, laneColOps, 1, 0
 	}
 	return laneColState, laneColQuota, laneColOps, 2, 1
 }
@@ -45,7 +45,7 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	// 展开历史时立即让出位置，避免卡片挡住恢复按钮。
 	reveal.Position = false
 	reveal.Colors = true
-	ui.Column(c.Key("lane-table")).Label("账号表格").FillWidth().Gap(10).Padding(12).Radius(tok.radiusL).
+	ui.Column(c.Key("lane-table")).Label("账号表格").FillWidth().Gap(4).Padding(6, 9).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).Transition(reveal).Children(func() {
 		a.laneHeader(c)
 		if mail {
@@ -62,7 +62,7 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 			}
 			return
 		}
-		ui.Row(c.Key("lane-head")).FillWidth().Gap(8).Padding(6, 0, 8, 0).AlignItems(ui.Center).
+		ui.Row(c.Key("lane-head")).FillWidth().Gap(6).Padding(2, 0, 4, 0).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 			head := func(label string) ui.Element {
 				return ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).SingleLine()
@@ -82,6 +82,9 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 			ui.Row(c).Width(opsW).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
 		})
 		capN := 3
+		if winH < 640 {
+			capN = 2
+		}
 		if mail && winH < 760 && (a.agyChooser != nil || a.agyLogin != nil) {
 			capN = 1
 		}
@@ -89,7 +92,7 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 		if len(board.Lanes) > capN {
 			rowsH = float32(laneRowH * capN)
 		}
-		ui.Scroll(c.Key("lane-rows")).Label("账号列表").FillWidth().Height(rowsH).MaxHeight(float32(laneRowH*capN) + 8).Children(func() {
+		ui.Scroll(c.Key("lane-rows")).Label("账号列表").FillWidth().Height(rowsH).MaxHeight(float32(laneRowH*capN) + 4).Children(func() {
 			ui.Column(c).FillWidth().Children(func() {
 				for i, ln := range board.Lanes {
 					a.laneRow(c, ln, i)
@@ -104,7 +107,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 	winW, _ := c.Size()
 	isAgy := ln.Platform == agy.Platform
 	compact := winW < 1150
-	row := ui.Row(c.Key(ln.ID)).FillWidth().Height(laneRowH).Gap(8).Padding(6, 0).AlignItems(ui.Center).
+	row := ui.Row(c.Key(ln.ID)).FillWidth().Height(laneRowH).Gap(6).Padding(3, 0).AlignItems(ui.Center).
 		Radius(tok.radiusS).Label("车道"+ln.Name).Transition(laneEnter(i)).BorderWidth(0, 0, 1, 0).BorderColor(tok.border.Alpha(0.6))
 	if row.Hovered() {
 		row.Background(tok.sunken)
@@ -121,7 +124,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 	row.Children(func() {
 		ui.Row(c).Grow(accountGrow).Basis(0).MinWidth(0).Gap(5).AlignItems(ui.Center).Children(func() {
 			on := !ln.Disabled
-			if ui.Switch(c.Key("enabled"), &on).Size(32, 18).Radius(9).Label("启用账号 " + ln.Name).Tooltip("禁用后不再接新任务，当前任务会完成").Changed() {
+			if ui.Switch(c.Key("enabled"), &on).Size(26, 15).Radius(7.5).Label("启用账号 " + ln.Name).Tooltip("禁用后不再接新任务，当前任务会完成").Changed() {
 				var err error
 				switch {
 				case a.engine != nil && a.store != nil:
@@ -169,16 +172,20 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			})
 		} else {
 			used, capN, frac, fill := laneQuotaFill(tok, ln)
-			ui.Column(c).Width(quotaW).Shrink(0).Gap(4).Justify(ui.Center).Children(func() {
-				ui.Row(c).FillWidth().Height(16).Gap(4).AlignItems(ui.Center).Children(func() {
-					ui.Text(c.Key("used"), fmt.Sprintf("%d/%d", used, capN)).FontSize(tok.caption).FontWeight(600).
-						FontFeatures("tnum").SingleLine().Shrink(0).Tooltip("今日已用次数 / 每日上限").
+			label, tip := fmt.Sprintf("%d/%d", used, capN), "今日已用次数 / 每日上限"
+			if capN <= 0 {
+				label, tip = fmt.Sprintf("%d/不限", used), "今日已用次数 / 每日上限（不限制）"
+			}
+			ui.Column(c).Width(quotaW).Shrink(0).Gap(2).Justify(ui.Center).Children(func() {
+				ui.Row(c).FillWidth().Height(14).Gap(4).AlignItems(ui.Center).Children(func() {
+					ui.Text(c.Key("used"), label).FontSize(tok.caption).FontWeight(600).
+						FontFeatures("tnum").SingleLine().Shrink(0).Tooltip(tip).
 						ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 					ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 						quotaBar(c, "quota", frac, fill, tok.text.Alpha(0.12))
 					})
 				})
-				ui.Row(c).Height(16).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Height(14).Gap(6).AlignItems(ui.Center).Children(func() {
 					for _, stat := range []struct {
 						label string
 						count int
@@ -249,26 +256,9 @@ func (a *App) laneTask(c *ui.Context, ln tasks.AccountLane, showElapsed bool) {
 }
 
 func (a *App) laneRenameButton(c *ui.Context, ln tasks.AccountLane) {
-	tok := a.look
-	pen := ui.ButtonBase(c.Key("pen")).Size(28, 28).Radius(tok.radiusS).Border(1, tok.border).Shrink(0).Center().
-		Label("改名 " + ln.Name).Tooltip("改名").Cursor(ui.CursorPointer)
-	ink := tok.muted
-	switch {
-	case pen.Pressed():
-		pen.Background(tok.text.Alpha(0.12))
-		ink = tok.text
-	case pen.Hovered() || pen.FocusVisible():
-		pen.Background(tok.sunkenHi)
-		ink = tok.text
-	}
-	if pen.FocusVisible() {
-		pen.Border(1, tok.accent)
-	}
-	if pen.Clicked() && !a.running {
+	uiIconBtn(c, "pen", "改名 "+ln.Name, "改名", iconPen, 22, false, false, a.look).
+		Disabled(a.running).OnClick(func() {
 		a.renameID, a.renameDraft, a.renameFocus = ln.ID, ln.Name, true
-	}
-	pen.Children(func() {
-		ui.Icon(c, iconPen).FontSize(12).TextColor(ink)
 	})
 }
 
@@ -291,7 +281,7 @@ func (a *App) agyQuotaCell(c *ui.Context, id int64) {
 	week := view.Usage.Weekly
 	fiveTip := agy.WindowTip(agy.Window5h, five.Remaining, five.Reset, now)
 	weekTip := agy.WindowTip(agy.WindowWeek, week.Remaining, week.Reset, now)
-	ui.Column(c.Key("bars")).FillWidth().Gap(4).Children(func() {
+	ui.Column(c.Key("bars")).FillWidth().Gap(2).Children(func() {
 		for _, item := range []struct {
 			key, label, tip string
 			remaining       float64
@@ -321,8 +311,11 @@ func laneAccountTitle(ln tasks.AccountLane) string {
 
 // laneQuotaFill 是今日用量和进度条颜色：快满变橙，满了变灰。
 func laneQuotaFill(tok tokens, ln tasks.AccountLane) (used, capN int, frac float64, fill ui.Color) {
-	capN = max(ln.Cap, 1)
 	used = max(ln.UsedToday, 0)
+	capN = max(ln.Cap, 0)
+	if capN == 0 {
+		return used, 0, 0, tok.accent
+	}
 	frac = min(float64(used)/float64(capN), 1)
 	fill = tok.accent
 	switch {

@@ -241,6 +241,13 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 		e.loginPrev = map[int64]string{}
 	}
 	prev := e.loginPrev[b.ID]
+	// 新建的账号在登录完成前本来就会显示登录页。第一次探测到 out 只是
+	// 用户还在扫码，不是“从已登录变成退出”，不能抢先弹重新登录提示。
+	// 这里也不记成 out，之后第一次读到 in 才会按“登录确认”处理。
+	if _, seen := e.loginPrev[b.ID]; !seen && state == heal.StateOut && !b.IsLoggedIn {
+		e.mu.Unlock()
+		return
+	}
 	if state == heal.StateIn || state == heal.StateOut || state == heal.StateChallenge || state == heal.StateRegion {
 		e.loginPrev[b.ID] = state
 	}
@@ -284,6 +291,30 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 		e.poke()
 	}
 	e.notify()
+}
+
+// NoteLoginConfirmed 接住界面已经明确看到的登录成功。
+// 登录成功后窗口可能马上关闭，之后的定时探测只会拿到 unknown；
+// 这里同步引擎状态，旧的重登提示才能立刻消失。
+func (e *Engine) NoteLoginConfirmed(id int64) {
+	if e == nil || id <= 0 {
+		return
+	}
+	e.mu.Lock()
+	if e.loginPrev == nil {
+		e.loginPrev = map[int64]string{}
+	}
+	changed := e.loginPrev[id] != heal.StateIn
+	e.loginPrev[id] = heal.StateIn
+	if e.attentionID == id {
+		e.attention = ""
+		e.attentionID = 0
+		changed = true
+	}
+	e.mu.Unlock()
+	if changed {
+		e.poke()
+	}
 }
 
 // announceAccount 在任务里发现退出登录时补上工作台提示。

@@ -1,9 +1,7 @@
 package logging
 
 import (
-	"context"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,6 +19,8 @@ type Line struct {
 	Port     int
 	Stage    string
 	Elapsed  time.Duration
+	Done     int
+	Total    int
 	Images   int
 	Bytes    int
 	Error    string
@@ -28,14 +28,37 @@ type Line struct {
 }
 
 var (
-	traceMu     sync.Mutex
-	traceLog    *slog.Logger
-	traceRotate *rotator
-	runID       string
+	traceMu      sync.Mutex
+	traceWriteMu sync.Mutex
+	traceOut     io.Writer
+	traceRotate  *rotator
+	traceFailed  bool // guarded by traceWriteMu
+	runID        string
 )
 
 // Open 把结构化日志按天切片写到数据目录 logs/tulai.YYYYMMDD.log，并同时打到 stderr。
 func Open(dir string) error {
+	return open(dir, os.Stderr)
+}
+
+// 文件是主要输出；无控制台的图形程序可能没有可写的 stderr。
+type traceWriter struct {
+	file   io.Writer
+	stderr io.Writer
+}
+
+func (w traceWriter) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	if w.stderr != nil {
+		_, _ = w.stderr.Write(p)
+	}
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	return n, err
+}
+
+func open(dir string, stderr io.Writer) error {
 	if dir == "" {
 		dir = "."
 	}
@@ -47,12 +70,34 @@ func Open(dir string) error {
 	if err != nil {
 		return err
 	}
-	h := slog.NewTextHandler(io.MultiWriter(os.Stderr, w), &slog.HandlerOptions{Level: slog.LevelDebug})
+	traceWriteMu.Lock()
+	defer traceWriteMu.Unlock()
 	traceMu.Lock()
-	traceLog = slog.New(h)
+	previous := traceRotate
+	traceOut = traceWriter{file: w, stderr: stderr}
 	traceRotate = w
+	traceFailed = false
 	traceMu.Unlock()
+	if previous != nil && previous != w {
+		_ = previous.Close()
+	}
 	return nil
+}
+
+// Close 关闭当前日志文件。主要给测试和需要干净退出的调用方使用。
+func Close() error {
+	traceWriteMu.Lock()
+	defer traceWriteMu.Unlock()
+	traceMu.Lock()
+	r := traceRotate
+	traceOut = nil
+	traceRotate = nil
+	traceFailed = false
+	traceMu.Unlock()
+	if r == nil {
+		return nil
+	}
+	return r.Close()
 }
 
 // Path 是当前日志文件。还没打开时为空。
@@ -69,7 +114,7 @@ func Path() string {
 // SetRun 记下这一批的 run_id。空则按时间生成。
 func SetRun(id string) {
 	traceMu.Lock()
-	runID = id
+	runID = strings.TrimSpace(id)
 	traceMu.Unlock()
 }
 
@@ -96,39 +141,34 @@ func Emit(level Level, line Line) {
 	if line.Stage == "" {
 		line.Stage = "log"
 	}
-	slogLevel := slog.LevelInfo
-	if level == Debug {
-		slogLevel = slog.LevelDebug
-	}
-	writeSlog(slogLevel, line)
+	writeLine(level, line)
 	if line.Msg != "" {
 		Log.addRaw(level, line.Msg)
 	}
 }
 
-func writeSlog(level slog.Level, line Line) {
+// writeLine 是文件输出的唯一出口：格式化、加锁、整行写入，避免并发日志互相截断。
+func writeLine(level Level, line Line) {
+	if line.RunID == "" {
+		line.RunID = Run()
+	}
+	text := DefaultFormat.line(level, line, time.Now())
+	traceWriteMu.Lock()
 	traceMu.Lock()
-	lg := traceLog
+	out := traceOut
 	traceMu.Unlock()
-	if lg == nil {
+	if out == nil {
+		traceWriteMu.Unlock()
 		return
 	}
-	lg.Log(context.Background(), level, line.Msg, line.attrs()...)
-}
-
-func (line Line) attrs() []any {
-	errText := line.Error
-	return []any{
-		"run_id", line.RunID,
-		"task_id", line.TaskID,
-		"platform", line.Platform,
-		"account", line.Account,
-		"port", line.Port,
-		"stage", line.Stage,
-		"elapsed_ms", line.Elapsed.Milliseconds(),
-		"images", line.Images,
-		"bytes", line.Bytes,
-		"error", errText,
+	_, err := io.WriteString(out, text)
+	notify := err != nil && !traceFailed
+	traceFailed = err != nil
+	traceWriteMu.Unlock()
+	if notify {
+		// Do not recurse into the failing file writer; surface the problem in
+		// the in-memory/UI log once until a later write succeeds.
+		Log.addRaw(Error, "写入日志文件失败："+err.Error())
 	}
 }
 
@@ -211,109 +251,5 @@ func boundLine(line Line) Line {
 
 func (l *Logger) add(level Level, msg string) {
 	l.addRaw(level, msg)
-	slogLevel := slog.LevelInfo
-	if level == Debug {
-		slogLevel = slog.LevelDebug
-	}
-	writeSlog(slogLevel, boundLine(Line{Stage: "log", Msg: msg}))
-}
-
-// 日志按天切片：每天一个 tulai.YYYYMMDD.log，跨天写入时自动切换，过期的旧片自动清理。
-const (
-	dayLayout = "20060102"
-	keepDays  = 7
-)
-
-type rotator struct {
-	mu   sync.Mutex
-	dir  string
-	stem string
-	keep int
-	now  func() time.Time
-	f    *os.File
-	day  string
-}
-
-func newRotator(dir, stem string, keep int, now func() time.Time) (*rotator, error) {
-	if keep < 1 {
-		keep = 1
-	}
-	if now == nil {
-		now = time.Now
-	}
-	r := &rotator{dir: dir, stem: stem, keep: keep, now: now}
-	if err := r.switchTo(now().Format(dayLayout)); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
-func (r *rotator) path(day string) string {
-	return filepath.Join(r.dir, r.stem+"."+day+".log")
-}
-
-// Write 跨天时先切到新一天的文件再写。
-func (r *rotator) Write(p []byte) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if day := r.now().Format(dayLayout); day != r.day {
-		if err := r.switchTo(day); err != nil {
-			return 0, err
-		}
-	}
-	return r.f.Write(p)
-}
-
-// currentPath 是最近写入的日志文件。
-func (r *rotator) currentPath() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.path(r.day)
-}
-
-// switchTo 打开指定日期的切片；成功后关闭旧文件并清理过期切片。
-func (r *rotator) switchTo(day string) error {
-	f, err := os.OpenFile(r.path(day), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	if r.f != nil {
-		_ = r.f.Close()
-	}
-	r.f = f
-	r.day = day
-	r.prune(day)
-	return nil
-}
-
-// prune 删除保留窗口之外的旧切片；文件名对不上日期格式的一律不动。
-func (r *rotator) prune(today string) {
-	entries, err := os.ReadDir(r.dir)
-	if err != nil {
-		return
-	}
-	cut, err := time.ParseInLocation(dayLayout, today, time.Local)
-	if err != nil {
-		return
-	}
-	cut = cut.AddDate(0, 0, -(r.keep - 1)) // 保留今天在内共 keep 天
-	prefix := r.stem + "."
-	suffix := ".log"
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
-			continue
-		}
-		dayText := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-		day, err := time.ParseInLocation(dayLayout, dayText, time.Local)
-		if err != nil {
-			continue
-		}
-		if day.Before(cut) {
-			_ = os.Remove(filepath.Join(r.dir, name))
-		}
-	}
+	writeLine(level, boundLine(Line{Stage: "log", Msg: msg}))
 }

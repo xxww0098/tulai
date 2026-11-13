@@ -66,9 +66,9 @@ func TestExportWorkbenchShots(t *testing.T) {
 		return color.NRGBA{R: 20, G: 30, B: 50, A: 255}
 	})
 
-	save := func(name string, a *App) {
+	saveSize := func(name string, a *App, width, height int) {
 		t.Helper()
-		tt := ui.NewTester(a.view, 1280, 900)
+		tt := ui.NewTester(a.view, width, height)
 		tt.Advance(400 * time.Millisecond)
 		f, err := os.Create(filepath.Join(dir, name+".png"))
 		if err != nil {
@@ -78,6 +78,9 @@ func TestExportWorkbenchShots(t *testing.T) {
 		if err := png.Encode(f, tt.Image()); err != nil {
 			t.Fatal(err)
 		}
+	}
+	save := func(name string, a *App) {
+		saveSize(name, a, 1280, 900)
 	}
 
 	const shotOut = "图片/输出结果"
@@ -106,6 +109,29 @@ func TestExportWorkbenchShots(t *testing.T) {
 	save("accounts-12-wash", &App{platformAuto: true, concurrencyAuto: true, outputPath: shotOut, browserRows: twelve, tab: pageWash, statePage: pageWash, runPage: pageWash,
 		sources: []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}}, queue: busy, running: true})
 	save("wash-empty", &App{platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash})
+	var gallerySources []sourceImage
+	var galleryPaths []string
+	for i := 0; i < 12; i++ {
+		path := filepath.Join(pics, fmt.Sprintf("图库-%02d.png", i+1))
+		writeShot(t, path, 320, 240, func(x, y, w, h int) color.NRGBA {
+			return color.NRGBA{
+				R: uint8(45 + i*13 + x%70),
+				G: uint8(80 + i*7 + y%60),
+				B: uint8(120 + i*5),
+				A: 255,
+			}
+		})
+		galleryPaths = append(galleryPaths, path)
+		gallerySources = append(gallerySources, sourceImage{Path: path, Hash: fmt.Sprintf("gallery-%d", i)})
+	}
+	gallery := &App{
+		platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash,
+		sources: gallerySources, galleryOn: true, galleryTitle: "原图",
+		gallerySelected: map[string]bool{galleryPaths[1]: true, galleryPaths[4]: true},
+	}
+	gallery.preloadThumbs(galleryPaths)
+	saveSize("wash-gallery-wide", gallery, 1280, 900)
+	saveSize("wash-gallery-narrow", gallery, 760, 700)
 	washShot := &App{
 		platformAuto: true, outputPath: shotOut, tab: pageWash, statePage: pageWash, flowPin: 1, srcSel: -1,
 		sources: []sourceImage{{Path: land, Hash: "land"}, {Path: face, Hash: "face"}, {Path: still, Hash: "still"}},

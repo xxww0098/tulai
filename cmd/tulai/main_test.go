@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
 func TestProductVersionMatchesConfig(t *testing.T) {
@@ -100,5 +103,68 @@ func TestPackagedDataDir(t *testing.T) {
 	}
 	if after, err := os.Getwd(); err != nil || after != wd {
 		t.Fatalf("resolving a data directory changed the working directory: %q, %v", after, err)
+	}
+}
+
+func TestDevelopmentAndInstalledShareData(t *testing.T) {
+	for _, tc := range []struct {
+		goos       string
+		devExe     string
+		installExe string
+	}{
+		{"windows", `C:\Users\user\Temp\go-build\exe\tulai.exe`, `C:\Program Files\tulai\tulai.exe`},
+		{"darwin", "/tmp/go-build/exe/tulai", "/Applications/tulai.app/Contents/MacOS/tulai"},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			configHome := t.TempDir()
+			t.Setenv("APPDATA", configHome)
+			t.Setenv("XDG_CONFIG_HOME", configHome)
+			t.Setenv("HOME", configHome)
+
+			devDir, err := packagedDataDir(tc.goos, tc.devExe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			installedDir, err := packagedDataDir(tc.goos, tc.installExe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if devDir == "" || devDir != installedDir || devDir != browser.ConfigDir() {
+				t.Fatalf("data roots differ: dev=%q installed=%q browser runtime=%q", devDir, installedDir, browser.ConfigDir())
+			}
+
+			installedDB, err := store.Open(filepath.Join(installedDir, "database", "config.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile := browser.ProfileDir(filepath.Join(installedDir, "BrowserData"), browser.KindCamoufox, "account-test")
+			account, err := installedDB.AddBrowser("豆包", "共享账号", profile)
+			if err != nil {
+				installedDB.Close()
+				t.Fatal(err)
+			}
+			if err := installedDB.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(profile, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(profile, "profile-marker"), []byte("saved"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			devDB, err := store.Open(filepath.Join(devDir, "database", "config.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer devDB.Close()
+			accounts := devDB.Browsers()
+			if len(accounts) != 1 || accounts[0].ID != account.ID || accounts[0].UserDataDir != profile {
+				t.Fatalf("development build did not see the installed account: %+v", accounts)
+			}
+			if data, err := os.ReadFile(filepath.Join(accounts[0].UserDataDir, "profile-marker")); err != nil || string(data) != "saved" {
+				t.Fatalf("development build did not see the account profile: %q, %v", data, err)
+			}
+		})
 	}
 }

@@ -26,7 +26,7 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 	if tt.HasText("更多设置") || tt.HasText("输出目录") || tt.HasText("每日上限") {
 		t.Fatal("生图页还留着配置")
 	}
-	prompt := assertVisible(t, tt, "每行一条；导入段落会合并", 1280, 840)
+	prompt := assertVisible(t, tt, "提示词", 1280, 840)
 	drop := assertVisible(t, tt, "拖入或点击添加图片", 1280, 840)
 	start := assertVisible(t, tt, "开始出图", 1280, 840)
 	if prompt.Y > drop.Y {
@@ -42,7 +42,7 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 		t.Fatal("empty drop zone shows the filled-state importer")
 	}
 	for _, tab := range []struct{ label, want string }{
-		{"浏览器", "浏览器实例"},
+		{"浏览器", "Camoufox 账号环境"},
 		{"提示词", "保存提示词"},
 		{"设置", "账号与并发"},
 		{"图片生成", "开始出图"},
@@ -52,6 +52,7 @@ func TestWorkspaceAndSettingsStayVisible(t *testing.T) {
 		if err := tt.Click(tab.label); err != nil {
 			t.Fatal(err)
 		}
+		tt.Advance(motionUI)
 		assertVisible(t, tt, tab.want, 1280, 840)
 	}
 	if err := tt.Click("设置"); err != nil {
@@ -218,7 +219,7 @@ func TestTextOnlyStartWithoutSources(t *testing.T) {
 		prompts: "画一只猫\n\n画一条鱼", outputPath: t.TempDir(),
 	}
 	tt := ui.NewTester(a.view, 1280, 840)
-	for _, label := range []string{"开始出图", "拖入或点击添加图片", "不放图片也可以只写提示词", "检查更新"} {
+	for _, label := range []string{"开始出图", "拖入或点击添加图片", "检查更新"} {
 		if !tt.HasText(label) {
 			t.Fatalf("缺少文生图说明 %q", label)
 		}
@@ -281,8 +282,8 @@ func TestMissingAccountDoesNotOpenWizardWhenStartingOrRetrying(t *testing.T) {
 				a.sources = []sourceImage{{Path: "input.png"}}
 			}
 			tt := ui.NewTester(a.view, 1280, 900)
-			if !tt.HasText("还没有可用账号。先去设置登录，再开始出图。") {
-				t.Fatal("没有账号时应提示先登录")
+			if _, ok := tt.Find("去设置"); ok {
+				t.Fatal("提示条已移除，不应再有「去设置」")
 			}
 			a.startTasks()
 			if a.wizardOn || a.running {
@@ -295,12 +296,6 @@ func TestMissingAccountDoesNotOpenWizardWhenStartingOrRetrying(t *testing.T) {
 			tt.Frame()
 			if !tt.HasText(a.progText) {
 				t.Fatal("重试失败时应提示先登录")
-			}
-			if err := tt.Click("去设置"); err != nil {
-				t.Fatal(err)
-			}
-			if a.wizardOn || a.tab != pageBrowser {
-				t.Fatal("去设置应打开浏览器账号管理")
 			}
 		})
 	}
@@ -551,11 +546,8 @@ func TestBrowserSelectionAndBusyActions(t *testing.T) {
 		tab: pageBrowser, browserSel: -1, newBrowserPlat: "豆包", browserBackend: "Chrome",
 	}
 	tt := ui.NewTester(a.view, 1000, 720)
-	if err := tt.Click("删除当前"); err != nil {
-		t.Fatal(err)
-	}
-	if tt.Focused("删除当前") {
-		t.Fatal("delete is enabled without a selected browser")
+	if tt.HasText("删除当前") {
+		t.Fatal("delete should be hidden without a selected browser")
 	}
 	if err := tt.Click("工作账号"); err != nil {
 		t.Fatal(err)
@@ -779,6 +771,7 @@ func TestCamoufoxQianwenWithoutAccountCannotStart(t *testing.T) {
 	a := &App{
 		store: st, manager: browser.NewManager(), engine: tasks.NewEngine(st, nil, nil, ""),
 		browserBackend: browser.KindCamoufox, platformAuto: true,
+		detectedNote: "Camoufox 已就绪", camoufoxStatus: "Camoufox 已就绪", camoufoxReady: true,
 		platQianwen: true, prompts: "画一只猫", outputPath: t.TempDir(),
 	}
 	tt := ui.NewTester(a.view, 1280, 840)

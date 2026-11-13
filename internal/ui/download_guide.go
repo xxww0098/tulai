@@ -170,8 +170,8 @@ func (a *App) downloadGuide(c *ui.Context, tok tokens) {
 			TrackScroll(&a.dlGuideScroll).Children(func() {
 			ui.Column(c).FillWidth().Gap(12).Children(func() {
 				if len(groups) == 0 {
-					ui.Row(c).FillWidth().Gap(10).Padding(16, 14).Radius(10).Background(dlQuiet(tok)).Children(func() {
-						ui.Icon(c, iconSearch).FontSize(16).TextColor(tok.muted)
+					ui.Row(c).FillWidth().Gap(8).Padding(8, 10).Radius(8).Background(dlQuiet(tok)).Children(func() {
+						ui.Icon(c, iconSearch).FontSize(13).TextColor(tok.muted)
 						ui.Text(c, "没有找到匹配的站点；也可以尝试粘贴普通网页地址。").
 							FontSize(13).TextColor(tok.muted).Grow(1).MinWidth(0).Wrap()
 					})

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/xxww0098/tulai/internal/browser"
@@ -35,6 +36,7 @@ func TestDoubaoOutputSizeSettingsPersistAndReachTasks(t *testing.T) {
 	if err := tt.Click("常用像素"); err != nil {
 		t.Fatal(err)
 	}
+	tt.Advance(300 * time.Millisecond)
 	if err := tt.Click("1920×1080"); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +147,7 @@ func TestOutputSizeControlsStayVisibleOnWorkspaces(t *testing.T) {
 						height := assertVisible(t, tt, "输出高度", w, h)
 						presets := assertVisible(t, tt, "常用像素", w, h)
 						crop := assertVisible(t, tt, "居中裁剪铺满画面", w, h)
-						if width.X+width.W > height.X || height.X+height.W > presets.X || presets.X+presets.W > crop.X {
+						if width.X+width.W > height.X || height.X+height.W > presets.X || (crop.Y < presets.Y+presets.H-1 && presets.X+presets.W > crop.X) {
 							t.Fatalf("pixel controls overlap: width=%v height=%v presets=%v crop=%v", width, height, presets, crop)
 						}
 					}

@@ -141,8 +141,8 @@ func TestWorkspaceModeTabsKeyboardAndLayout(t *testing.T) {
 			if err := tt.Click("自由生图"); err != nil {
 				t.Fatal(err)
 			}
-			if a.tab != pageWash {
-				t.Fatal("运行中不应切换模式")
+			if a.tab != pageHome || !tt.HasText("提示词内容") {
+				t.Fatalf("运行中无法切换到另一页: tab=%d", a.tab)
 			}
 			a.running = false
 			tt.Frame()
@@ -154,8 +154,8 @@ func TestWorkspaceModeTabsKeyboardAndLayout(t *testing.T) {
 				t.Fatalf("侧栏键盘导航未进入去重: tab=%d", a.tab)
 			}
 			tt.Key(0, ui.KeyUp)
-			if a.tab != pageWash {
-				t.Fatalf("侧栏键盘导航未返回洗图模式: tab=%d", a.tab)
+			if a.tab != pageHome {
+				t.Fatalf("侧栏键盘导航未返回图片生成: tab=%d", a.tab)
 			}
 		})
 	}

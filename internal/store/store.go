@@ -4,13 +4,17 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xxww0098/tulai/internal/logging"
 
 	_ "modernc.org/sqlite"
 )
@@ -99,7 +103,10 @@ var defaults = map[string]string{
 	"update_skipped_version":  "",
 	"proxy_mode":              "system",
 	"proxy_server":            "",
-	"daily_cap":               "100",
+	"daily_cap":               "0",
+	"daily_cap_qianwen":       "100",
+	"daily_cap_agy":           "100",
+	"daily_cap_chatgpt":       "100",
 	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
 	"agy_bin":                 "",
 	"agy_home_root":           "",
@@ -157,17 +164,37 @@ CREATE TABLE IF NOT EXISTS session_tasks (
 	error TEXT NOT NULL DEFAULT '',
 	at_unix INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_session_tasks_session ON session_tasks(session_id, ord);`
+CREATE INDEX IF NOT EXISTS idx_session_tasks_session ON session_tasks(session_id, ord);
+CREATE TABLE IF NOT EXISTS session_sources (
+	session_id INTEGER NOT NULL,
+	path TEXT NOT NULL,
+	washed INTEGER NOT NULL DEFAULT 0,
+	output TEXT NOT NULL DEFAULT '',
+	updated_at INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY(session_id, path)
+);`
 
 // Open 打开（或创建）配置库。
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	// Check an existing database read-only before migrations or default inserts.
+	// In particular, a damaged settings index can return another key's value.
+	if err := checkIntegrity(path); err != nil {
+		return nil, err
+	}
+	// Reserve the writer before a transaction reads state it will later update.
+	// A deferred read-to-write upgrade can fail with SQLITE_BUSY_SNAPSHOT even
+	// when busy_timeout is set and another Store instance has already committed.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
+	// Store operations are serialized by mu; one connection avoids unrelated
+	// connections racing through initialization or WAL checkpoint transitions.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("初始化表结构: %w", err)
@@ -180,11 +207,110 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &Store{db: db, path: path}
-	for k, v := range defaults {
-		s.db.Exec(`INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)`, k, v)
+	if err := initSettings(db); err != nil {
+		db.Close()
+		return nil, err
 	}
-	return s, nil
+	return &Store{db: db, path: path}, nil
+}
+
+func checkIntegrity(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("检查配置数据库: %w", err)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("配置数据库完整性校验失败: 文件为空")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("检查配置数据库: %w", err)
+	}
+	filePath := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" && !strings.HasPrefix(filePath, "/") {
+		filePath = "/" + filePath
+	}
+	u := url.URL{Scheme: "file", Path: filePath, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}
+	probe, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return fmt.Errorf("检查配置数据库: %w", err)
+	}
+	defer probe.Close()
+	var result string
+	if err := probe.QueryRow(`PRAGMA quick_check(1)`).Scan(&result); err != nil {
+		return fmt.Errorf("配置数据库完整性校验失败: %w", err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("配置数据库完整性校验失败: %s", result)
+	}
+	// quick_check skips index-to-table consistency. The settings index is used
+	// for every option lookup, so check that table and its indexes fully.
+	var hasSettings int
+	if err := probe.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='settings'`).Scan(&hasSettings); err != nil {
+		return fmt.Errorf("检查配置数据库: %w", err)
+	}
+	if hasSettings != 0 {
+		if err := probe.QueryRow(`PRAGMA integrity_check('settings')`).Scan(&result); err != nil {
+			return fmt.Errorf("配置数据库设置表校验失败: %w", err)
+		}
+		if result != "ok" {
+			return fmt.Errorf("配置数据库设置表校验失败: %s", result)
+		}
+		rows, err := probe.Query(`SELECT key,value FROM settings WHERE key IN
+			('daily_cap','daily_cap_qianwen','daily_cap_agy','daily_cap_chatgpt')`)
+		if err != nil {
+			return fmt.Errorf("检查每日上限: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var key string
+			var value sql.NullString
+			if err := rows.Scan(&key, &value); err != nil {
+				return fmt.Errorf("检查每日上限: %w", err)
+			}
+			// Empty legacy provider values mean “inherit the previous value”.
+			if value.Valid && strings.TrimSpace(value.String) != "" {
+				if _, err := strconv.Atoi(strings.TrimSpace(value.String)); err != nil {
+					return fmt.Errorf("配置数据库每日上限无效: %s", key)
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("检查每日上限: %w", err)
+		}
+	}
+	return nil
+}
+
+func initSettings(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("初始化设置: %w", err)
+	}
+	defer tx.Rollback()
+	// A legacy daily_cap applied to every platform. Materialize it for other
+	// providers before using the new Doubao-only default on a fresh database.
+	var legacy string
+	err = tx.QueryRow(`SELECT value FROM settings WHERE key='daily_cap'`).Scan(&legacy)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("读取旧每日上限: %w", err)
+	}
+	hasLegacy := err == nil
+	for k, v := range defaults {
+		if hasLegacy && (k == "daily_cap_qianwen" || k == "daily_cap_agy" || k == "daily_cap_chatgpt") {
+			v = legacy
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)`, k, v); err != nil {
+			return fmt.Errorf("初始化设置 %s: %w", k, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("保存初始设置: %w", err)
+	}
+	return nil
 }
 
 // rewriteLegacyNames 把旧的默认名「浏览器3」改成「千问1」。只改这一次数据，之后不再认旧名字。
@@ -290,21 +416,31 @@ func (s *Store) File() string {
 // Get 读取设置（缺失时回默认值）。
 func (s *Store) Get(key string) string {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	var v string
 	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	s.mu.Unlock()
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			logging.Log.Errorf("读取设置 %s 失败: %v", key, err)
+		}
 		return defaults[key]
 	}
 	return v
 }
 
-// Set 写入设置。
-func (s *Store) Set(key, value string) {
+// Set 写入设置。保留旧接口；失败会写入应用日志。
+func (s *Store) Set(key, value string) { _ = s.SetChecked(key, value) }
+
+// SetChecked 写入设置并向需要确认落盘的调用者返回错误。
+func (s *Store) SetChecked(key, value string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)
+	_, err := s.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	s.mu.Unlock()
+	if err != nil {
+		logging.Log.Errorf("保存设置 %s 失败: %v", key, err)
+	}
+	return err
 }
 
 // GetInt 读取整型设置。
@@ -338,27 +474,39 @@ func (s *Store) SetPlatforms(ps []string) { s.Set("selected_platforms", strings.
 // Browsers 返回全部浏览器记录。
 func (s *Store) Browsers() []Browser {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	out, err := s.browsersLocked()
+	s.mu.Unlock()
+	if err != nil {
+		logging.Log.Errorf("读取账号列表失败: %v", err)
+	}
+	return out
+}
+
+func (s *Store) browsersLocked() ([]Browser, error) {
 	rows, err := s.db.Query(`SELECT id, platform, name, port, COALESCE(user_data_dir,''), is_running, is_logged_in,
 		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''), COALESCE(ext_account,''),
 		COALESCE(day_key,''), COALESCE(day_count,0), COALESCE(day_success,0), COALESCE(day_failed,0), COALESCE(proxy,''), COALESCE(disabled,0)
 		FROM browsers ORDER BY id`)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	var out []Browser
 	for rows.Next() {
 		var b Browser
 		var run, login, disabled int
-		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled); err == nil {
-			b.IsRunning = run != 0
-			b.IsLoggedIn = login != 0
-			b.Disabled = disabled != 0
-			out = append(out, b)
+		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled); err != nil {
+			return nil, err
 		}
+		b.IsRunning = run != 0
+		b.IsLoggedIn = login != 0
+		b.Disabled = disabled != 0
+		out = append(out, b)
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // SetBrowserDisabled 只更改账号是否参与任务，不改登录或健康状态。
@@ -397,8 +545,27 @@ func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
 func (s *Store) addBrowser(platform, name, dataDir, extAccount string, loggedIn bool) (Browser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Browser{}, err
+	}
+	defer tx.Rollback()
+	b, err := addBrowserTx(tx, platform, name, dataDir, extAccount, loggedIn)
+	if err != nil {
+		return Browser{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Browser{}, err
+	}
+	return b, nil
+}
+
+// addBrowserTx allocates the port and inserts the account under one writer lock.
+func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, loggedIn bool) (Browser, error) {
 	var maxPort int
-	s.db.QueryRow(`SELECT COALESCE(MAX(port), 9332) FROM browsers`).Scan(&maxPort)
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(port), 9332) FROM browsers`).Scan(&maxPort); err != nil {
+		return Browser{}, err
+	}
 	port := maxPort + 1
 	if port < 9333 {
 		port = 9333
@@ -407,12 +574,15 @@ func (s *Store) addBrowser(platform, name, dataDir, extAccount string, loggedIn 
 	if loggedIn {
 		login = 1
 	}
-	res, err := s.db.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, ext_account) VALUES(?,?,?,?,?,?,?)`,
+	res, err := tx.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, ext_account) VALUES(?,?,?,?,?,?,?)`,
 		platform, name, port, dataDir, login, login, extAccount)
 	if err != nil {
 		return Browser{}, err
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Browser{}, err
+	}
 	return Browser{
 		ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir,
 		IsRunning: loggedIn, IsLoggedIn: loggedIn, ExtAccount: extAccount, Health: HealthReady,
@@ -436,7 +606,6 @@ func (s *Store) RenameBrowser(id int64, name string) {
 // UpdateBrowser 更新浏览器运行/登录状态。
 func (s *Store) UpdateBrowser(id int64, running, loggedIn bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	r, l := 0, 0
 	if running {
 		r = 1
@@ -444,7 +613,11 @@ func (s *Store) UpdateBrowser(id int64, running, loggedIn bool) {
 	if loggedIn {
 		l = 1
 	}
-	s.db.Exec(`UPDATE browsers SET is_running=?, is_logged_in=? WHERE id=?`, r, l, id)
+	_, err := s.db.Exec(`UPDATE browsers SET is_running=?, is_logged_in=? WHERE id=?`, r, l, id)
+	s.mu.Unlock()
+	if err != nil {
+		logging.Log.Errorf("保存账号 %d 的登录状态失败: %v", id, err)
+	}
 }
 
 // SetRunning 只改运行标记，不动登录标记。启动和停止不能把刚确认的登录写回去。
@@ -453,12 +626,15 @@ func (s *Store) SetRunning(id int64, running bool) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	r := 0
 	if running {
 		r = 1
 	}
-	s.db.Exec(`UPDATE browsers SET is_running=? WHERE id=?`, r, id)
+	_, err := s.db.Exec(`UPDATE browsers SET is_running=? WHERE id=?`, r, id)
+	s.mu.Unlock()
+	if err != nil {
+		logging.Log.Errorf("保存账号 %d 的运行状态失败: %v", id, err)
+	}
 }
 
 // DeleteBrowser 删除浏览器记录。
@@ -564,8 +740,11 @@ func (s *Store) UpdateBrowserHealth(id int64, health string, coolUntil int64, la
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.db.Exec(`UPDATE browsers SET health=?, cool_until=?, last_error=? WHERE id=?`, health, coolUntil, lastError, id)
+	_, err := s.db.Exec(`UPDATE browsers SET health=?, cool_until=?, last_error=? WHERE id=?`, health, coolUntil, lastError, id)
+	s.mu.Unlock()
+	if err != nil {
+		logging.Log.Errorf("保存账号 %d 的健康状态失败: %v", id, err)
+	}
 }
 
 // ResetBrowserHealth 把账号标回可使用。用户重新登录或确认额度恢复后点这一下。
@@ -703,25 +882,44 @@ func (s *Store) upsertExtension(platform, account, name string, loggedIn bool) (
 		}
 		name = "扩展账号" + short
 	}
-	s.mu.Lock()
-	var id int64
-	err := s.db.QueryRow(`SELECT id FROM browsers WHERE platform=? AND ext_account=?`, platform, account).Scan(&id)
-	s.mu.Unlock()
-	if err == nil {
+	id, err := func() (int64, error) {
 		s.mu.Lock()
-		s.db.Exec(`UPDATE browsers SET name=? WHERE id=? AND name LIKE '扩展账号%'`, name, id)
-		s.mu.Unlock()
-		for _, b := range s.Browsers() {
-			if b.ID == id {
-				return b, nil
-			}
+		defer s.mu.Unlock()
+		tx, err := s.db.Begin()
+		if err != nil {
+			return 0, err
 		}
-		return Browser{}, fmt.Errorf("扩展账号 %d 读取失败", id)
-	}
-	if err != sql.ErrNoRows {
+		defer tx.Rollback()
+		var id int64
+		err = tx.QueryRow(`SELECT id FROM browsers WHERE platform=? AND ext_account=?`, platform, account).Scan(&id)
+		switch {
+		case err == nil:
+			if _, err := tx.Exec(`UPDATE browsers SET name=? WHERE id=? AND name LIKE '扩展账号%'`, name, id); err != nil {
+				return 0, err
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			b, err := addBrowserTx(tx, platform, name, "", account, loggedIn)
+			if err != nil {
+				return 0, err
+			}
+			id = b.ID
+		default:
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}()
+	if err != nil {
 		return Browser{}, err
 	}
-	return s.addBrowser(platform, name, "", account, loggedIn)
+	for _, b := range s.Browsers() {
+		if b.ID == id {
+			return b, nil
+		}
+	}
+	return Browser{}, fmt.Errorf("扩展账号 %d 读取失败", id)
 }
 
 func migrateBrowsers(db *sql.DB) error {

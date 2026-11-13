@@ -37,7 +37,7 @@ func (a *App) downloadBrowserEnvironment(c *ui.Context) {
 	} else if a.dlBrowser != nil && a.dlBrowser.Alive() {
 		status = "已打开"
 	}
-	ui.Row(c.Key("download-browser-environment")).FillWidth().Padding(10, 14).Gap(12).
+	ui.Row(c.Key("download-browser-environment")).FillWidth().Padding(8, 10).Gap(8).
 		AlignItems(ui.Center).Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(8).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
 			ui.Text(c, "网页图片下载专用环境").FontSize(13).Bold()

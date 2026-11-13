@@ -17,6 +17,36 @@ import (
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
+func TestGenericFailureSwitchesToAnotherAccount(t *testing.T) {
+	st := openRotateStore(t)
+	first := addNamed(t, st, "豆包", "甲")
+	addNamed(t, st, "豆包", "乙")
+	e := NewEngine(st, nil, nil, "")
+	var used []int64
+	err := e.run(context.Background(), Options{
+		Platforms: []string{"豆包"}, Images: []string{"a.png"}, Concurrency: 1, RetryCount: 1,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		used = append(used, task.BrowserID)
+		if task.Attempts == 1 {
+			return errors.New("页面返回失败")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := e.View().Snapshot()
+	if len(queue) != 1 || queue[0].Status != StatusSuccess {
+		t.Fatalf("generic failure should retry on another account: %+v", queue)
+	}
+	if len(used) < 2 || used[0] == used[1] {
+		t.Fatalf("used = %v, want the retry on another account", used)
+	}
+	if !browserByID(t, st, first.ID).Usable(time.Now()) {
+		t.Fatal("a generic failure should not mark the first account unavailable")
+	}
+}
+
 func TestQuotaSwitchesToOtherAccount(t *testing.T) {
 	st := openRotateStore(t)
 	first, second := addNamed(t, st, "豆包", "甲"), addNamed(t, st, "豆包", "乙")

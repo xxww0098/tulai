@@ -118,3 +118,34 @@ func TestSessionRoundTrip(t *testing.T) {
 		t.Fatalf("reopen %+v tasks=%+v ok=%v err=%v", loaded, loadedTasks, ok, err)
 	}
 }
+
+func TestSessionSourceProgressRoundTrip(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id, err := st.SaveActive(Session{
+		Page: PageWash, Images: "/wash/done.png\n/wash/pending.png",
+		Sources: []SessionSource{
+			{Path: "/wash/done.png", Washed: true, Output: "/out/done_01.png"},
+			{Path: "/wash/pending.png"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, _, ok, err := st.ActiveSession(PageWash)
+	if err != nil || !ok || sess.ID != id || len(sess.Sources) != 2 {
+		t.Fatalf("active wash session=%+v ok=%v err=%v", sess, ok, err)
+	}
+	if !sess.Sources[0].Washed || sess.Sources[0].Output != "/out/done_01.png" ||
+		sess.Sources[1].Washed || sess.Sources[1].Output != "" {
+		t.Fatalf("source progress=%+v", sess.Sources)
+	}
+
+	loaded, _, err := st.Session(id)
+	if err != nil || len(loaded.Sources) != 2 || !loaded.Sources[0].Washed {
+		t.Fatalf("session source load=%+v err=%v", loaded.Sources, err)
+	}
+}

@@ -12,7 +12,7 @@ import (
 )
 
 func TestRuntimeEnvIsolatesFingerprintConfiguration(t *testing.T) {
-	for _, key := range []string{"CAMOU_CONFIG_1", "camou_prefs_2", "FONTCONFIG_FILE"} {
+	for _, key := range []string{"CAMOU_CONFIG_1", "camou_prefs_2", "FONTCONFIG_FILE", "NAPI_RS_NATIVE_LIBRARY_PATH", "NAPI_RS_ENFORCE_VERSION_CHECK", "NAPI_RS_FORCE_WASI"} {
 		t.Setenv(key, "foreign")
 	}
 	t.Setenv("TULAI_RUNTIME_ENV_TEST", "preserved")
@@ -21,7 +21,7 @@ func TestRuntimeEnvIsolatesFingerprintConfiguration(t *testing.T) {
 		key, value, _ := strings.Cut(item, "=")
 		got[strings.ToUpper(key)] = value
 	}
-	for _, key := range []string{"CAMOU_CONFIG_1", "CAMOU_PREFS_2", "FONTCONFIG_FILE"} {
+	for _, key := range []string{"CAMOU_CONFIG_1", "CAMOU_PREFS_2", "FONTCONFIG_FILE", "NAPI_RS_NATIVE_LIBRARY_PATH", "NAPI_RS_ENFORCE_VERSION_CHECK", "NAPI_RS_FORCE_WASI"} {
 		if _, ok := got[key]; ok {
 			t.Fatalf("inherited fingerprint setting %s", key)
 		}

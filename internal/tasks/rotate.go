@@ -33,7 +33,7 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 	if len(rows) == 0 {
 		return time.Time{}, false
 	}
-	limit := e.capNow()
+	limit := e.capFor(task.Platform)
 	if task.BrowserID <= 0 {
 		if id, ok := pickHealthy(e.store, rows, 0, now, limit); ok {
 			task.BrowserID = id
@@ -107,7 +107,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 		return false
 	}
 	current := task.ranOnOr(task.BrowserID)
-	next, ok := pickHealthy(e.store, e.accountsFor(task.Platform), current, now, e.capNow())
+	next, ok := pickHealthy(e.store, e.accountsFor(task.Platform), current, now, e.capFor(task.Platform))
 	if !ok {
 		if kind != faultOffline {
 			e.noteFault(current, kind, err, now)
@@ -138,8 +138,28 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	return true
 }
 
+// rotateOnFailure 在普通失败后把这一条交给同平台的另一个健康账号。
+// 不把这错误记成账号故障，只避开刚刚失败的账号。
+func (e *Engine) rotateOnFailure(task *Task, now time.Time) bool {
+	if e == nil || e.store == nil || task == nil || task.submitted {
+		return false
+	}
+	current := task.ranOnOr(task.BrowserID)
+	next, ok := pickHealthy(e.store, e.accountsFor(task.Platform), current, now, e.capFor(task.Platform))
+	if !ok || next == current {
+		return false
+	}
+	task.BrowserID = next
+	task.submitted = false
+	task.sentURL, task.sentWrap = "", ""
+	task.chatGPT = nil
+	task.rotated = true
+	task.pauseNote = ""
+	return true
+}
+
 func (e *Engine) hasOtherHealthy(platform string, avoid int64, now time.Time) bool {
-	_, ok := pickHealthy(e.store, e.accountsFor(platform), avoid, now, e.capNow())
+	_, ok := pickHealthy(e.store, e.accountsFor(platform), avoid, now, e.capFor(platform))
 	return ok
 }
 
@@ -189,10 +209,19 @@ func agyAccountsBlocked(rows []store.Browser, now time.Time, cap int) bool {
 }
 
 func openAccount(b store.Browser, now time.Time, cap int) bool {
+	return openAccountCaps(b, now, FlatCap(cap))
+}
+
+// openAccountCaps 按账号所属供应商的上限判断。上限为 0 或负数时视为不限制。
+func openAccountCaps(b store.Browser, now time.Time, caps CapFor) bool {
 	if b.Disabled || !b.Usable(now) {
 		return false
 	}
-	return cap <= 0 || b.UsedToday(now) < cap
+	capN := 0
+	if caps != nil {
+		capN = caps(b.Platform)
+	}
+	return capN <= 0 || b.UsedToday(now) < capN
 }
 
 func cappedOut(rows []store.Browser, now time.Time, cap int) bool {
@@ -209,11 +238,15 @@ func cappedOut(rows []store.Browser, now time.Time, cap int) bool {
 }
 
 func pickHealthy(st *store.Store, rows []store.Browser, avoid int64, now time.Time, cap int) (int64, bool) {
+	return pickHealthyCaps(st, rows, avoid, now, FlatCap(cap))
+}
+
+func pickHealthyCaps(st *store.Store, rows []store.Browser, avoid int64, now time.Time, caps CapFor) (int64, bool) {
 	var best *store.Browser
 	bestRemaining := -1.0
 	for i := range rows {
 		b := &rows[i]
-		if b.ID == avoid || !openAccount(*b, now, cap) {
+		if b.ID == avoid || !openAccountCaps(*b, now, caps) {
 			continue
 		}
 		remaining := -1.0
@@ -234,9 +267,14 @@ func pickHealthy(st *store.Store, rows []store.Browser, avoid int64, now time.Ti
 // ParallelSlots 是这些账号里现在能同时出图的名额。
 // 同一个扩展配置文件只算一个：扩展每次命令都把标签页拉到前台，一个窗口不能两单一起跑。
 func ParallelSlots(rows []store.Browser, now time.Time, cap int) int {
+	return ParallelSlotsCaps(rows, now, FlatCap(cap))
+}
+
+// ParallelSlotsCaps 按账号所属供应商的上限统计可用名额。
+func ParallelSlotsCaps(rows []store.Browser, now time.Time, caps CapFor) int {
 	seen := map[string]struct{}{}
 	for _, b := range rows {
-		if !openAccount(b, now, cap) {
+		if !openAccountCaps(b, now, caps) {
 			continue
 		}
 		key := strconv.FormatInt(b.ID, 10)

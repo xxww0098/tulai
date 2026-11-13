@@ -89,6 +89,7 @@ type Options struct {
 	OutputSize         OutputSize
 	RemoveWatermark    bool // 千问另存去水印版本，保留原图
 	DailyCap           int
+	DailyCaps          map[string]int // 按供应商设置每个账号的每日上限；缺省或非正数用 DailyCap
 	RiskyWords         []string
 	AgyBin             string
 	AgyModel           string
@@ -97,6 +98,8 @@ type Options struct {
 	ChatGPTModel       string
 	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
 	Wash bool
+	// Fission 将一张母图和四条方向指令组成四个独立任务。
+	Fission bool
 	// Numbering 开启后结果文件按「前缀+补零序号」自动编号命名，替代默认词根。
 	Numbering Numbering
 	// 结果图不经页面、直接按地址下载时的设置。并发按站点算，整批任务共用。
@@ -128,7 +131,17 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 		}
 	}
 	var units []queueUnit
-	if len(opts.Images) > 0 {
+	if opts.Fission {
+		if len(opts.Images) != 1 || len(opts.Prompts) != 4 || len(opts.Platforms) != 1 {
+			return nil
+		}
+		for _, prompt := range opts.Prompts {
+			if strings.TrimSpace(prompt) == "" {
+				return nil
+			}
+			units = append(units, queueUnit{image: opts.Images[0], hasImage: true, prompt: prompt, fixed: true})
+		}
+	} else if len(opts.Images) > 0 {
 		for _, img := range opts.Images {
 			units = append(units, queueUnit{image: img, hasImage: true})
 		}
@@ -275,7 +288,7 @@ func sanitizeNamePart(s string, maxRunes int) string {
 
 // resultStem 是序号前面的名字。生图用提示词，洗图用源文件名。
 func (o Options) resultStem(prompt, source string) string {
-	if o.Wash {
+	if o.Wash || o.Fission {
 		return sourceStem(source)
 	}
 	return strings.TrimSuffix(promptFileName(prompt), ".png")
@@ -316,7 +329,9 @@ func (o Options) ResultDir(when time.Time) string {
 		when = time.Now()
 	}
 	kind := "生图"
-	if o.Wash {
+	if o.Fission {
+		kind = "裂变图片"
+	} else if o.Wash {
 		kind = "洗图"
 	}
 	return filepath.Join(o.OutputPath, kind, when.Format("2006-01-02"))

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	extbundle "github.com/xxww0098/tulai/extension"
@@ -61,31 +62,33 @@ type QianwenRun struct {
 	sourceIndices []int
 }
 
+type extImage struct {
+	URL         string `json:"url"`
+	RawURL      string `json:"rawUrl"`
+	SourceIndex int    `json:"sourceIndex"`
+}
+
 type extAck struct {
-	Name           string `json:"name"`
-	OK             *bool  `json:"ok"`
-	Code           string `json:"code"`
-	Message        string `json:"message"`
-	CaptchaBlocked bool   `json:"captchaBlocked"`
-	Kind           string `json:"kind"`
-	Baxia          bool   `json:"baxia"`
-	Crop           string `json:"crop"`
-	Images         []struct {
-		URL         string `json:"url"`
-		RawURL      string `json:"rawUrl"`
-		SourceIndex int    `json:"sourceIndex"`
-	} `json:"images"`
-	DataBase64   string   `json:"dataBase64"`
-	Total        int      `json:"total"`
-	Offset       int      `json:"offset"`
-	Done         bool     `json:"done"`
-	Path         string   `json:"path"`
-	Conversation string   `json:"conversation"`
-	TabID        int      `json:"tabId"`
-	Ready        bool     `json:"ready"`
-	Reusable     bool     `json:"reusable"`
-	Attachments  []string `json:"attachments"`
-	Applied      bool    `json:"applied"`
+	Name           string     `json:"name"`
+	OK             *bool      `json:"ok"`
+	Code           string     `json:"code"`
+	Message        string     `json:"message"`
+	CaptchaBlocked bool       `json:"captchaBlocked"`
+	Kind           string     `json:"kind"`
+	Baxia          bool       `json:"baxia"`
+	Crop           string     `json:"crop"`
+	Images         []extImage `json:"images"`
+	DataBase64     string     `json:"dataBase64"`
+	Total          int        `json:"total"`
+	Offset         int        `json:"offset"`
+	Done           bool       `json:"done"`
+	Path           string     `json:"path"`
+	Conversation   string     `json:"conversation"`
+	TabID          int        `json:"tabId"`
+	Ready          bool       `json:"ready"`
+	Reusable       bool       `json:"reusable"`
+	Attachments    []string   `json:"attachments"`
+	Applied        bool       `json:"applied"`
 }
 
 func (e *Engine) useExtension(platform string) bool {
@@ -296,7 +299,30 @@ func (e *Engine) noteExtensionEvent(sess *extbridge.Session, env extbridge.Envel
 		platform = sess.Platform()
 		account = sess.AccountName()
 	}
-	label := extensionPlatformLabel(platform)
+	platformLabel := extensionPlatformLabel(platform)
+	var row store.Browser
+	var hasRow bool
+	if sess != nil {
+		row, hasRow = loggedInExtension(e.store, platformLabel, sess.Account())
+		if !hasRow && e.useBoundExtension(platformLabel) {
+			id, err := strconv.ParseInt(strings.TrimPrefix(sess.Account(), "tulai-bound-"), 10, 64)
+			if err == nil && sess.Account() == "tulai-bound-"+strconv.FormatInt(id, 10) {
+				row, hasRow = e.browserByID(id)
+				hasRow = hasRow && row.ExtAccount == "" && row.Platform == platformLabel
+			}
+		}
+	}
+	port := 0
+	if hasRow {
+		account, port = accountLabel(row), row.Port
+	}
+	taskID, _ := strconv.Atoi(env.TaskID)
+	if taskID < 0 {
+		taskID = 0
+	}
+	stopLog := logging.Bind(platformLabel, account, port, taskID)
+	defer stopLog()
+	label := platformLabel
 	if account != "" {
 		label += "「" + account + "」"
 	}
@@ -322,15 +348,7 @@ func (e *Engine) noteExtensionEvent(sess *extbridge.Session, env extbridge.Envel
 		}
 	}
 	if sess != nil && (body.Kind == "quota" || body.Kind == "rate") {
-		row, ok := loggedInExtension(e.store, extensionPlatformLabel(sess.Platform()), sess.Account())
-		if !ok && e.useBoundExtension(extensionPlatformLabel(sess.Platform())) {
-			id, err := strconv.ParseInt(strings.TrimPrefix(sess.Account(), "tulai-bound-"), 10, 64)
-			if err == nil && sess.Account() == "tulai-bound-"+strconv.FormatInt(id, 10) {
-				row, ok = e.browserByID(id)
-				ok = ok && row.ExtAccount == "" && row.Platform == extensionPlatformLabel(sess.Platform())
-			}
-		}
-		if ok {
+		if hasRow {
 			kind := faultQuota
 			if body.Kind == "rate" {
 				kind = faultRate
@@ -629,7 +647,8 @@ func (e *Engine) attemptDoubaoExtension(ctx context.Context, t *Task) error {
 }
 
 func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocolPlatform, label string) error {
-	if e.useBoundExtension(t.Platform) && t.Platform == "豆包" && e.opts.Wash && e.opts.WaitResult {
+	trackUse := e.useBoundExtension(t.Platform) && t.Platform == "豆包" && (e.opts.Wash || e.opts.Fission) && e.opts.WaitResult
+	if trackUse {
 		t.noUse = !t.submitted
 	}
 	if !t.submitted && e.opts.WaitBeforeSend > 0 {
@@ -710,7 +729,7 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		SkipSubmit:        t.submitted,
 		VerifyAttachments: boundWash,
 	}, label)
-	if boundWash && out.sendAttempted {
+	if trackUse && out.sendAttempted {
 		t.noUse = false
 	}
 	e.noteExtensionTaskLogin(label, sess, err)
@@ -747,7 +766,10 @@ func waitBoundPage(ctx context.Context, sess *extbridge.Session, taskID, platfor
 	defer cancel()
 	for {
 		_, err := extCall(wait, sess, extbridge.CmdCaptchaAssist, taskID, "", nil, 3*time.Second, platform)
-		if extbridge.CodeOf(err) != extbridge.ENoTab {
+		// Page scripts may still be starting after the bridge connects. This
+		// probe only observes the page, so a timed-out probe can be retried
+		// within the overall readiness deadline without sending a generation.
+		if err == nil || (extbridge.CodeOf(err) != extbridge.ENoTab && extbridge.CodeOf(err) != extbridge.ETimeout) {
 			return err
 		}
 		select {
@@ -880,11 +902,12 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 				}
 			}
 		}
+		uploadStart := time.Now()
 		if err := extUpload(ctx, sess, job, platform); err != nil {
 			return out, err
 		}
 		if len(job.Images) > 0 {
-			logging.Log.Info("扩展任务 %s 已上传 %d 张源图", job.TaskID, len(job.Images))
+			logging.Log.Info("扩展任务 %s 已上传 %d 张源图（%.1f 秒）", job.TaskID, len(job.Images), time.Since(uploadStart).Seconds())
 		}
 		if _, err := extCall(ctx, sess, extbridge.CmdSetPrompt, job.TaskID, "", map[string]any{"prompt": job.Prompt}, 10*time.Second, platform); err != nil {
 			return out, err
@@ -915,54 +938,105 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		}
 		waitPayload["expectedAttachments"] = names
 	}
+	waitStart := time.Now()
 	body, err := extCall(ctx, sess, extbridge.CmdWaitResult, job.TaskID, "", waitPayload, job.Wait+20*time.Second, platform)
 	if err != nil {
 		return out, err
+	}
+	if platform == "豆包" && job.VerifyAttachments {
+		logging.Log.Info("扩展任务 %s 等待豆包生成及匹配用时 %.1f 秒", job.TaskID, time.Since(waitStart).Seconds())
 	}
 	if len(body.Images) == 0 {
 		return out, fmt.Errorf("等待生成结果超时：未得到有效的新图片")
 	}
 	out.Conversation = body.Conversation
 	out.TabID = body.TabID
-	var dlErr error
-	for _, item := range body.Images {
-		var data []byte
-		var usedURL string
-		var removed bool
-		var err error
-		if platform == "豆包" && item.RawURL != "" {
-			data, err = extDownloadURL(ctx, sess, job.TaskID, item.RawURL, platform)
-			if err == nil && validRawResult(data) {
-				usedURL, removed = item.RawURL, true
-				logging.Log.Info("扩展任务 %s 已取得豆包原图", job.TaskID)
-			} else {
-				data = nil
-			}
-		}
-		if data == nil && ctx.Err() == nil {
-			data, usedURL, removed, err = extDownload(ctx, sess, job.TaskID, item.URL, platform)
-		}
-		if ctx.Err() != nil {
-			return out, ctx.Err()
-		}
-		if err != nil {
-			dlErr = errors.Join(dlErr, err)
-			continue
-		}
-		if data == nil {
-			dlErr = errors.Join(dlErr, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载没有图片数据"})
-			continue
-		}
-		out.Results = append(out.Results, strategy.Result{
-			URL:              usedURL,
-			Src:              "extension",
-			TS:               time.Now().UnixMilli(),
-			Data:             data,
-			WatermarkRemoved: removed,
-		})
-		out.sourceIndices = append(out.sourceIndices, item.SourceIndex)
+	workers := 1
+	if platform == "豆包" && job.VerifyAttachments && len(job.Images) > 1 {
+		workers = 3
 	}
-	return out, dlErr
+	downloadStart := time.Now()
+	out.Results, out.sourceIndices, err = downloadExtensionResults(ctx, sess, job.TaskID, platform, body.Images, workers)
+	if platform == "豆包" && job.VerifyAttachments {
+		logging.Log.Info("扩展任务 %s 下载 %d/%d 张结果用时 %.1f 秒", job.TaskID, len(out.Results), len(body.Images), time.Since(downloadStart).Seconds())
+	}
+	return out, err
+}
+
+type extensionDownloadResult struct {
+	result strategy.Result
+	err    error
+}
+
+// Downloads are independent, but the result and source index must stay paired even
+// when the browser finishes requests out of order. Partial failures remain available
+// to the caller for quarantine rather than being assigned to the wrong source.
+func downloadExtensionResults(ctx context.Context, sess *extbridge.Session, taskID, platform string, items []extImage, workers int) ([]strategy.Result, []int, error) {
+	values := make([]extensionDownloadResult, len(items))
+	jobs := make(chan int, len(items))
+	for i := range items {
+		jobs <- i
+	}
+	close(jobs)
+	var wg sync.WaitGroup
+	for range min(max(workers, 1), len(items)) {
+		wg.Go(func() {
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				values[i].result, values[i].err = downloadExtensionImage(ctx, sess, taskID, platform, items[i])
+			}
+		})
+	}
+	wg.Wait()
+	var results []strategy.Result
+	var indices []int
+	var resultErr error
+	for i, value := range values {
+		if value.err != nil {
+			resultErr = errors.Join(resultErr, value.err)
+			continue
+		}
+		if value.result.Data == nil {
+			continue
+		}
+		results = append(results, value.result)
+		indices = append(indices, items[i].SourceIndex)
+	}
+	if ctx.Err() != nil {
+		return results, indices, ctx.Err()
+	}
+	return results, indices, resultErr
+}
+
+func downloadExtensionImage(ctx context.Context, sess *extbridge.Session, taskID, platform string, item extImage) (strategy.Result, error) {
+	var data []byte
+	var usedURL string
+	var removed bool
+	var err error
+	if platform == "豆包" && item.RawURL != "" {
+		data, err = extDownloadURL(ctx, sess, taskID, item.RawURL, platform)
+		if err == nil && validRawResult(data) {
+			usedURL, removed = item.RawURL, true
+			logging.Log.Info("扩展任务 %s 已取得豆包原图", taskID)
+		} else {
+			data = nil
+		}
+	}
+	if data == nil && ctx.Err() == nil {
+		data, usedURL, removed, err = extDownload(ctx, sess, taskID, item.URL, platform)
+	}
+	if ctx.Err() != nil {
+		return strategy.Result{}, ctx.Err()
+	}
+	if err != nil {
+		return strategy.Result{}, err
+	}
+	if data == nil {
+		return strategy.Result{}, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载没有图片数据"}
+	}
+	return strategy.Result{URL: usedURL, Src: "extension", TS: time.Now().UnixMilli(), Data: data, WatermarkRemoved: removed}, nil
 }
 
 func doubaoBatchPrompt(job QianwenJob) string {

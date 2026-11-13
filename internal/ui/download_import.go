@@ -145,7 +145,7 @@ func (a *App) downloadImportModal(c *ui.Context) {
 	}
 	tok := a.look
 	ui.Modal(c, &s.open, func() {
-		ui.Column(c.Key("dl-import")).Width(680).Gap(10).Padding(4, 4, 4, 4).Children(func() {
+		ui.Column(c.Key("dl-import")).Width(560).Gap(8).Padding(4, 4, 4, 4).Children(func() {
 			ui.Text(c, "导入表格图片").FontSize(18).FontWeight(500).TextColor(tok.text)
 			ui.Text(c, s.name).FontSize(12).TextColor(tok.muted).SingleLine()
 			if len(s.book.Sheets) > 1 {

@@ -27,9 +27,11 @@ func TestRenameFieldFloatingLabel(t *testing.T) {
 				return r.Y
 			}
 			idle := labelY()
-			if err := tt.Click("序号前面字符"); err != nil {
-				t.Fatal(err)
+			label, ok := tt.Find("序号前面字符")
+			if !ok {
+				t.Fatal("label is missing")
 			}
+			tt.ClickAt(label.X+label.W/2, label.Y+label.H/2)
 			if !tt.Focused("序号前缀") {
 				t.Fatal("input did not receive focus")
 			}

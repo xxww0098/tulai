@@ -189,9 +189,8 @@ func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page 
 			}
 			if time.Since(lastProbe) >= 2*time.Second {
 				lastProbe = time.Now()
-				if state, err := page.LoginState(frameCtx); err == nil && state == "in" && a.store != nil {
-					a.store.ConfirmLogin(s.row.ID)
-					a.clearLoginHold(s.row.ID)
+				if state, err := page.LoginState(frameCtx); err == nil && state == "in" {
+					a.acceptLogin(s.row.ID)
 				}
 			}
 			stop()
@@ -223,7 +222,7 @@ func (a *App) browserDrawerView(c *ui.Context) {
 	}
 	tok := a.look
 	w, _ := c.Size()
-	drawerW := min(w, max(float32(680), w*0.68))
+	drawerW := min(w, max(float32(580), w*0.64))
 	busy := a.browserDrawerBusy(s.row.ID)
 	manual := s.manual && !busy && s.err == "" && !s.loading
 	ui.Overlay(c, func() {
@@ -237,7 +236,7 @@ func (a *App) browserDrawerView(c *ui.Context) {
 			ui.Column(c.Key("browser-drawer")).Width(drawerW).FillHeight().Background(tok.card).
 				BorderWidth(0, 0, 0, 1).BorderColor(tok.border).Shadow(-6, 0, 24, 0, ui.RGBA(0, 0, 0, 0.12)).
 				Role(ui.RoleDialog).Label("浏览器 · " + s.row.Name).Transition(motionTravel(12, 0)).Children(func() {
-				ui.Row(c).FillWidth().Gap(8).Padding(14, 16).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).FillWidth().Gap(6).Padding(8, 12).AlignItems(ui.Center).Children(func() {
 					ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
 						ui.Text(c, s.row.Name).FontSize(tok.title).Bold().SingleLine()
 						label := "仅查看"
@@ -454,8 +453,8 @@ func (a *App) laneBrowserButton(c *ui.Context, ln tasks.AccountLane) {
 	if ln.Extension || (ln.Platform != "豆包" && ln.Platform != "千问" && ln.Platform != "ChatGPT") {
 		return
 	}
-	ui.Button(c.Key("view-browser"), "查看").FontSize(a.look.caption).Height(28).Padding(0, 8).Radius(a.look.radiusS).Shrink(0).
-		Label("查看浏览器 " + ln.Name).Tooltip("查看浏览器").OnClick(func() {
+	uiIconBtn(c, "view-browser", "查看浏览器 "+ln.Name, "查看浏览器", iconEye, 22, false, false, a.look).
+		OnClick(func() {
 		if a.store == nil {
 			return
 		}

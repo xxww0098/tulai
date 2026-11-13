@@ -17,9 +17,9 @@ import (
 
 // 下载页照 Moza 的迅雷式队列做：页签、右上角搜索和新建、任务行和空态。
 const (
-	dlPagePadX  float32 = 24
-	dlPagePadR  float32 = 4
-	dlRowH      float32 = 38
+	dlPagePadX  float32 = 2
+	dlPagePadR  float32 = 2
+	dlRowH      float32 = 30
 	dlSizeColW  float32 = 84
 	dlProgColW  float32 = 150
 	dlSpeedColW float32 = 80
@@ -89,9 +89,9 @@ func (a *App) downloadPage(c *ui.Context) {
 
 func (a *App) downloadHeader(c *ui.Context) {
 	tok := a.look
-	ui.Row(c.Key("dl-header")).FillWidth().MinHeight(64).Padding(0, dlPagePadR, 12, dlPagePadX).
-		AlignItems(ui.End).Gap(12).Children(func() {
-		ui.Row(c.Key("dl-tabs")).Gap(44).Grow(1).MinWidth(0).MinHeight(32).AlignItems(ui.Center).Clip().Children(func() {
+	ui.Row(c.Key("dl-header")).FillWidth().MinHeight(30).Padding(0, dlPagePadR, 4, dlPagePadX).
+		AlignItems(ui.Center).Gap(8).Children(func() {
+		ui.Row(c.Key("dl-tabs")).Gap(16).Grow(1).MinWidth(0).MinHeight(24).AlignItems(ui.Center).Clip().Children(func() {
 			for i, label := range dlFilterLabels {
 				a.downloadTab(c, tok, i, label)
 			}
@@ -105,7 +105,7 @@ func (a *App) downloadHeader(c *ui.Context) {
 
 func (a *App) downloadTab(c *ui.Context, tok tokens, index int, label string) {
 	active := a.dlFilter == index
-	t := ui.Text(c.Key(fmt.Sprintf("dl-tab-%d", index)), label).FontSize(16).FontWeight(500)
+	t := ui.Text(c.Key(fmt.Sprintf("dl-tab-%d", index)), label).FontSize(a.look.body).FontWeight(500)
 	switch {
 	case active:
 		t.TextColor(tok.text)
@@ -125,7 +125,7 @@ func (a *App) downloadTab(c *ui.Context, tok tokens, index int, label string) {
 }
 
 func (a *App) downloadSearchFab(c *ui.Context, tok tokens) {
-	b := ui.ButtonBase(c.Key("dl-search-fab")).Size(32, 32).Radius(16).Center().Label("搜索任务")
+	b := ui.ButtonBase(c.Key("dl-search-fab")).Size(26, 26).Radius(13).Center().Label("搜索任务")
 	b.Background(tok.card).BorderWidth(1)
 	if b.Hovered() {
 		b.BorderColor(dlFaint(tok))
@@ -162,7 +162,7 @@ func (a *App) downloadSearchFab(c *ui.Context, tok tokens) {
 }
 
 func (a *App) downloadNewFab(c *ui.Context, tok tokens) {
-	b := ui.ButtonBase(c.Key("dl-new-fab")).Size(32, 32).Radius(16).Center().Label("新建任务")
+	b := ui.ButtonBase(c.Key("dl-new-fab")).Size(24, 24).Radius(12).Center().Label("新建任务")
 	bg := tok.accent
 	if b.Hovered() {
 		bg = dlTransferStrong(tok)
@@ -173,7 +173,7 @@ func (a *App) downloadNewFab(c *ui.Context, tok tokens) {
 		a.dlComposerOn = true
 	})
 	b.Children(func() {
-		ui.Icon(c, iconPlus).FontSize(16)
+		ui.Icon(c, iconPlus).FontSize(14)
 	})
 	dlTip(c, b, "新建任务")
 }
@@ -188,9 +188,9 @@ func (a *App) downloadSubToolbar(c *ui.Context) {
 	if len(a.dlTasks) > len(tasks) {
 		count += fmt.Sprintf(" · 共 %d", len(a.dlTasks))
 	}
-	ui.Row(c.Key("dl-sub")).FillWidth().Padding(0, dlPagePadR, 10, dlPagePadX).Gap(8).
+	ui.Row(c.Key("dl-sub")).FillWidth().Padding(0, dlPagePadR, 6, dlPagePadX).Gap(6).
 		AlignItems(ui.Center).Children(func() {
-		ui.Text(c.Key("dl-count"), count).FontSize(14).FontWeight(500).TextColor(tok.text).Shrink(0)
+		ui.Text(c.Key("dl-count"), count).FontSize(tok.body).FontWeight(500).TextColor(tok.text).Shrink(0)
 		ui.Spacer(c)
 		a.downloadSubActions(c, tok, tasks)
 	})
@@ -237,8 +237,8 @@ func (a *App) downloadSubActions(c *ui.Context, tok tokens, tasks []*downloadTas
 
 // dlPill 是工具条上的灰色小胶囊，选中时变蓝。
 func (a *App) dlPill(c *ui.Context, tok tokens, key, label string, icon *ui.SVG, active, disabled bool, click func()) {
-	b := ui.ButtonBase(c.Key(key)).Height(28).Radius(14).Padding(0, 10).Gap(5).
-		AlignItems(ui.Center).Label(label).Disabled(disabled)
+	b := ui.ButtonBase(c.Key(key)).Height(20).Radius(10).Padding(0, 7).Gap(4).
+		AlignItems(ui.Center).Label(label).Tooltip(label).Disabled(disabled)
 	bg, fg := dlQuiet(tok), tok.muted
 	switch {
 	case active:
@@ -573,7 +573,7 @@ func (a *App) downloadRowActions(c *ui.Context, tok tokens, t *downloadTask) {
 }
 
 func (a *App) dlIconButton(c *ui.Context, tok tokens, key, label string, icon *ui.SVG, danger bool, click func()) {
-	b := ui.ButtonBase(c.Key(key)).Size(24, 24).Radius(6).Center().Label(label)
+	b := ui.ButtonBase(c.Key(key)).Size(22, 22).Radius(5).Center().Label(label)
 	bg, fg := ui.Color{}, tok.muted
 	switch {
 	case danger && b.Hovered():
@@ -583,7 +583,7 @@ func (a *App) dlIconButton(c *ui.Context, tok tokens, key, label string, icon *u
 	}
 	b.Background(bg).TextColor(fg).Cursor(ui.CursorPointer)
 	b.OnClick(click)
-	b.Children(func() { ui.Icon(c, icon).FontSize(14) })
+	b.Children(func() { ui.Icon(c, icon).FontSize(13) })
 	dlTip(c, b, label)
 }
 
@@ -595,15 +595,15 @@ func (a *App) downloadEmpty(c *ui.Context) {
 	if searching {
 		title, subtitle = "没有匹配的任务", "试试其他关键词，或清除搜索"
 	}
-	ui.Column(c.Key("dl-empty")).Grow(1).FillWidth().MinHeight(280).Center().
-		Padding(40, 28, 40, 28).Gap(4).Children(func() {
-		circle := ui.Column(c).Size(84, 84).Radius(42).Center().Margin(0, 0, 10, 0).
+	ui.Column(c.Key("dl-empty")).Grow(1).FillWidth().MinHeight(220).Center().
+		Padding(24, 20, 24, 20).Gap(4).Children(func() {
+		circle := ui.Column(c).Size(44, 44).Radius(22).Center().Margin(0, 0, 4, 0).
 			Background(dlTransferSoft(tok))
-		circle.Children(func() { ui.Icon(c, iconDownload).FontSize(34).TextColor(dlTransferStrong(tok)) })
-		ui.Text(c, title).FontSize(15).FontWeight(500).TextColor(tok.text).TextAlign(ui.Center)
-		ui.Text(c, subtitle).FontSize(12.5).TextColor(tok.muted).MaxWidth(280).
-			TextAlign(ui.Center).Margin(6, 0, 0, 0)
-		ui.Row(c).Margin(20, 0, 0, 0).Justify(ui.Center).Children(func() {
+		circle.Children(func() { ui.Icon(c, iconDownload).FontSize(24).TextColor(dlTransferStrong(tok)) })
+		ui.Text(c, title).FontSize(13.5).FontWeight(500).TextColor(tok.text).TextAlign(ui.Center)
+		ui.Text(c, subtitle).FontSize(tok.body).TextColor(tok.muted).MaxWidth(280).
+			TextAlign(ui.Center).Margin(4, 0, 0, 0)
+		ui.Row(c).Margin(14, 0, 0, 0).Justify(ui.Center).Children(func() {
 			if searching {
 				a.dlEmptyButton(c, tok, "清除搜索", iconX, false, func() { a.dlSearch = "" })
 				return
@@ -617,8 +617,8 @@ func (a *App) downloadEmpty(c *ui.Context) {
 }
 
 func (a *App) dlEmptyButton(c *ui.Context, tok tokens, label string, icon *ui.SVG, primary bool, click func()) {
-	b := ui.ButtonBase(c.Key("dl-empty-"+label)).Height(38).MinWidth(112).Radius(19).
-		Padding(0, 16).Gap(6).AlignItems(ui.Center).Center().Label(label)
+	b := ui.ButtonBase(c.Key("dl-empty-"+label)).Height(30).MinWidth(96).Radius(15).
+		Padding(0, 14).Gap(5).AlignItems(ui.Center).Center().Label(label)
 	bg, fg := tok.card, tok.text
 	if primary {
 		bg, fg = tok.accent, tok.onAccent
@@ -736,45 +736,43 @@ func (a *App) dlComposerMeta(c *ui.Context, tok tokens, valid []string, invalid 
 	})
 }
 
-func (a *App) dlComposerDest(c *ui.Context, tok tokens) {
-	row := ui.Row(c.Key("dl-composer-dest")).FillWidth().Height(56).Padding(10, 14).Gap(12).
-		AlignItems(ui.Center).Radius(tok.radiusM).BorderWidth(1).BorderColor(tok.border)
+func dlComposerOptionRow(c *ui.Context, key string, icon *ui.SVG, title, sub, tooltip string, iconBg, iconFg ui.Color, tok tokens, onClick func()) {
+	row := ui.Row(c.Key(key)).FillWidth().Height(40).Padding(6, 10).Gap(8).
+		AlignItems(ui.Center).Radius(tok.radiusS).BorderWidth(1).BorderColor(tok.border)
 	if row.Hovered() {
 		row.Background(dlQuiet(tok))
 	}
-	row.Cursor(ui.CursorPointer).OnClick(func() { a.pickDownloadDir() })
+	row.Cursor(ui.CursorPointer).OnClick(onClick)
 	row.Children(func() {
-		icon := ui.Column(c).Size(32, 32).Radius(8).Center().Background(dlTransferSoft(tok))
-		icon.Children(func() { ui.Icon(c, iconFolder).FontSize(16).TextColor(dlTransferStrong(tok)) })
+		box := ui.Column(c).Size(24, 24).Radius(tok.radiusS).Center().Background(iconBg)
+		box.Children(func() { ui.Icon(c, icon).FontSize(13).TextColor(iconFg) })
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-			ui.Text(c, "保存目录").FontSize(13).FontWeight(500).TextColor(tok.text)
-			ui.Text(c, shortenPath(a.downloadDir(), 60)).FontSize(12).TextColor(tok.muted).
-				SingleLine().Tooltip(a.downloadDir())
+			ui.Text(c, title).FontSize(tok.body).FontWeight(500).TextColor(tok.text)
+			t := ui.Text(c, sub).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+			if tooltip != "" {
+				t.Tooltip(tooltip)
+			}
 		})
-		ui.Icon(c, iconChevronRight).FontSize(15).TextColor(dlFaint(tok))
+		ui.Icon(c, iconChevronRight).FontSize(13).TextColor(dlFaint(tok))
 	})
 }
 
+func (a *App) dlComposerDest(c *ui.Context, tok tokens) {
+	dlComposerOptionRow(c, "dl-composer-dest", iconFolder, "保存目录",
+		shortenPath(a.downloadDir(), 60), a.downloadDir(),
+		dlTransferSoft(tok), dlTransferStrong(tok), tok,
+		func() { a.pickDownloadDir() })
+}
+
 func (a *App) dlComposerSettingsRow(c *ui.Context, tok tokens) {
-	row := ui.Row(c.Key("dl-composer-settings")).FillWidth().Height(56).Padding(10, 14).Gap(12).
-		AlignItems(ui.Center).Radius(tok.radiusM).BorderWidth(1).BorderColor(tok.border)
-	if row.Hovered() {
-		row.Background(dlQuiet(tok))
-	}
-	row.Cursor(ui.CursorPointer).OnClick(func() {
-		a.dlComposerOn = false
-		a.settingsTab = settingsDownload
-		a.tab = pageSettings
-	})
-	row.Children(func() {
-		icon := ui.Column(c).Size(32, 32).Radius(8).Center().Background(tok.sunken)
-		icon.Children(func() { ui.Icon(c, iconSettings).FontSize(16).TextColor(tok.muted) })
-		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-			ui.Text(c, "下载设置").FontSize(13).FontWeight(500).TextColor(tok.text)
-			ui.Text(c, a.dlSettingsSummary()).FontSize(12).TextColor(tok.muted).SingleLine()
+	dlComposerOptionRow(c, "dl-composer-settings", iconSettings, "下载设置",
+		a.dlSettingsSummary(), "",
+		tok.sunken, tok.muted, tok,
+		func() {
+			a.dlComposerOn = false
+			a.settingsTab = settingsDownload
+			a.tab = pageSettings
 		})
-		ui.Icon(c, iconChevronRight).FontSize(15).TextColor(dlFaint(tok))
-	})
 }
 
 func (a *App) dlSettingsSummary() string {

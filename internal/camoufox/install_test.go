@@ -67,7 +67,7 @@ func TestConcurrentDriverRefreshUsesUniqueStagingFiles(t *testing.T) {
 	}
 	workers.Wait()
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 4 {
+	if err != nil || len(entries) != 6 {
 		t.Fatalf("unfinished driver refresh: %v %v", entries, err)
 	}
 	for _, entry := range entries {
@@ -138,15 +138,75 @@ func TestNodeArtifactsMatchPlatform(t *testing.T) {
 	}
 }
 
+func TestImpitNativePackageMatchesPlatform(t *testing.T) {
+	for platform, want := range map[string]string{
+		"windows/amd64": "impit-win32-x64-msvc",
+		"darwin/amd64":  "impit-darwin-x64",
+		"darwin/arm64":  "impit-darwin-arm64",
+		"linux/amd64":   "impit-linux-x64-gnu",
+		"linux/arm64":   "impit-linux-arm64-gnu",
+	} {
+		goos, goarch, _ := strings.Cut(platform, "/")
+		if got := impitNativePackage(goos, goarch); got != want {
+			t.Errorf("%s: got %q, want %q", platform, got, want)
+		}
+	}
+	if got := impitNativePackage("windows", "arm64"); got != "" {
+		t.Fatalf("unsupported platform returned %q", got)
+	}
+}
+
+func TestImpitOptionalVersion(t *testing.T) {
+	dir := t.TempDir()
+	impitDir := filepath.Join(dir, "node_modules", "impit")
+	if err := os.MkdirAll(impitDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(impitDir, "package.json"), []byte(`{"optionalDependencies":{"impit-win32-x64-msvc":"0.14.8"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := impitOptionalVersion(dir, "impit-win32-x64-msvc"); got != "0.14.8" {
+		t.Fatalf("version = %q", got)
+	}
+	if got := impitOptionalVersion(dir, "missing"); got != "" {
+		t.Fatalf("missing package version = %q", got)
+	}
+	nativeDir := filepath.Join(dir, "node_modules", "impit-win32-x64-msvc")
+	if err := os.MkdirAll(nativeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nativeDir, "package.json"), []byte(`{"version":"0.14.8"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := nodePackageVersion(dir, "impit-win32-x64-msvc"); got != "0.14.8" {
+		t.Fatalf("native version = %q", got)
+	}
+}
+
 func TestInstalledRequiresPinnedDependenciesAndBinary(t *testing.T) {
 	root := t.TempDir()
 	dir := runtimeDir(root)
 	exe := filepath.Join(dir, "browser")
-	for _, p := range []string{nodePath(dir), exe, filepath.Join(dir, "node_modules", "camoufox", "package.json")} {
+	nativeName := impitNativePackage(runtime.GOOS, runtime.GOARCH)
+	if nativeName == "" {
+		t.Fatalf("test platform %s/%s has no native package", runtime.GOOS, runtime.GOARCH)
+	}
+	native := filepath.Join(dir, "node_modules", nativeName, "package.json")
+	impit := filepath.Join(dir, "node_modules", "impit", "package.json")
+	nativeMeta := []byte(`{"version":"0.14.8"}`)
+	impitMeta, _ := json.Marshal(map[string]any{"optionalDependencies": map[string]string{nativeName: "0.14.8"}})
+	files := map[string][]byte{
+		nodePath(dir): []byte("x"), exe: []byte("x"), filepath.Join(dir, "node_modules", "camoufox", "package.json"): []byte("x"),
+		impit: impitMeta, native: nativeMeta,
+	}
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		files[filepath.Join(dir, "node_modules", nativeName, "impit-node.win32-x64-msvc.node")] = []byte("x")
+	}
+	for p, body := range files {
 		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte("x"), 0600); err != nil {
+		if err := os.WriteFile(p, body, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -180,6 +240,34 @@ func TestInstalledRequiresPinnedDependenciesAndBinary(t *testing.T) {
 	}
 	if err := writeDriver(dir); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte(`{"version":"0.14.9"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Installed(root); ok {
+		t.Fatal("mismatched native dependency accepted")
+	}
+	if err := os.WriteFile(native, nativeMeta, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(native)
+	if _, ok := Installed(root); ok {
+		t.Fatal("missing native dependency accepted")
+	}
+	if err := os.WriteFile(native, nativeMeta, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		binary := filepath.Join(dir, "node_modules", nativeName, "impit-node.win32-x64-msvc.node")
+		if err := os.Remove(binary); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := Installed(root); ok {
+			t.Fatal("missing native binary accepted")
+		}
+		if err := os.WriteFile(binary, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	_ = os.Remove(exe)
 	if _, ok := Installed(root); ok {

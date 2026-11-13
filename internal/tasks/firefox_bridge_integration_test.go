@@ -32,12 +32,13 @@ func TestFirefoxBridgeObservesStreamAndDownloadsRaw(t *testing.T) {
 	raw := "https://p3.byteimg.com/test/image.jpeg~tplv-image_raw.png"
 	data := resultPNG(t, 29)
 	var rawDownloads atomic.Int32
+	var activeDownloads, peakDownloads atomic.Int32
 	eventJSON, _ := json.Marshal(map[string]any{"event_data": fmt.Sprintf(`{"image":{"image_preview":{"url":%q},"image_ori_raw":{"url":%q}}}`, preview, raw)})
 	body := "event: message\nid: 42\ndata: " + string(eventJSON) + "\n\n"
 	page := `<!doctype html><html><body>
-<div class="guidance-input-surface"><textarea style="width:400px;height:80px"></textarea><button data-testid="chat_input_send_button">发送</button></div>
+<div class="guidance-input-surface"><button data-testid="skill_input_exit_button">图像生成</button><textarea style="width:400px;height:80px"></textarea><button data-testid="chat_input_send_button">发送</button></div>
 <script>
-document.querySelector('button').onclick=async()=>{
+document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()=>{
   const box=document.querySelector('textarea'), prompt=box.value; box.value='';
   history.pushState({}, '', '/chat/fixture');
   const user=document.createElement('div'); user.setAttribute('data-role','user'); user.textContent=prompt; document.body.append(user);
@@ -51,9 +52,18 @@ document.querySelector('button').onclick=async()=>{
 	fixture := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.Host, "byteimg.com"):
+			if strings.HasPrefix(r.URL.Path, "/performance/") {
+				n := activeDownloads.Add(1)
+				for old := peakDownloads.Load(); n > old && !peakDownloads.CompareAndSwap(old, n); old = peakDownloads.Load() {
+				}
+				defer activeDownloads.Add(-1)
+				time.Sleep(350 * time.Millisecond)
+			}
 			if strings.Contains(r.URL.Path, "image_raw") {
 				rawDownloads.Add(1)
 			}
+			w.Header().Set("Access-Control-Allow-Origin", "https://www.doubao.com")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Content-Type", "image/png")
 			_, _ = w.Write(data)
 		case r.URL.Path == "/samantha/chat/completion":
@@ -69,7 +79,7 @@ document.querySelector('button').onclick=async()=>{
 			if r.URL.Path == "/chat/" {
 				time.Sleep(400 * time.Millisecond)
 			}
-			w.Header().Set("Content-Type", "text/html")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = io.WriteString(w, page)
 		}
 	}))
@@ -217,4 +227,33 @@ document.querySelector('button').onclick=async()=>{
 	if !observed {
 		t.Fatal("Firefox did not report the completion response status")
 	}
+	started = time.Now()
+	for i := 0; i < 6; i++ {
+		url := fmt.Sprintf("https://p3.byteimg.com/performance/serial-%d.png", i)
+		got, err := extDownloadURL(ctx, session, "performance", url, "豆包")
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("serial result %d: %v", i, err)
+		}
+	}
+	t.Logf("six serial Firefox bridge downloads: %v", time.Since(started))
+	peakDownloads.Store(0)
+	items := make([]extImage, 6)
+	for i := range items {
+		url := fmt.Sprintf("https://p3.byteimg.com/performance/parallel-%d.png", i)
+		items[i] = extImage{URL: url, RawURL: url, SourceIndex: len(items) - i}
+	}
+	started = time.Now()
+	results, indices, err := downloadExtensionResults(ctx, session, "performance", "豆包", items, 3)
+	if err != nil || len(results) != len(items) || len(indices) != len(items) {
+		t.Fatalf("parallel Firefox downloads: results=%d indices=%v err=%v", len(results), indices, err)
+	}
+	for i, result := range results {
+		if !bytes.Equal(result.Data, data) || indices[i] != len(items)-i {
+			t.Fatalf("parallel Firefox result %d lost its source association", i)
+		}
+	}
+	if n := peakDownloads.Load(); n < 2 || n > 3 {
+		t.Fatalf("Firefox download concurrency = %d, want 2 or 3", n)
+	}
+	t.Logf("six parallel Firefox bridge downloads: %v, peak concurrent requests: %d", time.Since(started), peakDownloads.Load())
 }

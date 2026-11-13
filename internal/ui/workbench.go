@@ -16,6 +16,7 @@ import (
 const (
 	pageHome = iota
 	pageWash
+	pageFission
 	pageDedup
 	pageBrowser
 	pagePrompts
@@ -103,15 +104,6 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 		return WorkbenchPlan{Action: StartNone}
 	}
 	return WorkbenchPlan{Action: StartGenerate, Platforms: platforms}
-}
-
-func hasPlatformAccount(accounts []AccountSnap, platform string) bool {
-	for _, account := range accounts {
-		if account.Platform == platform {
-			return true
-		}
-	}
-	return false
 }
 
 // ConcurrencyCaption 是「调度与等待」里并发这一行的说明。

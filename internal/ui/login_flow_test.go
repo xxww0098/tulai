@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/wizard"
 )
 
@@ -55,6 +56,12 @@ func TestProxyCardAndAccountQR(t *testing.T) {
 	}
 	if start.W > 160 {
 		t.Fatalf("action button is too wide: %+v", start)
+	}
+	if at.HasText("删除当前") {
+		t.Fatal("delete should be hidden until an environment is selected")
+	}
+	if err := at.Click("配置 工作号"); err != nil {
+		t.Fatal(err)
 	}
 	del := assertVisible(t, at, "删除当前", 1280, 900)
 	if del.W > 160 || del.Y < start.Y {
@@ -158,6 +165,39 @@ func TestReloginWatchesQR(t *testing.T) {
 	}
 	if a.tab != pageBrowser || a.browserSel != 0 {
 		t.Fatalf("QR row should be selected: tab=%d sel=%d", a.tab, a.browserSel)
+	}
+}
+
+func TestPublishLoginClearsEngineAttention(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	row, err := st.AddBrowser("豆包", "豆包1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(row.ID, true, true)
+	e := tasks.NewEngine(st, nil, nil, "")
+	e.RaiseAttention("豆包1 需要重新扫码登录", row.ID)
+	a := &App{
+		store: st, engine: e,
+		loginWatchGen: map[int64]int{row.ID: 1},
+		loginShots:    map[int64]loginShot{},
+	}
+
+	if !a.publishLogin(row.ID, 1, wizard.ProbeIn, "") {
+		t.Fatal("login generation changed")
+	}
+	if text, _, ok := e.Attention(); ok {
+		t.Fatalf("stale relogin banner remained: %q", text)
+	}
+	if shot := a.loginShot(row.ID); shot.state != wizard.ProbeIn {
+		t.Fatalf("login shot = %+v", shot)
+	}
+	if got := st.Browsers(); len(got) != 1 || !got[0].IsLoggedIn {
+		t.Fatalf("login was not confirmed: %+v", got)
 	}
 }
 

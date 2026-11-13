@@ -115,7 +115,7 @@ func (a *App) pruneBrowserSelection() {
 func (a *App) browserBatchToolbar(c *ui.Context) {
 	chosen := a.browserChecked.Len()
 	all := chosen > 0 && chosen == len(a.browserRows)
-	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 		check := ui.Checkbox(c, &all, "全选").Disabled(len(a.browserRows) == 0)
 		if chosen > 0 && chosen < len(a.browserRows) {
 			check.Mixed()
@@ -135,17 +135,20 @@ func (a *App) browserBatchToolbar(c *ui.Context) {
 				}
 			}
 		}
-		ui.Text(c, fmt.Sprintf("已选 %d 个", a.browserChecked.Len())).FontSize(12).TextColor(c.Theme().TextMuted).Width(78)
+		ui.Text(c, fmt.Sprintf("已选 %d 个", a.browserChecked.Len())).FontSize(a.look.caption).TextColor(c.Theme().TextMuted).Width(60)
 		busy := a.running || len(a.browserPending) > 0
-		ui.Button(c, "批量启动").FontSize(12).Shrink(0).Disabled(busy || len(a.browserBatchTargets(false)) == 0).OnClick(func() { a.runBrowserBatch(false) })
-		ui.Button(c, "批量停止").FontSize(12).Shrink(0).Disabled(busy || len(a.browserBatchTargets(true)) == 0).OnClick(func() { a.runBrowserBatch(true) })
-		ui.Button(c, "清空").FontSize(12).Shrink(0).Disabled(a.browserChecked.Len() == 0).OnClick(func() { a.browserChecked.Clear() })
+		uiIconBtn(c, "bulk-start", "批量启动", "批量启动已选环境", iconPlay, 22, false, false, a.look).
+			Disabled(busy || len(a.browserBatchTargets(false)) == 0).OnClick(func() { a.runBrowserBatch(false) })
+		uiIconBtn(c, "bulk-stop", "批量停止", "批量停止已选环境", iconStop, 22, false, false, a.look).
+			Disabled(busy || len(a.browserBatchTargets(true)) == 0).OnClick(func() { a.runBrowserBatch(true) })
+		uiIconBtn(c, "bulk-clear", "清空", "清空勾选", iconX, 22, false, false, a.look).
+			Disabled(a.browserChecked.Len() == 0).OnClick(func() { a.browserChecked.Clear() })
 		if a.browserBatch != nil {
 			ink := c.Theme().TextMuted
 			if a.browserBatch.failed > 0 {
 				ink = c.Theme().Danger
 			}
-			ui.Text(c, a.browserBatch.text()).FontSize(12).TextColor(ink).Grow(1).MinWidth(0).SingleLine().Tooltip(a.browserBatch.text())
+			ui.Text(c, a.browserBatch.text()).FontSize(a.look.caption).TextColor(ink).Grow(1).MinWidth(0).SingleLine().Tooltip(a.browserBatch.text())
 		}
 	})
 }

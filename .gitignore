@@ -9,8 +9,9 @@
 /dist/
 /database/
 /数据库/
-/BrowserData/
+BrowserData/
 /输出结果/
 /tulai
 /tulai.exe
 node_modules/
+/internal/camoufox/bundled/*.zip

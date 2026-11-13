@@ -93,6 +93,9 @@ func promptOptionLabel(id string, options []prompts.Template) string {
 }
 
 func (a *App) taskPromptList() []string {
+	if a.fissioning() {
+		return prompts.FissionPrompts(a.prompts)
+	}
 	if a.washing() {
 		return []string{a.washPrompt()}
 	}

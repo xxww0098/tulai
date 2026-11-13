@@ -62,7 +62,7 @@ func (a *App) outputSizeSelect(c *ui.Context) {
 	}
 	ui.Text(c, "尺寸").FontSize(a.look.caption).TextColor(a.look.muted).Shrink(0)
 	motionSelect(c, &a.outputSizeMode, []string{outputOriginal, outputRatio, outputPixels}).
-		Width(126).Label("豆包输出尺寸").Disabled(a.running).OnChange(func() {
+		Width(104).Label("豆包输出尺寸").Disabled(a.running).OnChange(func() {
 		if a.outputRatio == "" {
 			a.outputRatio = "5:4"
 		}
@@ -82,20 +82,20 @@ func (a *App) outputSizeFields(c *ui.Context) {
 	if a.outputSizePreset == "" {
 		a.outputSizePreset = "常用"
 	}
-	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 		presets := []string{"常用", "1:1", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16"}
 		presetLabel := "常用比例"
 		if a.outputSizeMode == outputRatio {
 			ui.Text(c, "比例").FontSize(a.look.caption).Shrink(0)
-			ui.TextInput(c, &a.outputRatio).Width(66).Label("画面比例").Placeholder("5:4").Disabled(a.running)
+			ui.TextInput(c, &a.outputRatio).Width(54).Label("画面比例").Placeholder("5:4").Disabled(a.running)
 		} else {
 			presets = []string{"常用", "1024×1024", "1200×1200", "1200×960", "1080×1350", "1920×1080", "1080×1920", "2048×2048"}
 			presetLabel = "常用像素"
-			ui.TextInput(c, &a.outputWidth).Width(66).Label("输出宽度").Disabled(a.running)
+			ui.TextInput(c, &a.outputWidth).Width(54).Label("输出宽度").Disabled(a.running)
 			ui.Text(c, "×").Shrink(0)
-			ui.TextInput(c, &a.outputHeight).Width(66).Label("输出高度").Disabled(a.running)
+			ui.TextInput(c, &a.outputHeight).Width(54).Label("输出高度").Disabled(a.running)
 		}
-		motionSelect(c.Key("output-size-presets"), &a.outputSizePreset, presets).Width(100).Label(presetLabel).Disabled(a.running).OnChange(func() {
+		motionSelect(c.Key("output-size-presets"), &a.outputSizePreset, presets).Width(84).Label(presetLabel).Disabled(a.running).OnChange(func() {
 			if a.outputSizePreset != "常用" {
 				if a.outputSizeMode == outputRatio {
 					a.outputRatio = a.outputSizePreset

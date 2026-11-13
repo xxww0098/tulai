@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,11 +88,11 @@ func TestUpdateBannerLayoutAndDownloadState(t *testing.T) {
 				assertVisible(t, tt, label, float32(tc.width), float32(tc.height))
 			}
 			panel := assertVisible(t, tt, "更新提示", float32(tc.width), float32(tc.height))
-			bottom := float32(16)
+			bottom := float32(12)
 			if tc.wizard {
-				bottom = 80
+				bottom = 58
 			}
-			if panel.W > 320 || panel.X+panel.W != float32(tc.width)-16 || panel.Y+panel.H != float32(tc.height)-bottom {
+			if panel.W > 276*interfaceZoom+1 || math.Abs(float64(panel.X+panel.W-(float32(tc.width)-12*interfaceZoom))) > 1 || math.Abs(float64(panel.Y+panel.H-(float32(tc.height)-bottom*interfaceZoom))) > 1 {
 				t.Fatalf("update notice is not in the bottom-right corner: %+v", panel)
 			}
 			if tt.HasText(lines[0]) {

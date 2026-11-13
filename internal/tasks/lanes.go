@@ -231,10 +231,7 @@ func accountSlot(rows []store.Browser, id int64) int64 {
 // MapLane 把一条账号收成界面上的状态。等人验证优先于出图中；扩展没连上是离线，
 // 本机没登录是需要登录；满额、验证码、冷却都比发送间隔优先。
 func MapLane(f LaneFact, now time.Time) AccountLane {
-	cap := f.Cap
-	if cap <= 0 {
-		cap = DefaultDailyCap
-	}
+	cap := max(f.Cap, 0)
 	name := strings.TrimSpace(f.Name)
 	if name == "" {
 		name = f.Platform
@@ -312,11 +309,7 @@ func agyExhausted(f LaneFact, now time.Time) bool {
 }
 
 func dayFull(f LaneFact, now time.Time) bool {
-	cap := f.Cap
-	if cap <= 0 {
-		cap = DefaultDailyCap
-	}
-	if f.UsedToday >= cap {
+	if f.Cap > 0 && f.UsedToday >= f.Cap {
 		return true
 	}
 	if !strings.Contains(f.LastError, "额度") && !strings.Contains(f.LastError, "上限") {
@@ -341,6 +334,11 @@ func Assemble(rows []store.Browser, live LaneLive, cap int, now time.Time) Board
 	if cap <= 0 {
 		cap = DefaultDailyCap
 	}
+	return AssembleCaps(rows, live, FlatCap(cap), now)
+}
+
+// AssembleCaps 按每个账号所属供应商的上限拼出车道。
+func AssembleCaps(rows []store.Browser, live LaneLive, caps CapFor, now time.Time) Board {
 	var board Board
 	for _, b := range rows {
 		slot := accountSlot(rows, b.ID)
@@ -348,7 +346,7 @@ func Assemble(rows []store.Browser, live LaneLive, cap int, now time.Time) Board
 		fact := LaneFact{
 			ID: b.ID, Platform: b.Platform, Name: b.Name, Extension: b.ExtAccount != "", Disabled: b.Disabled,
 			LoggedIn: b.IsLoggedIn, Health: b.Health, CoolUntil: b.CoolUntil, LastError: b.LastError,
-			UsedToday: b.UsedToday(now), SuccessToday: success, FailedToday: failed, Cap: cap, Offline: live.Offline[b.ID],
+			UsedToday: b.UsedToday(now), SuccessToday: success, FailedToday: failed, Cap: caps.For(b.Platform), Offline: live.Offline[b.ID],
 		}
 		if !fact.Offline && !b.Usable(now) && (strings.Contains(b.LastError, "未连接") || strings.Contains(b.LastError, "离线")) {
 			fact.Offline = true
@@ -380,6 +378,14 @@ func Assemble(rows []store.Browser, live LaneLive, cap int, now time.Time) Board
 
 // BoardFrom 在没有引擎时，用队列里正在跑的任务拼车道。截图和界面测试走这里。
 func BoardFrom(rows []store.Browser, items []Task, cap int, now time.Time) Board {
+	if cap <= 0 {
+		cap = DefaultDailyCap
+	}
+	return BoardFromCaps(rows, items, FlatCap(cap), now)
+}
+
+// BoardFromCaps 按账号所属供应商的上限拼车道。
+func BoardFromCaps(rows []store.Browser, items []Task, caps CapFor, now time.Time) Board {
 	live := LaneLive{Busy: map[int64]int64{}, Jobs: map[int64]LaneJob{}}
 	for _, task := range items {
 		if task.Status != StatusRunning && task.Status != StatusRetry && task.Status != StatusAwaitUser {
@@ -397,7 +403,7 @@ func BoardFrom(rows []store.Browser, items []Task, cap int, now time.Time) Board
 			live.Verify[task.BrowserID] = true
 		}
 	}
-	return Assemble(rows, live, cap, now)
+	return AssembleCaps(rows, live, caps, now)
 }
 
 func jobOf(t Task, started time.Time) LaneJob {
@@ -465,6 +471,14 @@ func (e *Engine) laneFinish(busySlot, browserID, readySlot int64, gap time.Durat
 
 // AccountBoard 是界面读的快照。调用时不占用引擎锁，和调度、页面操作可以同时进行。
 func (e *Engine) AccountBoard(now time.Time, cap int) Board {
+	if cap <= 0 {
+		cap = DefaultDailyCap
+	}
+	return e.AccountBoardCaps(now, FlatCap(cap))
+}
+
+// AccountBoardCaps 按账号所属供应商的上限读快照。
+func (e *Engine) AccountBoardCaps(now time.Time, caps CapFor) Board {
 	if e == nil {
 		return Board{}
 	}
@@ -483,7 +497,7 @@ func (e *Engine) AccountBoard(now time.Time, cap int) Board {
 			live.Offline[b.ID] = true
 		}
 	}
-	return Assemble(rows, live, cap, now)
+	return AssembleCaps(rows, live, caps, now)
 }
 
 func (e *Engine) laneRows() []store.Browser {

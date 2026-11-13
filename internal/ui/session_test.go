@@ -219,7 +219,7 @@ func TestWashPageRestoresSourcesAndResults(t *testing.T) {
 	}
 	tt := ui.NewTester(b.view, 1280, 900)
 	tt.Advance(200 * time.Millisecond)
-	for _, label := range []string{"原图", "poster.png", "mug.png", "已选 2 张", "poster_01.png", "出图超时，请重试", "洗图指令"} {
+	for _, label := range []string{"原图", "poster.png", "mug.png", "2 张", "poster_01.png", "出图超时，请重试", "洗图指令"} {
 		if !tt.HasText(label) {
 			t.Fatalf("洗图页缺少 %q，看到 %v", label, tt.Texts())
 		}
@@ -541,15 +541,18 @@ func TestHistoryPopupClearsHeaderAndLog(t *testing.T) {
 		if !ok {
 			t.Fatal("添加账号 missing")
 		}
-		logCard, ok := tt.Find("运行日志区")
+		logBtn, ok := tt.Find("运行日志")
 		if !ok {
-			t.Fatal("运行日志 missing")
+			t.Fatal("运行日志 button missing")
+		}
+		if logBtn.X <= float32(sz[0])/2 || logBtn.Y+logBtn.H > topbarH+2 {
+			t.Fatalf("%v: log trigger not in topbar right: %v", sz, logBtn)
 		}
 		if rectsOverlap(panel, add) {
 			t.Fatalf("%v: history covers 添加账号 panel %v add %v", sz, panel, add)
 		}
-		if rectsOverlap(panel, logCard) {
-			t.Fatalf("%v: history covers 运行日志 panel %v log %v", sz, panel, logCard)
+		if rectsOverlap(panel, logBtn) {
+			t.Fatalf("%v: history covers 运行日志 panel %v log %v", sz, panel, logBtn)
 		}
 		if panel.Y+panel.H > add.Y+1 {
 			t.Fatalf("%v: history is not above 添加账号 panel %v add %v", sz, panel, add)
@@ -578,6 +581,13 @@ func TestHistoryPopupClearsHeaderAndLog(t *testing.T) {
 				t.Fatalf("%v: history covers %s panel %v cell %v", sz, label, panel, cell)
 			}
 		}
+		if err := tt.Click("运行日志"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Advance(150 * time.Millisecond)
+		if _, ok := tt.Find("运行日志区"); !ok {
+			t.Fatal("运行日志 popover missing")
+		}
 		scroll, ok := tt.Find("运行日志内容")
 		if !ok {
 			t.Fatal("log scroll missing")
@@ -601,6 +611,10 @@ func TestHistoryPopupClearsHeaderAndLog(t *testing.T) {
 		if !saw {
 			t.Fatalf("%v: no full log line inside %v", sz, scroll)
 		}
+		if err := tt.Click("运行日志"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Advance(120 * time.Millisecond)
 	}
 }
 

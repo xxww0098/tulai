@@ -92,11 +92,25 @@ func TestTaskStartCancellationAndProcessLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker, _ := json.Marshal(map[string]string{"executable": node, "version": camoufox.Version, "platform": runtime.GOOS + "/" + runtime.GOARCH})
-	for name, body := range map[string][]byte{
+	native := map[string]string{
+		"windows/amd64": "impit-win32-x64-msvc",
+		"darwin/amd64":  "impit-darwin-x64",
+		"darwin/arm64":  "impit-darwin-arm64",
+		"linux/amd64":   "impit-linux-x64-gnu",
+		"linux/arm64":   "impit-linux-arm64-gnu",
+	}[runtime.GOOS+"/"+runtime.GOARCH]
+	impitMeta, _ := json.Marshal(map[string]any{"optionalDependencies": map[string]string{native: "0.14.8"}})
+	files := map[string][]byte{
 		node: data, filepath.Join(dir, "package-lock.json"): lock,
 		filepath.Join(dir, "ready.json"):                               marker,
 		filepath.Join(dir, "node_modules", "camoufox", "package.json"): []byte("{}"),
-	} {
+		filepath.Join(dir, "node_modules", "impit", "package.json"):    impitMeta,
+		filepath.Join(dir, "node_modules", native, "package.json"):     []byte(`{"version":"0.14.8"}`),
+	}
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		files[filepath.Join(dir, "node_modules", native, "impit-node.win32-x64-msvc.node")] = []byte("x")
+	}
+	for name, body := range files {
 		if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 			t.Fatal(err)
 		}

@@ -64,7 +64,10 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 	runtime, ok := Installed(dataDir)
 	var driverErr error
 	if ok {
-		driverErr = writeDriver(runtime.Dir)
+		driverErr = ensureNodeRuntimeSupport(runtime.Dir)
+		if driverErr == nil {
+			driverErr = writeDriver(runtime.Dir)
+		}
 	}
 	installMu.Unlock()
 	if !ok {
@@ -259,7 +262,7 @@ func runtimeEnv(proxy, dir string) []string {
 	for _, item := range inherited {
 		key, _, _ := strings.Cut(item, "=")
 		key = strings.ToUpper(key)
-		if strings.HasPrefix(key, "CAMOU_CONFIG_") || strings.HasPrefix(key, "CAMOU_PREFS_") || key == "FONTCONFIG_FILE" || key == "TULAI_CAMOUFOX_MIRROR" {
+		if strings.HasPrefix(key, "CAMOU_CONFIG_") || strings.HasPrefix(key, "CAMOU_PREFS_") || strings.HasPrefix(key, "NAPI_RS_") || key == "FONTCONFIG_FILE" || key == "TULAI_CAMOUFOX_MIRROR" {
 			continue
 		}
 		env = append(env, item)

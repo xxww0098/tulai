@@ -15,23 +15,6 @@ import (
 	"github.com/xxww0098/tulai/internal/update"
 )
 
-func (a *App) installMenu() *mygo.Menu {
-	return mygo.NewMenu([]*mygo.MenuItem{
-		{Role: mygo.RoleAppMenu},
-		{Role: mygo.RoleEditMenu},
-		{Label: "帮助", Submenu: []*mygo.MenuItem{
-			{
-				Label:       "检查更新…",
-				Accelerator: "CmdOrCtrl+U",
-				Click: func(*mygo.MenuItem, *mygo.Window) {
-					a.checkForUpdates()
-				},
-			},
-		}},
-		{Role: mygo.RoleWindowMenu},
-	})
-}
-
 func currentVersion() string {
 	if v := strings.TrimSpace(mygo.App.Version()); v != "" {
 		return v
@@ -48,15 +31,16 @@ func (a *App) persistUpdatePrefs() {
 }
 
 func (a *App) updateSettings(c *ui.Context) {
+	tok := a.look
 	ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, "当前版本 "+currentVersion()).FontSize(14).Grow(1).MinWidth(0).SingleLine()
-		ui.Button(c, "检查更新").Shrink(0).Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
+		ui.Text(c, "当前版本 "+currentVersion()).FontSize(tok.body).Grow(1).MinWidth(0).SingleLine()
+		uiBtn(ui.Button(c, "检查更新"), tok).Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
 	})
 	ui.Checkbox(c, &a.autoCheck, "自动检查更新").OnChange(func() { a.persistUpdatePrefs() })
 	ui.Field(c, "更新镜像", func() {
 		ui.TextInput(c, &a.updateMirror).Placeholder("留空用默认镜像，填 off 则只用 GitHub")
 	})
-	ui.Text(c, "镜像是地址前缀。GitHub 连不上时才会用它。").FontSize(12).TextColor(c.Theme().TextMuted)
+	ui.Text(c, "镜像是地址前缀。GitHub 连不上时才会用它。").FontSize(tok.caption).TextColor(tok.muted)
 }
 
 func (a *App) updateBanner(c *ui.Context) {
@@ -69,41 +53,41 @@ func (a *App) updateBanner(c *ui.Context) {
 	a.updateHidden = false
 	tok := a.look
 	w, h := c.Size()
-	bottom := float32(16)
+	bottom := float32(12)
 	if a.wizardOn {
-		bottom = 80
+		bottom = 58
 	}
 	ui.Overlay(c, func() {
-		ui.Column(c.Key("update-banner")).Absolute().Right(16).Bottom(bottom).Width(min(320, max(0, w-32))).
-			Padding(10, 12).Gap(8).Radius(10).Background(tok.card).Border(1, tok.border).
+		ui.Column(c.Key("update-banner")).Absolute().Right(12).Bottom(bottom).Width(min(276, max(0, w-24))).
+			Padding(8, 10).Gap(6).Radius(tok.radiusM).Background(tok.card).Border(1, tok.border).
 			Shadow(0, 4, 16, 0, tok.shadow).Role(ui.RoleStatus).Label("更新提示").Children(func() {
-			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "发现新版本 "+a.updateNotice).FontSize(13).Bold().Grow(1).MinWidth(0).SingleLine()
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "发现新版本 "+a.updateNotice).FontSize(tok.body).Bold().Grow(1).MinWidth(0).SingleLine()
 				label, accessible := "详情", "查看更新详情"
 				if a.updateDetailsOpen {
 					label, accessible = "收起", "收起更新详情"
 				}
-				ui.Button(c.Key("update-details"), label).Label(accessible).FontSize(12).Padding(4, 8).Shrink(0).
+				uiMiniBtn(ui.Button(c.Key("update-details"), label), tok).Label(accessible).
 					OnClick(func() { a.updateDetailsOpen = !a.updateDetailsOpen })
 				if a.updateDownloading {
-					ui.Button(c, "隐藏").Label("隐藏更新提示").FontSize(12).Padding(4, 8).Shrink(0).
+					uiMiniBtn(ui.Button(c, "隐藏"), tok).Label("隐藏更新提示").
 						OnClick(func() { a.updateHidden = true })
 				} else {
-					ui.Button(c, "稍后").FontSize(12).Padding(4, 8).Shrink(0).OnClick(func() { a.dismissUpdate() })
+					uiMiniBtn(ui.Button(c, "稍后"), tok).OnClick(func() { a.dismissUpdate() })
 				}
 			})
 			if a.updateDeferred {
-				ui.Text(c, update.DeferMessage).FontSize(12).TextColor(tok.warning).SingleLine().Tooltip(update.DeferMessage)
+				ui.Text(c, update.DeferMessage).FontSize(tok.caption).TextColor(tok.warning).SingleLine().Tooltip(update.DeferMessage)
 			}
 			if a.updateErr != "" {
-				ui.Text(c, a.updateErr).FontSize(12).TextColor(tok.danger).SingleLine().Tooltip(a.updateErr)
+				ui.Text(c, a.updateErr).FontSize(tok.caption).TextColor(tok.danger).SingleLine().Tooltip(a.updateErr)
 			}
 			if a.updateDownloading {
 				installing := strings.Contains(a.updateProgressText, "正在安装")
-				ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, a.updateProgressText).FontSize(12).TextColor(tok.muted).Grow(1).MinWidth(0).SingleLine().Tooltip(a.updateProgressText)
+				ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, a.updateProgressText).FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0).SingleLine().Tooltip(a.updateProgressText)
 					if !installing && a.updateFraction > 0 {
-						ui.Text(c, fmt.Sprintf("%.0f%%", min(a.updateFraction, 1)*100)).FontSize(12).TextColor(tok.muted)
+						ui.Text(c, fmt.Sprintf("%.0f%%", min(a.updateFraction, 1)*100)).FontSize(tok.caption).TextColor(tok.muted)
 					}
 				})
 				motionProgress(c, "update-progress", a.updateFraction, installing || a.updateFraction <= 0)
@@ -113,13 +97,13 @@ func (a *App) updateBanner(c *ui.Context) {
 				if a.updateSigned != nil {
 					verification = "更新包由 MyGo 验证开发者签名。"
 				}
-				ui.Text(c, verification).FontSize(12).TextColor(tok.muted).SingleLine().Tooltip(verification)
+				ui.Text(c, verification).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(verification)
 				a.updateBannerActions(c)
 				if a.updateNotes != "" && a.updateNotesOpen {
-					ui.Scroll(c.Key("update-notes")).FillWidth().MaxHeight(min(120, max(40, h-bottom-180))).Label("更新说明").Children(func() {
+					ui.Scroll(c.Key("update-notes")).FillWidth().MaxHeight(min(100, max(40, h-bottom-150))).Label("更新说明").Children(func() {
 						ui.Column(c).FillWidth().Shrink(0).Children(func() {
 							for _, line := range splitLines(a.updateNotes) {
-								ui.Text(c, line).FontSize(12).TextColor(tok.muted).Shrink(0)
+								ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
 							}
 						})
 					})
@@ -130,23 +114,24 @@ func (a *App) updateBanner(c *ui.Context) {
 }
 
 func (a *App) updateBannerActions(c *ui.Context) {
-	ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
+	tok := a.look
+	ui.Row(c).FillWidth().Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
 		if a.updateNotes != "" {
 			label := "查看更新说明"
 			if a.updateNotesOpen {
 				label = "收起更新说明"
 			}
-			ui.Button(c, label).FontSize(12).Shrink(0).OnClick(func() { a.updateNotesOpen = !a.updateNotesOpen })
+			uiMiniBtn(ui.Button(c, label), tok).OnClick(func() { a.updateNotesOpen = !a.updateNotesOpen })
 		}
 		if !a.updateDownloading {
-			ui.Button(c, "跳过此版本").FontSize(12).Shrink(0).OnClick(func() { a.skipUpdate() })
-			ui.Button(c, "立即更新").FontSize(12).Shrink(0).Background(a.look.accent.Alpha(0.1)).TextColor(a.look.accent).
+			uiMiniBtn(ui.Button(c, "跳过此版本"), tok).OnClick(func() { a.skipUpdate() })
+			uiMiniBtn(ui.Button(c, "立即更新"), tok).Background(tok.accent.Alpha(0.1)).TextColor(tok.accent).
 				Disabled(a.updateBusy).OnClick(func() { a.applyUpdate() })
 		}
 	})
 }
 
-// checkForUpdates is the manual entry from the menu, the title bar, and settings.
+// checkForUpdates is the manual entry from the sidebar, the title bar, and settings.
 func (a *App) checkForUpdates() {
 	if a.updateHidden && a.updateDownloading {
 		a.updateHidden = false

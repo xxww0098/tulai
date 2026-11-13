@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,38 +19,59 @@ import (
 )
 
 const (
-	railWidth     float32 = 56
-	composerW     float32 = 360
-	homeSplitMin  float32 = 900
-	pagePadX      float32 = 16
-	homeGap       float32 = 12
-	workspaceBarH float32 = 36
+	composerW    float32 = 248
+	homeSplitMin float32 = 810
+	pagePadX     float32 = 8
+	homeGap      float32 = 6
 )
 
-// columnHeight 扣掉页头和「新建任务」那一行，避免把运行日志顶出窗口。
+// columnHeight 扣掉全局顶栏和页面上下边距，让左右两栏自然贴合视口高度。
 func columnHeight(winH float32) float32 {
-	h := winH - 48 - workspaceBarH - 8
-	if h < 220 {
-		return 220
+	h := winH - topbarH - 12
+	if h < 200 {
+		return 200
 	}
 	return h
 }
 
 func homeSplit(w float32) bool { return w >= homeSplitMin }
 
-func pageInner(w float32) float32 {
-	inner := w - railWidth - pagePadX*2
+func (a *App) pageInner(w float32) float32 {
+	inner := w - a.sidebarWidth(w) - pagePadX*2
 	if inner < 200 {
 		return 200
 	}
 	return inner
 }
 
-func homeStageW(w float32) float32 {
-	if !homeSplit(w) {
-		return pageInner(w)
+func pageInnerDefault(w float32) float32 {
+	side := sidebarExpandedW
+	if w > 0 && w < sidebarFoldW {
+		side = sidebarCollapsedW
 	}
-	stage := pageInner(w) - composerW - homeGap
+	inner := w - side - pagePadX*2
+	if inner < 200 {
+		return 200
+	}
+	return inner
+}
+
+func (a *App) homeStageW(w float32) float32 {
+	if !homeSplit(w) {
+		return a.pageInner(w)
+	}
+	stage := a.pageInner(w) - composerW - homeGap
+	if stage < 220 {
+		return 220
+	}
+	return stage
+}
+
+func homeStageWDefault(w float32) float32 {
+	if !homeSplit(w) {
+		return pageInnerDefault(w)
+	}
+	stage := pageInnerDefault(w) - composerW - homeGap
 	if stage < 220 {
 		return 220
 	}
@@ -69,119 +89,13 @@ func fitCols(inner, min float32, max int) int {
 	return cols
 }
 
-func (a *App) navRail(c *ui.Context) {
-	tok := a.look
-	ui.Column(c.Key("nav-rail")).Width(railWidth).FillHeight().Padding(12, 0, 10, 0).Gap(4).
-		AlignItems(ui.Center).Background(tok.card).
-		BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
-		a.pageTabs(c)
-		ui.Spacer(c)
-		ui.Box(c).Width(18).Height(1).Margin(6, 0).Background(tok.border)
-		a.railButton(c, "nav-wizard", "设置向导", iconCompass, a.running, false, func() { a.openWizard() })
-		updateLabel := "检查更新"
-		if a.updateHidden && a.updateDownloading {
-			updateLabel = "显示更新进度"
-		}
-		a.railButton(c, "nav-update", updateLabel, iconRefresh, a.updateBusy && !(a.updateHidden && a.updateDownloading), a.updateNotice != "", func() { a.checkForUpdates() })
-	})
-}
-
-func (a *App) pageTabs(c *ui.Context) {
-	type item struct {
-		page  int
-		label string
-		icon  *ui.SVG
-	}
-	items := []item{
-		{pageHome, "图片生成", iconImages},
-		{pageDedup, "去重", iconDedup},
-		{pageBrowser, "浏览器", iconGlobe},
-		{pagePrompts, "提示词", iconPen},
-		{pageDownload, "下载", iconDownload},
-		{pageRename, "批量重命名", iconRename},
-		{pageImageEdit, "图片编辑", iconCrop},
-		{pageSettings, "设置", iconSettings},
-	}
-	selected := 0
-	for i, it := range items {
-		if it.page == a.tab {
-			selected = i
-			break
-		}
-	}
-	tabs := ui.TabsBase(c.Key("main-tabs"), &selected, len(items))
-	tabs.List.Column().Gap(4).AlignItems(ui.Center).Disabled(a.running).OnChange(func() {
-		a.tab = items[selected].page
-		if a.tab == pageHome && a.workspacePage == store.PageWash {
-			a.tab = pageWash
-		}
-	}).Children(func() {
-		for i, it := range items {
-			tab := tabs.Tab(i).Size(36, 36).Radius(10).Center().Label(it.label).Disabled(a.running)
-			if !a.running {
-				tab.Cursor(ui.CursorPointer)
-			}
-			a.paintNavIcon(c, tab, it.icon, i == selected, false)
-			railTip(c, tab, it.label)
-		}
-	})
-}
-
-func (a *App) railButton(c *ui.Context, key, label string, icon *ui.SVG, disabled, dot bool, click func()) {
-	b := ui.ButtonBase(c.Key(key)).Size(36, 36).Radius(10).Center().Label(label).Disabled(disabled)
-	if !disabled {
-		b.Cursor(ui.CursorPointer).OnClick(click)
-	}
-	a.paintNavIcon(c, b, icon, false, dot)
-	railTip(c, b, label)
-}
-
-func (a *App) paintNavIcon(c *ui.Context, b ui.Element, icon *ui.SVG, on, dot bool) {
-	tok := a.look
-	bg, fg := tok.card, tok.muted
-	switch {
-	case on:
-		bg, fg = tok.accent.Alpha(0.14), tok.accent
-	case !b.IsDisabled() && b.Pressed():
-		bg, fg = tok.sunken, tok.text
-	case !b.IsDisabled() && b.Hovered():
-		bg, fg = tok.sunkenHi, tok.text
-	}
-	b.Background(b.AnimateColor("bg", bg, motionEaseFast))
-	b.TextColor(b.AnimateColor("ink", fg, motionEaseFast))
-	if !b.IsDisabled() {
-		hoverPressPose(b)
-	}
-	b.Children(func() {
-		ui.Icon(c, icon).FontSize(18)
-		if dot {
-			ui.Box(c.Key("dot")).Size(6, 6).Radius(3).Background(tok.danger).Absolute().Top(5).Right(5)
-		}
-	})
-}
-
-// railTip 把提示放在图标右侧。窄栏上居中的提示会伸出窗口左边。
-func railTip(c *ui.Context, anchor ui.Element, text string) {
-	anchor.Description(text)
-	ui.TooltipBase(c, anchor, func(tip ui.Element) {
-		th := c.Theme()
-		tip.AttachTo(anchor, ui.AnchorRight, ui.AnchorLeft).Margin(0, 0, 0, 8).
-			Padding(4, 8).Radius(6).Background(th.Inverse).TextColor(th.InverseText).
-			Shadow(0, 4, 14, 0, ui.RGBA(16, 32, 64, 0.18)).Transition(motionPopup())
-		tip.Children(func() {
-			ui.Text(c, text).FontSize(12).SingleLine()
-		})
-	})
-}
-
 func (a *App) homePage(c *ui.Context) {
 	a.workColumns(c, func() { a.genInput(c) })
 }
 
-// homeStage 上面是平台和账号，出图结果撑满剩下的高度。
+// homeStage 上面是账号列表，出图结果撑满剩下的高度。
 func (a *App) homeStage(c *ui.Context) {
-	_, winH := c.Size()
-	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).Height(columnHeight(winH)).Gap(10).Padding(0, 0, 8, 0).Children(func() {
+	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).MinHeight(0).Gap(6).Children(func() {
 		a.platformStage(c)
 	})
 }
@@ -223,7 +137,7 @@ func (a *App) platformTabs(c *ui.Context) {
 			a.stageTab = 3
 		}
 	}
-	ui.Row(c.Key("platform-tabs")).Gap(6).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key("platform-tabs")).Label("服务商选择").Gap(4).AlignItems(ui.Center).Children(func() {
 		a.stageButton(c, 0, "豆包", doubaoN)
 		a.stageButton(c, 1, "千问", qianwenN)
 		a.stageButton(c, 2, agy.Platform, agyN)
@@ -236,25 +150,28 @@ func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
 	if n > 0 {
 		text = fmt.Sprintf("%s %d", label, n)
 	}
-	th := c.Theme()
-	bg, fg, border := th.Surface, th.Text, th.Border
+	tok := a.look
+	bg, fg, border := tok.sunken, tok.muted, tok.border
 	on := a.stageTab == index
 	if on {
-		bg, fg, border = th.Accent.Alpha(0.12), th.Accent, th.Accent
+		bg, fg, border = tok.accent.Alpha(0.14), tok.accent, tok.accent.Alpha(0.35)
 	}
-	b := ui.ButtonBase(c.Key("stage-"+label)).Padding(4, 10).Gap(6).Radius(8).
-		AlignItems(ui.Center).Cursor(ui.CursorPointer).
-		Background(bg).TextColor(fg).Border(1, border)
+	b := ui.ButtonBase(c.Key("stage-"+label)).Height(22).Padding(0, 7).Gap(4).Radius(tok.radiusS).
+		AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).
+		Background(bg).TextColor(fg).Border(1, border).Label(text).Tooltip("切换到 " + label)
 	if !on && b.Hovered() {
-		b.Background(th.SurfaceHover)
+		b.Background(tok.sunkenHi).TextColor(tok.text)
 	}
 	b.OnClick(func() {
 		a.stageTab = index
 		a.stagePicked = true
 	})
 	b.Children(func() {
-		platformIcon(c, label, 16, a.look)
-		ui.Text(c, text).FontSize(a.look.body).SingleLine()
+		platformIcon(c, label, 12, a.look)
+		t := ui.Text(c, text).FontSize(a.look.caption).SingleLine()
+		if on {
+			t.FontWeight(600)
+		}
 	})
 }
 
@@ -301,115 +218,13 @@ func tasksForPlatform(items []tasks.Task, platform string) []tasks.Task {
 	return out
 }
 
-// logLineH 是运行日志一行的高度。跟视口对齐后，贴底滚动不会把第一行切掉半个字。
-const logLineH float32 = 20
-
-// logCardMinHeight 窗口矮时放宽运行日志的最小高度，
-// 让左栏放得下开始卡片：保存路径和「开始洗图」按钮不会被顶出窗口。
-func logCardMinHeight(winH float32) float32 {
-	switch {
-	case winH < 520:
-		return 0
-	case winH < 640:
-		return 80
-	default:
-		return 140
-	}
-}
-
-// logTailPad 让内容高度减去视口之后正好是整行。贴底时视口顶部落在行边界上。
-func logTailPad(viewport float32) float32 {
-	if viewport <= 1 {
-		return 0
-	}
-	rem := math.Mod(float64(viewport), float64(logLineH))
-	if rem < 0.01 {
-		return 0
-	}
-	return float32(rem)
-}
-
-// runLog 在左栏里撑满剩下的高度，日志在卡片里滚动，停在底部时跟着最新一行。
-func (a *App) runLog(c *ui.Context, fill bool) {
-	tok := a.look
-	card := ui.Column(c.Key("run-log")).Label("运行日志区").FillWidth().Gap(4).Padding(8, 10).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border)
-	limit := 6
-	if fill {
-		_, winH := c.Size()
-		card.Grow(1).Shrink(0).MinHeight(logCardMinHeight(winH))
-		limit = 300
-	}
-	card.Children(func() {
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "运行日志").FontSize(tok.body).Bold().Grow(1)
-			ui.Button(c, "打开日志文件").OnClick(func() { a.openLogFile() })
-		})
-		notes := logging.VisibleTail(logging.Log.Entries(), limit)
-		if len(notes) == 0 {
-			ui.Text(c, "每个任务的开始、提交和结束会写在这里").FontSize(tok.caption).TextColor(tok.muted)
-			return
-		}
-		lines := func() {
-			for _, line := range notes {
-				bg := tok.sunken
-				switch line.Level {
-				case logging.Success:
-					bg = tok.success.Alpha(0.14)
-				case logging.Warning:
-					bg = tok.warning.Alpha(0.14)
-				case logging.Error:
-					bg = tok.danger.Alpha(0.14)
-				}
-				ui.Row(c).FillWidth().Height(logLineH).Gap(6).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, line.Time.Local().Format("15:04:05")).Width(68).Shrink(0).
-						FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
-					ui.Row(c).Size(34, 18).Shrink(0).Radius(5).Background(bg).Center().Children(func() {
-						ui.Text(c, line.Level.String()).FontSize(tok.caption).TextColor(tok.text).SingleLine()
-					})
-					ui.Text(c, line.Text).Grow(1).MinWidth(0).FontSize(tok.caption).TextColor(tok.text).
-						SingleLine().Tooltip(line.Text)
-				})
-			}
-		}
-		if !fill {
-			lines()
-			return
-		}
-		if a.logScroll.Y >= a.logScroll.MaxY {
-			a.logScroll.Y = math.MaxFloat32
-		}
-		scroll := ui.Scroll(c.Key("run-log-lines")).Label("运行日志内容").FillWidth().Grow(1).MinHeight(0)
-		pad := float32(0)
-		if a.logScroll.MaxY > 0 {
-			pad = logTailPad(scroll.Bounds().H)
-		}
-		scroll.TrackScroll(&a.logScroll).Children(func() {
-			ui.Column(c).FillWidth().Gap(0).Children(func() {
-				lines()
-				if pad > 0.5 {
-					ui.Box(c.Key("log-pad")).Height(pad)
-				}
-			})
-		})
-	})
-}
-
-func (a *App) openLogFile() {
-	path := logging.Path()
-	if path == "" {
-		return
-	}
-	_ = mygo.Shell.OpenPath(path)
-}
-
 func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 	tok := a.look
 	reveal := motionReveal()
-	if a.tab == pageHome || a.tab == pageWash {
+	if a.tab == pageHome || a.tab == pageWash || a.tab == pageFission {
 		reveal.Enter.Opacity = 0.9
 	}
-	card := ui.Column(c.Key(key)).FillWidth().Padding(12, 14).Gap(8).Radius(tok.radiusL).
+	card := ui.Column(c.Key(key)).FillWidth().Padding(8, 10).Gap(5).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
 		Transition(reveal)
 	if !tok.dark {
@@ -422,20 +237,20 @@ func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 }
 
 const (
-	washThumbSize    float32 = 68
-	washThumbGap     float32 = 8
+	washThumbSize    float32 = 50
+	washThumbGap     float32 = 4
 	washThumbCols            = 4
 	washThumbMaxRows         = 2
 )
 
-// washThumbViewport 是原图网格的可视高度：窗口矮时一整行，否则最多两整行，不把一行切在缩略图中间。
+// washThumbViewport 是原图网格的可视高度：窗口极矮时一整行，常规高度显示两整行，不把一行切在缩略图中间。
 func washThumbViewport(n int, winH float32) float32 {
 	if n <= 0 {
 		return 0
 	}
 	rows := (n + washThumbCols - 1) / washThumbCols
 	maxRows := washThumbMaxRows
-	if winH < 800 {
+	if winH < 640 {
 		maxRows = 1
 	}
 	if rows > maxRows {
@@ -472,6 +287,20 @@ func (a *App) washThumb(c *ui.Context, i int) {
 		if bmp := a.cachedThumb(si.Path); bmp != nil {
 			ui.Image(c, bmp).Size(washThumbSize, washThumbSize).Fit(ui.Cover).Radius(a.look.radiusS)
 		}
+		label, bg, fg := "未洗", ui.RGBA(20, 28, 42, 0.78), ui.Hex("#FFFFFF")
+		if si.Washed {
+			label, bg = "已洗", a.look.success
+		} else if si.Washing {
+			label, bg = "洗图中", a.look.accent
+		}
+		badge := ui.Row(c).Label(label).Absolute().Left(4).Bottom(4).Padding(1, 4).Radius(4).
+			Background(bg)
+		if si.WashOutput != "" {
+			badge.Tooltip("已保存：" + si.WashOutput)
+		}
+		badge.Children(func() {
+			ui.Text(c, label).FontSize(10).TextColor(fg).SingleLine()
+		})
 		a.thumbRemove(c, frame, i)
 	})
 }
@@ -493,11 +322,11 @@ func (a *App) thumbRemove(c *ui.Context, host ui.Element, index int) {
 
 func (a *App) miniThumb(c *ui.Context, i int) {
 	si := a.sources[i]
-	frame := ui.Box(c.Key(si.Path)).Size(36, 36).Radius(6).Background(a.look.sunken).
+	frame := ui.Box(c.Key(si.Path)).Size(30, 30).Radius(5).Background(a.look.sunken).
 		Label(filepath.Base(si.Path)).Transition(motionItem())
 	frame.Children(func() {
 		if bmp := a.cachedThumb(si.Path); bmp != nil {
-			ui.Image(c, bmp).Size(36, 36).Fit(ui.Cover).Radius(6)
+			ui.Image(c, bmp).Size(30, 30).Fit(ui.Cover).Radius(5)
 		}
 		a.thumbRemove(c, frame, i)
 	})
@@ -510,6 +339,8 @@ func (a *App) clearSources() {
 	a.sources = nil
 	a.srcSel = -1
 	a.skipImages = false
+	clear(a.gallerySelected)
+	a.galleryDrag = nil
 }
 
 func paintFolder(c *ui.Context, ink ui.Color) {
@@ -524,21 +355,33 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	tok := a.look
 	th := c.Theme()
 	running := a.running && a.ownsRun()
+	washed, pending := a.washCounts()
 	// 没有可用账号时关掉开始按钮。
 	// 另一页在跑时引擎占着，这一页只能等。
 	disabled := (!running && (plan.Action == StartNone || a.renameUpdateActive())) || (a.running && !running) ||
-		(!running && a.washing() && len(a.sources) == 0) || len(a.browserPending) > 0
+		(!running && a.washing() && (len(a.sources) == 0 || pending == 0)) ||
+		(!running && a.fissioning() && len(a.sources) != 1) || len(a.browserPending) > 0
 	if !running && plan.Action == StartGenerate && a.liveParallel() == 0 {
 		disabled = true
 	}
 	label := "开始出图"
 	if a.washing() {
-		label = "开始洗图"
+		switch {
+		case len(a.sources) > 0 && pending == 0:
+			label = "已全部洗完"
+		case washed > 0:
+			label = "继续洗图"
+		default:
+			label = "开始洗图"
+		}
+	}
+	if a.fissioning() {
+		label = "开始裂变"
 	}
 	if running {
 		label = "停止"
 	}
-	b := ui.ButtonBase(c.Key("run-go")).Padding(8, 16).Gap(8).Radius(th.Radius).Shrink(0).
+	b := ui.ButtonBase(c.Key("run-go")).Label(label).Padding(6, 12).Gap(6).Radius(th.Radius).Shrink(0).
 		AlignItems(ui.Center).AlignSelf(ui.Center)
 	bg, fg := th.Accent, th.AccentText
 	border := ui.Color{}
@@ -602,61 +445,6 @@ func runGlyph(c *ui.Context, stop bool, ink ui.Color) {
 	})
 }
 
-// loggedOutCallout 是这一页已经有账号，但没有一个是登录的。
-// 开始按钮保持关掉，另外留一句去登录。已登录只是额度满了，不说成没登录。
-func (a *App) loggedOutCallout() bool {
-	if a == nil || a.workbenchPlan().Action != StartNone {
-		return false
-	}
-	in := a.workbenchInput()
-	if !in.HasImages && !in.HasPrompts {
-		return false
-	}
-	stage := a.stagePlatform()
-	any := false
-	for _, account := range in.Accounts {
-		if account.Platform != stage {
-			continue
-		}
-		if (account.Platform == "豆包" || account.Platform == "千问") && account.Extension != in.ExtensionMode {
-			continue
-		}
-		if account.LoggedIn {
-			return false
-		}
-		any = true
-	}
-	return any
-}
-
-// noAccountCallout 在所选平台没有账号且已准备输入时显示提示。
-func (a *App) noAccountCallout() bool {
-	if a == nil {
-		return false
-	}
-	in := a.workbenchInput()
-	if !in.HasImages && !in.HasPrompts {
-		return false
-	}
-	return !hasPlatformAccount(in.Accounts, a.stagePlatform())
-}
-
-func (a *App) accountCallout(c *ui.Context) {
-	tok := a.look
-	ui.Row(c.Key("account-callout")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
-		Radius(tok.radiusM).Background(tok.warning.Alpha(0.14)).Border(1, tok.warning).
-		Transition(motionBanner()).Children(func() {
-		text := "还没有可用账号。先去设置登录，再开始出图。"
-		if a.stagePlatform() == agy.Platform {
-			text = "还没有可用账号。在右上角账号表格点「+ 添加账号」登录。"
-		}
-		ui.Text(c, text).FontSize(tok.body).Grow(1).MinWidth(0)
-		if a.stagePlatform() != agy.Platform {
-			ui.Button(c, "去设置").OnClick(func() { a.tab = pageBrowser })
-		}
-	})
-}
-
 // stepLead 是出图步骤左侧的一行。跑起来写进度，没有能用的账号就写原因，避免和面板标题重复。
 func (a *App) stepLead(board tasks.Board) string {
 	if a != nil && a.running {
@@ -669,10 +457,25 @@ func (a *App) stepLead(board tasks.Board) string {
 		if a.washing() {
 			return "正在洗图"
 		}
+		if a.fissioning() {
+			return "正在生成裂变图片"
+		}
 		return "正在出图"
 	}
 	if a != nil && a.washing() && len(a.sources) == 0 {
 		return "先添加要洗的图片"
+	}
+	if a != nil && a.fissioning() && len(a.sources) != 1 {
+		return "先添加一张母图"
+	}
+	if a != nil && a.washing() {
+		washed, pending := a.washCounts()
+		switch {
+		case washed > 0 && pending == 0:
+			return fmt.Sprintf("已洗 %d 张，全部完成", washed)
+		case washed > 0:
+			return fmt.Sprintf("已洗 %d 张，继续处理剩余 %d 张", washed, pending)
+		}
 	}
 	if a.liveParallel() == 0 {
 		if len(board.Lanes) > 0 {
@@ -920,14 +723,14 @@ func (a *App) previewModal(c *ui.Context) {
 	}
 	tok := a.look
 	ui.Modal(c, &a.previewOn, func() {
-		ui.Column(c).MaxWidth(760).Gap(12).Children(func() {
+		ui.Column(c).MaxWidth(760 / interfaceZoom).Gap(12).Children(func() {
 			ui.Text(c, filepath.Base(a.previewPath)).FontSize(tok.title).Bold()
 			if a.previewBmp != nil {
-				ui.Image(c, a.previewBmp).MaxWidth(720).MaxHeight(480).Fit(ui.Contain).Radius(tok.radiusM)
+				ui.Image(c, a.previewBmp).MaxWidth(720 / interfaceZoom).MaxHeight(480 / interfaceZoom).Fit(ui.Contain).Radius(tok.radiusM)
 			} else {
 				ui.Spinner(c).Size(28, 28)
 			}
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 				path := a.previewPath
 				ui.Button(c, "打开文件").OnClick(func() { a.openResult(path) })
 				ui.Button(c, "关闭").OnClick(func() { a.previewOn = false })

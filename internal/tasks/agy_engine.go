@@ -141,7 +141,7 @@ func (e *Engine) noteAgyNoAccount(now time.Time) {
 		return
 	}
 	rows := e.accountsFor(agy.Platform)
-	capN := e.capNow()
+	capN := e.capFor(agy.Platform)
 	if _, ok := agyFullyPaused(rows, now, capN); ok {
 		e.noteAgyPause(now)
 		return
@@ -165,7 +165,7 @@ func (e *Engine) noteAgyPause(now time.Time) {
 		return
 	}
 	rows := e.accountsFor(agy.Platform)
-	until, ok := agyFullyPaused(rows, now, e.capNow())
+	until, ok := agyFullyPaused(rows, now, e.capFor(agy.Platform))
 	if !ok {
 		return
 	}

@@ -20,16 +20,16 @@ func TestWorkSideScrollsWhenWindowIsShort(t *testing.T) {
 			}
 			const (
 				w float32 = 1024
-				h float32 = 460
+				h float32 = 400
 			)
 			tt := ui.NewTester(a.view, int(w), int(h))
 			tt.Advance(motionUI)
 
 			start := "开始出图"
-			top := "每行一条；导入段落会合并"
+			top := "提示词内容"
 			if page == pageWash {
 				start = "开始洗图"
-				top = "已选 1 张"
+				top = "1 张"
 			}
 			// 开始卡片在输入区外面，矮窗口里也完整露出。
 			assertVisible(t, tt, start, w, h)

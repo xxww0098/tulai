@@ -149,6 +149,7 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 		}
 		line := logging.Line{
 			TaskID: ev.task.Index, Platform: ev.task.Platform, Account: e.accountName(ev.task.BrowserID), Port: e.accountPort(ev.task.BrowserID),
+			Done: done, Total: total,
 		}
 		if ev.task.Status == StatusSuccess {
 			line.Stage = "saved"
@@ -168,7 +169,7 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 			continue
 		}
 		logging.Event(logging.Line{
-			Platform: name, Stage: "fail", Error: "已停止",
+			Platform: name, Stage: "fail", Error: "已停止", Done: done, Total: total,
 			Msg: fmt.Sprintf("已停止：%s %d 个任务跳过", name, n),
 		})
 	}
@@ -222,8 +223,11 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 						e.store.TouchBrowser(t.BrowserID, time.Now())
 					}
 				}
-				e.starts.Store(t.Index, time.Now())
-				e.laneStart(e.slotKey(t.BrowserID), t.BrowserID, jobOf(t, time.Now()))
+				started := time.Now()
+				for _, item := range batchMembers(t) {
+					e.starts.Store(item.Index, started)
+				}
+				e.laneStart(e.slotKey(t.BrowserID), t.BrowserID, jobOf(t, started))
 				t.Status = StatusRunning
 				if e.view != nil {
 					for _, item := range batchMembers(t) {
@@ -394,6 +398,20 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				if remaining := switchAfter - completedByAccount[task.BrowserID]; switchAfter > 0 && remaining > 0 {
 					maxImages = min(maxImages, remaining)
 				}
+				// Leave work for a second account only when it can dispatch now.
+				// The selected resource has just been claimed, but busy is the
+				// snapshot from immediately before that claim.
+				if e.opts.Wash && e.opts.WaitResult && platform == "豆包" && e.useBoundExtension(platform) && freshWashItem(task) &&
+					active+1 < e.platformCap(platform, now) && (e.opts.Concurrency <= 0 || len(busy)+1 < e.opts.Concurrency) {
+					otherBusy := make(map[int64]bool, len(busy)+1)
+					for slot, occupied := range busy {
+						otherBusy[slot] = occupied
+					}
+					otherBusy[resource] = true
+					if _, ok := e.pickIdleAccount(platform, 0, 0, otherBusy, readyAt, now); ok {
+						maxImages = e.parallelWashBatchLimit(pending, i, task, maxImages)
+					}
+				}
 				next, batchIndices = e.bundleWashTasks(pending, i, task, maxImages, now)
 				index, dispatch = i, jobs
 				break
@@ -552,7 +570,7 @@ func (e *Engine) stopLeftovers() {
 }
 
 func (e *Engine) platformCap(platform string, now time.Time) int {
-	usable := ParallelSlots(e.accountsFor(platform), now, e.capNow())
+	usable := ParallelSlots(e.accountsFor(platform), now, e.capFor(platform))
 	if platform == agy.Platform {
 		return 1
 	}

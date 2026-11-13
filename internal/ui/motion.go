@@ -180,7 +180,7 @@ func quotaBar(c *ui.Context, key string, fraction float64, fill, track ui.Color)
 	if fraction > 1 {
 		fraction = 1
 	}
-	host := ui.Box(c.Key(key)).FillWidth().Height(7).Radius(4).Background(track)
+	host := ui.Box(c.Key(key)).FillWidth().Height(5).Radius(3).Background(track)
 	shown := host.AnimateTo("fraction", float32(fraction), motionEaseOut)
 	host.Draw(func(p *ui.Painter, r ui.Rect) {
 		w := r.W * shown
@@ -258,10 +258,10 @@ func statusPill(c *ui.Context, status string) ui.Element {
 	case "待验证", "需要人工验证", "需核对":
 		fg, bg = t.Warning, t.Warning.Alpha(0.16)
 	}
-	pill := ui.Row(c.Key("status")).Padding(1, 6).Radius(999).Shrink(0).AlignItems(ui.Center)
+	pill := ui.Row(c.Key("status")).Padding(1, 5).Radius(999).Shrink(0).AlignItems(ui.Center)
 	pill.Background(pill.AnimateColor("bg", bg, motionEaseFast))
 	pill.Children(func() {
-		ui.Text(c.Key("status-label"), status).FontSize(12).TextColor(fg).SingleLine().
+		ui.Text(c.Key("status-label"), status).FontSize(10.5).TextColor(fg).SingleLine().
 			ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
 	})
 	return pill
@@ -301,8 +301,8 @@ func motionSelect(c *ui.Context, selected *string, options []string) ui.Element 
 			Background(t.Background).Border(1, t.Border).
 			Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.18)).
 			Transition(motionPopup())
-		ui.Scroll(c).MaxHeight(280).Children(func() {
-			ui.Column(c).Gap(2).FillWidth().Children(func() {
+		ui.Scroll(c).MaxHeight(220).Children(func() {
+			ui.Column(c).Gap(1).FillWidth().Children(func() {
 				for _, opt := range options {
 					item := sel.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).FillWidth()
 					switch {
