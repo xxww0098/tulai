@@ -1,6 +1,14 @@
-# 发布 tulai 0.1.17
+# 发布 tulai 0.1.19
 
-当前桌面端版本是 **0.1.17**，标签 **`v0.1.17`**。页面桥扩展是 **0.3.15**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.19**，标签 **`v0.1.19`**。页面桥扩展是 **0.3.15**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.19
+
+新增「裂变图片」模式：一张母图按四个方向分别生成，结果用 pHash 检查相似度，超过 60% 的图片标记「需核对」并可单独重新生成。批量洗图新增风格预设；洗图会话逐张记录已洗和未洗，重新打开或恢复历史后「继续洗图」只发送未洗成功的图片，失败和中断的可重试；原图图库可多选、拖入并「清除已洗」。提示词库内置模板只保留「豆包洗图」。每日上限可按供应商分别设置。Windows x64 的安装包和免安装程序内置 Node、Camoufox 启动库和微软签名的 VC 运行库，首次准备不再下载 Node；Camoufox 安装使用跨进程锁，并处理部分系统上的 mozglue 清单问题。运行日志改为单行格式。界面去掉窗口菜单栏、顶栏重复的「tulai」品牌和无账号黄条。页面桥扩展仍为 0.3.15。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
+
+## 0.1.18
+
+复用查看面板预装的账号浏览器，不再每批关闭重开；无头绑定浏览器空闲 15 分钟后才自动关闭。Camoufox GPU 探测结果落盘缓存，启动导航只等页面提交。停止批量任务后把剩余「跳过」项收成每个平台一条汇总。页面桥扩展仍为 0.3.15。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.17
 
@@ -92,8 +100,8 @@
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.17` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.17` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.17` 之后，模块版本就是这个标签。 |
+| 桌面端 | `0.1.19` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.19` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.19` 之后，模块版本就是这个标签。 |
 | 页面桥扩展 | `0.3.15` | `extension/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | Chrome 扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
