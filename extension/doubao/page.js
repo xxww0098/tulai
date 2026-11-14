@@ -528,6 +528,15 @@ globalThis.TULAIPage = (function () {
     return role + ':' + hash(businessText(node))
   }
 
+  function hasExpandAll(root) {
+    if (!root) return false
+    const raw = normalize((root.innerText || root.textContent) || '')
+    if (/(?:^|\s)展开全部(?:\s|$)/.test(raw)) return true
+    return all(root, 'button,[role="button"],span,div').some(function (el) {
+      return normalize((el.innerText || el.textContent) || '') === '展开全部'
+    })
+  }
+
   function userContents(root) {
     const nodes = [root].concat(all(root, 'p,div,span'))
     const out = []
@@ -538,7 +547,28 @@ globalThis.TULAIPage = (function () {
       const prompt = text.replace(/^生成图片[：:]\s*/, '')
       if (prompt && out.indexOf(prompt) === -1) out.push(prompt)
     })
+    out.collapsed = hasExpandAll(root)
     return out
+  }
+
+  function bodiesMatchPrompt(bodies, prompt) {
+    if (!Array.isArray(bodies) || !prompt) return false
+    if (bodies.indexOf(prompt) !== -1) return true
+    if (prompt.length < 40) return false
+    const collapsed = Boolean(bodies.collapsed) || bodies.some(function (b) { return /展开全部$/.test(String(b || '').trim()) })
+    if (!collapsed) return false
+    return bodies.some(function (b) {
+      const prefix = String(b || '')
+        .replace(/\s*展开全部$/, '')
+        .replace(/^生成图片[：:]\s*/, '')
+        .replace(/(?:\.\.\.|…|\u2026)+$/, '')
+        .trim()
+      return prefix.length >= 40 && prompt.indexOf(prefix) === 0
+    })
+  }
+
+  function userMatchesPrompt(node, prompt) {
+    return bodiesMatchPrompt(userContents(node), prompt)
   }
 
   function busy(root) {
@@ -767,11 +797,11 @@ globalThis.TULAIPage = (function () {
     const messages = orderedMessages(doc, q.user, q.assistant)
     const prompt = state.prompt
     let anchor = null
-    if (prompt && state.anchorConfirmed && state.anchor && state.anchor.isConnected !== false && messages.indexOf(state.anchor) !== -1 && userContents(state.anchor).indexOf(prompt) !== -1) {
+    if (prompt && state.anchorConfirmed && state.anchor && state.anchor.isConnected !== false && messages.indexOf(state.anchor) !== -1 && userMatchesPrompt(state.anchor, prompt)) {
       anchor = state.anchor
     } else if (prompt) {
-      const oldMatches = (state.userBodies || []).filter(function (bodies) { return bodies.indexOf(prompt) !== -1 }).length
-      const matches = messages.filter(function (node) { return matchesQuery(node, q.user) && userContents(node).indexOf(prompt) !== -1 })
+      const oldMatches = (state.userBodies || []).filter(function (bodies) { return bodiesMatchPrompt(bodies, prompt) }).length
+      const matches = messages.filter(function (node) { return matchesQuery(node, q.user) && userMatchesPrompt(node, prompt) })
       if (matches.length > oldMatches) anchor = matches[oldMatches]
       if (!anchor && state.tail && state.tail.isConnected !== false) {
         const tailIndex = messages.indexOf(state.tail)
@@ -947,8 +977,8 @@ globalThis.TULAIPage = (function () {
     if (!state || !state.prompt) return false
     const q = state.q || queries(doc)
     const messages = orderedMessages(doc, q.user, q.assistant)
-    const oldMatches = (state.userBodies || []).filter(function (bodies) { return bodies.indexOf(state.prompt) !== -1 }).length
-    const matches = messages.filter(function (node) { return matchesQuery(node, q.user) && userContents(node).indexOf(state.prompt) !== -1 })
+    const oldMatches = (state.userBodies || []).filter(function (bodies) { return bodiesMatchPrompt(bodies, state.prompt) }).length
+    const matches = messages.filter(function (node) { return matchesQuery(node, q.user) && userMatchesPrompt(node, state.prompt) })
     return matches.length > oldMatches
   }
 

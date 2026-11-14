@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -72,6 +73,9 @@ func TestUpdateCheckUpToDate(t *testing.T) {
 }
 
 func TestUpdateInstallsUserArchive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell binary test")
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("APPDATA", t.TempDir())

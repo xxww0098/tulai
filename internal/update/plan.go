@@ -2,6 +2,8 @@ package update
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -63,7 +65,7 @@ func DetectMode(goos, executable string) Mode {
 		return ModeMacCopy
 	case "windows":
 		slash := strings.ToLower(toSlash(executable))
-		if strings.Contains(slash, "/go-build") || strings.Contains(slash, "/program files") || strings.Contains(slash, "/programs/") {
+		if strings.Contains(slash, "/go-build") || strings.Contains(slash, "/program files") || strings.Contains(slash, "/programs/") || windowsSetupDir(executable) {
 			return ModeWindowsSetup
 		}
 		return ModeWindowsExe
@@ -246,4 +248,18 @@ func splitVersion(s string) (nums []int, pre string, err error) {
 
 func toSlash(path string) string {
 	return strings.ReplaceAll(path, "\\", "/")
+}
+
+func windowsSetupDir(executable string) bool {
+	executable = strings.TrimSpace(executable)
+	if executable == "" {
+		return false
+	}
+	dir := filepath.Dir(executable)
+	for _, marker := range []string{"Uninstall.exe", ".mygo-files"} {
+		if info, err := os.Stat(filepath.Join(dir, marker)); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }

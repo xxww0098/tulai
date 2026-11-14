@@ -86,6 +86,9 @@ func ClassifyFailure(status Status, raw string) FailHint {
 	if strings.Contains(text, "未按源图保存") {
 		return FailHint{FailUnknown, "无法确认图片对应关系，请检查豆包页面", "重试"}
 	}
+	if strings.Contains(text, "已按源图关联保存") {
+		return FailHint{FailUnknown, "豆包本批少返回了这张图的结果，其余已保存", "重试"}
+	}
 	if strings.Contains(text, "已停止") {
 		return FailHint{FailUnknown, "已停止", "重试"}
 	}

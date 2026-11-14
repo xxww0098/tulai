@@ -826,6 +826,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	if page == pageWash {
 		opts.Wash = true
 		opts.UseSuffix = false
+		opts.SoloImages = a.washSoloPaths()
 	} else if page == pageFission {
 		opts.Fission = true
 		opts.UseSuffix = false

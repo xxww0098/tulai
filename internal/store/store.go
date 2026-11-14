@@ -162,7 +162,9 @@ CREATE TABLE IF NOT EXISTS session_tasks (
 	status TEXT NOT NULL DEFAULT '',
 	outputs TEXT NOT NULL DEFAULT '',
 	error TEXT NOT NULL DEFAULT '',
-	at_unix INTEGER NOT NULL DEFAULT 0
+	at_unix INTEGER NOT NULL DEFAULT 0,
+	elapsed_ms INTEGER NOT NULL DEFAULT 0,
+	undispatched INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_session_tasks_session ON session_tasks(session_id, ord);
 CREATE TABLE IF NOT EXISTS session_sources (
@@ -200,6 +202,10 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("初始化表结构: %w", err)
 	}
 	if err := migrateBrowsers(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := migrateSessions(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -944,6 +950,19 @@ func migrateBrowsers(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS browsers_ext_account ON browsers(platform, ext_account) WHERE ext_account <> ''`); err != nil {
 		return fmt.Errorf("升级 browsers 索引: %w", err)
+	}
+	return nil
+}
+
+func migrateSessions(db *sql.DB) error {
+	alters := []string{
+		`ALTER TABLE session_tasks ADD COLUMN elapsed_ms INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_tasks ADD COLUMN undispatched INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, stmt := range alters {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return fmt.Errorf("升级 session_tasks 表: %w", err)
+		}
 	}
 	return nil
 }

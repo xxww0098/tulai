@@ -76,8 +76,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Test Windows downloads and ChatGPT
-        run: go test ./internal/download ./internal/chatgpt -short
+      - name: Test Windows downloads, ChatGPT, and updater
+        run: go test ./internal/download ./internal/chatgpt ./internal/update ./cmd/tulai -short
       - name: Test Windows background commands
         run: go test ./internal/agy -short -run '^TestWindowsBackgroundCommand'
       - name: Vet

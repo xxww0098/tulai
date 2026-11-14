@@ -309,3 +309,19 @@ func TestSettingsShowVersionAndCheck(t *testing.T) {
 		assertVisible(t, tt, label, 1280, 900)
 	}
 }
+
+func TestSignedUpdateProgressTransitionsToInstalling(t *testing.T) {
+	a := &App{updateNotice: "0.2.0"}
+	a.applySignedProgress(update.Progress{Name: "update.tar.gz", Done: 50, Total: 100})
+	if !a.updateDownloading || a.updateFraction != 0.5 || a.updateProgressText != "正在下载 update.tar.gz" {
+		t.Fatalf("downloading state = %+v", a)
+	}
+	a.applySignedProgress(update.Progress{Name: "update.tar.gz", Done: 100, Total: 100})
+	if !a.updateDownloading || a.updateFraction != 1 || a.updateProgressText != "正在安装…" {
+		t.Fatalf("installing state = %+v", a)
+	}
+	tt := ui.NewTester(a.view, 1000, 720)
+	if !tt.HasText("正在安装…") || tt.HasText("100%") {
+		t.Fatal("banner should display 正在安装… without 100%")
+	}
+}

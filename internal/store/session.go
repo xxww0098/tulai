@@ -49,18 +49,20 @@ type SessionSource struct {
 
 // SessionTask 是会话里的一条任务。Outputs 用换行分隔结果路径。
 type SessionTask struct {
-	ID          int64
-	SessionID   int64
-	Ord         int
-	Prompt      string
-	Source      string
-	Platform    string
-	AccountID   int64
-	AccountName string
-	Status      string
-	Outputs     string
-	Error       string
-	At          int64
+	ID           int64
+	SessionID    int64
+	Ord          int
+	Prompt       string
+	Source       string
+	Platform     string
+	AccountID    int64
+	AccountName  string
+	Status       string
+	Outputs      string
+	Error        string
+	At           int64
+	ElapsedMS    int64
+	Undispatched bool
 }
 
 // SaveActive 写入这一页的当前会话并把它标成活动。同页其他会话收起。
@@ -118,9 +120,13 @@ func (s *Store) SaveActive(sess Session, items []SessionTask) (int64, error) {
 		if ord <= 0 {
 			ord = i + 1
 		}
-		if _, err = tx.Exec(`INSERT INTO session_tasks(session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			id, ord, item.Prompt, item.Source, item.Platform, item.AccountID, item.AccountName, item.Status, item.Outputs, item.Error, item.At); err != nil {
+		undispatched := 0
+		if item.Undispatched {
+			undispatched = 1
+		}
+		if _, err = tx.Exec(`INSERT INTO session_tasks(session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix, elapsed_ms, undispatched)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			id, ord, item.Prompt, item.Source, item.Platform, item.AccountID, item.AccountName, item.Status, item.Outputs, item.Error, item.At, item.ElapsedMS, undispatched); err != nil {
 			return 0, fmt.Errorf("保存任务记录失败: %w", err)
 		}
 	}
@@ -374,7 +380,7 @@ func scanCounted(rows *sql.Rows) (Session, int, error) {
 }
 
 func loadTasks(q rowQuery, sessionID int64) ([]SessionTask, error) {
-	rows, err := q.Query(`SELECT id, session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix
+	rows, err := q.Query(`SELECT id, session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix, COALESCE(elapsed_ms,0), COALESCE(undispatched,0)
 		FROM session_tasks WHERE session_id=? ORDER BY ord, id`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("读取任务记录失败: %w", err)
@@ -383,9 +389,11 @@ func loadTasks(q rowQuery, sessionID int64) ([]SessionTask, error) {
 	var out []SessionTask
 	for rows.Next() {
 		var item SessionTask
-		if err := rows.Scan(&item.ID, &item.SessionID, &item.Ord, &item.Prompt, &item.Source, &item.Platform, &item.AccountID, &item.AccountName, &item.Status, &item.Outputs, &item.Error, &item.At); err != nil {
+		var undispatched int
+		if err := rows.Scan(&item.ID, &item.SessionID, &item.Ord, &item.Prompt, &item.Source, &item.Platform, &item.AccountID, &item.AccountName, &item.Status, &item.Outputs, &item.Error, &item.At, &item.ElapsedMS, &undispatched); err != nil {
 			return nil, fmt.Errorf("读取任务记录失败: %w", err)
 		}
+		item.Undispatched = undispatched != 0
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {

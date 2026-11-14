@@ -539,3 +539,84 @@ func TestFailureRotationAlternatesAccountsWithUpdatedRanOn(t *testing.T) {
 		t.Fatalf("ranOn = %v, want %v", ranOns, want)
 	}
 }
+
+func TestDoubaoSevenDayQuotaDisablesAccountForTodayAndSwitches(t *testing.T) {
+	quotaMsg := "近 7 天额度已用完，预计明天恢复。升级到标准套餐畅享更多额度。"
+	protoQuota := mapExtErr(&extbridge.ProtoError{Code: extbridge.EQuota, Message: quotaMsg}, extAck{}, "豆包")
+	if classifyFault(protoQuota) != faultQuota {
+		t.Fatalf("expected faultQuota for %v, got %v", protoQuota, classifyFault(protoQuota))
+	}
+	if classifyFault(errors.New("近 7 天额度用完，预计明天恢复")) != faultQuota {
+		t.Fatal("expected faultQuota for plain text 7-day quota message")
+	}
+
+	for _, submitted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("submitted=%t", submitted), func(t *testing.T) {
+			st := openRotateStore(t)
+			first := addNamed(t, st, "豆包", "豆包1")
+			second := addNamed(t, st, "豆包", "豆包2")
+			e := NewEngine(st, nil, nil, "")
+			e.gap = func(time.Duration) time.Duration { return 0 }
+
+			before := time.Now()
+			var calls []int64
+			var quotaHit atomic.Bool
+			err := e.run(context.Background(), Options{
+				Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png", "c.png"}, Concurrency: 1, RetryCount: 1,
+			}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+				calls = append(calls, task.BrowserID)
+				if task.BrowserID == first.ID {
+					quotaHit.Store(true)
+					task.submitted = submitted
+					return mapExtErr(&extbridge.ProtoError{Code: extbridge.EQuota, Message: quotaMsg}, extAck{}, "豆包")
+				}
+				return nil
+			})
+			after := time.Now()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !quotaHit.Load() {
+				t.Fatal("expected first account to execute and trigger 7-day quota error")
+			}
+
+			got := browserByID(t, st, first.ID)
+			wantUntilA := nextLocalMidnight(before).Unix()
+			wantUntilB := nextLocalMidnight(after).Unix()
+			if got.Health != store.HealthExhausted || (got.CoolUntil != wantUntilA && got.CoolUntil != wantUntilB) {
+				t.Fatalf("expected HealthExhausted until midnight (%d or %d), got %+v", wantUntilA, wantUntilB, got)
+			}
+			if got.Usable(after) {
+				t.Fatalf("account with 7-day quota must be unavailable for the rest of today: %+v", got)
+			}
+			if !got.Usable(time.Unix(got.CoolUntil, 0)) {
+				t.Fatalf("account should auto-recover at midnight tomorrow: %+v", got)
+			}
+
+			for i, id := range calls {
+				if i > 0 && id == first.ID {
+					t.Fatalf("exhausted account %d must not be scheduled again today: calls=%v", first.ID, calls)
+				}
+				if id != first.ID && id != second.ID {
+					t.Fatalf("unexpected account %d in calls=%v", id, calls)
+				}
+			}
+
+			queue := e.View().Snapshot()
+			if submitted {
+				if queue[0].Status != StatusFailed || !strings.Contains(queue[0].Error, "近 7 天额度已用完") {
+					t.Fatalf("submitted task should record quota error without resending: %+v", queue[0])
+				}
+			} else {
+				if queue[0].Status != StatusSuccess {
+					t.Fatalf("unsubmitted task should rotate to 豆包2 and succeed: %+v", queue[0])
+				}
+			}
+			for i := 1; i < len(queue); i++ {
+				if queue[i].Status != StatusSuccess || queue[i].BrowserID != second.ID {
+					t.Fatalf("task %d expected success on 豆包2 (%d): %+v", i, second.ID, queue[i])
+				}
+			}
+		})
+	}
+}

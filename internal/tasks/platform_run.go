@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -209,6 +210,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			for t := range jobs {
 				if ctx.Err() != nil || !e.enterAccount(ctx, t.BrowserID) {
 					t.slot, t.ranOn = 0, 0
+					t.StartedAt, t.Elapsed, t.AccountName = time.Time{}, 0, ""
 					if ctx.Err() == nil {
 						t.rotated = true
 					}
@@ -224,6 +226,11 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					}
 				}
 				started := time.Now()
+				name := e.accountName(t.BrowserID)
+				t.StartedAt = started
+				t.Elapsed = 0
+				t.Undispatched = false
+				t.AccountName = name
 				for _, item := range batchMembers(t) {
 					e.starts.Store(item.Index, started)
 				}
@@ -234,7 +241,6 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 						e.view.Update(item)
 					}
 				}
-				name := e.accountName(t.BrowserID)
 				stopLog := logging.Bind(t.Platform, name, e.accountPort(t.BrowserID), t.Index)
 				e.traceTask(&t, "assign", "#"+itoa(t.Index)+" "+name+" 开始", 0, 0, nil)
 				if onTask != nil {
@@ -244,6 +250,23 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				}
 				t = e.execute(tctx, t, attempt)
 				cancel()
+				if t.rotated && t.Status == StatusPending {
+					t.StartedAt = time.Time{}
+					t.Elapsed = 0
+					t.AccountName = ""
+				} else {
+					elapsed := time.Since(started)
+					if elapsed <= 0 {
+						elapsed = time.Millisecond
+					}
+					t.Elapsed = elapsed
+					if t.ranOn > 0 {
+						t.BrowserID = t.ranOn
+						if actual := e.accountName(t.ranOn); actual != "" {
+							t.AccountName = actual
+						}
+					}
+				}
 				for _, item := range batchMembers(t) {
 					e.noteUse(item, previousSoften)
 				}
@@ -293,6 +316,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 	ctxDone := ctx.Done()
 	var claimed int64
 	var lastAccount int64
+	soloFails := 0
+	splitSaves := 0
 	switchAfter := 0
 	completedByAccount := map[int64]int{}
 	if e.opts.TaskSwitching {
@@ -350,6 +375,10 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					task.Status = StatusFailed
 					if task.Error == "" {
 						task.Error = "同平台账号都不可用"
+					}
+					if task.Attempts == 0 && task.StartedAt.IsZero() {
+						task.BrowserID = 0
+						task.AccountName = ""
 					}
 					members := batchMembers(task)
 					if e.view != nil {
@@ -491,7 +520,40 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			}
 			sched.finish(busySlot, readySlot, ready)
 			e.laneFinish(busySlot, resource, readySlot, gap)
+			if e.opts.Wash && platform == "豆包" && ctxDone != nil && ctx.Err() == nil && len(t.batch) > 1 &&
+				t.Status == StatusFailed && len(t.Results) == 0 && isModeration(errors.New(t.Error)) &&
+				(soloFails < 3 || splitSaves > 0) {
+				subLimit := max(1, len(t.batch)/2)
+				logging.Log.Info("[queue]  #%d-%d 豆包批次触发内容审核，自动拆分为每批最多 %d 张重试", t.batch[0].Index, t.batch[len(t.batch)-1].Index, subLimit)
+				split := splitModerationBatch(t.batch, subLimit)
+				pending = append(split, pending...)
+				for _, item := range split {
+					if e.view != nil {
+						e.view.Update(item)
+					}
+					events <- runEvent{task: item}
+				}
+				if timer != nil {
+					timer.Stop()
+					timer = nil
+				}
+				if claimed != 0 {
+					sched.unclaim(claimed)
+					claimed = 0
+				}
+				continue
+			}
 			members := batchMembers(t)
+			if t.Status != StatusPending && t.splitModeration {
+				for _, item := range members {
+					if item.Status == StatusSuccess {
+						splitSaves++
+					}
+				}
+				if len(t.batch) <= 1 && t.Status == StatusFailed && isModeration(errors.New(t.Error)) {
+					soloFails++
+				}
+			}
 			if e.view != nil {
 				for _, item := range members {
 					e.view.Update(item)
@@ -539,12 +601,39 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 	}
 }
 
+func splitModerationBatch(batch []Task, subLimit int) []Task {
+	split := make([]Task, 0, len(batch))
+	for _, orig := range batch {
+		orig.BrowserID = 0
+		orig.AccountName = ""
+		orig.Attempts = 0
+		orig.Status = StatusPending
+		orig.Error = ""
+		orig.StartedAt = time.Time{}
+		orig.Elapsed = 0
+		orig.Undispatched = false
+		orig.slot = 0
+		orig.ranOn = 0
+		orig.submitted = false
+		orig.noUse = false
+		orig.sentAt = time.Time{}
+		orig.batch = nil
+		orig.maxBatch = subLimit
+		orig.splitModeration = true
+		split = append(split, orig)
+	}
+	return split
+}
+
 // stopQueued 把还没开跑的任务标成已停止，卡片和页头不再留在排队里。
 func (e *Engine) stopQueued(pending []Task, events chan<- runEvent) {
 	for _, t := range pending {
 		switch t.Status {
 		case StatusSuccess, StatusFailed, StatusSkipped, StatusNeedsUser:
 			continue
+		}
+		if t.Attempts == 0 && t.StartedAt.IsZero() && len(t.Results) == 0 {
+			t.Undispatched = true
 		}
 		t.Status = StatusSkipped
 		t.Error = "已停止"
@@ -568,6 +657,9 @@ func (e *Engine) stopLeftovers() {
 		switch t.Status {
 		case StatusSuccess, StatusFailed, StatusSkipped, StatusNeedsUser:
 			continue
+		}
+		if t.Attempts == 0 && t.StartedAt.IsZero() && len(t.Results) == 0 {
+			t.Undispatched = true
 		}
 		t.Status = StatusSkipped
 		t.Error = "已停止"

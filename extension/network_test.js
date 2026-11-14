@@ -77,6 +77,10 @@ async function main() {
   assert.strictEqual(quota[1].kind, 'quota')
   assert.strictEqual(quota[1].code, '12345')
   assert.ok(!JSON.stringify(quota).includes('secret'))
+  body = 'data: ' + JSON.stringify({ event_type: 2005, event_data: JSON.stringify({ error_code: 54321, error_msg: '近 7 天额度已用完，预计明天恢复。' }) }) + '\n\n'
+  await onEvent({ tabId: 33 }, 'Network.loadingFinished', { requestId: 'quota', encodedDataLength: 100 })
+  assert.strictEqual(quota[2].kind, 'quota')
+  assert.strictEqual(quota[2].code, '54321')
   await network.stop(33, 'task-3')
 
   const unknown = []
@@ -119,7 +123,81 @@ async function main() {
   assert.strictEqual(newEvents[0].status, 200)
   await network.stop(66, 'new')
   assert.ok(calls.some((entry) => entry[1] === 'Network.enable'))
+  await testFirefoxStream()
   console.log('network test ok')
+}
+
+async function testFirefoxStream() {
+  let onBeforeRequest
+  let onHeadersReceived
+  let onErrorOccurred
+  const streams = new Map()
+  const chrome = {
+    webRequest: {
+      filterResponseData(requestId) {
+        const stream = {
+          written: [],
+          closed: false,
+          disconnected: false,
+          write(buf) { stream.written.push(buf) },
+          close() { stream.closed = true },
+          disconnect() { stream.disconnected = true },
+        }
+        streams.set(requestId, stream)
+        return stream
+      },
+      onBeforeRequest: { addListener(fn) { onBeforeRequest = fn } },
+      onHeadersReceived: { addListener(fn) { onHeadersReceived = fn } },
+      onErrorOccurred: { addListener(fn) { onErrorOccurred = fn } },
+    },
+  }
+  const context = vm.createContext({ chrome, URL, TextDecoder, setTimeout, clearTimeout })
+  context.globalThis = context
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'network.js'), 'utf8'), context)
+  const network = context.TULAINetwork
+
+  const reports = []
+  const rawPairs = []
+  const streamStates = []
+  assert.strictEqual(
+    await network.start(
+      77,
+      'doubao',
+      'task-ff',
+      (v) => reports.push(v),
+      (pairs) => rawPairs.push(...pairs),
+      (st) => streamStates.push(st.streaming)
+    ),
+    true
+  )
+  network.mark(77, 'task-ff')
+  onBeforeRequest({ tabId: 77, requestId: 'req-1', method: 'POST', url: 'https://www.doubao.com/chat/completion' })
+  onHeadersReceived({ tabId: 77, requestId: 'req-1', statusCode: 200 })
+  assert.deepStrictEqual(streamStates, [true], 'SSE 请求开始后应上报 streaming=true')
+
+  const stream = streams.get('req-1')
+  assert.ok(stream && typeof stream.ondata === 'function' && typeof stream.onstop === 'function')
+  const ssePayload = 'data: ' + JSON.stringify({
+    image: {
+      image_ori_raw: { url: 'https://p3.byteimg.com/tos-images/out1~tplv-raw.png?sig=1' },
+      image_preview: { url: 'https://p6.byteimg.com/tos-images/out1~tplv-prev.png?sig=2' },
+    },
+  }) + '\n\n'
+  stream.ondata({ data: new TextEncoder().encode(ssePayload) })
+  assert.ok(rawPairs.some((p) => p.raw === 'https://p3.byteimg.com/tos-images/out1~tplv-raw.png?sig=1'), 'ondata 应解析 SSE 中的 image_ori_raw')
+
+  stream.onstop()
+  assert.strictEqual(streamStates[streamStates.length - 1], false, 'onstop 后应上报 streaming=false')
+  assert.strictEqual(stream.closed, true)
+
+  // 若流未自然结束即调用 stop，也应立即上报 streaming=false。
+  const abortedStates = []
+  await network.start(88, 'doubao', 'task-abort', () => {}, null, (st) => abortedStates.push(st.streaming))
+  network.mark(88, 'task-abort')
+  onBeforeRequest({ tabId: 88, requestId: 'req-2', method: 'POST', url: 'https://www.doubao.com/chat/completion' })
+  assert.deepStrictEqual(abortedStates, [true])
+  await network.stop(88, 'task-abort')
+  assert.deepStrictEqual(abortedStates, [true, false])
 }
 
 main().catch((err) => {

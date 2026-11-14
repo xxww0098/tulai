@@ -6,7 +6,7 @@
   const maxBody = 128 * 1024
   const maxEvent = 2 * 1024 * 1024
   const firefox = !chrome.debugger && !!(chrome.webRequest && chrome.webRequest.filterResponseData)
-  const quota = /额度不足|额度已用尽|额度已用完|额度用尽|次数已用完|次数已用尽|(?:今日|当日).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|达到上限|已达上限)|free.{0,20}quota.{0,20}(?:exhausted|used up)/i
+  const quota = /额度不足|额度已用尽|额度已用完|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|达到上限|已达上限)|free.{0,20}quota.{0,20}(?:exhausted|used up)/i
   const rate = /过于频繁|操作频繁|请求过于频繁|访问太频繁|rate limit|too many requests/i
 
   function target(platform, method, raw) {
@@ -87,6 +87,7 @@
   async function stopCurrent(tabId, taskId) {
     const state = sessions.get(tabId)
     if (!state || (taskId && state.taskId !== taskId)) return
+    notifyStream(state, false, state.streaming)
     sessions.delete(tabId)
     clearTimeout(state.timer)
     await state.ready
@@ -104,11 +105,23 @@
     return serial(tabId, () => stopCurrent(tabId, taskId))
   }
 
-  function start(tabId, platform, taskId, report, rawImages) {
+  function notifyStream(state, streaming, force) {
+    if (!state || sessions.get(state.tabId) !== state) return
+    const next = !!streaming
+    const now = Date.now()
+    if (!force && state.streaming === next && (!next || now - state.lastStreamReport < 1500)) return
+    state.streaming = next
+    state.lastStreamReport = now
+    if (typeof state.onStream === 'function') {
+      try { state.onStream({ streaming: next }) } catch (err) {}
+    }
+  }
+
+  function start(tabId, platform, taskId, report, rawImages, onStream) {
     return serial(tabId, async () => {
       await stopCurrent(tabId)
       if (!taskId || (!chrome.debugger && !firefox)) return false
-      const state = { tabId, platform, taskId, report, rawImages, firefox, armed: false, requestId: '', status: 0, attached: false, timer: null, filter: null }
+      const state = { tabId, platform, taskId, report, rawImages, onStream, firefox, armed: false, streaming: false, lastStreamReport: 0, requestId: '', status: 0, attached: false, timer: null, filter: null }
       sessions.set(tabId, state)
       state.ready = (async () => {
         if (firefox) { state.attached = true; return true }
@@ -200,6 +213,7 @@
       let stream
       try { stream = chrome.webRequest.filterResponseData(details.requestId) } catch (err) { state.report({ unavailable: true }); return }
       state.filter = stream
+      notifyStream(state, true, true)
       const decoder = new TextDecoder()
       let pendingText = ''
       let eventText = ''
@@ -229,6 +243,7 @@
       stream.ondata = (event) => {
         try { stream.write(event.data) } catch (err) { try { stream.disconnect() } catch (ignored) {}; return }
         if (sessions.get(state.tabId) !== state) return
+        notifyStream(state, true, false)
         pendingText += decoder.decode(event.data, { stream: true })
         let end
         while ((end = pendingText.indexOf('\n')) >= 0) {
@@ -243,11 +258,12 @@
           if (pendingText) line(pendingText)
           if (!oversized) processEvent(state, eventText.trim())
         } finally {
+          notifyStream(state, false, true)
           if (state.filter === stream) state.filter = null
           try { stream.close() } catch (err) {}
         }
       }
-      stream.onerror = () => { if (state.filter === stream) state.filter = null; try { stream.disconnect() } catch (err) {} }
+      stream.onerror = () => { notifyStream(state, false, true); if (state.filter === stream) state.filter = null; try { stream.disconnect() } catch (err) {} }
       return {}
     }, filter, ['blocking'])
     chrome.webRequest.onHeadersReceived.addListener((details) => {
@@ -258,7 +274,10 @@
     }, filter)
     chrome.webRequest.onErrorOccurred.addListener((details) => {
       const state = sessions.get(details.tabId)
-      if (state && details.requestId === state.requestId) state.report({ failed: true })
+      if (state && details.requestId === state.requestId) {
+        notifyStream(state, false, true)
+        state.report({ failed: true })
+      }
     }, filter)
   }
 

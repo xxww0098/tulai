@@ -54,4 +54,11 @@ assert.strictEqual(TULAIQuota.imageReplyBlock('今日图片生成免费额度已
 assert.strictEqual(TULAIQuota.imageReplyBlock('为什么提示今日图片生成免费额度已用完？'), null)
 assert.strictEqual(TULAIQuota.imageReplyBlock('今日图片生成免费额度已用完了怎么办？'), null)
 
+assert.strictEqual(TULAIQuota.imageReplyBlock('近 7 天额度已用完，预计明天恢复。升级到标准套餐畅享更多额度。').kind, 'quota')
+assert.strictEqual(TULAIQuota.imageReplyBlock('近 7 天额度已用完，预计明天恢复。升级到标准套餐畅享更多额度。 升级正式订阅 ->').kind, 'quota')
+assert.strictEqual(TULAIQuota.imageReplyBlock('近7天图片生成额度已用完，预计明天恢复。').kind, 'quota')
+assert.strictEqual(TULAIQuota.imageReplyBlock('为什么提示近 7 天额度已用完？'), null)
+assert.strictEqual(TULAIQuota.imageReplyBlock('近 7 天额度已用完了怎么办？'), null)
+assert.strictEqual(TULAIQuota.accountBlock(doc([el('alert', '近 7 天额度用完，预计明天恢复')])).kind, 'quota')
+
 console.log('quota_test ok')

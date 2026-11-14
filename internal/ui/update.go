@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -207,13 +208,14 @@ func (a *App) runUpdateCheck(manual bool) {
 		}
 		return
 	}
-	var mirror, skipped string
+	var mirror, skipped, installed string
 	a.onUI(func() {
 		mirror = a.updateMirror
 		a.persistUpdatePrefs()
 		if a.store != nil {
 			skipped = update.Skipped(a.store)
 		}
+		installed = a.updateInstalled
 	})
 	logging.Log.Info("正在检查更新（当前 %s）", current)
 	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
@@ -258,6 +260,18 @@ func (a *App) runUpdateCheck(manual bool) {
 			return
 		}
 	}
+	if installed != "" {
+		if cmp, cmpErr := update.Compare(latest, installed); cmpErr == nil && cmp <= 0 {
+			if manual && runtime.GOOS == "windows" {
+				if exe, exeErr := update.RunningExecutable(); exeErr == nil {
+					if a.confirmUpdateRestart(installed) {
+						a.restartWindowsAfterQuit(exe)
+					}
+				}
+			}
+			return
+		}
+	}
 	var signed *mygo.Update
 	exe, err := update.RunningExecutable()
 	if err != nil {
@@ -267,14 +281,20 @@ func (a *App) runUpdateCheck(manual bool) {
 		}
 		return
 	}
+	mode := update.DetectMode(runtime.GOOS, exe)
 	if update.MyGoInstall(runtime.GOOS, exe) && !mygo.IsDev() {
 		signed, err = client.CheckSigned(ctx, rel)
 		if err != nil {
-			logging.Log.Errorf("检查签名更新失败: %v", err)
-			if manual {
-				a.tellUpdate(mygo.MessageError, "检查更新失败", err.Error())
+			if update.ShouldFallbackUnsigned(runtime.GOOS, mode, err) {
+				logging.Log.Info("签名原地更新不可用，改用安装器更新: %v", err)
+				signed = nil
+			} else {
+				logging.Log.Errorf("检查签名更新失败: %v", err)
+				if manual {
+					a.tellUpdate(mygo.MessageError, "检查更新失败", err.Error())
+				}
+				return
 			}
-			return
 		}
 	}
 	notes := update.ShortNotes(rel.Body, 180)
@@ -399,10 +419,7 @@ func (a *App) downloadAndInstall() {
 		signedClient.ApplyMirrorSetting(mirror)
 		signedClient.OnProgress = func(p update.Progress) {
 			a.onUI(func() {
-				a.updateProgressText = "正在下载 " + p.Name
-				if p.Total > 0 {
-					a.updateFraction = float64(p.Done) / float64(p.Total)
-				}
+				a.applySignedProgress(p)
 			})
 		}
 		a.onUI(func() {
@@ -417,7 +434,7 @@ func (a *App) downloadAndInstall() {
 			return
 		}
 		logging.Log.Success("已安装签名更新 %s", ver)
-		mygo.App.Relaunch()
+		a.finishSignedUpdate(exe, ver)
 		return
 	}
 	if asset == "" {
@@ -538,13 +555,21 @@ func (a *App) confirmUpdateQuit(detail string) bool {
 	if runtime.GOOS != "windows" {
 		return true
 	}
+	return a.confirmUpdateDialog("更新已下载，退出后自动安装并重新打开。", firstLine(detail), "现在安装")
+}
+
+func (a *App) confirmUpdateRestart(ver string) bool {
+	return a.confirmUpdateDialog("更新已安装，重新打开后生效。", "已安装新版本 "+ver+"。", "现在重启")
+}
+
+func (a *App) confirmUpdateDialog(message, detail, confirmButton string) bool {
 	res, err := mygo.Dialog.Message(mygo.MessageOptions{
 		Parent:        a.window,
 		Type:          mygo.MessageInfo,
 		Title:         "安装更新",
-		Message:       "更新已下载，退出后自动安装并重新打开。",
-		Detail:        firstLine(detail),
-		Buttons:       []string{"现在安装", "稍后"},
+		Message:       message,
+		Detail:        detail,
+		Buttons:       []string{confirmButton, "稍后"},
 		DefaultButton: 0,
 		CancelButton:  1,
 	})
@@ -552,6 +577,50 @@ func (a *App) confirmUpdateQuit(detail string) bool {
 		return true
 	}
 	return res.Button == 0
+}
+
+func (a *App) applySignedProgress(p update.Progress) {
+	a.updateDownloading = true
+	if p.Total > 0 && p.Done >= p.Total {
+		a.updateProgressText = "正在安装…"
+		a.updateFraction = 1
+		return
+	}
+	a.updateProgressText = "正在下载 " + p.Name
+	if p.Total > 0 {
+		a.updateFraction = float64(p.Done) / float64(p.Total)
+	}
+}
+
+func (a *App) finishSignedUpdate(exe, ver string) {
+	if runtime.GOOS != "windows" {
+		mygo.App.Relaunch()
+		return
+	}
+	a.onUI(func() {
+		a.updateInstalled = ver
+		a.dismissUpdate()
+	})
+	if !a.confirmUpdateRestart(ver) {
+		logging.Log.Info("更新 %s 已安装，用户选择稍后重启", ver)
+		return
+	}
+	a.restartWindowsAfterQuit(exe)
+}
+
+func (a *App) restartWindowsAfterQuit(exe string) {
+	out, err := update.PrepareWindowsRelaunch(exe, os.Getpid())
+	if err != nil {
+		logging.Log.Errorf("准备重启失败: %v", err)
+		mygo.App.Relaunch()
+		return
+	}
+	if err := update.StartDetached(out.Helper, out.HelperArgs...); err != nil {
+		logging.Log.Errorf("启动重启助手失败: %v", err)
+		mygo.App.Relaunch()
+		return
+	}
+	mygo.App.Quit()
 }
 
 func (a *App) failUpdate(err error) {

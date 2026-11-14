@@ -9,6 +9,7 @@ import (
 	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -31,7 +32,7 @@ const (
 var errExtOffline = errors.New("扩展账号未连接")
 
 var (
-	quotaPattern = regexp.MustCompile(`额度不足|额度已用尽|额度已用|额度用尽|次数已用完|次数已用尽|免费次数已|已达上限|超出.{0,8}限额|生成次数已|quota exceeded|daily limit`)
+	quotaPattern = regexp.MustCompile(`额度不足|额度已用尽|额度已用|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|免费次数已|已达上限|超出.{0,8}限额|生成次数已|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|已达上限)|quota exceeded|daily limit`)
 	ratePattern  = regexp.MustCompile(`过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests`)
 	authPattern  = regexp.MustCompile(`未登录|请先登录|请登录|登录已失效|登录失效|登录状态失效`)
 )
@@ -119,11 +120,16 @@ func (e *Engine) noteFault(id int64, kind faultKind, err error, now time.Time) {
 	default:
 		return
 	}
+	prev := findBrowser(e.store.Browsers(), id)
 	msg := faultLabel(kind)
 	if err != nil && err.Error() != "" {
 		msg = err.Error()
 	}
 	e.store.UpdateBrowserHealth(id, health, until, msg)
+	if kind == faultQuota && (prev == nil || prev.Health != store.HealthExhausted || prev.CoolUntil != until) {
+		logging.Log.Warning("账号[%s] 额度已用完，今日暂停使用（次日恢复）", browserName(e.store, id))
+	}
+	e.notify()
 }
 
 // replyCooldown 让连着回报错的账号歇一会儿，活先交给别的号。

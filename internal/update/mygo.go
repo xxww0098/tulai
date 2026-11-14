@@ -25,12 +25,21 @@ func MyGoInstall(goos, executable string) bool {
 		_, ok := MacBundle(executable)
 		return ok
 	case "windows":
-		return strings.HasSuffix(slash, "/tulai/tulai.exe") && DetectMode(goos, executable) == ModeWindowsSetup
+		if !strings.HasSuffix(slash, "/tulai.exe") || DetectMode(goos, executable) != ModeWindowsSetup {
+			return false
+		}
+		return strings.HasSuffix(slash, "/tulai/tulai.exe") || windowsSetupDir(executable)
 	case "linux":
 		return strings.HasSuffix(slash, "/.local/tulai.app/tulai") && os.Getenv("APPIMAGE") == ""
 	default:
 		return false
 	}
+}
+
+// ShouldFallbackUnsigned reports whether a failed signed update check on Windows
+// setup installs should fall back to the NSIS installer (e.g. non-writable Program Files).
+func ShouldFallbackUnsigned(goos string, mode Mode, err error) bool {
+	return goos == "windows" && mode == ModeWindowsSetup && errors.Is(err, mygo.ErrUpdatesDisabled)
 }
 
 // CheckSigned reads this release's MyGo manifest and keeps its source for Install.

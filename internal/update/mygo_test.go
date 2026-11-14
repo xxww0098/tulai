@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo"
 )
 
 func TestMyGoSourceUsesReleaseAndMirrors(t *testing.T) {
@@ -58,6 +62,16 @@ func TestMyGoSourceUsesReleaseAndMirrors(t *testing.T) {
 
 func TestMyGoInstallLocations(t *testing.T) {
 	t.Setenv("APPIMAGE", "")
+	setupExeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(setupExeDir, "Uninstall.exe"), []byte("uninst"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mygoFilesDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mygoFilesDir, ".mygo-files"), []byte("tulai.exe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	portableDir := t.TempDir()
+
 	for _, tc := range []struct {
 		os, path string
 		want     bool
@@ -66,6 +80,9 @@ func TestMyGoInstallLocations(t *testing.T) {
 		{"darwin", "/tmp/tulai", false},
 		{"windows", `C:\Users\me\AppData\Local\Programs\tulai\tulai.exe`, true},
 		{"windows", `C:\Users\me\AppData\Local\Programs\Documents\tulai.exe`, false},
+		{"windows", filepath.Join(setupExeDir, "tulai.exe"), true},
+		{"windows", filepath.Join(mygoFilesDir, "tulai.exe"), true},
+		{"windows", filepath.Join(portableDir, "tulai.exe"), false},
 		{"windows", `C:\Downloads\tulai-0.2.0-windows-amd64.exe`, false},
 		{"linux", "/home/me/.local/tulai.app/tulai", true},
 		{"linux", "/usr/bin/tulai", false},
@@ -74,6 +91,29 @@ func TestMyGoInstallLocations(t *testing.T) {
 		t.Run(tc.os+"/"+tc.path, func(t *testing.T) {
 			if got := MyGoInstall(tc.os, tc.path); got != tc.want {
 				t.Fatalf("MyGoInstall = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldFallbackUnsigned(t *testing.T) {
+	wrappedDisabled := fmt.Errorf("wrap: %w", mygo.ErrUpdatesDisabled)
+	for _, tc := range []struct {
+		name string
+		goos string
+		mode Mode
+		err  error
+		want bool
+	}{
+		{"windows-setup-disabled", "windows", ModeWindowsSetup, wrappedDisabled, true},
+		{"windows-setup-signature-err", "windows", ModeWindowsSetup, errors.New("signature mismatch"), false},
+		{"windows-exe-disabled", "windows", ModeWindowsExe, wrappedDisabled, false},
+		{"darwin-disabled", "darwin", ModeMacBundle, wrappedDisabled, false},
+		{"linux-disabled", "linux", ModeLinuxUser, wrappedDisabled, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ShouldFallbackUnsigned(tc.goos, tc.mode, tc.err); got != tc.want {
+				t.Fatalf("ShouldFallbackUnsigned = %v, want %v", got, tc.want)
 			}
 		})
 	}

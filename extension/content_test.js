@@ -27,7 +27,12 @@ function load(page, where) {
     },
     TULAIPage: page,
   })
-  if (page.resolveSources) context.TULAIDoubaoSourceMap = { fromConversation: page.resolveSources }
+  if (page.resolveSources || page.resolveConversation) {
+    context.TULAIDoubaoSourceMap = {
+      fromConversation: page.resolveSources,
+      resolveFromConversation: page.resolveConversation,
+    }
+  }
   context.globalThis = context
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'protocol.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'refuse.js'), 'utf8'), context)
@@ -380,6 +385,107 @@ async function main() {
   assert.strictEqual(batchAck.payload.ok, true, JSON.stringify(batchAck.payload))
   assert.strictEqual(batchAck.payload.images.length, 3, '多图未齐时不能在 3 秒处提前截断')
   assert.ok(batchScrolled >= 1, '多图未齐时应滚动到回复底部唤醒虚拟列表')
+
+  const sevenDayQuotaPage = composerPage({
+    resultImages() { return [] },
+    resultsBusy() { return false },
+    assistantText() { return '近 7 天额度已用完，预计明天恢复。升级到标准套餐畅享更多额度。 升级正式订阅 ->' },
+  })
+  const sevenDayQuotaCall = load(sevenDayQuotaPage, { href: 'https://www.doubao.com/chat/quota-7d', hostname: 'www.doubao.com' })
+  assert.strictEqual((await sevenDayQuotaCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  const sevenDayAck = await sevenDayQuotaCall({ name: 'waitResult', timeoutMs: 2000 })
+  assert.strictEqual(sevenDayAck.payload.ok, false)
+  assert.strictEqual(sevenDayAck.payload.code, 'E_QUOTA')
+  assert.ok(sevenDayAck.payload.message.includes('近 7 天额度已用完'), sevenDayAck.payload.message)
+
+  async function streamHoldTest() {
+    const page = composerPage({
+      resultImages() { return [{ url: 'https://cdn.example/stream-1.png' }] },
+      resultsBusy() { return false },
+      replyDone() { return { done: true } },
+    })
+    const call = load(page, { href: 'https://www.doubao.com/chat/stream-hold', hostname: 'www.doubao.com' })
+    assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+    await call.ask({ type: 'NETWORK_STREAM', taskId: 'task-1', streaming: true })
+    let settled = false
+    const t0 = Date.now()
+    const waitPromise = call({ name: 'waitResult', timeoutMs: 9500 }).then((res) => {
+      settled = true
+      return res
+    })
+    await new Promise((r) => setTimeout(r, 3400))
+    assert.strictEqual(settled, false, 'SSE 流仍在进行时 waitResult 不应提前结束')
+    await call.ask({ type: 'NETWORK_STREAM', taskId: 'task-1', streaming: false })
+    const ack = await waitPromise
+    assert.strictEqual(ack.payload.ok, true, JSON.stringify(ack.payload))
+    assert.ok(Date.now() - t0 >= 5500, 'SSE 结束后再稳定 3 秒才应返回结果')
+  }
+
+  async function partialScrollTest() {
+    const scrollBlocks = []
+    const page = composerPage({
+      newAssistants() {
+        return [{ scrollIntoView(opt) { if (opt && opt.block) scrollBlocks.push(opt.block) } }]
+      },
+      resultImages() {
+        return [
+          { url: 'https://cdn.example/p1.png' },
+          { url: 'https://cdn.example/p2.png' },
+        ]
+      },
+      resultsBusy() { return false },
+      replyDone() { return { done: true } },
+      resolveConversation(_conv, _names, images) {
+        return Promise.resolve({ images: images.slice(), indices: [3, 1] })
+      },
+    })
+    const call = load(page, { href: 'https://www.doubao.com/chat/partial-wait', hostname: 'www.doubao.com' })
+    assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+    const ack = await call({
+      name: 'waitResult',
+      timeoutMs: 5200,
+      expectedAttachments: ['a.png', 'b.png', 'c.png'],
+    })
+    assert.strictEqual(ack.payload.ok, true, JSON.stringify(ack.payload))
+    assert.deepStrictEqual(scrollBlocks.slice(0, 3), ['end', 'start', 'center'], '多图未齐时应按 end/start/center 轮换滚动')
+    assert.strictEqual(ack.payload.images.length, 2, '部分生成结果应按已关联张数返回')
+    assert.deepStrictEqual(ack.payload.images.map((x) => x.sourceIndex), [3, 1], '部分结果必须保留逐张 sourceIndex')
+  }
+
+  async function resolveSupplementTest() {
+    const page = composerPage({
+      resultImages() {
+        return [
+          { url: 'https://cdn.example/s1.png' },
+          { url: 'https://cdn.example/s2.png' },
+        ]
+      },
+      resultsBusy() { return false },
+      replyDone() { return { done: true } },
+      resolveConversation() {
+        return Promise.resolve({
+          images: [
+            { url: 'https://cdn.example/s1.png' },
+            { url: 'https://cdn.example/s2.png' },
+            { url: 'https://cdn.example/s3.png' },
+          ],
+          indices: [3, 1, 2],
+        })
+      },
+    })
+    const call = load(page, { href: 'https://www.doubao.com/chat/resolve-wait', hostname: 'www.doubao.com' })
+    assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+    const ack = await call({
+      name: 'waitResult',
+      timeoutMs: 5200,
+      expectedAttachments: ['a.png', 'b.png', 'c.png'],
+    })
+    assert.strictEqual(ack.payload.ok, true, JSON.stringify(ack.payload))
+    assert.strictEqual(ack.payload.images.length, 3, 'resolveFromConversation 补全屏外图后应返回全部 3 张')
+    assert.deepStrictEqual(ack.payload.images.map((x) => x.sourceIndex), [3, 1, 2])
+  }
+
+  await Promise.all([streamHoldTest(), partialScrollTest(), resolveSupplementTest()])
 
   console.log('content wait ok')
 }

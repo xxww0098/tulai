@@ -58,12 +58,15 @@ func main() {
 		_ = logging.Close()
 		log.Fatalf("打开配置库失败: %v", err)
 	}
+	defer db.Close()
 	bm := browser.NewManager()
+	defer bm.StopAll()
 	if err := db.PrepareCamoufoxProfiles(dataRoot); err != nil {
 		log.Fatalf("迁移 Camoufox 账号: %v", err)
 	}
 
 	engine := tasks.NewEngine(db, bm, nil, dataRoot)
+	defer engine.Shutdown()
 	// mygo build 会把 mygo.json 的版本链进二进制；go run 没有这段链接信息。
 	if dataDir == "" {
 		dataDir, err = os.Getwd()
@@ -72,9 +75,6 @@ func main() {
 		}
 	}
 	logging.Log.Info("tulai %s 启动（数据目录: %s）", runningVersion(), dataDir)
-	defer bm.StopAll()
-	defer engine.CloseSessions()
-	defer db.Close()
 	ui.Run(db, bm, engine, dataRoot)
 }
 

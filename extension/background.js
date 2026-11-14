@@ -467,6 +467,12 @@ async function dispatchCommand(link, env) {
         }
       }, (pairs) => {
         chrome.tabs.sendMessage(tab.id, { type: 'NETWORK_RAW_IMAGES', taskId: env.taskId || '', pairs }).catch(() => {})
+      }, (streamState) => {
+        chrome.tabs.sendMessage(tab.id, {
+          type: 'NETWORK_STREAM',
+          taskId: env.taskId || '',
+          streaming: !!(streamState && streamState.streaming),
+        }).catch(() => {})
       })
     } else if (name === TULAI.commands.waitResult) {
       TULAINetwork.extend(tab.id, env.taskId || '', env.payload && env.payload.timeoutMs)

@@ -3,6 +3,7 @@
 package tasks
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,11 +35,15 @@ type Task struct {
 	BrowserID int64    // 执行用的浏览器（构建后分配）
 	Prompt    string   // 提示词（已拼后缀）
 	Images    []string // 源图路径；文生图为空，执行时不上传
-	Status    Status
-	Attempts  int // 已尝试次数
-	Error     string
-	Results   []string // 已保存结果路径
-	Rewritten bool     // 审核失败后提示词被改写过，卡片上要能看见
+	Status       Status
+	Attempts     int           // 已尝试次数
+	Error        string
+	Results      []string      // 已保存结果路径
+	Rewritten    bool          // 审核失败后提示词被改写过，卡片上要能看见
+	AccountName  string        // 实际派发/执行账号的显示名快照
+	StartedAt    time.Time     // 当前派发开始执行的时间
+	Elapsed      time.Duration // 执行结束后的最终耗时
+	Undispatched bool          // 从未实际派发即被停止跳过的排队项
 
 	submitted          bool // 已确认发送，重试时继续等待原任务
 	chatGPT            *chatgpt.Generation
@@ -56,8 +61,21 @@ type Task struct {
 	Reassigned         string // 改派到的账号名。卡片写「已改由…」，成功后也留着
 	ReassignWhy        string // 改派前的失败原因
 	soften             int    // 审核改写已经自动重试的次数
-	batch              []Task // 豆包洗图一次发送的原始单图任务
-	noUse              bool   // 确认还未尝试发送，不占账号每日次数
+	batch           []Task // 豆包洗图一次发送的原始单图任务
+	maxBatch        int    // 拆分审核批次或标记为需单独发送时限制单批上限（1 表示单独发）
+	splitModeration bool   // 由触发内容审核的豆包批次拆出，防止全批审核循环拆单
+	noUse           bool   // 确认还未尝试发送，不占账号每日次数
+}
+
+// Worked 报告这条任务是否已经实际派发或执行过（排队中及未派发即停止的任务返回 false）。
+func (t Task) Worked() bool {
+	if t.Status == "" || t.Status == StatusPending {
+		return false
+	}
+	if t.Status == StatusSkipped && t.Undispatched {
+		return false
+	}
+	return true
 }
 
 // Numbering 是输出文件自动编号的设置。开启后结果按「前缀+补零序号」命名（如图001.png），
@@ -99,6 +117,8 @@ type Options struct {
 	ChatGPTModel       string
 	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
 	Wash bool
+	// SoloImages 指定在洗图队列里单独发送（不参与多图合批）的源图路径。
+	SoloImages []string
 	// Fission 将一张母图和四条方向指令组成四个独立任务。
 	Fission bool
 	// Numbering 开启后结果文件按「前缀+补零序号」自动编号命名，替代默认词根。
@@ -158,6 +178,12 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 			units = append(units, queueUnit{fixed: true})
 		}
 	}
+	solo := make(map[string]bool, len(opts.SoloImages))
+	for _, p := range opts.SoloImages {
+		if clean := strings.TrimSpace(p); clean != "" {
+			solo[filepath.Clean(clean)] = true
+		}
+	}
 	for _, unit := range units {
 		for _, platform := range opts.Platforms {
 			idx++
@@ -185,6 +211,9 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 				Prompt:   prompt,
 				Images:   images,
 				Status:   StatusPending,
+			}
+			if opts.Wash && len(images) == 1 && solo[filepath.Clean(images[0])] {
+				t.maxBatch = 1
 			}
 			// 分配浏览器（按平台轮转）
 			if ids := browsersOf[platform]; len(ids) > 0 {
@@ -220,6 +249,9 @@ func RebuildRetry(items []Task) []Task {
 			Prompt:    task.Prompt,
 			Rewritten: task.Rewritten,
 			Status:    StatusPending,
+		}
+		if task.maxBatch == 1 || (task.Error != "" && isModeration(errors.New(task.Error))) {
+			next.maxBatch = 1
 		}
 		if task.Platform == chatgpt.Platform && task.chatGPT != nil && task.chatGPT.Attempted {
 			next.chatGPT, next.BrowserID = task.chatGPT, task.BrowserID

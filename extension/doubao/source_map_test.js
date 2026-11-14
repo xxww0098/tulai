@@ -35,4 +35,35 @@ const unknownOrder = state(attachments, creations)
 delete unknownOrder.loaderData.page.messageList.message_list[1].index
 assert.strictEqual(TULAIDoubaoSourceMap.match(unknownOrder, names, images), null, '不能确定消息先后时不能猜测')
 
+assert.deepStrictEqual(TULAIDoubaoSourceMap.match(state(attachments, creations), names, images.slice(0, 2)), [3, 1], '少返回结果时仍应准确关联已生成的图')
+assert.strictEqual(TULAIDoubaoSourceMap.match(state(attachments, [creations[0], output(2, ['tos-input/1']), creations[2]]), names, [{ url: preview(1), rawUrl: raw(1) }]), null, '少返回结果时同源冲突仍不能猜测')
+
+const resolved = TULAIDoubaoSourceMap.resolve(state(attachments, creations), names, images.slice(0, 2))
+assert.ok(resolved && resolved.images.length === 3, 'resolve 应从会话状态补全屏外漏采的生成图')
+assert.deepStrictEqual(resolved.indices, [3, 1, 2], 'resolve 补全后应返回完整源图索引')
+
+const reusedState = {
+  loaderData: {
+    page: {
+      messageList: {
+        message_list: [
+          { index: '1', content_block: [{ content: { attachment_block: { attachments } } }] },
+          { index: '2', content_block: [{ content: { creation_block: { creations: [output(9, ['tos-input/1'])] } } }] },
+          { index: '4', content_block: [{ content: { attachment_block: { attachments } } }] },
+          { index: '5', content_block: [{ content: { creation_block: { creations: [output(10, ['tos-input/1']), output(11, ['tos-input/2']), output(12, ['tos-input/3'])] } } }] },
+        ],
+      },
+    },
+  },
+}
+assert.deepStrictEqual(
+  TULAIDoubaoSourceMap.match(reusedState, names, [
+    { url: preview(10), rawUrl: raw(10) },
+    { url: preview(11), rawUrl: raw(11) },
+    { url: preview(12), rawUrl: raw(12) },
+  ]),
+  [1, 2, 3],
+  '复用会话中前几轮的源图 URI 不应误判为本轮冲突'
+)
+
 console.log('doubao source mapping ok')

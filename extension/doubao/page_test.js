@@ -882,4 +882,38 @@ async function testSetOutputRatio() {
   assert.strictEqual((await Page.setOutputRatio(malformed.doc, '宽高比 4:3', null, 250)).error, '比例格式应为 4:3')
 }
 
+// 豆包长提示词折叠（「展开全部」）时，仍能定位本轮用户气泡与助手额度回复，并区分同前缀的上一轮消息。
+{
+  const { doc, box } = surface()
+  const basePrompt = '我需要提取这个商品中的图片，每张图单独按以下要求生成一张图。反推图生文要求：以数字油画作为画面主体，全文将该对象称作主体，中文详尽描述主体表面全部图案细节。'
+  const prompt1 = basePrompt + '\n请按上传顺序依次对应以下源图生成：\n第 1 张：tulai-11111111'
+  const prompt2 = basePrompt + '\n请按上传顺序依次对应以下源图生成：\n第 1 张：tulai-22222222'
+
+  const u1 = message(doc, 'user', '')
+  u1.append(new El('p')).addText('生成图片：' + basePrompt.slice(0, 65))
+  const btn1 = u1.append(new El('button')).addText('展开全部')
+  u1.innerText = '生成图片：' + basePrompt.slice(0, 65) + '\n' + btn1.innerText
+  u1.textContent = u1.innerText
+  const a1 = message(doc, 'assistant', '上一轮旧回复')
+
+  box.value = prompt2
+  const marked2 = Page.mark(doc, prompt2)
+  assert.strictEqual(Page.sendAccepted(doc, marked2), false, '同前缀折叠旧气泡不能算作本轮已发送')
+  assert.strictEqual(Page.assistantText(doc, marked2), '', '未出现新折叠气泡前不能读取旧回复')
+
+  box.value = ''
+  const u2 = message(doc, 'user', '')
+  u2.append(new El('div')).addText('生成图片：' + basePrompt.slice(0, 65))
+  const span2 = u2.append(new El('span')).addText('展开全部')
+  u2.innerText = '生成图片：' + basePrompt.slice(0, 65) + ' ' + span2.innerText
+  u2.textContent = '生成图片：' + basePrompt.slice(0, 65) + span2.textContent
+  const a2 = message(doc, 'assistant', '近 7 天额度已用完，预计明天恢复。升级到标准套餐畅享更多额度。\n升级正式订阅 ->')
+
+  assert.strictEqual(Page.sendAccepted(doc, marked2), true, '新折叠用户气泡出现后应判定发送被接受')
+  assert.deepStrictEqual(Page.newAssistants(doc, marked2), [a2])
+  assert.ok(Page.assistantText(doc, marked2).includes('近 7 天额度已用完，预计明天恢复'), Page.assistantText(doc, marked2))
+  assert.ok(!Page.assistantText(doc, marked2).includes('上一轮旧回复'))
+  void a1
+}
+
 testImageMode().then(testSetOutputRatio).then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })

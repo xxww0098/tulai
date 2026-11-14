@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -722,5 +723,89 @@ func TestEmptyResultHugsOneAccount(t *testing.T) {
 	}
 	if empty.Y > lane.Y+lane.H+120 {
 		t.Fatalf("empty hint sits too far below the only account: lane=%v empty=%v", lane, empty)
+	}
+}
+
+func TestShutdownSavesActiveSessionBeforeStoppingEngine(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.db")
+	st, err := store.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(t.TempDir(), "src.png")
+	writeTinyPNG(t, img)
+
+	eng := tasks.NewEngine(st, nil, nil, "")
+	a := &App{
+		store:     st,
+		engine:    eng,
+		tab:       pageWash,
+		statePage: pageWash,
+		runPage:   pageWash,
+		running:   true,
+		prompts:   "洗图",
+		sources:   []sourceImage{{Path: img, Washing: true}},
+		queue: []tasks.Task{{
+			Index:    1,
+			Platform: "豆包",
+			Prompt:   "洗图",
+			Images:   []string{img},
+			Status:   tasks.StatusRunning,
+		}},
+		progText: "0 / 1",
+	}
+
+	// Simulate OnQuit: snapshot active workspace while DB is still open, then mark quitting and clear queued UI callbacks.
+	a.saveSettings()
+	a.mu.Lock()
+	a.quitting = true
+	a.uiUpdates = nil
+	a.mu.Unlock()
+
+	// Late postUI callbacks arriving after quitting must be ignored and must not overwrite the active snapshot.
+	a.postUI(func() {
+		a.running = false
+		a.queue[0].Status = tasks.StatusSkipped
+		a.queue[0].Error = "已停止"
+		a.persistWorkspace(pageWash)
+	})
+	a.flushUIUpdates()
+	eng.Shutdown()
+	st.Close()
+
+	reopened, err := store.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restored := &App{store: reopened}
+	restored.loadSettings()
+	ws := restored.stateOf(pageWash)
+	if len(ws.queue) != 1 || ws.queue[0].Status != tasks.StatusNeedsReview {
+		t.Fatalf("expected interrupted task to restore as NeedsReview, got %+v", ws.queue)
+	}
+}
+
+func TestWashSoloPathsSelectsModerationUnwashed(t *testing.T) {
+	a := &App{
+		statePage: pageWash,
+		sources: []sourceImage{
+			{Path: "/in/mod.png", Washed: false},
+			{Path: "/in/washed_mod.png", Washed: true},
+			{Path: "/in/timeout.png", Washed: false},
+			{Path: "/in/recovered_reason.png", Washed: false},
+		},
+		queue: []tasks.Task{
+			{Images: []string{"/in/mod.png"}, Status: tasks.StatusFailed, Error: "E_MODERATION: 审核不通过"},
+			{Images: []string{"/in/washed_mod.png"}, Status: tasks.StatusFailed, Error: "E_MODERATION: 审核不通过"},
+			{Images: []string{"/in/timeout.png"}, Status: tasks.StatusFailed, Error: "出图超时"},
+			{Images: []string{"/in/recovered_reason.png"}, Status: tasks.StatusFailed, Error: "E_MODERATION: 审核不通过"},
+			{Images: []string{"/in/recovered_reason.png"}, Status: tasks.StatusFailed, Error: "出图超时"},
+		},
+	}
+	got := a.washSoloPaths()
+	want := []string{"/in/mod.png"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("washSoloPaths() = %v, want %v", got, want)
 	}
 }

@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
@@ -28,12 +30,13 @@ type resultTile struct {
 	fly  bool
 }
 
-// resultRow 是虚拟列表的一行：分组标题，或一行缩略图。
+// resultRow 是虚拟列表的一行：账号分组标题，或一行缩略图。
 type resultRow struct {
-	key    string
-	header bool
-	title  string
-	tiles  []resultTile
+	key     string
+	header  bool
+	title   string
+	summary string
+	tiles   []resultTile
 }
 
 func (a *App) resultList() *ui.ListState {
@@ -46,11 +49,13 @@ func (a *App) resultList() *ui.ListState {
 	return &a.genList
 }
 
-// resultsPane 撑满账号表下面的高度。缩略图按提示词或源图分组，滚进视口才解码。
+// resultsPane 撑满账号表下面的高度。缩略图按工作账号分组，没工作的账号和未派发任务不显示。
 func (a *App) resultsPane(c *ui.Context) {
 	tok := a.look
 	w, _ := c.Size()
-	rows, tileW := a.buildResultRows(w)
+	items := tasksForPlatform(a.queueItems(), a.stagePlatform())
+	rows, tileW := a.buildResultRowsAt(w, c.Now())
+	a.resultsClock(c, items)
 	pane := ui.Column(c.Key("results")).Label("出图结果区").FillWidth().Padding(8, 10).Gap(5).Radius(tok.radiusM).
 		Background(tok.card).Border(1, tok.border)
 	if homeSplit(w) {
@@ -58,7 +63,7 @@ func (a *App) resultsPane(c *ui.Context) {
 	}
 	pane.Children(func() {
 		a.resultsHead(c)
-		if TallyTasks(tasksForPlatform(a.queueItems(), a.stagePlatform())).Needs > 0 {
+		if TallyTasks(items).Needs > 0 {
 			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
 		}
 		if len(rows) == 0 {
@@ -92,6 +97,30 @@ func (a *App) resultsPane(c *ui.Context) {
 			list.Height(320)
 		}
 	})
+}
+
+func (a *App) resultsClock(c *ui.Context, items []tasks.Task) {
+	now := c.Now()
+	var wait time.Duration
+	for _, task := range items {
+		if !task.Worked() || !isTaskActiveStatus(task.Status) || task.StartedAt.IsZero() {
+			continue
+		}
+		elapsed := now.Sub(task.StartedAt)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		left := time.Second - elapsed%time.Second
+		if left <= 0 {
+			left = time.Millisecond
+		}
+		if wait == 0 || left < wait {
+			wait = left
+		}
+	}
+	if wait > 0 {
+		c.After(wait)
+	}
 }
 
 func (a *App) resultsHead(c *ui.Context) {
@@ -131,55 +160,85 @@ func (a *App) resultsEmpty(c *ui.Context) {
 }
 
 func (a *App) buildResultRows(windowW float32) ([]resultRow, float32) {
+	return a.buildResultRowsAt(windowW, time.Now())
+}
+
+func (a *App) buildResultRowsAt(windowW float32, _ time.Time) ([]resultRow, float32) {
 	cols, tileW := resultLayoutForStage(a.homeStageW(windowW))
 	items := tasksForPlatform(a.queueItems(), a.stagePlatform())
+	browsers := a.configuredBrowsers()
+	byID := make(map[int64]string, len(browsers))
+	for _, b := range browsers {
+		title := accountLabel(b)
+		if b.Platform == agy.Platform && strings.TrimSpace(b.UserDataDir) != "" {
+			if email := strings.TrimSpace(agy.Email(b.UserDataDir)); email != "" {
+				title = email
+			}
+		}
+		byID[b.ID] = title
+	}
 	type group struct {
 		key, title string
+		tasks      []tasks.Task
 		tiles      []resultTile
 	}
 	var order []string
 	groups := map[string]*group{}
-	for _, task := range items {
-		key, title := a.resultGroup(task)
+	for pos, task := range items {
+		if !task.Worked() {
+			continue
+		}
+		key, title := a.resultAccountGroup(task, byID)
 		g := groups[key]
 		if g == nil {
 			g = &group{key: key, title: title}
 			groups[key] = g
 			order = append(order, key)
 		}
+		g.tasks = append(g.tasks, task)
 		if len(task.Results) == 0 {
 			g.tiles = append(g.tiles, resultTile{
-				key:  fmt.Sprintf("t-%d-%s", task.Index, task.Status),
+				key:  fmt.Sprintf("t-%d-%d-%s", task.Index, pos, task.Status),
 				task: task,
 			})
 			continue
 		}
 		for i, path := range task.Results {
 			g.tiles = append(g.tiles, resultTile{
-				key:  fmt.Sprintf("p-%d-%d", task.Index, i),
+				key:  fmt.Sprintf("p-%d-%d-%d", task.Index, pos, i),
 				task: task,
 				path: path,
 				fly:  i == 0,
 			})
 		}
 	}
-	var rows []resultRow
-	if a.washing() || a.fissioning() {
-		var tiles []resultTile
-		for _, key := range order {
-			tiles = append(tiles, groups[key].tiles...)
+	if len(groups) == 0 {
+		return nil, tileW
+	}
+	ordered := make([]string, 0, len(groups))
+	added := make(map[string]bool, len(groups))
+	for _, b := range browsers {
+		key := fmt.Sprintf("acct:%d", b.ID)
+		if groups[key] != nil && !added[key] {
+			ordered = append(ordered, key)
+			added[key] = true
 		}
-		for i := 0; i < len(tiles); i += cols {
-			rows = append(rows, resultRow{
-				key:   fmt.Sprintf("wash:%d", i),
-				tiles: tiles[i:min(i+cols, len(tiles))],
-			})
-		}
-		return rows, tileW
 	}
 	for _, key := range order {
+		if !added[key] {
+			ordered = append(ordered, key)
+			added[key] = true
+		}
+	}
+	var rows []resultRow
+	for _, key := range ordered {
 		g := groups[key]
-		rows = append(rows, resultRow{key: "h:" + key, header: true, title: g.title})
+		rows = append(rows, resultRow{
+			key:     "h:" + key,
+			header:  true,
+			title:   g.title,
+			summary: accountGroupSummary(g.tasks),
+		})
 		for i := 0; i < len(g.tiles); i += cols {
 			end := i + cols
 			if end > len(g.tiles) {
@@ -194,20 +253,59 @@ func (a *App) buildResultRows(windowW float32) ([]resultRow, float32) {
 	return rows, tileW
 }
 
-// resultGroup 生图按提示词分组，洗图按源图分组。
-func (a *App) resultGroup(task tasks.Task) (key, title string) {
-	if a != nil && (a.washing() || a.fissioning()) {
-		if src := taskSource(task); src != "" {
-			return "img:" + src, filepath.Base(src)
+func (a *App) resultAccountGroup(task tasks.Task, byID map[int64]string) (key, title string) {
+	if task.BrowserID > 0 {
+		title = strings.TrimSpace(byID[task.BrowserID])
+		if title == "" {
+			title = strings.TrimSpace(task.AccountName)
 		}
+		if title == "" {
+			if plat := strings.TrimSpace(task.Platform); plat != "" {
+				title = fmt.Sprintf("%s账号%d", plat, task.BrowserID)
+			} else {
+				title = fmt.Sprintf("账号%d", task.BrowserID)
+			}
+		}
+		return fmt.Sprintf("acct:%d", task.BrowserID), title
 	}
-	if p := oneLine(task.Prompt); p != "" {
-		return "prompt:" + p, p
+	if name := strings.TrimSpace(task.AccountName); name != "" {
+		return "acct-name:" + name, name
 	}
-	if src := taskSource(task); src != "" {
-		return "img:" + src, filepath.Base(src)
+	plat := strings.TrimSpace(task.Platform)
+	if plat == "" && a != nil {
+		plat = strings.TrimSpace(a.stagePlatform())
 	}
-	return "prompt:", "未命名"
+	if plat == "" {
+		return "plat:", "工作账号"
+	}
+	return "plat:" + plat, plat + "账号"
+}
+
+func accountGroupSummary(items []tasks.Task) string {
+	if len(items) == 0 {
+		return ""
+	}
+	tally := TallyTasks(items)
+	parts := []string{fmt.Sprintf("已派发 %d 项", len(items))}
+	if tally.Running > 0 {
+		parts = append(parts, fmt.Sprintf("进行中 %d", tally.Running))
+	}
+	if tally.Done > 0 {
+		parts = append(parts, fmt.Sprintf("完成 %d", tally.Done))
+	}
+	if tally.Failed > 0 {
+		parts = append(parts, fmt.Sprintf("失败 %d", tally.Failed))
+	}
+	if tally.Needs > 0 {
+		parts = append(parts, fmt.Sprintf("待验证 %d", tally.Needs))
+	}
+	if tally.Review > 0 {
+		parts = append(parts, fmt.Sprintf("需核对 %d", tally.Review))
+	}
+	if tally.Stopped > 0 {
+		parts = append(parts, fmt.Sprintf("已停止 %d", tally.Stopped))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func taskSource(task tasks.Task) string {
@@ -247,8 +345,12 @@ func (a *App) resultHeader(c *ui.Context, row resultRow) {
 	if title == "" {
 		title = "未命名"
 	}
-	ui.Row(c.Key(row.key)).FillWidth().Padding(4, 2).Background(tok.card).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key(row.key)).Label("账号分组"+title).FillWidth().Padding(4, 8).Gap(8).
+		Radius(tok.radiusS).Background(tok.sunken).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, title).FontSize(tok.body).Bold().SingleLine().MinWidth(0).Grow(1).Tooltip(title)
+		if row.summary != "" {
+			ui.Text(c, row.summary).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted).SingleLine().Shrink(0).Tooltip(row.summary)
+		}
 	})
 }
 
@@ -266,10 +368,10 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 	title := tileTitle(tile)
 	ui.Column(c.Key(tile.key)).Width(tileW).Shrink(0).Gap(4).Label("结果卡" + title).Children(func() {
 		if a.washing() {
-			_, source := a.resultGroup(task)
 			tip := taskSource(task)
+			source := filepath.Base(tip)
 			if tip == "" {
-				tip = source
+				source, tip = "未命名", "未命名"
 			}
 			ui.Text(c.Key("source"), source).FillWidth().FontSize(tok.body).Bold().SingleLine().Tooltip(tip)
 		}
@@ -279,6 +381,12 @@ func (a *App) resultTile(c *ui.Context, tile resultTile, tileW float32) {
 			if tile.path != "" && filePresent(tile.path) {
 				a.revealButton(c, tile.path)
 			}
+		})
+		elapsed := taskElapsedText(task, c.Now())
+		ui.Row(c.Key("meta")).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
+			statusPill(c, tileStatus(task))
+			ui.Text(c.Key("elapsed"), elapsed).FontSize(tok.caption).FontFeatures("tnum").
+				TextColor(tok.muted).Grow(1).MinWidth(0).SingleLine().TextAlign(ui.End).Tooltip(elapsed)
 		})
 		if task.Rewritten {
 			line := "已改写：" + shortLine(task.Prompt, 36)
@@ -378,7 +486,6 @@ func (a *App) resultFrame(c *ui.Context, tile resultTile, tileW float32) {
 				promptMarkBox(c, tok, tileW)
 			}
 		}
-		statusPill(c, status).Absolute().Top(6).Left(6)
 		if path != "" {
 			if badge := shotBadge(tile.task.Platform, a.accountName(tile.task.BrowserID)); badge != "" {
 				ui.Row(c).Label("产出"+badge).Absolute().Bottom(4).Left(4).Padding(1, 4).Radius(4).
@@ -388,6 +495,46 @@ func (a *App) resultFrame(c *ui.Context, tile resultTile, tileW float32) {
 			}
 		}
 	})
+}
+
+func isTaskActiveStatus(status tasks.Status) bool {
+	return status == tasks.StatusRunning || status == tasks.StatusRetry || status == tasks.StatusAwaitUser
+}
+
+func taskElapsedText(task tasks.Task, now time.Time) string {
+	if isTaskActiveStatus(task.Status) {
+		if task.StartedAt.IsZero() {
+			return "耗时 0秒"
+		}
+		d := now.Sub(task.StartedAt)
+		if d < 0 {
+			d = 0
+		}
+		return "耗时 " + formatElapsedDuration(d, false)
+	}
+	if task.Elapsed > 0 {
+		return "耗时 " + formatElapsedDuration(task.Elapsed, true)
+	}
+	return "耗时 --"
+}
+
+func formatElapsedDuration(d time.Duration, round bool) string {
+	if d < 0 {
+		d = 0
+	}
+	var sec int
+	if round {
+		sec = int((d + time.Second/2) / time.Second)
+		if sec < 1 {
+			sec = 1
+		}
+	} else {
+		sec = int(d / time.Second)
+	}
+	if sec < 60 {
+		return fmt.Sprintf("%d秒", sec)
+	}
+	return fmt.Sprintf("%d分%02d秒", sec/60, sec%60)
 }
 
 func tileTitle(tile resultTile) string {

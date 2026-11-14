@@ -215,12 +215,41 @@ func TestSaveWashBatchKeepsMappingAndRejectsMissingResults(t *testing.T) {
 	dir := t.TempDir()
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{Wash: true, OutputPath: dir}
-	batch := Task{Platform: "豆包", batch: []Task{{Images: []string{"/a/first.png"}}, {Images: []string{"/b/second.png"}}}}
 	data := [][]byte{resultPNG(t, 81), resultPNG(t, 82)}
 	results := []strategy.Result{{Data: data[0], WatermarkRemoved: true}, {Data: data[1], WatermarkRemoved: true}}
-	if err := e.saveWashBatch(context.Background(), &batch, results[:1], []int{1}); err == nil || len(batch.Results) != 0 {
-		t.Fatalf("missing result must not be assigned: %v %v", batch.Results, err)
+
+	// 无关联或非法关联时，缺失结果不得分配给任何源图。
+	unverified := Task{Index: 5, Platform: "豆包", batch: []Task{{Images: []string{"/a/first.png"}}, {Images: []string{"/b/second.png"}}}}
+	if err := e.saveWashBatch(context.Background(), &unverified, results[:1], nil); err == nil || len(unverified.Results) != 0 {
+		t.Fatalf("unverified missing result must not be assigned: %v %v", unverified.Results, err)
 	}
+
+	// 已验证部分结果（1/2 对应第 2 张）：直接保存到第 2 张源图，不写待核对，仅第 1 张失败。
+	partialDir := t.TempDir()
+	ePartial := NewEngine(nil, nil, nil, "")
+	ePartial.opts = Options{Wash: true, OutputPath: partialDir}
+	partial := Task{Index: 6, Platform: "豆包", submitted: true, batch: []Task{{Index: 1, Images: []string{"/a/first.png"}}, {Index: 2, Images: []string{"/b/second.png"}}}}
+	err := ePartial.saveExtensionWash(context.Background(), &partial, results[1:2], []int{2}, nil)
+	if err == nil || !strings.Contains(err.Error(), "已按源图关联保存") || strings.Contains(err.Error(), "待核对") {
+		t.Fatalf("unexpected partial wash error: %v", err)
+	}
+	partial.Status, partial.Error = StatusFailed, err.Error()
+	members := batchMembers(partial)
+	if members[0].Status != StatusFailed || len(members[0].Results) != 0 {
+		t.Fatalf("missing member should remain failed: %+v", members[0])
+	}
+	if members[1].Status != StatusSuccess || len(members[1].Results) != 1 || filepath.Base(members[1].Results[0]) != "second_01.png" {
+		t.Fatalf("matched partial member should succeed: %+v", members[1])
+	}
+	if got, readErr := os.ReadFile(members[1].Results[0]); readErr != nil || !bytes.Equal(got, data[1]) {
+		t.Fatalf("wrong partial data: %v", readErr)
+	}
+	if files, globErr := filepath.Glob(filepath.Join(partialDir, "待核对", "*", "*", "*.png")); globErr != nil || len(files) != 0 {
+		t.Fatalf("verified partial outputs must not be quarantined: %v err=%v", files, globErr)
+	}
+
+	// 完整批次：两张都按源图关联保存且返回 nil。
+	batch := Task{Platform: "豆包", batch: []Task{{Images: []string{"/a/first.png"}}, {Images: []string{"/b/second.png"}}}}
 	if err := e.saveWashBatch(context.Background(), &batch, results, []int{1, 2}); err != nil {
 		t.Fatal(err)
 	}
@@ -564,5 +593,285 @@ func TestSentWashBatchPreservesUnmatchedAndUncertainOutcome(t *testing.T) {
 	}
 	if hint := ClassifyFailure(gotMod.Status, gotMod.Error); hint.Class != FailModeration || hint.Button != "改提示词重试" {
 		t.Fatalf("unexpected moderation classification: %+v (err=%q)", hint, gotMod.Error)
+	}
+}
+
+func TestPartialVerifiedWashBatchSavesMatchedWithoutQuarantine(t *testing.T) {
+	dir := t.TempDir()
+	inDir := filepath.Join(dir, "in")
+	outDir := filepath.Join(dir, "out")
+	if err := os.MkdirAll(inDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for i := 0; i < 3; i++ {
+		p := filepath.Join(inDir, fmt.Sprintf("src-%d.png", i+1))
+		if err := os.WriteFile(p, resultPNG(t, byte(i+10)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	data := map[string][]byte{
+		"https://cdn.example/raw-3.png": resultPNG(t, 93),
+		"https://cdn.example/raw-1.png": resultPNG(t, 91),
+	}
+	var names []string
+	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdUpload:
+			var p struct {
+				Name   string `json:"fileName"`
+				Finish bool   `json:"finish"`
+			}
+			_ = json.Unmarshal(env.Payload, &p)
+			if p.Finish {
+				names = append(names, p.Name)
+			}
+			return ackOK(env, map[string]any{"attachments": names})
+		case extbridge.CmdSetPrompt, extbridge.CmdSend, extbridge.CmdCaptchaAssist:
+			return ackOK(env, nil)
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{
+				"conversation": "https://www.doubao.com/chat/partial-1",
+				"images": []map[string]any{
+					{"url": "https://cdn.example/raw-3.png", "rawUrl": "https://cdn.example/raw-3.png", "sourceIndex": 3},
+					{"url": "https://cdn.example/raw-1.png", "rawUrl": "https://cdn.example/raw-1.png", "sourceIndex": 1},
+				},
+			})
+		case extbridge.CmdDownload:
+			var p struct {
+				URL    string `json:"url"`
+				Offset int    `json:"offset"`
+			}
+			_ = json.Unmarshal(env.Payload, &p)
+			return chunkAck(env, data[p.URL], p.Offset)
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{Wash: true, WaitResult: true, OutputPath: outDir, RetryCount: 1}
+	batch := Task{
+		Index:    1,
+		Platform: "豆包",
+		Prompt:   "分别洗图",
+		Images:   append([]string(nil), paths...),
+		batch: []Task{
+			{Index: 1, Platform: "豆包", Prompt: "分别洗图", Images: []string{paths[0]}},
+			{Index: 2, Platform: "豆包", Prompt: "分别洗图", Images: []string{paths[1]}},
+			{Index: 3, Platform: "豆包", Prompt: "分别洗图", Images: []string{paths[2]}},
+		},
+	}
+	done := e.execute(context.Background(), batch, func(ctx context.Context, task *Task) error {
+		out, err := RunDoubaoExtension(ctx, sess, QianwenJob{
+			TaskID:            "1",
+			IdempotencyPrefix: "partial",
+			Images:            task.Images,
+			Prompt:            task.Prompt,
+			Wait:              time.Second,
+			VerifyAttachments: true,
+		})
+		task.submitted = task.submitted || out.Submitted || out.sendAttempted
+		return e.saveExtensionWash(ctx, task, out.Results, out.sourceIndices, err)
+	})
+	if done.Status != StatusFailed || !strings.Contains(done.Error, "已按源图关联保存") || strings.Contains(done.Error, "发送状态未确认") {
+		t.Fatalf("unexpected batch result: %+v", done)
+	}
+	members := batchMembers(done)
+	if len(members) != 3 {
+		t.Fatalf("members len = %d", len(members))
+	}
+	if members[0].Status != StatusSuccess || len(members[0].Results) != 1 || filepath.Base(members[0].Results[0]) != "src-1_01.png" {
+		t.Fatalf("first member should succeed: %+v", members[0])
+	}
+	if members[1].Status != StatusFailed || len(members[1].Results) != 0 {
+		t.Fatalf("missing second member should fail: %+v", members[1])
+	}
+	if hint := ClassifyFailure(members[1].Status, members[1].Error); hint.Class != FailUnknown || !strings.Contains(hint.Sentence, "少返回") {
+		t.Fatalf("unexpected partial failure hint: %+v (err=%q)", hint, members[1].Error)
+	}
+	if members[2].Status != StatusSuccess || len(members[2].Results) != 1 || filepath.Base(members[2].Results[0]) != "src-3_01.png" {
+		t.Fatalf("third member should succeed: %+v", members[2])
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "待核对")); !os.IsNotExist(err) {
+		t.Fatalf("待核对 directory should not be created for verified partial saves, stat err=%v", err)
+	}
+}
+
+func TestModerationBatchSplitsAndIsolatesGuiltyImage(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	addNamed(t, st, "豆包", "甲")
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+
+	sources := []string{"01.png", "02.png", "bad.png", "04.png", "05.png", "06.png"}
+	var dispatches []int
+	var progress Progress
+	err := e.RunObserved(context.Background(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources,
+		Wash: true, Concurrency: 1, WaitResult: true, DailyCap: 100,
+	}, func(Task) {}, func(p Progress) { progress = p }, func(_ context.Context, task *Task) error {
+		if !task.Rewritten {
+			dispatches = append(dispatches, len(task.Images))
+		}
+		for _, img := range task.Images {
+			if img == "bad.png" {
+				task.submitted = true
+				return mapExtErr(&extbridge.ProtoError{Code: extbridge.EModeration, Message: "审核不通过"}, extAck{}, "豆包")
+			}
+		}
+		if len(task.batch) > 0 {
+			for i := range task.batch {
+				out := task.batch[i].Images[0] + ".out"
+				task.batch[i].Results = []string{out}
+				task.Results = append(task.Results, out)
+			}
+		} else {
+			task.Results = []string{task.Images[0] + ".out"}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(dispatches, []int{6, 3, 1, 1, 1, 3}) {
+		t.Fatalf("expected binary split batches [6 3 1 1 1 3], got %v", dispatches)
+	}
+	if progress.Done != 6 || progress.Total != 6 {
+		t.Fatalf("unexpected progress: %+v", progress)
+	}
+	snap := e.View().Snapshot()
+	for i, item := range snap {
+		if sources[i] == "bad.png" {
+			if item.Status != StatusFailed || ClassifyFailure(item.Status, item.Error).Class != FailModeration {
+				t.Fatalf("guilty image #%d should fail with moderation: %+v", i+1, item)
+			}
+			continue
+		}
+		if item.Status != StatusSuccess || !reflect.DeepEqual(item.Results, []string{sources[i] + ".out"}) {
+			t.Fatalf("healthy image #%d poisoned by batch moderation: %+v", i+1, item)
+		}
+	}
+}
+
+func TestPromptWideModerationStopsSplittingAfterThreeSoloFails(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	addNamed(t, st, "豆包", "甲")
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+
+	sources := []string{"01.png", "02.png", "03.png", "04.png", "05.png", "06.png"}
+	var dispatches []int
+	var progress Progress
+	err := e.RunObserved(context.Background(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"整批都过不了审"}, Images: sources,
+		Wash: true, Concurrency: 1, WaitResult: true, DailyCap: 100,
+	}, func(Task) {}, func(p Progress) { progress = p }, func(_ context.Context, task *Task) error {
+		if !task.Rewritten {
+			dispatches = append(dispatches, len(task.Images))
+		}
+		task.submitted = true
+		return mapExtErr(&extbridge.ProtoError{Code: extbridge.EModeration, Message: "审核不通过"}, extAck{}, "豆包")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(dispatches, []int{6, 3, 1, 1, 1, 3}) {
+		t.Fatalf("should stop splitting after 3 solo moderation fails without saves, got %v", dispatches)
+	}
+	if progress.Done != 6 || progress.Total != 6 {
+		t.Fatalf("unexpected progress: %+v", progress)
+	}
+	for i, item := range e.View().Snapshot() {
+		if item.Status != StatusFailed || ClassifyFailure(item.Status, item.Error).Class != FailModeration {
+			t.Fatalf("item #%d should end with moderation failure: %+v", i+1, item)
+		}
+	}
+}
+
+func TestSoloImagesAndRebuildRetryPreventRebundling(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	addNamed(t, st, "豆包", "甲")
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+
+	var batches [][]string
+	err := e.RunObserved(context.Background(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"},
+		Images:     []string{"/dir/a.png", "/dir/bad.png", "/dir/b.png", "/dir/c.png"},
+		SoloImages: []string{"/dir/../dir/bad.png"},
+		Wash:       true, Concurrency: 1, WaitResult: true, DailyCap: 100,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		batches = append(batches, append([]string(nil), task.Images...))
+		if len(task.batch) > 0 {
+			for i := range task.batch {
+				out := task.batch[i].Images[0] + ".out"
+				task.batch[i].Results = []string{out}
+				task.Results = append(task.Results, out)
+			}
+		} else {
+			task.Results = []string{task.Images[0] + ".out"}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBatches := [][]string{
+		{"/dir/a.png", "/dir/b.png", "/dir/c.png"},
+		{"/dir/bad.png"},
+	}
+	if !reflect.DeepEqual(batches, wantBatches) {
+		t.Fatalf("SoloImages bundles mismatch: got %v want %v", batches, wantBatches)
+	}
+
+	retryItems := []Task{
+		{Index: 1, Platform: "豆包", Prompt: "洗图", Images: []string{"/dir/ok.png"}, Status: StatusSuccess},
+		{Index: 2, Platform: "豆包", Prompt: "洗图", Images: []string{"/dir/bad.png"}, Status: StatusFailed, Error: "E_MODERATION: 审核不通过"},
+		{Index: 3, Platform: "豆包", Prompt: "洗图", Images: []string{"/dir/t1.png"}, Status: StatusFailed, Error: "出图超时"},
+		{Index: 4, Platform: "豆包", Prompt: "洗图", Images: []string{"/dir/t2.png"}, Status: StatusSkipped, Error: "已停止"},
+	}
+	rebuilt := RebuildRetry(retryItems)
+	if len(rebuilt) != 3 {
+		t.Fatalf("rebuilt len = %d", len(rebuilt))
+	}
+	if rebuilt[0].maxBatch != 1 || rebuilt[1].maxBatch != 0 || rebuilt[2].maxBatch != 0 {
+		t.Fatalf("unexpected maxBatch on rebuilt items: [%d %d %d]", rebuilt[0].maxBatch, rebuilt[1].maxBatch, rebuilt[2].maxBatch)
+	}
+
+	var retryBatches [][]string
+	err = e.retry(context.Background(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"},
+		Wash: true, Concurrency: 1, WaitResult: true, DailyCap: 100,
+	}, retryItems, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		retryBatches = append(retryBatches, append([]string(nil), task.Images...))
+		if len(task.batch) > 0 {
+			for i := range task.batch {
+				out := task.batch[i].Images[0] + ".out"
+				task.batch[i].Results = []string{out}
+				task.Results = append(task.Results, out)
+			}
+		} else {
+			task.Results = []string{task.Images[0] + ".out"}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRetryBatches := [][]string{
+		{"/dir/bad.png"},
+		{"/dir/t1.png", "/dir/t2.png"},
+	}
+	if !reflect.DeepEqual(retryBatches, wantRetryBatches) {
+		t.Fatalf("RebuildRetry bundles mismatch: got %v want %v", retryBatches, wantRetryBatches)
 	}
 }

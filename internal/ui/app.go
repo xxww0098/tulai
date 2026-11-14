@@ -314,6 +314,7 @@ type App struct {
 	updateFraction     float64
 	updateProgressText string
 	updateAsset        string
+	updateInstalled    string
 	updateStop         chan struct{}
 	updateRel          update.Release
 	updateSigned       *mygo.Update
@@ -352,6 +353,7 @@ type App struct {
 	loginPoll       time.Duration
 	loginFollow     func(store.Browser, string)
 	accountOpen     func(store.Browser) error
+	quitting        bool
 }
 
 type sourceImage struct {
@@ -402,9 +404,14 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		}
 	}
 	a.wireHealing()
+	defer logging.Log.SetSink(nil)
 	defer a.stopAgyUsage()
 	loginCtx, loginStop := context.WithCancel(context.Background())
-	defer loginStop()
+	var loginWG sync.WaitGroup
+	defer func() {
+		loginStop()
+		loginWG.Wait()
+	}()
 	// 窗口里不要菜单栏：检查更新和帮助在侧栏与设置页里，WebView 自己处理编辑快捷键。
 	// macOS 的菜单栏在屏幕顶部，没有它连 Cmd+Q 和复制粘贴都会失效，所以只在那儿留最少的菜单。
 	if runtime.GOOS == "darwin" {
@@ -417,6 +424,15 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		a.closeBrowserDrawer()
 		a.waitRename()
 		a.saveSettings()
+		a.mu.Lock()
+		a.quitting = true
+		a.uiUpdates = nil
+		a.mu.Unlock()
+		logging.Log.SetSink(nil)
+		loginStop()
+		if a.engine != nil {
+			a.engine.Stop()
+		}
 		select {
 		case <-a.updateStop:
 		default:
@@ -433,6 +449,9 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		})
 		// 窗口初始化后再发布后台回调，避免读到尚未赋值的 window。
 		logging.Log.SetSink(func(e logging.Entry) {
+			if a.isQuitting() || a.window == nil || a.window.IsDestroyed() {
+				return
+			}
 			a.window.Update(func() {
 				a.mu.Lock()
 				a.logs = append(a.logs, e)
@@ -444,7 +463,11 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		})
 		a.startAgyUsage()
 		if a.engine != nil {
-			go a.engine.WatchLogins(loginCtx)
+			loginWG.Add(1)
+			go func() {
+				defer loginWG.Done()
+				a.engine.WatchLogins(loginCtx)
+			}()
 			// 查看面板正盯着的账号不做空闲关闭，免得看到一半断开。
 			a.engine.SetIdleGuard(func(id int64) bool {
 				a.mu.Lock()
@@ -464,7 +487,7 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 		a.startUpdateLoop()
 		if a.engine != nil {
 			a.engine.EnsureExtensionBridge(func() {
-				if a.window == nil {
+				if a.isQuitting() || a.window == nil || a.window.IsDestroyed() {
 					return
 				}
 				a.window.Update(func() {})
@@ -930,9 +953,19 @@ func (a *App) configuredBrowsers() []store.Browser {
 	return a.browserRows
 }
 
+func (a *App) isQuitting() bool {
+	if a == nil {
+		return true
+	}
+	a.mu.Lock()
+	q := a.quitting
+	a.mu.Unlock()
+	return q
+}
+
 // syncUI 把界面更新送回窗口线程。
 func (a *App) syncUI(fn func()) {
-	if fn == nil || a.window == nil {
+	if fn == nil || a.isQuitting() || a.window == nil || a.window.IsDestroyed() {
 		return
 	}
 	a.window.Update(fn)
@@ -940,6 +973,9 @@ func (a *App) syncUI(fn func()) {
 
 // postUI 把后台结果送回界面；没有窗口时由下一帧统一应用。
 func (a *App) postUI(fn func()) {
+	if fn == nil || a.isQuitting() {
+		return
+	}
 	if a.window != nil {
 		if !a.window.IsDestroyed() {
 			a.window.Update(fn)
@@ -947,7 +983,9 @@ func (a *App) postUI(fn func()) {
 		return
 	}
 	a.mu.Lock()
-	a.uiUpdates = append(a.uiUpdates, fn)
+	if !a.quitting {
+		a.uiUpdates = append(a.uiUpdates, fn)
+	}
 	a.mu.Unlock()
 }
 

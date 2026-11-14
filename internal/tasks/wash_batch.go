@@ -16,10 +16,16 @@ func (e *Engine) parallelWashBatchLimit(pending []Task, index int, first Task, l
 	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || !freshWashItem(first) {
 		return limit
 	}
+	if first.maxBatch == 1 {
+		return 1
+	}
+	if first.maxBatch > 1 {
+		limit = min(limit, first.maxBatch)
+	}
 	matching := 1
 	for i := index + 1; i < len(pending); i++ {
 		item := pending[i]
-		if item.Platform != first.Platform || !freshWashItem(item) {
+		if item.Platform != first.Platform || item.maxBatch != first.maxBatch || !freshWashItem(item) {
 			continue
 		}
 		if item.Prompt != first.Prompt {
@@ -37,8 +43,11 @@ func freshWashItem(item Task) bool {
 // bundleWashTasks 只合并尚未发送、提示词相同的豆包洗图。
 func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImages int, now time.Time) (Task, []int) {
 	indices := []int{index}
-	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || !freshWashItem(first) {
+	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || !freshWashItem(first) || first.maxBatch == 1 {
 		return first, indices
+	}
+	if first.maxBatch > 1 {
+		maxImages = min(maxImages, first.maxBatch)
 	}
 	if row, ok := e.browserByID(first.BrowserID); ok {
 		if cap := e.capFor(first.Platform); cap > 0 {
@@ -49,7 +58,7 @@ func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImage
 	batch := []Task{first}
 	for i := index + 1; i < len(pending) && len(batch) < maxImages; i++ {
 		item := pending[i]
-		if item.Platform != first.Platform || item.Prompt != first.Prompt || !freshWashItem(item) {
+		if item.Platform != first.Platform || item.Prompt != first.Prompt || item.maxBatch != first.maxBatch || !freshWashItem(item) {
 			continue
 		}
 		batch = append(batch, item)
@@ -61,66 +70,78 @@ func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImage
 	first.Images = make([]string, len(batch))
 	for i := range batch {
 		first.Images[i] = batch[i].Images[0]
+		if batch[i].splitModeration {
+			first.splitModeration = true
+		}
 	}
 	first.batch = batch
 	return first, indices
 }
 
-func (e *Engine) saveWashBatch(ctx context.Context, t *Task, results []strategy.Result, indices []int) error {
-	if len(results) != len(t.batch) {
-		return fmt.Errorf("本批发送 %d 张，但只取得 %d 张结果，未按源图保存，请检查豆包页面", len(t.batch), len(results))
+// saveVerifiedWashBatch 按已校验的源图关联逐张保存豆包批量结果，允许少于发送张数但禁止无关联猜测。
+// 返回尚未落盘的结果切片，供上层仅在真正未匹配或保存失败时写入「待核对」。
+func (e *Engine) saveVerifiedWashBatch(ctx context.Context, t *Task, results []strategy.Result, indices []int) ([]strategy.Result, error) {
+	if len(results) < 1 || len(results) > len(t.batch) {
+		return results, fmt.Errorf("本批发送 %d 张，但取得 %d 张结果，未按源图保存，请检查豆包页面", len(t.batch), len(results))
 	}
 	if len(indices) != len(results) {
-		return errors.New("豆包未提供完整的源图关联，未按源图保存")
+		return results, errors.New("豆包未提供完整的源图关联，未按源图保存")
 	}
-	ordered := make([]strategy.Result, len(results))
-	seen := make([]bool, len(results))
-	for i, index := range indices {
-		if index < 1 || index > len(results) || seen[index-1] {
-			return errors.New("豆包源图关联缺失或重复，未按源图保存")
+	seen := make([]bool, len(t.batch))
+	for _, index := range indices {
+		if index < 1 || index > len(t.batch) || seen[index-1] {
+			return results, errors.New("豆包源图关联缺失或重复，未按源图保存")
 		}
 		seen[index-1] = true
-		ordered[index-1] = results[i]
 	}
-	// 调用方按这个顺序保留发生保存错误后尚未落盘的结果。
-	copy(results, ordered)
-	for i := range t.batch {
-		item := &t.batch[i]
+	for i, index := range indices {
+		item := &t.batch[index-1]
 		item.BrowserID = t.BrowserID
 		saved, err := e.saveResults(ctx, item, strategy.Factory(t.Platform), nil, results[i:i+1])
 		item.Results = append(item.Results, saved...)
 		t.Results = append(t.Results, saved...)
 		if err != nil {
-			return err
+			if len(saved) == 0 {
+				return results[i:], err
+			}
+			return results[i+1:], err
 		}
 		if len(saved) != 1 {
-			return fmt.Errorf("第 %d 张结果未通过保存校验", i+1)
+			return results[i:], fmt.Errorf("第 %d 张结果未通过保存校验", index)
 		}
 	}
-	return nil
+	if len(results) < len(t.batch) {
+		return nil, fmt.Errorf("本批发送 %d 张，已按源图关联保存 %d 张，缺少 %d 张结果，请重试未完成源图", len(t.batch), len(t.Results), len(t.batch)-len(t.Results))
+	}
+	return nil, nil
+}
+
+func (e *Engine) saveWashBatch(ctx context.Context, t *Task, results []strategy.Result, indices []int) error {
+	_, err := e.saveVerifiedWashBatch(ctx, t, results, indices)
+	return err
 }
 
 func (e *Engine) saveExtensionWash(ctx context.Context, t *Task, results []strategy.Result, indices []int, resultErr error) error {
 	want := max(1, len(t.batch))
-	if resultErr == nil && len(results) != want {
-		resultErr = fmt.Errorf("本批发送 %d 张，但取得 %d 张结果，未按源图保存，请检查豆包页面", want, len(results))
-	}
-	if resultErr == nil && want > 1 {
-		resultErr = e.saveWashBatch(ctx, t, results, indices)
-	} else if resultErr == nil {
-		var saved []string
-		saved, resultErr = e.saveResults(ctx, t, strategy.Factory(t.Platform), nil, results)
-		t.Results = append(t.Results, saved...)
-		if resultErr == nil && len(saved) != 1 {
-			resultErr = errors.New("未保存到有效结果图片")
+	unsaved := results
+	if resultErr == nil {
+		if want > 1 {
+			unsaved, resultErr = e.saveVerifiedWashBatch(ctx, t, results, indices)
+		} else if len(results) != 1 {
+			resultErr = fmt.Errorf("本批发送 1 张，但取得 %d 张结果，未按源图保存，请检查豆包页面", len(results))
+		} else {
+			var saved []string
+			saved, resultErr = e.saveResults(ctx, t, strategy.Factory(t.Platform), nil, results)
+			t.Results = append(t.Results, saved...)
+			if resultErr == nil && len(saved) != 1 {
+				resultErr = errors.New("未保存到有效结果图片")
+			} else if resultErr == nil && len(saved) == 1 {
+				unsaved = nil
+			}
 		}
 	}
-	if resultErr != nil && ctx.Err() == nil && len(results) > 0 {
-		remaining := results
-		if len(results) == want {
-			remaining = results[min(len(t.Results), len(results)):]
-		}
-		count, dir, keepErr := e.saveUnmatchedWash(ctx, t, remaining)
+	if resultErr != nil && ctx.Err() == nil && len(unsaved) > 0 {
+		count, dir, keepErr := e.saveUnmatchedWash(ctx, t, unsaved)
 		if count > 0 {
 			resultErr = fmt.Errorf("%w；%d 张未匹配结果保存在 %s", resultErr, count, dir)
 		}
@@ -162,6 +183,7 @@ func batchMembers(t Task) []Task {
 	for i := range out {
 		item := &out[i]
 		item.BrowserID, item.Status, item.Attempts, item.Error = t.BrowserID, t.Status, t.Attempts, t.Error
+		item.AccountName, item.StartedAt, item.Elapsed, item.Undispatched = t.AccountName, t.StartedAt, t.Elapsed, t.Undispatched
 		item.slot, item.ranOn, item.soften = t.slot, t.ranOn, t.soften
 		item.noUse = t.noUse
 		item.Reassigned, item.ReassignWhy, item.Rewritten = t.Reassigned, t.ReassignWhy, t.Rewritten

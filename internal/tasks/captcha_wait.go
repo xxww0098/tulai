@@ -227,7 +227,9 @@ func (e *Engine) setAwaiting(t *Task, on bool) {
 			shown.Status = StatusRunning
 			shown.Error = ""
 		}
-		e.view.Update(shown)
+		for _, item := range batchMembers(shown) {
+			e.view.Update(item)
+		}
 	}
 	e.notify()
 }

@@ -347,8 +347,11 @@ func TestWorkspaceResponsiveQueue(t *testing.T) {
 				}
 				tt := ui.NewTester(a.view, width, 720)
 				tt.SetDark(dark)
-				for _, label := range []string{"检查更新", "服务商选择", "本次发送至：豆包", "当前服务商：豆包", "开始出图", "出图进度", "排队中", "添加图片", "运行日志"} {
+				for _, label := range []string{"检查更新", "服务商选择", "本次发送至：豆包", "当前服务商：豆包", "开始出图", "出图进度", "完成 0 · 进行中 0 · 排队 1 · 失败 0 · 0/1 并发", "出图结果会出现在这里", "添加图片", "运行日志"} {
 					assertVisible(t, tt, label, float32(width), 720)
+				}
+				if tt.HasText("排队中") {
+					t.Fatal("pending task should stay hidden in results pane")
 				}
 			})
 		}

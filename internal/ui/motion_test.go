@@ -231,10 +231,16 @@ func TestManyGeneratingCardsStayReadable(t *testing.T) {
 	queue[2].Error = "额度用尽"
 	a := &App{queue: queue}
 	tt := ui.NewTester(a.view, 1280, 2800)
-	for _, label := range []string{"排队中", "进行中", "完成", "失败", "账号额度已用完", "换账号重试"} {
+	for _, label := range []string{"排队 1", "进行中", "完成", "失败", "账号额度已用完", "换账号重试"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q", label)
 		}
+	}
+	if tt.HasText("img-00.png") {
+		t.Fatal("pending card should not render in results pane")
+	}
+	if tt.HasText("排队中") {
+		t.Fatal("pending status pill should not render in results pane")
 	}
 	if _, ok := tt.Find("img-39.png"); !ok {
 		t.Fatal("last card was not built")

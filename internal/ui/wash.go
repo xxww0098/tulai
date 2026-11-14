@@ -137,6 +137,28 @@ func (a *App) washPendingPaths() []string {
 	return out
 }
 
+// washSoloPaths 返回上次因内容审核失败的未洗源图路径，继续洗图时单独发送，避免再整批连坐。
+func (a *App) washSoloPaths() []string {
+	if a == nil {
+		return nil
+	}
+	st := a.stateOf(pageWash)
+	lastModeration := make(map[string]bool, len(st.queue))
+	for _, task := range st.queue {
+		if len(task.Images) != 1 {
+			continue
+		}
+		lastModeration[filepath.Clean(task.Images[0])] = tasks.ClassifyFailure(task.Status, task.Error).Class == tasks.FailModeration
+	}
+	var out []string
+	for _, src := range st.sources {
+		if !src.Washed && lastModeration[filepath.Clean(src.Path)] {
+			out = append(out, src.Path)
+		}
+	}
+	return out
+}
+
 func (a *App) beginWashRun() {
 	for i := range a.sources {
 		a.sources[i].Washing = false

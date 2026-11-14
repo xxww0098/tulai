@@ -491,37 +491,70 @@ func (a *App) tasksForSession(page int, items []tasks.Task) []store.SessionTask 
 		}
 		outputs := strings.Join(task.Results, "\n")
 		status := string(task.Status)
-		name := ""
-		if task.BrowserID > 0 {
-			name = a.accountName(task.BrowserID)
+		name := a.sessionAccountName(task)
+		elapsed := task.Elapsed
+		if elapsed <= 0 && !task.StartedAt.IsZero() && (task.Status == tasks.StatusRunning || task.Status == tasks.StatusRetry || task.Status == tasks.StatusAwaitUser) {
+			elapsed = time.Since(task.StartedAt)
+			if elapsed <= 0 {
+				elapsed = time.Millisecond
+			}
 		}
 		out = append(out, store.SessionTask{
-			Ord:         ord,
-			Prompt:      task.Prompt,
-			Source:      source,
-			Platform:    task.Platform,
-			AccountID:   task.BrowserID,
-			AccountName: name,
-			Status:      status,
-			Outputs:     outputs,
-			Error:       task.Error,
-			At:          a.stampAt(stampKey(page, ord, status, source, outputs)),
+			Ord:          ord,
+			Prompt:       task.Prompt,
+			Source:       source,
+			Platform:     task.Platform,
+			AccountID:    task.BrowserID,
+			AccountName:  name,
+			Status:       status,
+			Outputs:      outputs,
+			Error:        task.Error,
+			At:           a.stampAt(stampKey(page, ord, status, source, outputs)),
+			ElapsedMS:    elapsed.Milliseconds(),
+			Undispatched: task.Undispatched,
 		})
 	}
 	return out
+}
+
+func (a *App) sessionAccountName(task tasks.Task) string {
+	if task.BrowserID > 0 {
+		for _, b := range a.browserRows {
+			if b.ID == task.BrowserID && b.Name != "" {
+				return b.Name
+			}
+		}
+		if a.store != nil {
+			for _, b := range a.store.Browsers() {
+				if b.ID == task.BrowserID && b.Name != "" {
+					return b.Name
+				}
+			}
+		}
+	}
+	if name := strings.TrimSpace(task.AccountName); name != "" {
+		return name
+	}
+	if task.BrowserID > 0 {
+		return a.accountName(task.BrowserID)
+	}
+	return ""
 }
 
 func queueFromSession(items []store.SessionTask) []tasks.Task {
 	out := make([]tasks.Task, 0, len(items))
 	for _, item := range items {
 		task := tasks.Task{
-			Index:     item.Ord,
-			Platform:  item.Platform,
-			BrowserID: item.AccountID,
-			Prompt:    item.Prompt,
-			Status:    tasks.Status(item.Status),
-			Error:     item.Error,
-			Results:   splitLines(item.Outputs),
+			Index:        item.Ord,
+			Platform:     item.Platform,
+			BrowserID:    item.AccountID,
+			AccountName:  item.AccountName,
+			Prompt:       item.Prompt,
+			Status:       tasks.Status(item.Status),
+			Error:        item.Error,
+			Results:      splitLines(item.Outputs),
+			Elapsed:      time.Duration(item.ElapsedMS) * time.Millisecond,
+			Undispatched: item.Undispatched,
 		}
 		// 历史记录没有提交上下文，活动态不能当作仍在执行或直接续发。
 		switch task.Status {

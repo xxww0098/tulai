@@ -13,10 +13,21 @@ let cancelRequested = false
 let networkTask = ''
 let networkFault = ''
 let networkAccepted = false
+let networkStreaming = false
+let networkStreamAt = 0
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === 'NETWORK_RAW_IMAGES') {
     if (msg.taskId && msg.taskId === networkTask && Page.acceptRawImages) Page.acceptRawImages(msg.pairs)
+    sendResponse({ ok: true })
+    return true
+  }
+  if (msg && msg.type === 'NETWORK_STREAM') {
+    if (!msg.taskId || !networkTask || msg.taskId === networkTask) {
+      if (msg.taskId && !networkTask) networkTask = String(msg.taskId)
+      networkStreaming = !!msg.streaming
+      networkStreamAt = Date.now()
+    }
     sendResponse({ ok: true })
     return true
   }
@@ -62,6 +73,8 @@ async function handleCommand(env) {
       networkTask = String(env.taskId || '')
       networkFault = ''
       networkAccepted = false
+      networkStreaming = false
+      networkStreamAt = 0
       return sendPrompt(env, payload)
     case TULAI.commands.waitResult:
       return waitResult(env, payload)
@@ -549,8 +562,16 @@ async function confirmSend(env, payload, button, rec) {
 async function resultAck(env, payload, images) {
   const conversation = doubaoConversation()
   let indices = null
-  if (Array.isArray(payload.expectedAttachments) && payload.expectedAttachments.length > 1 && payload.expectedAttachments.length === images.length && globalThis.TULAIDoubaoSourceMap) {
-    indices = await TULAIDoubaoSourceMap.fromConversation(conversation, payload.expectedAttachments, images)
+  if (Array.isArray(payload.expectedAttachments) && payload.expectedAttachments.length > 1 && images.length >= 1 && images.length <= payload.expectedAttachments.length && globalThis.TULAIDoubaoSourceMap) {
+    if (typeof TULAIDoubaoSourceMap.resolveFromConversation === 'function') {
+      const resolved = await TULAIDoubaoSourceMap.resolveFromConversation(conversation, payload.expectedAttachments, images)
+      if (resolved && Array.isArray(resolved.images) && Array.isArray(resolved.indices)) {
+        images = resolved.images
+        indices = resolved.indices
+      }
+    } else if (typeof TULAIDoubaoSourceMap.fromConversation === 'function') {
+      indices = await TULAIDoubaoSourceMap.fromConversation(conversation, payload.expectedAttachments, images)
+    }
   }
   return TULAI.ack(env, {
     name: payload.name,
@@ -579,7 +600,8 @@ async function waitResult(env, payload) {
     const images = Page.resultImages(document, pageMark).filter(function (item) {
       return item && item.url && !(typeof Page.isPlaceholderURL === 'function' && Page.isPlaceholderURL(item.url))
     })
-    const busy = Page.resultsBusy(document, pageMark)
+    const streamBusy = networkStreaming && (!env.taskId || !networkTask || networkTask === String(env.taskId)) && (Date.now() - networkStreamAt < 45000)
+    const busy = Page.resultsBusy(document, pageMark) || streamBusy
     if (!images.length) {
       if (!busy && /(^|\.)doubao\.com$/i.test(location.hostname) && globalThis.TULAIQuota && typeof Page.assistantText === 'function') {
         const quota = TULAIQuota.imageReplyBlock(Page.assistantText(document, pageMark))
@@ -590,7 +612,7 @@ async function waitResult(env, payload) {
     }
     const urls = images.map(function (item) { return item.url }).join('\n')
     const expectedCount = Array.isArray(payload.expectedAttachments) ? payload.expectedAttachments.length : 0
-    // 豆包：实图还在、生成指示没了，同一组地址再稳约 3 秒；多图批量未齐时先滚到底部唤醒懒加载并放宽等待窗口。
+    // 豆包：实图还在、生成指示没了，同一组地址再稳约 3 秒；多图批量未齐时先循环滚动唤醒虚拟列表并放宽等待窗口。
     if (typeof Page.replyDone === 'function') {
       const now = Date.now()
       if (expectedCount > 1 && images.length < expectedCount && !busy && typeof Page.newAssistants === 'function') {
@@ -599,7 +621,10 @@ async function waitResult(env, payload) {
           const msgs = Page.newAssistants(document, pageMark)
           const tail = msgs && msgs.length ? msgs[msgs.length - 1] : null
           if (tail && typeof tail.scrollIntoView === 'function') {
-            try { tail.scrollIntoView({ block: 'end' }) } catch (_) {}
+            const blocks = ['end', 'start', 'center']
+            const step = pageMark.tailScrollStep || 0
+            pageMark.tailScrollStep = step + 1
+            try { tail.scrollIntoView({ block: blocks[step % blocks.length] }) } catch (_) {}
           }
         }
       }

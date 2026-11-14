@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +114,16 @@ func TestSelectIgnoresExtensionAndAcceptsGitHubDots(t *testing.T) {
 }
 
 func TestDetectMode(t *testing.T) {
+	uninstallDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(uninstallDir, "Uninstall.exe"), []byte("uninst"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mygoFilesDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mygoFilesDir, ".mygo-files"), []byte("tulai.exe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	portableDir := t.TempDir()
+
 	cases := []struct {
 		goos, exe string
 		want      Mode
@@ -122,6 +133,9 @@ func TestDetectMode(t *testing.T) {
 		{"windows", `C:\Users\a\AppData\Local\Programs\tulai\tulai.exe`, ModeWindowsSetup},
 		{"windows", `C:\Program Files\tulai\tulai.exe`, ModeWindowsSetup},
 		{"windows", `C:\Users\a\AppData\Local\Temp\go-build\tulai.exe`, ModeWindowsSetup},
+		{"windows", filepath.Join(uninstallDir, "tulai.exe"), ModeWindowsSetup},
+		{"windows", filepath.Join(mygoFilesDir, "tulai.exe"), ModeWindowsSetup},
+		{"windows", filepath.Join(portableDir, "tulai.exe"), ModeWindowsExe},
 		{"windows", `D:\Portable\tulai.exe`, ModeWindowsExe},
 		{"linux", "/usr/bin/tulai", ModeLinuxDeb},
 		{"linux", "/opt/tulai/tulai", ModeLinuxDeb},
@@ -279,6 +293,9 @@ func TestRedirectStaysOnAllowedHosts(t *testing.T) {
 }
 
 func TestInstallLinuxUserArchive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell binary and symlink test")
+	}
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "app.tar.gz")
 	writeTar(t, archive, map[string]string{
@@ -371,23 +388,24 @@ func TestInstallDebIsManual(t *testing.T) {
 func TestWindowsReplaceScript(t *testing.T) {
 	script := WindowsScript()
 	for _, needle := range []string{
-		"Get-Process", "Move-Item -LiteralPath $Source", "Start-Process -FilePath $Destination",
-		"Start-Process -FilePath $Installer", ".previous",
+		"Get-Process", "$staged", "Move-Item -LiteralPath $staged -Destination $Destination",
+		"Start-Target $Destination", "Start-Process -FilePath $Installer", ".previous",
 		// The wait gives up instead of chasing a recycled process id.
 		"$tries -lt 300",
 		// The silent install goes over the copy the user runs, and the app
 		// is opened again: a silent install skips the finish page.
 		"$installArgs = @('/S', ('/D=' + $dir))",
-		"if ($Destination -ne '' -and (Test-Path -LiteralPath $Destination)) { Start-Process -FilePath $Destination }",
+		"if ($Source -eq '') {",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("script missing %s:\n%s", needle, script)
 		}
 	}
 	args := WindowsHelperArgs("replace.ps1", 42, `D:\Portable\new.exe`, `D:\Portable\tulai.exe`, "")
-	joined := strings.Join(args, "\n")
-	if !strings.Contains(joined, "42") || !strings.Contains(joined, `D:\Portable\tulai.exe`) {
-		t.Fatalf("args: %#v", args)
+	for _, want := range []string{"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "42", `D:\Portable\tulai.exe`} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
 	}
 	out, err := Install(Options{
 		Mode:       ModeWindowsExe,
@@ -399,8 +417,25 @@ func TestWindowsReplaceScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Quit || out.Helper != "powershell.exe" || !strings.Contains(strings.Join(out.HelperArgs, " "), "42") {
+	cleanupHelperScript := func(helperArgs []string) {
+		for i := 0; i+1 < len(helperArgs); i++ {
+			if helperArgs[i] == "-File" {
+				_ = os.RemoveAll(filepath.Dir(helperArgs[i+1]))
+			}
+		}
+	}
+	t.Cleanup(func() { cleanupHelperScript(out.HelperArgs) })
+	if !out.Quit || out.Helper != "powershell.exe" || !slices.Contains(out.HelperArgs, "42") || !slices.Contains(out.HelperArgs, "-NonInteractive") {
 		t.Fatalf("windows outcome: %+v", out)
+	}
+
+	relaunchOut, err := PrepareWindowsRelaunch(`D:\Custom\tulai\tulai.exe`, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cleanupHelperScript(relaunchOut.HelperArgs) })
+	if !relaunchOut.Quit || relaunchOut.Helper != "powershell.exe" || slices.Contains(relaunchOut.HelperArgs, "-Source") || !slices.Contains(relaunchOut.HelperArgs, `D:\Custom\tulai\tulai.exe`) {
+		t.Fatalf("relaunch outcome: %+v", relaunchOut)
 	}
 	// The portable file is not opened until PowerShell runs.
 	if runtime.GOOS == "windows" {
@@ -409,6 +444,9 @@ func TestWindowsReplaceScript(t *testing.T) {
 }
 
 func TestMacDestination(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX path separator test")
+	}
 	bundle, inPlace := MacDestination("/Applications/tulai.app/Contents/MacOS/tulai", "/Users/a")
 	if bundle != "/Applications/tulai.app" || !inPlace {
 		t.Fatalf("bundle dest %s inPlace %v", bundle, inPlace)

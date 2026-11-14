@@ -46,6 +46,8 @@ type Engine struct {
 	view          *QueueView
 	cancel        context.CancelFunc
 	running       bool
+	runDone       chan struct{}
+	closing       bool
 	sessions      map[string]*cdp.Session // key: backend:platform:browserID
 	washChats     map[*cdp.Session]washChat
 	extWashChats  map[int64]extensionWashChat
@@ -242,8 +244,11 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 	return e.driveLocked(ctx, opts, queue, onTask, onProgress, attempt)
 }
 
-// claimRun 在持有 e.mu 时占用引擎。任务已在跑时返回错误，锁仍由调用方释放。
+// claimRun 在持有 e.mu 时占用引擎。任务已在跑或正在退出时返回错误，锁仍由调用方释放。
 func (e *Engine) claimRun() error {
+	if e.closing {
+		return fmt.Errorf("应用正在退出")
+	}
 	if e.running {
 		return fmt.Errorf("任务已在执行中")
 	}
@@ -276,8 +281,10 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	nudge := make(chan struct{}, 1)
+	done := make(chan struct{})
 	e.cancel = cancel
 	e.running = true
+	e.runDone = done
 	e.runBrowsers = make(map[int64]struct{})
 	e.wake = nudge
 	e.mu.Unlock()
@@ -292,12 +299,16 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 		logging.Event(logging.Line{Stage: "queue", Msg: "任务结束", Elapsed: time.Since(started)})
 		e.mu.Lock()
 		e.running = false
+		if e.runDone == done {
+			e.runDone = nil
+		}
 		e.washChats = nil
 		e.extWashChats = nil
 		e.cancel = nil
 		if e.wake == nudge {
 			e.wake = nil
 		}
+		close(done)
 		e.mu.Unlock()
 	}()
 
@@ -425,8 +436,11 @@ func (e *Engine) Wake() {
 	e.poke()
 }
 
-// Stop 停止任务并关闭会话。
+// Stop 停止任务。
 func (e *Engine) Stop() {
+	if e == nil {
+		return
+	}
 	e.mu.Lock()
 	cancel := e.cancel
 	e.mu.Unlock()
@@ -434,6 +448,36 @@ func (e *Engine) Stop() {
 		cancel()
 		logging.Log.Info("已请求停止任务…")
 	}
+}
+
+// StopAndWait 请求停止当前任务并等待其完全退出。
+func (e *Engine) StopAndWait() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	cancel := e.cancel
+	done := e.runDone
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		logging.Log.Info("已请求停止任务…")
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+// Shutdown 在应用退出时按序停止任务、禁止再起空闲定时器并关闭全部会话。
+func (e *Engine) Shutdown() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.closing = true
+	e.mu.Unlock()
+	e.StopAndWait()
+	e.CloseSessions()
 }
 
 // execute 执行单个任务（含重试）。
@@ -494,7 +538,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			}
 			t.Status = StatusFailed
 			msg := err.Error()
-			if strings.Contains(msg, "未按源图保存") || strings.Contains(msg, "未匹配结果保存在 ") || isModeration(err) || classifyFault(err) != faultNone || errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, strategy.ErrPlatformReply) {
+			if strings.Contains(msg, "未按源图保存") || strings.Contains(msg, "已按源图关联保存") || strings.Contains(msg, "未匹配结果保存在 ") || isModeration(err) || classifyFault(err) != faultNone || errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, strategy.ErrPlatformReply) {
 				t.Error = msg
 			} else {
 				t.Error = "本批已发送或发送状态未确认，请检查豆包结果后再重试：" + msg
@@ -1134,6 +1178,9 @@ func (e *Engine) SetIdleGuard(fn func(id int64) bool) {
 func (e *Engine) armIdleClose(id int64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.closing {
+		return
+	}
 	delay := e.idleAfter
 	if delay <= 0 {
 		delay = browserIdleClose
@@ -1155,7 +1202,7 @@ func (e *Engine) cancelIdleCloseLocked(id int64) {
 // idleExpired 关掉保活超时的浏览器；引擎在跑或界面还在看就顺延。
 func (e *Engine) idleExpired(id int64) {
 	e.mu.Lock()
-	if e.running {
+	if e.running || e.closing {
 		e.mu.Unlock()
 		return
 	}
@@ -1166,7 +1213,7 @@ func (e *Engine) idleExpired(id int64) {
 		return
 	}
 	e.mu.Lock()
-	if e.running {
+	if e.running || e.closing {
 		e.mu.Unlock()
 		return
 	}
@@ -1840,9 +1887,25 @@ func watermarkStaticImage(data []byte, format string) bool {
 func (e *Engine) CloseSessions() {
 	e.closeExtensionBridge()
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	for k, s := range e.sessions {
 		s.Close()
 		delete(e.sessions, k)
+	}
+	for id, timer := range e.idleClose {
+		if timer != nil {
+			timer.Stop()
+		}
+		delete(e.idleClose, id)
+	}
+	var dirs []string
+	for id, dir := range e.firefoxAddons {
+		if dir != "" {
+			dirs = append(dirs, dir)
+		}
+		delete(e.firefoxAddons, id)
+	}
+	e.mu.Unlock()
+	for _, dir := range dirs {
+		_ = os.RemoveAll(dir)
 	}
 }
