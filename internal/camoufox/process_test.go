@@ -85,3 +85,11 @@ func TestCallReplyCancellationAndExit(t *testing.T) {
 		t.Fatal("pending calls leaked")
 	}
 }
+
+func TestStripANSIErrorFormatting(t *testing.T) {
+	got := stripANSI("\x1b[2mBrowserContext.new_page: \x1b[22mTarget page, context or browser has been closed\n")
+	want := "BrowserContext.new_page: Target page, context or browser has been closed\n"
+	if got != want {
+		t.Fatalf("stripANSI=%q want %q", got, want)
+	}
+}

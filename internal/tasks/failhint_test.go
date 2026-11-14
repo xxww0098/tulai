@@ -2,11 +2,13 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
@@ -127,5 +129,38 @@ func TestJitterStayInBounds(t *testing.T) {
 		if got < 5*time.Second || got > 15*time.Second {
 			t.Fatalf("unit %d → %s", i, got)
 		}
+	}
+}
+
+func TestMapExtErrModerationDedupsPrefixes(t *testing.T) {
+	got := mapExtErr(&extbridge.ProtoError{
+		Code:    extbridge.EModeration,
+		Message: "审核不通过: 很抱歉，由于安全审核原因，图片无法生成。",
+	}, extAck{}, "豆包")
+	if !errors.Is(got, strategy.ErrModeration) {
+		t.Fatalf("expected ErrModeration, got %v", got)
+	}
+	text := got.Error()
+	if strings.Contains(text, "E_MODERATION") {
+		t.Fatalf("unexpected raw code prefix in %q", text)
+	}
+	if strings.Count(text, "审核不通过") != 1 || !strings.Contains(text, "很抱歉") {
+		t.Fatalf("unexpected duplicated prefix in %q", text)
+	}
+	if hint := ClassifyFailure(StatusFailed, text); hint.Class != FailModeration || hint.Button != "改提示词重试" {
+		t.Fatalf("unexpected moderation hint: %+v", hint)
+	}
+
+	empty := mapExtErr(&extbridge.ProtoError{
+		Code:    extbridge.EModeration,
+		Message: "E_MODERATION: 审核不通过",
+	}, extAck{}, "豆包")
+	if !errors.Is(empty, strategy.ErrModeration) || empty.Error() != strategy.ErrModeration.Error() {
+		t.Fatalf("unexpected empty moderation error: %v", empty)
+	}
+
+	unmatched := ClassifyFailure(StatusFailed, "返回 1 张结果（期望 2 张）；1 张未匹配结果保存在 /tmp/待核对")
+	if unmatched.Class != FailUnmatched || unmatched.Button != "查看待核对" {
+		t.Fatalf("unexpected unmatched hint: %+v", unmatched)
 	}
 }

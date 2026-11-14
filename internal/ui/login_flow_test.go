@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -222,5 +223,22 @@ func saveFrame(t *testing.T, dir, name string, tt *ui.Tester) {
 	defer f.Close()
 	if err := png.Encode(f, tt.Image()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIsClosedBrowserError(t *testing.T) {
+	closedCases := []string{
+		"Browser.open_url: BrowserContext.new_page: Target page, context or browser has been closed",
+		"\x1b[2mBrowserContext.new_page: \x1b[22mTarget page, context or browser has been closed",
+		"Camoufox 账号窗口已关闭",
+		"camoufox driver closed",
+	}
+	for _, msg := range closedCases {
+		if !isClosedBrowserError(errors.New(msg)) {
+			t.Fatalf("expected closed error match for %q", msg)
+		}
+	}
+	if isClosedBrowserError(nil) || isClosedBrowserError(errors.New("proxy connection failed")) {
+		t.Fatal("non-closed error should return false")
 	}
 }

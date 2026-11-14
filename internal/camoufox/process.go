@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,6 +19,12 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+var ansiEscapeRe = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+func stripANSI(s string) string {
+	return ansiEscapeRe.ReplaceAllString(s, "")
+}
 
 type Options struct {
 	Profile    string   `json:"profile"`
@@ -160,7 +167,7 @@ func (p *Process) Call(ctx context.Context, target, method string, params, out a
 		return errors.New("Camoufox 已关闭")
 	case result := <-ch:
 		if result.Error != "" {
-			return fmt.Errorf("%s: %s", method, result.Error)
+			return fmt.Errorf("%s: %s", method, strings.TrimSpace(stripANSI(result.Error)))
 		}
 		if out != nil && len(result.Result) > 0 {
 			return json.Unmarshal(result.Result, out)

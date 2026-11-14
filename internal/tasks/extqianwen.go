@@ -698,7 +698,7 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 			}
 		}
 	}
-	if t.ranOn <= 0 {
+	if t.BrowserID > 0 {
 		t.ranOn = t.BrowserID
 	}
 	wait := time.Duration(0)
@@ -706,6 +706,9 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		secs := e.opts.WaitResultSeconds
 		if secs <= 0 {
 			secs = 120
+		}
+		if len(t.batch) > 1 && secs >= 120 && secs < 240 {
+			secs = 240
 		}
 		wait = time.Duration(secs) * time.Second
 	}
@@ -1284,7 +1287,23 @@ func mapExtErr(err error, body extAck, platform string) error {
 	case extbridge.ERateLimit:
 		return fmt.Errorf("%w: %s", strategy.ErrAccountRate, err.Error())
 	case extbridge.EModeration:
-		return fmt.Errorf("%w: %s", strategy.ErrModeration, err.Error())
+		msg := strings.TrimSpace(err.Error())
+		for {
+			trimmed := msg
+			for _, prefix := range []string{"E_MODERATION:", "E_MODERATION：", "审核不通过:", "审核不通过："} {
+				if strings.HasPrefix(trimmed, prefix) {
+					trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+				}
+			}
+			if trimmed == msg {
+				break
+			}
+			msg = trimmed
+		}
+		if msg == "" || msg == "E_MODERATION" || msg == "审核不通过" {
+			return strategy.ErrModeration
+		}
+		return fmt.Errorf("%w: %s", strategy.ErrModeration, msg)
 	case extbridge.ENotLoggedIn:
 		loginErr := errQianwenLogin
 		if platform == "豆包" {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
@@ -377,4 +378,164 @@ func browserByID(t *testing.T, st *store.Store, id int64) store.Browser {
 	}
 	t.Fatalf("missing browser %d", id)
 	return store.Browser{}
+}
+
+func TestFailureRotationWaitsForBusyTargetAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		wash bool
+	}{
+		{name: "single", wash: false},
+		{name: "wash_batch", wash: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := openRotateStore(t)
+			if tc.wash {
+				st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+				st.Set(extbridge.SettingExtPort, freePort(t))
+			}
+			first := addNamed(t, st, "豆包", "豆包1")
+			second := addNamed(t, st, "豆包", "豆包2")
+			e := NewEngine(st, nil, nil, "")
+			e.gap = func(time.Duration) time.Duration { return 0 }
+			defer e.CloseSessions()
+
+			opts := Options{
+				Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: []string{"a.png", "b.png"},
+				Concurrency: 2, RetryCount: 1,
+			}
+			if tc.wash {
+				opts.Images = []string{"1.png", "2.png", "3.png", "4.png"}
+				opts.Wash = true
+				opts.WaitResult = true
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
+			releaseFirst := make(chan struct{})
+			firstStarted := make(chan struct{}, 1)
+			secondFailed := make(chan struct{}, 1)
+			var mu sync.Mutex
+			activeOn := map[int64]int{}
+			var overlapErr error
+			var attempts []int64
+			done := make(chan error, 1)
+
+			go func() {
+				done <- e.RunObserved(ctx, opts, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
+					mu.Lock()
+					if activeOn[task.BrowserID] > 0 && overlapErr == nil {
+						overlapErr = fmt.Errorf("account %d ran concurrently", task.BrowserID)
+					}
+					activeOn[task.BrowserID]++
+					attempts = append(attempts, task.BrowserID)
+					mu.Unlock()
+					defer func() {
+						mu.Lock()
+						activeOn[task.BrowserID]--
+						mu.Unlock()
+					}()
+
+					if task.BrowserID == second.ID && task.Attempts == 1 {
+						select {
+						case secondFailed <- struct{}{}:
+						default:
+						}
+						return errors.New("未找到「图像生成」入口")
+					}
+					if task.BrowserID == first.ID {
+						select {
+						case firstStarted <- struct{}{}:
+						default:
+						}
+						select {
+						case <-releaseFirst:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+					for i := range task.batch {
+						task.batch[i].Results = []string{task.batch[i].Images[0] + ".out"}
+					}
+					if len(task.batch) == 0 && len(task.Images) > 0 {
+						task.Results = []string{task.Images[0] + ".out"}
+					}
+					return nil
+				})
+			}()
+
+			select {
+			case <-firstStarted:
+			case <-ctx.Done():
+				t.Fatal("first account did not start")
+			}
+			select {
+			case <-secondFailed:
+			case <-ctx.Done():
+				t.Fatal("second account did not run first attempt")
+			}
+			// Wait past the 3s retry backoff while 豆包1 is still busy:
+			// the rotated batch from 豆包2 must wait for 豆包1's slot instead of hijacking 豆包1 or bouncing back to 豆包2.
+			time.Sleep(3300 * time.Millisecond)
+			mu.Lock()
+			gotOverlap := overlapErr
+			attemptCountBeforeRelease := len(attempts)
+			mu.Unlock()
+			if gotOverlap != nil {
+				close(releaseFirst)
+				t.Fatal(gotOverlap)
+			}
+			if attemptCountBeforeRelease != 2 {
+				close(releaseFirst)
+				t.Fatalf("expected rotated task to wait while 豆包1 was busy, got attempts before release: %v", attempts)
+			}
+			close(releaseFirst)
+
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			if overlapErr != nil {
+				mu.Unlock()
+				t.Fatal(overlapErr)
+			}
+			mu.Unlock()
+			for _, task := range e.View().Snapshot() {
+				if task.Status != StatusSuccess {
+					t.Fatalf("expected all tasks to succeed after waiting for target slot: %+v", task)
+				}
+			}
+		})
+	}
+}
+
+func TestFailureRotationAlternatesAccountsWithUpdatedRanOn(t *testing.T) {
+	st := openRotateStore(t)
+	first := addNamed(t, st, "豆包", "甲")
+	second := addNamed(t, st, "豆包", "乙")
+	e := NewEngine(st, nil, nil, "")
+	e.gap = func(time.Duration) time.Duration { return 0 }
+	var used []int64
+	var ranOns []int64
+	err := e.run(context.Background(), Options{
+		Platforms: []string{"豆包"}, Images: []string{"a.png"}, Concurrency: 1, RetryCount: 2,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		used = append(used, task.BrowserID)
+		ranOns = append(ranOns, task.ranOn)
+		if task.Attempts <= 2 {
+			return errors.New("页面返回失败")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{first.ID, second.ID, first.ID}
+	if len(used) != 3 || used[0] != want[0] || used[1] != want[1] || used[2] != want[2] {
+		t.Fatalf("used = %v, want %v", used, want)
+	}
+	if len(ranOns) != 3 || ranOns[0] != want[0] || ranOns[1] != want[1] || ranOns[2] != want[2] {
+		t.Fatalf("ranOn = %v, want %v", ranOns, want)
+	}
 }

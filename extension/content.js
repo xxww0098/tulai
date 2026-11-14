@@ -589,16 +589,31 @@ async function waitResult(env, payload) {
       if (refused) return refused
     }
     const urls = images.map(function (item) { return item.url }).join('\n')
-    // 豆包：实图还在、生成指示没了，同一组地址再稳约 3 秒。不看重新生成按钮。
+    const expectedCount = Array.isArray(payload.expectedAttachments) ? payload.expectedAttachments.length : 0
+    // 豆包：实图还在、生成指示没了，同一组地址再稳约 3 秒；多图批量未齐时先滚到底部唤醒懒加载并放宽等待窗口。
     if (typeof Page.replyDone === 'function') {
+      const now = Date.now()
+      if (expectedCount > 1 && images.length < expectedCount && !busy && typeof Page.newAssistants === 'function') {
+        if (!pageMark.tailScrollAt || now - pageMark.tailScrollAt >= 1200) {
+          pageMark.tailScrollAt = now
+          const msgs = Page.newAssistants(document, pageMark)
+          const tail = msgs && msgs.length ? msgs[msgs.length - 1] : null
+          if (tail && typeof tail.scrollIntoView === 'function') {
+            try { tail.scrollIntoView({ block: 'end' }) } catch (_) {}
+          }
+        }
+      }
       const signal = Page.replyDone(document, pageMark)
       if (signal && signal.done && images.length && !busy) {
-        const now = Date.now()
         if (urls !== lastURLs || !pageMark.stableAt) {
           lastURLs = urls
           pageMark.stableAt = now
         }
-        if (now - pageMark.stableAt >= 3000) {
+        const remain = typeof deadline === 'number' ? deadline - now - 1500 : 15000
+        const needStableMs = expectedCount > 1 && images.length < expectedCount
+          ? Math.min(15000, Math.max(3000, remain))
+          : 3000
+        if (now - pageMark.stableAt >= needStableMs) {
           return resultAck(env, payload, images)
         }
       } else {

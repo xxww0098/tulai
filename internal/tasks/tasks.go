@@ -49,6 +49,7 @@ type Task struct {
 	matchedSavedResult bool   // 本轮是否再次获取到本任务已成功落盘的原图
 	slot               int64  // 这次派发时占用的浏览器，完成后用来释放并发名额
 	ranOn              int64  // 实际打到的账号。轮换后 BrowserID 会改成下一个
+	avoidBrowser       int64  // 刚因普通失败换出的账号，避免目标账号忙时立刻弹回原账号
 	rotated            bool   // 失败后已改派，调度器要把任务放回队列
 	pauseNote          string // quota 或 login。换号日志已经写过时，不再补一句容易看错的说明
 	replyRetried       bool   // 平台回了报错后已经在新对话里重试过一次

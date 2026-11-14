@@ -799,6 +799,10 @@ func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
 		}()
 		ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, platform.HomeURL(), false)
 		if err != nil && !errors.Is(err, browser.ErrDebugPort) {
+			if isClosedBrowserError(err) {
+				cleanupFresh = a.noteClosedLoginBrowser(b, fresh)
+				return
+			}
 			logging.Log.Errorf("启动失败: %v", err)
 			operationErr, cleanupFresh = err, true
 			return
@@ -811,6 +815,13 @@ func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
 			return
 		}
 		err = cdp.OpenURLContext(context.Background(), ws, platform.HomeURL())
+		if isClosedBrowserError(err) {
+			if a.manager != nil {
+				a.manager.StopLogin(b.ID)
+			}
+			cleanupFresh = a.noteClosedLoginBrowser(b, fresh)
+			return
+		}
 		if a.store != nil {
 			a.store.SetRunning(b.ID, true)
 		}
@@ -826,6 +837,30 @@ func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
 			logging.Log.Success("浏览器[%s]已打开%s，可在浏览器中登录账号", b.Name, b.Platform)
 		}
 	}()
+}
+
+func (a *App) noteClosedLoginBrowser(b store.Browser, fresh bool) bool {
+	if fresh {
+		logging.Log.Info("浏览器[%s] 未登录，已从列表移除", b.Name)
+		return true
+	}
+	if a.store != nil {
+		a.store.SetRunning(b.ID, false)
+	}
+	logging.Log.Info("浏览器[%s] 窗口已关闭", b.Name)
+	return false
+}
+
+func isClosedBrowserError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "target page, context or browser has been closed") ||
+		strings.Contains(lower, "browser has been closed") ||
+		strings.Contains(lower, "target closed") ||
+		strings.Contains(lower, "camoufox driver closed") ||
+		strings.Contains(lower, "camoufox 账号窗口已关闭")
 }
 
 func (a *App) stopBrowser() {

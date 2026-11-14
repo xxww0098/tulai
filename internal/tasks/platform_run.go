@@ -251,7 +251,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				if t.rotated && t.Status == StatusPending {
 					stage = "retry"
 					switch {
-					case strings.Contains(t.Error, "已换到"), t.pauseNote == "login":
+					case strings.Contains(t.Error, "已换到"), t.pauseNote == "login", t.pauseNote == "rotate", t.ReassignWhy == "失败换号":
 						// 换号那一行已经写过。登录停住用「没有可用账号」，不要再写成额度恢复。
 						msg = ""
 					case t.Platform == agy.Platform && t.Error == "":
@@ -373,7 +373,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				}
 				resource := e.slotKey(task.BrowserID)
 				if !task.submitted && !pinned && (busy[resource] || now.Before(readyAt[resource])) {
-					if id, ok := pickAccount(0, 0, busy, readyAt, now); ok {
+					if id, ok := pickAccount(0, task.avoidBrowser, busy, readyAt, now); ok {
 						task.BrowserID = id
 						pending[i] = task
 						resource = e.slotKey(id)
@@ -394,6 +394,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					continue
 				}
 				claimed = resource
+				task.avoidBrowser = 0
+				pending[i] = task
 				maxImages := washChatTasks
 				if remaining := switchAfter - completedByAccount[task.BrowserID]; switchAfter > 0 && remaining > 0 {
 					maxImages = min(maxImages, remaining)
@@ -462,7 +464,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			if used == 0 {
 				used = resource
 			}
-			if switchAfter > 0 && t.slot != 0 && t.Attempts > 0 && used > 0 {
+			if switchAfter > 0 && t.slot != 0 && t.Attempts > 0 && used > 0 && !(t.rotated && t.Status == StatusPending) {
 				lastAccount = used
 				if completedByAccount[used] < switchAfter {
 					completedByAccount[used] += len(batchMembers(t))
@@ -470,7 +472,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			}
 			readySlot := e.slotKey(used)
 			gap := time.Duration(0)
-			if t.slot != 0 {
+			if t.slot != 0 && !(t.rotated && t.Status == StatusPending && !t.submitted) {
 				gap = e.sendGap(time.Duration(e.opts.SendWait) * time.Second)
 			}
 			ready := time.Time{}
@@ -497,7 +499,11 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			}
 			if t.rotated && t.Status == StatusPending {
 				t.rotated = false
-				pending = append(pending, t)
+				if t.Attempts > 0 {
+					pending = append([]Task{t}, pending...)
+				} else {
+					pending = append(pending, t)
+				}
 				for _, item := range members {
 					events <- runEvent{task: item}
 				}
@@ -650,8 +656,9 @@ func (e *Engine) traceTask(t *Task, stage, msg string, n, nbytes int, err error)
 	if err != nil {
 		errText = err.Error()
 	}
+	id := t.ranOnOr(t.BrowserID)
 	logging.Event(logging.Line{
-		TaskID: t.Index, Platform: t.Platform, Account: e.accountName(t.BrowserID), Port: e.accountPort(t.BrowserID),
+		TaskID: t.Index, Platform: t.Platform, Account: e.accountName(id), Port: e.accountPort(id),
 		Stage: stage, Elapsed: elapsed, Images: n, Bytes: nbytes, Error: errText, Msg: msg,
 	})
 }

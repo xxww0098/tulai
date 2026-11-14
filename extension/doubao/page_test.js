@@ -346,6 +346,40 @@ async function testImageMode() {
   exitChip.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button', 'data-value': '3' })).addText('图像生成')
   assert.strictEqual(Page.imageModeActive(exitChip.doc), true, '退出按钮代表图像模式已选中')
   assert.strictEqual((await Page.ensureImageMode(exitChip.doc, null, 250)).ok, true, '已有退出按钮时不再点击入口')
+
+  // 「更多」折叠菜单与技能栏文本按钮，以及游客态无入口的未登录归类。
+  const overflow = surface()
+  const moreBtn = overflow.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_more' })).addText('更多')
+  moreBtn.click = function () {
+    moreBtn.clicked = (moreBtn.clicked || 0) + 1
+    const menu = overflow.doc.body.append(new El('div', { role: 'menu', 'data-state': 'open' }))
+    const entry = menu.append(new El('div', { role: 'menuitem' })).addText('图像生成')
+    entry.click = function () {
+      entry.clicked = (entry.clicked || 0) + 1
+      overflow.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+    }
+  }
+  assert.strictEqual((await Page.ensureImageMode(overflow.doc, null, 800)).ok, true, '更多菜单里的图像生成也要能点开')
+  assert.strictEqual(moreBtn.clicked, 1)
+
+  const skillBar = surface()
+  const guidanceBar = skillBar.box.parentElement.append(new El('div', { 'data-testid': 'guidance-skill-bar' }))
+  const guidanceBtn = guidanceBar.append(new El('button')).addText('图像生成')
+  guidanceBtn.click = function () {
+    guidanceBtn.clicked = (guidanceBtn.clicked || 0) + 1
+    skillBar.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+  }
+  assert.strictEqual((await Page.ensureImageMode(skillBar.doc, null, 800)).ok, true, '技能栏文本按钮也要能点击')
+  assert.strictEqual(guidanceBtn.clicked, 1)
+
+  const guest = surface()
+  guest.doc.body.append(new El('button')).addText('登录')
+  assert.strictEqual(Page.loginWall(guest.doc), false, '仅有底部输入框和登录按钮时不直接破坏原有判定')
+  assert.strictEqual((await Page.ensureImageMode(guest.doc, null, 250)).code, 'E_NOT_LOGGED_IN', '游客态无图像入口应归类为未登录')
+
+  const modalGuest = surface()
+  modalGuest.doc.body.append(new El('div', { role: 'dialog' })).addText('扫码登录')
+  assert.strictEqual(Page.loginWall(modalGuest.doc), true, '出现登录弹窗时即使有输入框也要判为未登录')
 }
 
 {
@@ -729,6 +763,29 @@ console.log('doubao page.js anchors ok')
   img.src = 'https://cdn.example/g0.png'
   img.currentSrc = img.src
   assert.strictEqual(Page.replyDone(counted, mark2).done, true, '没有声明张数时，一张实图也算候选')
+
+  answer.attrs['data-streaming'] = 'true'
+  assert.strictEqual(Page.replyDone(doc, marked).done, false, '流式属性为 true 时不能结束')
+  answer.attrs['data-streaming'] = 'false'
+  assert.strictEqual(Page.replyDone(doc, marked).done, true)
+
+  marked.anchorConfirmed = true
+  const brk = doc.body.append(new El('button', { 'data-testid': 'chat_input_local_break_button' }))
+  assert.strictEqual(Page.resultsBusy(doc, marked), true, '停止生成按钮可见时代表仍在出图')
+  assert.strictEqual(Page.replyDone(doc, marked).done, false)
+  brk.className = '!hidden'
+  assert.strictEqual(Page.resultsBusy(doc, marked), false)
+  assert.strictEqual(Page.replyDone(doc, marked).done, true)
+
+  const lazyBox = answer.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  const lazyImg = lazyBox.append(new El('img'))
+  lazyImg.src = 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+  lazyImg.currentSrc = lazyImg.src
+  const pendingSignal = Page.replyDone(doc, marked)
+  assert.strictEqual(pendingSignal.done, false, '仍有 SVG 占位卡片待揭开时应等待')
+  assert.strictEqual(pendingSignal.pendingCards, 1)
+  marked.pendingSince = Date.now() - 16000
+  assert.strictEqual(Page.replyDone(doc, marked).done, true, '占位卡片宽限到期后放行，避免永久卡死')
 }
 
 // 同一对话里重复洗图指令，旧消息重绘后也不能归到下一张源图。

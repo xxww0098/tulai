@@ -450,6 +450,9 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Status = StatusRetry
 		}
 		t.Attempts++
+		if t.BrowserID > 0 {
+			t.ranOn = t.BrowserID
+		}
 		err := attempt(ctx, &t)
 		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 			t.Status = StatusSkipped
@@ -490,7 +493,12 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 				e.announceAccount(id, kind)
 			}
 			t.Status = StatusFailed
-			t.Error = "本批已发送或发送状态未确认，请检查豆包结果后再重试：" + err.Error()
+			msg := err.Error()
+			if strings.Contains(msg, "未按源图保存") || strings.Contains(msg, "未匹配结果保存在 ") || isModeration(err) || classifyFault(err) != faultNone || errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, strategy.ErrPlatformReply) {
+				t.Error = msg
+			} else {
+				t.Error = "本批已发送或发送状态未确认，请检查豆包结果后再重试：" + msg
+			}
 			return t
 		}
 		if errors.Is(err, strategy.ErrPlatformReply) {
@@ -554,6 +562,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Status = StatusFailed
 			return t
 		}
+		prevSlot := e.slotKey(t.slot)
 		switched := ""
 		if kind == faultNone && t.Attempts < maxAttempts && e.rotateOnFailure(&t, time.Now()) {
 			switched = e.accountName(t.BrowserID)
@@ -570,6 +579,14 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		case <-time.After(3 * time.Second):
 		case <-ctx.Done():
 			return stoppedTask(ctx, t)
+		}
+		if switched != "" && t.slot != 0 && e.slotKey(t.BrowserID) != prevSlot {
+			t.rotated = true
+			t.Status = StatusPending
+			t.Reassigned = switched
+			t.ReassignWhy = "失败换号"
+			t.pauseNote = "rotate"
+			return t
 		}
 	}
 	t.Status = StatusFailed

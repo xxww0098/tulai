@@ -509,3 +509,60 @@ func TestBatchBridgeUploadsOnceAndSavesTenMatchingResults(t *testing.T) {
 		}
 	}
 }
+
+func TestSentWashBatchPreservesUnmatchedAndUncertainOutcome(t *testing.T) {
+	e := NewEngine(nil, nil, nil, "")
+	e.opts = Options{Wash: true, OutputPath: t.TempDir(), RetryCount: 2}
+	img := resultPNG(t, 91)
+
+	unmatchedTask := Task{
+		Index:    1,
+		Platform: "豆包",
+		Images:   []string{"/in/a.png", "/in/b.png"},
+		batch:    []Task{{Images: []string{"/in/a.png"}}, {Images: []string{"/in/b.png"}}},
+	}
+	gotUnmatched := e.execute(context.Background(), unmatchedTask, func(ctx context.Context, task *Task) error {
+		task.submitted = true
+		return e.saveExtensionWash(ctx, task, []strategy.Result{{Data: img, WatermarkRemoved: true}}, nil, nil)
+	})
+	if gotUnmatched.Status != StatusFailed || strings.Contains(gotUnmatched.Error, "发送状态未确认") || !strings.Contains(gotUnmatched.Error, "未匹配结果保存在 ") {
+		t.Fatalf("unmatched outcome overwritten: %+v", gotUnmatched)
+	}
+	if hint := ClassifyFailure(gotUnmatched.Status, gotUnmatched.Error); hint.Class != FailUnmatched || hint.Button != "查看待核对" {
+		t.Fatalf("unexpected unmatched classification: %+v (err=%q)", hint, gotUnmatched.Error)
+	}
+
+	uncertainTask := Task{
+		Index:    2,
+		Platform: "豆包",
+		Images:   []string{"/in/c.png", "/in/d.png"},
+		batch:    []Task{{Images: []string{"/in/c.png"}}, {Images: []string{"/in/d.png"}}},
+	}
+	gotUncertain := e.execute(context.Background(), uncertainTask, func(_ context.Context, task *Task) error {
+		task.submitted = true
+		return errors.New("E_NO_TAB: Could not establish connection. Receiving end does not exist.")
+	})
+	if gotUncertain.Status != StatusFailed || !strings.Contains(gotUncertain.Error, "发送状态未确认") {
+		t.Fatalf("uncertain post-send failure missing confirmation hint: %+v", gotUncertain)
+	}
+	if hint := ClassifyFailure(gotUncertain.Status, gotUncertain.Error); hint.Button != "核对后重试" {
+		t.Fatalf("unexpected uncertain classification: %+v (err=%q)", hint, gotUncertain.Error)
+	}
+
+	modTask := Task{
+		Index:    3,
+		Platform: "豆包",
+		Images:   []string{"/in/e.png", "/in/f.png"},
+		batch:    []Task{{Images: []string{"/in/e.png"}}, {Images: []string{"/in/f.png"}}},
+	}
+	gotMod := e.execute(context.Background(), modTask, func(_ context.Context, task *Task) error {
+		task.submitted = true
+		return mapExtErr(&extbridge.ProtoError{Code: extbridge.EModeration, Message: "审核不通过: 违规内容"}, extAck{}, "豆包")
+	})
+	if gotMod.Status != StatusFailed || strings.Contains(gotMod.Error, "发送状态未确认") {
+		t.Fatalf("moderation failure mislabeled: %+v", gotMod)
+	}
+	if hint := ClassifyFailure(gotMod.Status, gotMod.Error); hint.Class != FailModeration || hint.Button != "改提示词重试" {
+		t.Fatalf("unexpected moderation classification: %+v (err=%q)", hint, gotMod.Error)
+	}
+}

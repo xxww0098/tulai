@@ -45,6 +45,7 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 	}
 	if id, ok := pickHealthy(e.store, rows, task.BrowserID, now, limit); ok {
 		task.BrowserID = id
+		task.avoidBrowser = 0
 		task.Error = ""
 		return time.Time{}, false
 	}
@@ -125,6 +126,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	}
 	logging.Log.Warning("#%d「%s」%s，改用「%s」", task.Index, old, label, name)
 	task.BrowserID = next
+	task.avoidBrowser = 0
 	task.submitted = false
 	task.sentURL, task.sentWrap = "", ""
 	task.chatGPT = nil
@@ -149,12 +151,13 @@ func (e *Engine) rotateOnFailure(task *Task, now time.Time) bool {
 	if !ok || next == current {
 		return false
 	}
+	task.avoidBrowser = current
 	task.BrowserID = next
 	task.submitted = false
 	task.sentURL, task.sentWrap = "", ""
 	task.chatGPT = nil
 	task.rotated = true
-	task.pauseNote = ""
+	task.pauseNote = "rotate"
 	return true
 }
 

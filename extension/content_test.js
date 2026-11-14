@@ -350,6 +350,37 @@ async function main() {
   assert.strictEqual(proto.TULAI.hello('t', 'qianwen', 'profile-1').payload.loggedIn, undefined)
   assert.strictEqual(proto.TULAI.hello('t', 'doubao', 'profile-2', true).payload.loggedIn, true)
   assert.strictEqual(proto.TULAI.hello('t', 'qianwen', 'profile-3', false).payload.loggedIn, false)
+
+  let batchReady = false
+  let batchScrolled = 0
+  const batchPage = composerPage({
+    newAssistants() {
+      return [{ scrollIntoView(opt) { if (opt && opt.block === 'end') batchScrolled++ } }]
+    },
+    resultImages() {
+      const list = [
+        { url: 'https://cdn.example/b1.png' },
+        { url: 'https://cdn.example/b2.png' },
+      ]
+      if (batchReady) list.push({ url: 'https://cdn.example/b3.png' })
+      return list
+    },
+    resultsBusy() { return false },
+    replyDone() { return { done: true } },
+    resolveSources() { return Promise.resolve([1, 2, 3]) },
+  })
+  const batchCall = load(batchPage, { href: 'https://www.doubao.com/chat/batch-wait', hostname: 'www.doubao.com' })
+  assert.strictEqual((await batchCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  setTimeout(() => { batchReady = true }, 3400)
+  const batchAck = await batchCall({
+    name: 'waitResult',
+    timeoutMs: 12000,
+    expectedAttachments: ['a.png', 'b.png', 'c.png'],
+  })
+  assert.strictEqual(batchAck.payload.ok, true, JSON.stringify(batchAck.payload))
+  assert.strictEqual(batchAck.payload.images.length, 3, '多图未齐时不能在 3 秒处提前截断')
+  assert.ok(batchScrolled >= 1, '多图未齐时应滚动到回复底部唤醒虚拟列表')
+
   console.log('content wait ok')
 }
 

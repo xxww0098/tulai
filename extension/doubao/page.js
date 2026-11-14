@@ -194,7 +194,28 @@ globalThis.TULAIPage = (function () {
   }
 
   function imageModeControl(doc) {
-    return all(imageModeScope(doc), '[data-testid="skill_bar_button_3"]').find(enabled) || null
+    const scope = imageModeScope(doc)
+    const direct = all(scope, '[data-testid="skill_bar_button_3"],[data-skill-id="skill_bar_button_3"]').find(enabled)
+    if (direct) return direct
+    const bars = all(scope, '[data-testid="guidance-skill-bar"]')
+    for (let i = 0; i < bars.length; i++) {
+      const btn = all(bars[i], 'button').find(function (el) {
+        return enabled(el) && exactText(el, '图像生成')
+      })
+      if (btn) return btn
+    }
+    const item = all(scope, '[data-component-type="skill-item"]').find(function (el) {
+      return enabled(el) && exactText(el, '图像生成')
+    })
+    if (item) return item
+    const menus = all(doc, '[role="menu"][data-state="open"],[role="listbox"][data-state="open"],[data-radix-popper-content-wrapper]').filter(visible)
+    for (let i = 0; i < menus.length; i++) {
+      const entry = all(menus[i], 'button,[role="menuitem"],[role="option"],[data-component-type="skill-item"]').find(function (el) {
+        return enabled(el) && exactText(el, '图像生成')
+      })
+      if (entry) return entry
+    }
+    return null
   }
 
   function imageModeActive(doc) {
@@ -215,10 +236,19 @@ globalThis.TULAIPage = (function () {
   // 2026-11 实测：冷加载页面点击「图像生成」后，输入区要 2 秒多才重绘出已选标签；
   // 页面还没挂载完时第一次点击也会被吞掉。默认窗口 12 秒，未生效时每 3.5 秒补点
   // 一次（最多 3 次），每轮先查已选证据，已经生效就不再点。失败夹具传短 timeoutMs。
+  function hasVisibleLoginButton(doc) {
+    return all(doc, 'button,[role="button"],a').some(function (el) {
+      return enabled(el) &&
+        !closest(el, '[data-testid="send_message"],[data-testid="receive_message"]') &&
+        /^(登录|扫码登录|立即登录|登录\/注册)$/.test(String(el.innerText || '').trim())
+    })
+  }
+
   async function ensureImageMode(doc, cancelled, timeoutMs) {
     const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 12000)
     let clicks = 0
     let lastClick = 0
+    let moreOpened = false
     while (Date.now() < deadline) {
       if (cancelled && cancelled()) return { error: '切换图像生成模式已取消', code: 'E_CANCELLED' }
       if (loginWall(doc)) return { error: '请先登录平台账号', code: 'E_NOT_LOGGED_IN' }
@@ -228,8 +258,17 @@ globalThis.TULAIPage = (function () {
         if (!activate(control)) return { error: '无法点击「图像生成」，未开始任务', code: 'E_SELECTOR_MISS' }
         clicks++
         lastClick = Date.now()
+      } else if (!control && !moreOpened) {
+        const more = all(imageModeScope(doc), '[data-testid="skill_bar_button_more"]').find(enabled)
+        if (more) {
+          moreOpened = true
+          activate(more)
+        }
       }
       await new Promise(function (resolve) { setTimeout(resolve, 100) })
+    }
+    if (!clicks && !all(doc, '[data-testid="chat_header_avatar_button"]').some(visible) && hasVisibleLoginButton(doc)) {
+      return { error: '请先登录平台账号', code: 'E_NOT_LOGGED_IN' }
     }
     return { error: clicks ? '点击「图像生成」后模式未生效，未开始任务' : '未找到「图像生成」入口，未开始任务', code: 'E_SELECTOR_MISS' }
   }
@@ -407,8 +446,11 @@ globalThis.TULAIPage = (function () {
 
   function loginWall(doc) {
     if (all(doc, '[data-testid="to_login_button"]').some(enabled)) return true
-    if (composer(doc)) return false
     if (all(doc, 'input[type="password"]').some(visible)) return true
+    if (all(doc, '[role="dialog"],[aria-modal="true"]').some(function (el) {
+      return visible(el) && /扫码登录|手机号登录|短信登录|验证码登录|密码登录/.test(String(el.innerText || ''))
+    })) return true
+    if (composer(doc)) return false
     return all(doc, 'button,[role="button"],a').some(function (el) {
       return enabled(el) && /^(登录|扫码登录|立即登录)$/.test(String(el.innerText || '').trim())
     })
@@ -501,6 +543,8 @@ globalThis.TULAIPage = (function () {
 
   function busy(root) {
     if (!root) return false
+    if (root.getAttribute && (root.getAttribute('data-streaming') === 'true' || root.getAttribute('data-finished') === 'false')) return true
+    if (all(root, '[data-streaming="true"],[data-finished="false"]').length > 0) return true
     if (all(root, '[aria-busy="true"],[role="progressbar"]').some(visible)) return true
     return /正在生成|生成中|绘制中|\bGenerating\b/i.test(root.innerText || '')
   }
@@ -772,18 +816,51 @@ globalThis.TULAIPage = (function () {
     return images
   }
 
-  function resultsBusy(doc, state) {
-    return newAssistants(doc, state).some(busy)
+  function isHiddenClass(el) {
+    return !!(el && /(^|\s)!?hidden(\s|$)/.test(el.className || ''))
   }
 
-  // 完成候选：这一轮回复里有实图，并且没有生成指示。
+  function resultsBusy(doc, state) {
+    if (newAssistants(doc, state).some(busy)) return true
+    if (state && state.anchorConfirmed) {
+      const scope = imageModeScope(doc) || doc
+      if (all(scope, '[data-testid="chat_input_local_break_button"]').some(function (el) {
+        return visible(el) && !isHiddenClass(el)
+      })) return true
+    }
+    return false
+  }
+
+  // 完成候选：这一轮回复里有实图，并且没有生成指示；若仍有待揭开的图片卡片，最多宽限 15 秒。
   // 重新生成/复制和声明张数在真实页面上经常没有。调用方再等地址稳住约 3 秒。
   function replyDone(doc, state) {
-    const messages = newAssistants(doc, state)
+    const isBusy = resultsBusy(doc, state)
     const images = resultImages(doc, state).filter(function (item) {
       return item && item.url && !isPlaceholderURL(item.url)
     })
-    return { done: !messages.some(busy) && images.length > 0 }
+    if (isBusy || !images.length) {
+      if (state) {
+        state.pendingSince = 0
+        state.pendingSig = ''
+      }
+      return { done: false }
+    }
+    const pending = pendingRevealTargets(doc, state)
+    if (pending.length > 0 && state) {
+      const sig = images.length + ':' + pending.length
+      const now = Date.now()
+      if (state.pendingSig !== sig || !state.pendingSince) {
+        state.pendingSig = sig
+        state.pendingSince = now
+      }
+      if (now - state.pendingSince < 15000) {
+        return { done: false, pendingCards: pending.length }
+      }
+    } else if (state) {
+      state.pendingSince = 0
+      state.pendingSig = ''
+    }
+    return { done: true }
   }
 
   function assistantText(doc, state) {
@@ -822,7 +899,7 @@ globalThis.TULAIPage = (function () {
   }
 
   // 豆包生成卡常先挂 1536 SVG 壳，真图 img 标着 loading=lazy。滚进视口并改成 eager 后才换成 http(s)。
-  const REVEAL_DWELL_MS = 8000
+  const REVEAL_DWELL_MS = 2000
   function pendingRevealTargets(doc, state) {
     const out = []
     const seen = new Set()
