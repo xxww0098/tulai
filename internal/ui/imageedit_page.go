@@ -11,9 +11,10 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// editPalette 是 moza 批处理页的取色。深浅色各一套。
+// editPalette 是图像编辑工作台的语义色板，直接映射到 workbenchTokens。
 type editPalette struct {
 	dark                                                               bool
+	tok                                                                tokens
 	paper, sheet, subtle, quiet                                        ui.Color
 	rule, ink, muted, faint                                            ui.Color
 	transfer, transferStrong, transferSoft, transferBorder, onTransfer ui.Color
@@ -24,62 +25,46 @@ type editPalette struct {
 }
 
 func editColors(dark bool) editPalette {
+	tok := workbenchTokens(dark)
+	blueFg, accentSoft, accentBorder := semanticToneColors(dark, tok.accent, tok.accent, 0.12)
 	if dark {
-		return editPalette{
-			dark:           true,
-			paper:          ui.Hex("#161618"),
-			sheet:          ui.Hex("#1e1e22"),
-			subtle:         ui.Hex("#26262b"),
-			quiet:          ui.Hex("#232328"),
-			rule:           ui.Hex("#333338"),
-			ink:            ui.Hex("#ececef"),
-			muted:          ui.Hex("#b5b5bb"),
-			faint:          ui.Hex("#8e8e95"),
-			transfer:       ui.Hex("#4a90f5"),
-			transferStrong: ui.Hex("#93c5fd"),
-			transferSoft:   ui.Hex("#4a90f5").Mix(ui.Hex("#1e1e22"), 0.84),
-			transferBorder: ui.Hex("#4a90f5").Mix(ui.Hex("#1e1e22"), 0.66),
-			onTransfer:     ui.Hex("#0b1220"),
-			amber:          ui.Hex("#fbbf24"),
-			amberSoft:      ui.Hex("#fbbf24").Mix(ui.Hex("#1e1e22"), 0.84),
-			blue:           ui.Hex("#60a5fa"),
-			blueSoft:       ui.Hex("#60a5fa").Mix(ui.Hex("#1e1e22"), 0.82),
-			violet:         ui.Hex("#a78bfa"),
-			violetSoft:     ui.Hex("#a78bfa").Mix(ui.Hex("#1e1e22"), 0.84),
-			green:          ui.Hex("#4ade80"),
-			greenSoft:      ui.Hex("#4ade80").Mix(ui.Hex("#1e1e22"), 0.84),
-			monoSoft:       ui.Hex("#333338"),
-			success:        ui.Hex("#4ade80"),
-			fault:          ui.Hex("#f87171"),
-			shadow:         ui.RGBA(0, 0, 0, 0.36),
-		}
+		blueFg, accentSoft, accentBorder = semanticToneColors(dark, tok.accent, tok.accent, 0.16)
 	}
+	amberFg, amberSoft, _ := semanticToneColors(dark, tok.warning, tok.warning, 0.12)
+	violetBase := ui.Hex("#6366F1")
+	if dark {
+		violetBase = ui.Hex("#818CF8")
+	}
+	violetFg, violetSoft, _ := semanticToneColors(dark, violetBase, violetBase, 0.12)
+	greenFg, greenSoft, _ := semanticToneColors(dark, tok.success, tok.success, 0.12)
 	return editPalette{
-		paper:          ui.Hex("#e4e3e3"),
-		sheet:          ui.Hex("#ffffff"),
-		subtle:         ui.Hex("#f3f6fb"),
-		quiet:          ui.Hex("#f7f9fc"),
-		rule:           ui.Hex("#dce3f0"),
-		ink:            ui.Hex("#1a2332"),
-		muted:          ui.Hex("#4b556f"),
-		faint:          ui.Hex("#64708a"),
-		transfer:       ui.Hex("#3b82f6"),
-		transferStrong: ui.Hex("#2563eb"),
-		transferSoft:   ui.Hex("#e8f0fe"),
-		transferBorder: ui.Hex("#bfd3fc"),
-		onTransfer:     ui.Hex("#ffffff"),
-		amber:          ui.Hex("#f59e0b"),
-		amberSoft:      ui.Hex("#fff4df"),
-		blue:           ui.Hex("#3b82f6"),
-		blueSoft:       ui.Hex("#e0ebff"),
-		violet:         ui.Hex("#8b5cf6"),
-		violetSoft:     ui.Hex("#efe9ff"),
-		green:          ui.Hex("#22c55e"),
-		greenSoft:      ui.Hex("#e4f8ec"),
-		monoSoft:       ui.Hex("#dce3f0"),
-		success:        ui.Hex("#22c55e"),
-		fault:          ui.Hex("#ef4444"),
-		shadow:         ui.RGBA(42, 58, 96, 0.06),
+		dark:           dark,
+		tok:            tok,
+		paper:          tok.paper,
+		sheet:          tok.card,
+		subtle:         tok.rail,
+		quiet:          tok.sunken,
+		rule:           tok.border,
+		ink:            tok.text,
+		muted:          tok.muted,
+		faint:          tok.subtle,
+		transfer:       tok.accent,
+		transferStrong: tok.accent,
+		transferSoft:   accentSoft,
+		transferBorder: accentBorder,
+		onTransfer:     tok.onAccent,
+		amber:          amberFg,
+		amberSoft:      amberSoft,
+		blue:           blueFg,
+		blueSoft:       accentSoft,
+		violet:         violetFg,
+		violetSoft:     violetSoft,
+		green:          greenFg,
+		greenSoft:      greenSoft,
+		monoSoft:       tok.sunkenHi,
+		success:        tok.success,
+		fault:          tok.danger,
+		shadow:         tok.shadow,
 	}
 }
 
@@ -103,18 +88,26 @@ func (a *App) imageEditPage(c *ui.Context) {
 	page.Children(func() {
 		a.editHeader(c, be)
 		if st.notice != "" {
-			// moza 的提示只有浅灰文字，不套底色；跑过一轮后右边给个「查看详情」。
 			okN, failN := a.editRunCounts()
-			ui.Row(c).FillWidth().Padding(0, 14).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, st.notice).FontSize(11).TextColor(be.muted).SingleLine().
-					Grow(1).MinWidth(0).Padding(4, 6)
+			ui.Row(c.Key("edit-notice-bar")).FillWidth().Padding(5, 12).Gap(8).AlignItems(ui.Center).
+				Background(be.quiet).BorderWidth(1, 0, 0, 0).BorderColor(be.rule).Children(func() {
+				if failN > 0 {
+					uiBadge(c, "edit-notice-badge", fmt.Sprintf("失败 %d", failN), "danger", be.tok)
+				} else if okN > 0 {
+					uiBadge(c, "edit-notice-badge", fmt.Sprintf("完成 %d", okN), "success", be.tok)
+				} else {
+					ui.Icon(c, iconInfo).FontSize(12).TextColor(be.muted).Shrink(0)
+				}
+				ui.Text(c, st.notice).FontSize(be.tok.body).TextColor(be.ink).SingleLine().
+					Grow(1).MinWidth(0)
 				if okN+failN > 0 {
-					ink := be.transfer
+					ink := be.transferStrong
 					if failN > 0 {
 						ink = be.fault
 					}
-					link := ui.Text(c, "查看详情").FontSize(11).TextColor(ink).Shrink(0).
-						Padding(4, 6).Cursor(ui.CursorPointer)
+					link := ui.Text(c, "查看详情").FontSize(be.tok.caption).FontWeight(500).TextColor(ink).Shrink(0).
+						Padding(3, 8).Radius(be.tok.radiusS).Background(be.sheet).Border(1, be.rule).
+						Cursor(ui.CursorPointer)
 					link.OnClick(func() { st.resultOpen = true })
 				}
 			})
@@ -134,16 +127,20 @@ func (a *App) imageEditPage(c *ui.Context) {
 
 func (a *App) editHeader(c *ui.Context, be editPalette) {
 	st := &a.edit
-	row := ui.Row(c.Key("edit-header")).FillWidth().Padding(6, 12).Gap(8).AlignItems(ui.Center)
+	row := ui.Row(c.Key("edit-header")).FillWidth().Padding(8, 12).Gap(10).
+		AlignItems(ui.Center).Background(be.sheet)
 	row.Children(func() {
 		left := ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center)
 		left.Children(func() {
-			ui.Text(c, "批处理").FontSize(a.look.body).FontWeight(600).TextColor(be.ink).Shrink(0)
+			badge := ui.Box(c).Size(24, 24).Center().Radius(be.tok.radiusS).Background(be.transferSoft).Shrink(0)
+			badge.Children(func() { ui.Icon(c, iconCrop).FontSize(13).TextColor(be.transfer) })
+			ui.Text(c, "批处理").FontSize(be.tok.display).FontWeight(600).TextColor(be.ink).Shrink(0)
+			ui.Box(c).Size(1, 14).Background(be.rule).Shrink(0)
 			chips := ui.Row(c).Gap(5).Wrap().AlignItems(ui.Center).MinWidth(0)
 			chips.Children(func() {
 				list := a.editChips()
 				if len(list) == 0 {
-					ui.Text(c, "未选功能").FontSize(a.look.caption).TextColor(be.faint)
+					uiBadge(c, "edit-no-ops", "未选功能", "neutral", be.tok)
 					return
 				}
 				for _, chip := range list {
@@ -151,9 +148,13 @@ func (a *App) editHeader(c *ui.Context, be editPalette) {
 				}
 			})
 		})
-		actions := ui.Row(c).Shrink(0).Gap(5).AlignItems(ui.Center)
+		actions := ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center)
 		actions.Children(func() {
-			uiIconBtn(c, "edit-save-recipe", "存为配方", "存为配方", iconSave, 24, false, false, a.look).
+			if len(st.files) > 0 {
+				ui.Text(c, fmt.Sprintf("共 %d 张", len(st.files))).FontSize(be.tok.caption).
+					TextColor(be.muted).FontFeatures("tnum").Shrink(0)
+			}
+			uiIconTextBtn(c, "edit-save-recipe", "存为配方", "存为配方", iconSave, 26, false, be.tok).
 				OnClick(func() { a.editOpenRecipeModal() })
 			if st.running {
 				// 跑批时主按钮变成「停止」，这是唯一能中止的地方。
@@ -175,14 +176,15 @@ func (a *App) editHeader(c *ui.Context, be editPalette) {
 }
 
 func (a *App) editChip(c *ui.Context, be editPalette, chip editChip) {
-	row := ui.Row(c.Key("chip-"+chip.ID+chip.Label)).Height(20).Padding(0, 3, 0, 8).Gap(3).
-		Radius(10).Background(be.transferSoft).AlignItems(ui.Center).Shrink(0)
+	row := ui.Row(c.Key("chip-"+chip.ID+chip.Label)).Height(22).Padding(0, 4, 0, 8).Gap(4).
+		Radius(be.tok.radiusS).Background(be.transferSoft).Border(1, be.transferBorder).
+		AlignItems(ui.Center).Shrink(0)
 	row.Children(func() {
 		ui.Text(c, chip.Label).FontSize(11).FontWeight(500).TextColor(be.transferStrong).SingleLine()
-		close := ui.Box(c).Size(14, 14).Center().Radius(7).Cursor(ui.CursorPointer)
+		close := ui.Box(c).Size(14, 14).Center().Radius(3).Cursor(ui.CursorPointer)
 		close.Draw(func(p *ui.Painter, r ui.Rect) {
 			if close.Hovered() {
-				p.Fill(r, be.transferStrong.Alpha(0.18), 7)
+				p.Fill(r, be.transferStrong.Alpha(0.16), 3)
 			}
 		})
 		close.OnClick(func() { a.editDisableChip(chip.ID) })
@@ -208,9 +210,9 @@ func (a *App) editAside(c *ui.Context, be editPalette) {
 	aside := ui.Column(c.Key("edit-ops")).Width(256).FillHeight().MinHeight(0).
 		Padding(8).Gap(6).Background(be.subtle).BorderWidth(0, 1, 0, 0).BorderColor(be.rule)
 	aside.Children(func() {
-		head := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Padding(0, 4, 2, 4)
+		head := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Padding(2, 4, 2, 4)
 		head.Children(func() {
-			ui.Text(c, "处理流程").FontSize(11.5).FontWeight(500).TextColor(be.faint).Grow(1)
+			ui.Text(c, "处理流程").FontSize(be.tok.title).FontWeight(600).TextColor(be.ink).Grow(1)
 			onCount := 0
 			if st.enabled.Format {
 				onCount++
@@ -224,13 +226,19 @@ func (a *App) editAside(c *ui.Context, be editPalette) {
 			if st.opts.Grayscale {
 				onCount++
 			}
-			count := "未启用功能"
 			if onCount > 0 {
-				count = fmt.Sprintf("%d 项生效", onCount)
+				uiBadge(c, "edit-on-count", fmt.Sprintf("%d 项生效", onCount), "accent", be.tok)
+			} else {
+				ui.Text(c, "未启用功能").FontSize(be.tok.caption).TextColor(be.muted)
 			}
-			ui.Text(c, count).FontSize(10.5).TextColor(be.faint).FontFeatures("tnum")
-			clear := ui.Text(c, "清空").FontSize(10.5).TextColor(be.faint).Cursor(ui.CursorPointer)
+			clear := ui.Text(c, "清空").FontSize(be.tok.caption).TextColor(be.muted).
+				Padding(2, 4).Radius(be.tok.radiusS).Cursor(ui.CursorPointer)
 			if onCount > 0 {
+				clear.Draw(func(p *ui.Painter, r ui.Rect) {
+					if clear.Hovered() {
+						p.Fill(r, be.quiet, be.tok.radiusS)
+					}
+				})
 				clear.OnClick(func() { a.editClearAll() })
 				clear.Tooltip("清空全部功能")
 			} else {
@@ -240,7 +248,7 @@ func (a *App) editAside(c *ui.Context, be editPalette) {
 
 		flow := ui.Scroll(c.Key("edit-flow")).Grow(1).MinHeight(0).TrackScroll(&st.flowScroll)
 		flow.Children(func() {
-			ui.Column(c).FillWidth().Gap(5).Children(func() {
+			ui.Column(c).FillWidth().Gap(6).Children(func() {
 				a.editRecipeCard(c, be)
 				a.editFeatureCard(c, be, "format", "格式转换", "JPEG / PNG / WebP / AVIF",
 					iconFileOutput, be.blue, be.blueSoft)
@@ -255,7 +263,7 @@ func (a *App) editAside(c *ui.Context, be editPalette) {
 	})
 }
 
-// editFeatureCard 是一张带开关的功能卡。停用平躺，启用或展开浮起。
+// editFeatureCard 是一张带开关的功能卡。统一 1px 描边与圆角，启用时强化边框与状态点。
 func (a *App) editFeatureCard(c *ui.Context, be editPalette, id, title, hint string, icon *ui.SVG, tint, tintSoft ui.Color) {
 	st := &a.edit
 	on, open := false, st.expanded[id]
@@ -267,17 +275,17 @@ func (a *App) editFeatureCard(c *ui.Context, be editPalette, id, title, hint str
 	case "adjust":
 		on = st.enabled.Adjust
 	}
-	card := ui.Column(c.Key("edit-op-" + id)).FillWidth().Radius(9).
+	card := ui.Column(c.Key("edit-op-" + id)).FillWidth().Radius(be.tok.radiusM).
 		BorderWidth(1).BorderColor(be.rule).Background(be.sheet)
-	if !on && !open {
-		card.BorderColor(ui.Color{}).Background(ui.Color{})
-	} else {
+	if on {
+		card.BorderColor(be.tok.borderStrong).Shadow(0, 1, 2, 0, be.shadow)
+	} else if open {
 		card.Shadow(0, 1, 2, 0, be.shadow)
 	}
 	card.Children(func() {
 		a.editCardHead(c, be, id, title, editSummary(id, st.opts, hint), icon, tint, tintSoft, on, open)
 		if open {
-			body := ui.Column(c.Key("edit-body-"+id)).FillWidth().Padding(6, 8, 8, 8).Gap(6).
+			body := ui.Column(c.Key("edit-body-"+id)).FillWidth().Padding(8, 10, 10, 10).Gap(6).
 				BorderWidth(1, 0, 0, 0).BorderColor(be.rule)
 			body.Children(func() {
 				switch id {
@@ -297,37 +305,36 @@ func (a *App) editFeatureCard(c *ui.Context, be editPalette, id, title, hint str
 func (a *App) editCardHead(c *ui.Context, be editPalette, id, title, summary string, icon *ui.SVG, tint, tintSoft ui.Color, on, open bool) {
 	head := ui.Row(c).FillWidth().Gap(5).Padding(4, 8, 4, 4).AlignItems(ui.Center)
 	head.Children(func() {
-		toggle := ui.Row(c).Grow(1).MinWidth(0).Gap(7).Padding(2, 4).Radius(7).
+		toggle := ui.Row(c).Grow(1).MinWidth(0).Gap(7).Padding(3, 5).Radius(be.tok.radiusS).
 			AlignItems(ui.Center).Cursor(ui.CursorPointer)
 		toggle.Draw(func(p *ui.Painter, r ui.Rect) {
 			if toggle.Hovered() {
-				p.Fill(r, be.quiet, 7)
+				p.Fill(r, be.quiet, be.tok.radiusS)
 			}
 		})
 		toggle.OnClick(func() { a.editToggleExpanded(id) })
 		toggle.Children(func() {
-			icoBg, icoInk := be.quiet, be.faint
+			icoBg, icoInk := be.quiet, be.muted
 			if on {
 				icoBg, icoInk = tintSoft, tint
 			}
-			box := ui.Box(c).Size(22, 22).Center().Radius(6).Background(icoBg).Shrink(0)
+			box := ui.Box(c).Size(22, 22).Center().Radius(be.tok.radiusS).Background(icoBg).Shrink(0)
 			box.Children(func() { ui.Icon(c, icon).FontSize(12).TextColor(icoInk) })
 			text := ui.Column(c).Grow(1).MinWidth(0).Gap(1)
 			text.Children(func() {
-				b := ui.Text(c, title).FontSize(12).FontWeight(500).SingleLine()
-				if on {
-					b.TextColor(be.ink)
-				} else {
-					b.TextColor(be.muted)
-				}
-				em := ui.Text(c, summary).FontSize(10).SingleLine()
-				if on {
-					em.TextColor(be.muted)
-				} else {
-					em.TextColor(be.faint)
-				}
+				titleRow := ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center)
+				titleRow.Children(func() {
+					b := ui.Text(c, title).FontSize(12).FontWeight(500).SingleLine()
+					if on {
+						b.TextColor(be.ink)
+						ui.Box(c).Size(5, 5).Radius(3).Background(tint).Shrink(0)
+					} else {
+						b.TextColor(be.ink.Alpha(0.86))
+					}
+				})
+				ui.Text(c, summary).FontSize(10.5).SingleLine().TextColor(be.muted)
 			})
-			caret := ui.Icon(c, iconChevronDown).FontSize(12).TextColor(be.faint).Shrink(0)
+			caret := ui.Icon(c, iconChevronDown).FontSize(12).TextColor(be.muted).Shrink(0)
 			if open {
 				caret.Rotate(180)
 			}
@@ -342,24 +349,22 @@ func (a *App) editCardHead(c *ui.Context, be editPalette, id, title, summary str
 func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 	st := &a.edit
 	open := st.expanded["recipe"]
-	card := ui.Column(c.Key("edit-op-recipe")).FillWidth().Radius(9).
+	card := ui.Column(c.Key("edit-op-recipe")).FillWidth().Radius(be.tok.radiusM).
 		BorderWidth(1).BorderColor(be.rule).Background(be.sheet)
-	if !open {
-		card.BorderColor(ui.Color{}).Background(ui.Color{})
-	} else {
-		card.Shadow(0, 1, 2, 0, be.shadow)
+	if open {
+		card.BorderColor(be.tok.borderStrong).Shadow(0, 1, 2, 0, be.shadow)
 	}
 	card.Children(func() {
-		toggle := ui.Row(c).FillWidth().Gap(7).Padding(5, 8, 5, 6).Radius(7).AlignItems(ui.Center).
+		toggle := ui.Row(c).FillWidth().Gap(7).Padding(7, 8, 7, 9).Radius(be.tok.radiusM).AlignItems(ui.Center).
 			Cursor(ui.CursorPointer)
 		toggle.Draw(func(p *ui.Painter, r ui.Rect) {
 			if toggle.Hovered() {
-				p.Fill(r, be.quiet, 7)
+				p.Fill(r, be.quiet, be.tok.radiusM)
 			}
 		})
 		toggle.OnClick(func() { a.editToggleExpanded("recipe") })
 		toggle.Children(func() {
-			box := ui.Box(c).Size(22, 22).Center().Radius(6).Background(be.amberSoft).Shrink(0)
+			box := ui.Box(c).Size(22, 22).Center().Radius(be.tok.radiusS).Background(be.amberSoft).Shrink(0)
 			box.Children(func() { ui.Icon(c, iconSparkles).FontSize(12).TextColor(be.amber) })
 			text := ui.Column(c).Grow(1).MinWidth(0).Gap(1)
 			text.Children(func() {
@@ -368,9 +373,9 @@ func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 				if len(st.recipes) > 0 {
 					sub = fmt.Sprintf("%d 个已存配方", len(st.recipes))
 				}
-				ui.Text(c, sub).FontSize(10).TextColor(be.faint).SingleLine()
+				ui.Text(c, sub).FontSize(10.5).TextColor(be.muted).FontFeatures("tnum").SingleLine()
 			})
-			caret := ui.Icon(c, iconChevronDown).FontSize(12).TextColor(be.faint).Shrink(0)
+			caret := ui.Icon(c, iconChevronDown).FontSize(12).TextColor(be.muted).Shrink(0)
 			if open {
 				caret.Rotate(180)
 			}
@@ -381,7 +386,7 @@ func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 			body.Children(func() {
 				if len(st.recipes) == 0 {
 					ui.Text(c, "暂无配方——调好功能后点顶部「存为配方」").FontSize(10.5).
-						TextColor(be.faint).Wrap()
+						TextColor(be.muted).Wrap()
 					return
 				}
 				for i, recipe := range st.recipes {
@@ -389,22 +394,22 @@ func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 					row := ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Center)
 					row.Children(func() {
 						pick := ui.Text(c, recipe.Name).FontSize(11.5).TextColor(be.ink).Grow(1).
-							MinWidth(0).SingleLine().Padding(6, 8).Radius(6).Cursor(ui.CursorPointer)
+							MinWidth(0).SingleLine().Padding(6, 8).Radius(be.tok.radiusS).Cursor(ui.CursorPointer)
 						pick.Draw(func(p *ui.Painter, r ui.Rect) {
 							if pick.Hovered() {
-								p.Fill(r, be.quiet, 6)
+								p.Fill(r, be.quiet, be.tok.radiusS)
 							}
 						})
 						pick.OnClick(func() { a.editApplyRecipe(index) })
-						del := ui.Box(c).Size(20, 20).Center().Radius(6).Cursor(ui.CursorPointer)
+						del := ui.Box(c).Size(20, 20).Center().Radius(be.tok.radiusS).Cursor(ui.CursorPointer)
 						del.Draw(func(p *ui.Painter, r ui.Rect) {
 							if del.Hovered() {
-								p.Fill(r, be.quiet, 6)
+								p.Fill(r, be.quiet, be.tok.radiusS)
 							}
 						})
 						del.OnClick(func() { a.editDeleteRecipe(index) })
 						del.Children(func() {
-							ui.Icon(c, iconTrash).FontSize(12).TextColor(be.faint)
+							ui.Icon(c, iconTrash).FontSize(12).TextColor(be.muted)
 						})
 					})
 				}
@@ -416,40 +421,42 @@ func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 func (a *App) editGrayCard(c *ui.Context, be editPalette) {
 	st := &a.edit
 	on := st.opts.Grayscale
-	card := ui.Column(c.Key("edit-op-gray")).FillWidth().Radius(12).
+	card := ui.Column(c.Key("edit-op-gray")).FillWidth().Radius(be.tok.radiusM).
 		BorderWidth(1).BorderColor(be.rule).Background(be.sheet)
-	if !on {
-		card.BorderColor(ui.Color{}).Background(ui.Color{})
-	} else {
-		card.Shadow(0, 1, 2, 0, be.shadow)
+	if on {
+		card.BorderColor(be.tok.borderStrong).Shadow(0, 1, 2, 0, be.shadow)
 	}
 	card.Children(func() {
-		head := ui.Row(c).FillWidth().Gap(6).Padding(5, 10, 5, 5).AlignItems(ui.Center)
+		head := ui.Row(c).FillWidth().Gap(5).Padding(4, 8, 4, 4).AlignItems(ui.Center)
 		head.Children(func() {
-			toggle := ui.Row(c).Grow(1).MinWidth(0).Gap(9).Padding(3, 4).Radius(9).
+			toggle := ui.Row(c).Grow(1).MinWidth(0).Gap(7).Padding(3, 5).Radius(be.tok.radiusS).
 				AlignItems(ui.Center).Cursor(ui.CursorPointer)
 			toggle.Draw(func(p *ui.Painter, r ui.Rect) {
 				if toggle.Hovered() {
-					p.Fill(r, be.quiet, 9)
+					p.Fill(r, be.quiet, be.tok.radiusS)
 				}
 			})
 			toggle.OnClick(func() { st.opts.Grayscale = !st.opts.Grayscale })
 			toggle.Children(func() {
-				bg, ink := be.quiet, be.faint
+				bg, ink := be.quiet, be.muted
 				if on {
 					bg, ink = be.monoSoft, be.ink
 				}
-				box := ui.Box(c).Size(26, 26).Center().Radius(8).Background(bg).Shrink(0)
-				box.Children(func() { ui.Icon(c, iconContrast).FontSize(14).TextColor(ink) })
+				box := ui.Box(c).Size(22, 22).Center().Radius(be.tok.radiusS).Background(bg).Shrink(0)
+				box.Children(func() { ui.Icon(c, iconContrast).FontSize(12).TextColor(ink) })
 				text := ui.Column(c).Grow(1).MinWidth(0).Gap(1)
 				text.Children(func() {
-					title := ui.Text(c, "灰度").FontSize(12.5).FontWeight(500).SingleLine()
-					if on {
-						title.TextColor(be.ink)
-					} else {
-						title.TextColor(be.muted)
-					}
-					ui.Text(c, "转为黑白图像").FontSize(10.5).TextColor(be.faint).SingleLine()
+					titleRow := ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center)
+					titleRow.Children(func() {
+						title := ui.Text(c, "灰度").FontSize(12).FontWeight(500).SingleLine()
+						if on {
+							title.TextColor(be.ink)
+							ui.Box(c).Size(5, 5).Radius(3).Background(be.transfer).Shrink(0)
+						} else {
+							title.TextColor(be.ink.Alpha(0.86))
+						}
+					})
+					ui.Text(c, "转为黑白图像").FontSize(10.5).TextColor(be.muted).SingleLine()
 				})
 			})
 			a.editSwitch(c, be, on, func() { st.opts.Grayscale = !on })
@@ -459,42 +466,49 @@ func (a *App) editGrayCard(c *ui.Context, be editPalette) {
 
 func (a *App) editOutputCard(c *ui.Context, be editPalette) {
 	st := &a.edit
-	card := ui.Column(c.Key("edit-op-output")).FillWidth().Radius(12).
+	card := ui.Column(c.Key("edit-op-output")).FillWidth().Radius(be.tok.radiusM).
 		BorderWidth(1).BorderColor(be.rule).Background(be.sheet).Shadow(0, 1, 2, 0, be.shadow)
 	card.Children(func() {
-		head := ui.Row(c).FillWidth().Gap(9).Padding(8, 10, 5, 9).AlignItems(ui.Center)
+		head := ui.Row(c).FillWidth().Gap(7).Padding(8, 10, 6, 9).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(be.rule)
 		head.Children(func() {
-			box := ui.Box(c).Size(26, 26).Center().Radius(8).Background(be.quiet).Shrink(0)
-			box.Children(func() { ui.Icon(c, iconFolderOutput).FontSize(14).TextColor(be.faint) })
+			box := ui.Box(c).Size(22, 22).Center().Radius(be.tok.radiusS).Background(be.quiet).Shrink(0)
+			box.Children(func() { ui.Icon(c, iconFolderOutput).FontSize(12).TextColor(be.muted) })
 			text := ui.Column(c).Grow(1).MinWidth(0).Gap(1)
 			text.Children(func() {
-				ui.Text(c, "输出").FontSize(12.5).FontWeight(500).TextColor(be.ink).SingleLine()
+				ui.Text(c, "输出").FontSize(12).FontWeight(500).TextColor(be.ink).SingleLine()
 				sub := "目录与命名"
 				if strings.TrimSpace(st.outDir) != "" {
 					sub = filepath.Base(st.outDir)
 				}
-				ui.Text(c, sub).FontSize(10.5).TextColor(be.faint).SingleLine()
+				ui.Text(c, sub).FontSize(10.5).TextColor(be.muted).SingleLine()
 			})
 		})
-		body := ui.Column(c).FillWidth().Padding(8, 10, 12, 10).Gap(8)
+		body := ui.Column(c).FillWidth().Padding(8, 10, 10, 10).Gap(6)
 		body.Children(func() {
-			dir := ui.Row(c).FillWidth().Height(30).Padding(0, 10).Gap(7).Radius(8).
+			dir := ui.Row(c).FillWidth().Height(28).Padding(0, 8).Gap(7).Radius(be.tok.radiusS).
 				Border(1, be.rule).Background(be.quiet).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			dir.Draw(func(p *ui.Painter, r ui.Rect) {
+				if dir.Hovered() {
+					p.Stroke(r, be.tok.borderStrong, be.tok.radiusS, 1)
+				}
+			})
 			dir.OnClick(func() { a.editPickOutDir(nil) })
 			dir.Children(func() {
-				ui.Icon(c, iconFolderOpen).FontSize(13).TextColor(be.faint).Shrink(0)
+				ui.Icon(c, iconFolderOpen).FontSize(13).TextColor(be.muted).Shrink(0)
 				label := st.outDir
 				if strings.TrimSpace(label) == "" {
 					label = "选择输出目录"
 				}
 				ui.Text(c, label).FontSize(11.5).TextColor(be.ink).SingleLine().Grow(1).MinWidth(0)
 			})
-			ui.Text(c, "文件名后缀").FontSize(11.5).TextColor(be.muted)
+			ui.Text(c, "文件名后缀").FontSize(11).TextColor(be.muted)
 			suffix := ui.TextInput(c.Key("edit-suffix"), &st.suffix).Height(28).FillWidth().
-				Placeholder("如 _edit（可留空）")
+				Radius(be.tok.radiusS).Background(be.quiet).Border(1, be.rule).Padding(0, 8).
+				TextColor(be.ink).Label("文件名后缀").Placeholder("如 _edit（可留空）")
 			suffix.FontSize(12)
 			ui.Text(c, "输出为 原文件名+后缀.扩展名；同名文件自动追加序号").
-				FontSize(10.5).TextColor(be.faint).Wrap()
+				FontSize(10.5).TextColor(be.muted).Wrap()
 		})
 	})
 }
@@ -503,27 +517,28 @@ func (a *App) editOutputCard(c *ui.Context, be editPalette) {
 
 func (a *App) editFormatBody(c *ui.Context, be editPalette) {
 	st := &a.edit
-	ui.Text(c, "输出格式").FontSize(11.5).TextColor(be.muted)
+	ui.Text(c, "输出格式").FontSize(11).TextColor(be.muted)
 	values := []string{"original", "jpeg", "png", "webp", "avif"}
 	if st.opts.Format == "" {
 		st.opts.Format = "original"
 	}
 	sel := ui.SelectBase(c.Key("edit-format"), &st.opts.Format)
 	tr := sel.Trigger
-	tr.FillWidth().Height(28).Radius(6).Border(1, be.rule).Background(be.sheet).Cursor(ui.CursorPointer)
+	tr.FillWidth().Height(28).Radius(be.tok.radiusS).Border(1, be.rule).Background(be.quiet).Cursor(ui.CursorPointer)
 	tr.Children(func() {
-		inner := ui.Row(c).FillWidth().Height(26).Padding(0, 10).AlignItems(ui.Center).Gap(6)
+		inner := ui.Row(c).FillWidth().Height(26).Padding(0, 8).AlignItems(ui.Center).Gap(6)
 		inner.Children(func() {
 			ui.Text(c, editFormatLabel(st.opts.Format)).FontSize(12).TextColor(be.ink).Grow(1).SingleLine()
-			ui.Icon(c, iconChevronDown).FontSize(12).TextColor(be.faint).Shrink(0)
+			ui.Icon(c, iconChevronDown).FontSize(12).TextColor(be.muted).Shrink(0)
 		})
 	})
 	sel.Popup(func(panel ui.Element) {
-		panel.Padding(4).Radius(8).Background(be.sheet).Border(1, be.rule).Shadow(0, 6, 20, 0, be.shadow)
+		panel.Padding(4).Radius(be.tok.radiusM).Background(be.tok.lift).Border(1, be.tok.borderStrong).
+			Shadow(0, 8, 22, 0, be.shadow)
 		panel.Children(func() {
 			for _, v := range values {
 				value := v
-				item := sel.Item(value).Padding(6, 10).Radius(6).Cursor(ui.CursorPointer)
+				item := sel.Item(value).Padding(6, 8).Radius(be.tok.radiusS).Cursor(ui.CursorPointer)
 				if item.Highlighted() {
 					item.Background(be.transferSoft)
 				}
@@ -545,9 +560,10 @@ func (a *App) editFormatBody(c *ui.Context, be editPalette) {
 	if st.opts.JPEGQuality > 0 {
 		label = fmt.Sprintf("压缩品质 · %d", st.opts.JPEGQuality)
 	}
-	ui.Text(c, label).FontSize(11.5).TextColor(be.muted)
+	ui.Text(c, label).FontSize(11).TextColor(be.muted).FontFeatures("tnum")
 	quality := ui.TextInput(c.Key("edit-quality"), &st.quality).Height(28).FillWidth().
-		Placeholder("默认 90")
+		Radius(be.tok.radiusS).Background(be.quiet).Border(1, be.rule).Padding(0, 8).
+		TextColor(be.ink).Label("压缩品质").Placeholder("默认 90")
 	quality.FontSize(12)
 	if quality.Changed() {
 		if n, err := strconv.Atoi(strings.TrimSpace(st.quality)); err == nil && n > 0 {
@@ -557,7 +573,7 @@ func (a *App) editFormatBody(c *ui.Context, be editPalette) {
 			st.opts.JPEGQuality = 0
 		}
 	}
-	ui.Text(c, "品质作用于 JPEG / WebP / AVIF 等有损格式").FontSize(10.5).TextColor(be.faint).Wrap()
+	ui.Text(c, "品质作用于 JPEG / WebP / AVIF 等有损格式").FontSize(10.5).TextColor(be.muted).Wrap()
 }
 
 func editFormatLabel(v string) string {
@@ -622,7 +638,7 @@ func (a *App) editSlider(c *ui.Context, be editPalette, key, label string, value
 		sl := ui.SliderBase(c.Key(key), value, lo, hi).Step(step).Grow(1).Height(18).MinWidth(0)
 		sl.Draw(func(p *ui.Painter, r ui.Rect) {
 			trackY := r.Y + r.H/2 - 2
-			p.Fill(ui.Rect{X: r.X, Y: trackY, W: r.W, H: 4}, be.rule, 2)
+			p.Fill(ui.Rect{X: r.X, Y: trackY, W: r.W, H: 4}, be.tok.borderStrong, 2)
 			frac := float32((*value - lo) / (hi - lo))
 			frac = float32(math.Min(1, math.Max(0, float64(frac))))
 			if frac > 0 {
@@ -664,16 +680,16 @@ func (a *App) editCropBody(c *ui.Context, be editPalette) {
 				{"stretch", "拉伸", "不裁剪图片，拉伸到目标尺寸"},
 			} {
 				mode := m.mode
-				box := ui.Box(c.Key("edit-mode-" + mode)).Grow(1).Basis(0).Height(22).Center().
-					Radius(11).Cursor(ui.CursorPointer).Tooltip(m.tip)
+				box := ui.Box(c.Key("edit-mode-" + mode)).Grow(1).Basis(0).Height(24).Center().
+					Radius(be.tok.radiusS).BorderWidth(1).Cursor(ui.CursorPointer).Tooltip(m.tip)
 				if st.mode == mode {
-					box.Background(be.transferSoft)
+					box.Background(be.transferSoft).BorderColor(be.transferBorder)
 				} else {
-					box.Background(be.quiet)
+					box.Background(be.quiet).BorderColor(be.rule)
 				}
 				box.Draw(func(p *ui.Painter, r ui.Rect) {
 					if st.mode != mode && box.Hovered() {
-						p.Fill(r, be.rule.Alpha(0.55), 11)
+						p.Fill(r, be.monoSoft, be.tok.radiusS)
 					}
 				})
 				box.OnClick(func() {
@@ -738,14 +754,16 @@ func (a *App) editCropBody(c *ui.Context, be editPalette) {
 }
 
 func (a *App) editRotateButton(c *ui.Context, be editPalette, icon *ui.SVG, tip string, on bool, fn func()) {
-	box := ui.Box(c.Key("edit-rot-"+tip)).Size(30, 30).Center().Radius(7).
-		Cursor(ui.CursorPointer).Tooltip(tip)
+	box := ui.Box(c.Key("edit-rot-"+tip)).Size(30, 30).Center().Radius(be.tok.radiusS).
+		BorderWidth(1).Cursor(ui.CursorPointer).Tooltip(tip)
 	if on {
-		box.Background(be.transferSoft)
+		box.Background(be.transferSoft).BorderColor(be.transferBorder)
+	} else {
+		box.BorderColor(be.rule)
 	}
 	box.Draw(func(p *ui.Painter, r ui.Rect) {
 		if !on && box.Hovered() {
-			p.Fill(r, be.quiet, 7)
+			p.Fill(r, be.quiet, be.tok.radiusS)
 		}
 	})
 	box.OnClick(fn)
@@ -754,18 +772,18 @@ func (a *App) editRotateButton(c *ui.Context, be editPalette, icon *ui.SVG, tip 
 		if on {
 			ink = be.transferStrong
 		}
-		ui.Icon(c, icon).FontSize(16).TextColor(ink)
+		ui.Icon(c, icon).FontSize(15).TextColor(ink)
 	})
 }
 
 // editSegTabs 是带下划线的两个小页签。
 func (a *App) editSegTabs(c *ui.Context, be editPalette, value *int, labels []string) {
-	row := ui.Row(c).FillWidth().Padding(0, 10).Gap(0).
+	row := ui.Row(c).FillWidth().Padding(0, 6).Gap(0).
 		BorderWidth(0, 0, 1, 0).BorderColor(be.rule)
 	row.Children(func() {
 		for i, label := range labels {
 			index := i
-			tab := ui.Box(c.Key("edit-seg-"+label)).Padding(6, 10, 8, 10).
+			tab := ui.Box(c.Key("edit-seg-"+label)).Padding(6, 10, 7, 10).
 				Cursor(ui.CursorPointer)
 			tab.Draw(func(p *ui.Painter, r ui.Rect) {
 				if *value == index {
@@ -776,7 +794,7 @@ func (a *App) editSegTabs(c *ui.Context, be editPalette, value *int, labels []st
 			tab.Children(func() {
 				text := ui.Text(c, label).FontSize(12)
 				if *value == index {
-					text.TextColor(be.ink).FontWeight(500)
+					text.TextColor(be.ink).FontWeight(600)
 				} else {
 					text.TextColor(be.muted)
 				}
@@ -786,7 +804,7 @@ func (a *App) editSegTabs(c *ui.Context, be editPalette, value *int, labels []st
 }
 
 func (a *App) editMiniTabs(c *ui.Context, be editPalette, value *int, labels []string, key string) {
-	row := ui.Row(c).Gap(0).Shrink(0)
+	row := ui.Row(c).Gap(2).Shrink(0)
 	row.Children(func() {
 		for i, label := range labels {
 			index := i
@@ -799,7 +817,7 @@ func (a *App) editMiniTabs(c *ui.Context, be editPalette, value *int, labels []s
 			tab.Children(func() {
 				text := ui.Text(c, label).FontSize(11)
 				if *value == index {
-					text.TextColor(be.ink).FontWeight(500)
+					text.TextColor(be.ink).FontWeight(600)
 				} else {
 					text.TextColor(be.muted)
 				}
@@ -835,13 +853,13 @@ func (a *App) editSizeControls(c *ui.Context, be editPalette) {
 				on := p.W > 0 && st.dimW == p.W && st.dimH == p.H &&
 					(st.opts.CropWidth == p.W || st.opts.ResizeWidth == p.W)
 				row := ui.Row(c.Key(fmt.Sprintf("edit-size-%s-%d", p.Label, p.W))).FillWidth().
-					Padding(7, 10).Radius(7).Cursor(ui.CursorPointer).AlignItems(ui.Center)
+					Padding(6, 8).Radius(be.tok.radiusS).Cursor(ui.CursorPointer).AlignItems(ui.Center)
 				if on {
 					row.Background(be.transferSoft)
 				}
 				row.Draw(func(painter *ui.Painter, r ui.Rect) {
 					if !on && row.Hovered() {
-						painter.Fill(r, be.quiet, 7)
+						painter.Fill(r, be.quiet, be.tok.radiusS)
 					}
 				})
 				row.OnClick(func() {
@@ -855,7 +873,7 @@ func (a *App) editSizeControls(c *ui.Context, be editPalette) {
 					a.editApplyDims(st.mode, p.W, p.H, "")
 				})
 				row.Children(func() {
-					text := ui.Text(c, label).FontSize(12.5).SingleLine()
+					text := ui.Text(c, label).FontSize(12).FontFeatures("tnum").SingleLine()
 					if on {
 						text.TextColor(be.transferStrong).FontWeight(500)
 					} else {
@@ -864,7 +882,7 @@ func (a *App) editSizeControls(c *ui.Context, be editPalette) {
 				})
 			}
 			if st.ratioTab == 1 && len(st.sizes) == 0 {
-				ui.Text(c, "暂无我的尺寸——输好宽高后点下方保存").FontSize(10.5).TextColor(be.faint).Wrap()
+				ui.Text(c, "暂无我的尺寸——输好宽高后点下方保存").FontSize(10.5).TextColor(be.muted).Wrap()
 			}
 		})
 	})
@@ -877,32 +895,34 @@ func (a *App) editDimRow(c *ui.Context, be editPalette) {
 	st := &a.edit
 	row := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Margin(8, 0, 0, 0)
 	row.Children(func() {
-		w := ui.TextInput(c.Key("edit-dim-w"), &st.dimWText).Height(30).Grow(1).Basis(0).
-			MinWidth(0).TextAlign(ui.Center).Placeholder("宽")
-		w.FontSize(12)
+		w := ui.TextInput(c.Key("edit-dim-w"), &st.dimWText).Height(28).Grow(1).Basis(0).
+			MinWidth(0).TextAlign(ui.Center).Radius(be.tok.radiusS).Background(be.quiet).
+			Border(1, be.rule).TextColor(be.ink).Label("宽度").Placeholder("宽")
+		w.FontSize(12).FontFeatures("tnum")
 		if w.Changed() {
 			a.editOnDimW(editAtoi(st.dimWText))
 		}
-		link := ui.Box(c).Size(22, 22).Center().Radius(5).Cursor(ui.CursorPointer).
+		link := ui.Box(c).Size(22, 22).Center().Radius(be.tok.radiusS).Cursor(ui.CursorPointer).
 			Tooltip(map[bool]string{true: "锁定比例", false: "自由比例"}[st.locked])
 		if st.locked {
-			link.Background(be.transferSoft)
+			link.Background(be.transferSoft).Border(1, be.transferBorder)
 		}
 		link.OnClick(func() { st.locked = !st.locked })
 		link.Children(func() {
-			ink := be.faint
+			ink := be.muted
 			if st.locked {
 				ink = be.transfer
 			}
 			ui.Icon(c, iconLink).FontSize(13).TextColor(ink)
 		})
-		h := ui.TextInput(c.Key("edit-dim-h"), &st.dimHText).Height(30).Grow(1).Basis(0).
-			MinWidth(0).TextAlign(ui.Center).Placeholder("高")
-		h.FontSize(12)
+		h := ui.TextInput(c.Key("edit-dim-h"), &st.dimHText).Height(28).Grow(1).Basis(0).
+			MinWidth(0).TextAlign(ui.Center).Radius(be.tok.radiusS).Background(be.quiet).
+			Border(1, be.rule).TextColor(be.ink).Label("高度").Placeholder("高")
+		h.FontSize(12).FontFeatures("tnum")
 		if h.Changed() {
 			a.editOnDimH(editAtoi(st.dimHText))
 		}
-		ui.Text(c, "像素").FontSize(11).TextColor(be.faint).Shrink(0)
+		ui.Text(c, "像素").FontSize(11).TextColor(be.muted).Shrink(0)
 	})
 }
 
@@ -922,13 +942,13 @@ func (a *App) editRatioControls(c *ui.Context, be editPalette) {
 					a.editRatioRow(c, be, ratio, "")
 				}
 				if len(st.ratios) == 0 {
-					ui.Text(c, "暂无我的比例——输好尺寸后点下方保存").FontSize(10.5).TextColor(be.faint).Wrap()
+					ui.Text(c, "暂无我的比例——输好尺寸后点下方保存").FontSize(10.5).TextColor(be.muted).Wrap()
 				}
 			}
 		})
 	})
 	if w, h, ok := a.editResolvedRatio(); ok {
-		ui.Text(c, fmt.Sprintf("当前图片 %d×%d", w, h)).FontSize(10.5).TextColor(be.faint)
+		ui.Text(c, fmt.Sprintf("当前图片 %d×%d", w, h)).FontSize(10.5).TextColor(be.muted).FontFeatures("tnum")
 	}
 	a.editSmallButton(c, be, "存为我的比例", func() { a.editSaveMyRatio() })
 }
@@ -936,26 +956,26 @@ func (a *App) editRatioControls(c *ui.Context, be editPalette) {
 func (a *App) editRatioRow(c *ui.Context, be editPalette, ratio, label string) {
 	st := &a.edit
 	on := st.opts.CropRatio == ratio
-	row := ui.Row(c.Key("edit-ratio-"+ratio)).FillWidth().Gap(8).Padding(7, 10).Radius(7).
+	row := ui.Row(c.Key("edit-ratio-"+ratio)).FillWidth().Gap(8).Padding(6, 8).Radius(be.tok.radiusS).
 		Cursor(ui.CursorPointer).AlignItems(ui.Baseline)
 	if on {
 		row.Background(be.transferSoft)
 	}
 	row.Draw(func(p *ui.Painter, r ui.Rect) {
 		if !on && row.Hovered() {
-			p.Fill(r, be.quiet, 7)
+			p.Fill(r, be.quiet, be.tok.radiusS)
 		}
 	})
 	row.OnClick(func() { a.editPickRatio(ratio) })
 	row.Children(func() {
-		text := ui.Text(c, ratio).FontSize(12.5).SingleLine()
+		text := ui.Text(c, ratio).FontSize(12).FontFeatures("tnum").SingleLine()
 		if on {
 			text.TextColor(be.transferStrong).FontWeight(500)
 		} else {
 			text.TextColor(be.ink)
 		}
 		if label != "" {
-			ui.Text(c, label).FontSize(10.5).TextColor(be.faint).SingleLine()
+			ui.Text(c, label).FontSize(10.5).TextColor(be.muted).SingleLine()
 		}
 	})
 }
@@ -984,52 +1004,56 @@ func (a *App) editResolvedRatio() (int, int, bool) {
 // ---- 小部件 ----
 
 func (a *App) editSmallButton(c *ui.Context, be editPalette, label string, fn func()) {
-	btn := ui.Button(c, label).FontSize(11).Padding(3, 8).Radius(6).Shrink(0).
-		Background(be.quiet).TextColor(be.muted)
+	btn := ui.Button(c, label).FontSize(11).Padding(4, 10).Radius(be.tok.radiusS).Shrink(0).
+		Background(be.quiet).Border(1, be.rule).TextColor(be.ink)
 	hoverPressPose(btn)
 	btn.OnClick(fn)
 }
 
 func (a *App) editAction(c *ui.Context, be editPalette, label string, icon *ui.SVG, primary, enabled bool) ui.Element {
-	// moza 的 quiet 按钮没有底色，文字用 75% 前景色；primary 用传送色。
-	ink := be.ink.Alpha(0.75)
-	el := ui.Row(c).Height(24).Padding(0, 8).Gap(4).Radius(6).AlignItems(ui.Center).Shrink(0)
+	ink := be.ink
+	el := ui.Row(c).Height(26).Padding(0, 10).Gap(5).Radius(be.tok.radiusS).AlignItems(ui.Center).Shrink(0)
 	if primary {
-		el.Background(be.transfer).Shadow(0, 1, 2, 0, be.shadow)
+		bg := be.transfer
+		if label == "停止" {
+			bg = be.fault
+		}
+		el.Background(bg).Shadow(0, 1, 2, 0, be.shadow)
 		ink = be.onTransfer
+	} else {
+		el.Background(be.sheet).Border(1, be.rule)
 	}
 	if enabled {
 		el.Cursor(ui.CursorPointer)
 	} else {
-		// moza 的按钮禁用时只降到半透明，不换颜色。
-		el.Opacity(0.5)
+		el.Opacity(0.45)
 	}
 	el.Draw(func(p *ui.Painter, r ui.Rect) {
 		if !enabled || !el.Hovered() {
 			return
 		}
 		if primary {
-			p.Fill(r, ui.RGBA(0, 0, 0, 0.08), 6)
+			p.Fill(r, ui.RGBA(0, 0, 0, 0.1), be.tok.radiusS)
 		} else {
-			p.Fill(r, be.quiet, 6)
+			p.Fill(r, be.quiet, be.tok.radiusS)
 		}
 	})
 	el.Children(func() {
 		if icon != nil {
 			ui.Icon(c, icon).FontSize(13).TextColor(ink)
 		}
-		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(ink).SingleLine()
+		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(ink).FontFeatures("tnum").SingleLine()
 	})
 	return el
 }
 
-// editSwitch 是 26×15 的紧凑开关。
+// editSwitch 是 28×16 的紧凑开关。
 func (a *App) editSwitch(c *ui.Context, be editPalette, on bool, fn func()) ui.Element {
-	sw := ui.Box(c).Size(26, 15).Radius(8).Shrink(0).Cursor(ui.CursorPointer)
+	sw := ui.Box(c).Size(28, 16).Radius(8).Shrink(0).Cursor(ui.CursorPointer)
 	if on {
 		sw.Background(be.transfer)
 	} else {
-		sw.Background(be.rule)
+		sw.Background(be.tok.borderStrong)
 	}
 	sw.Draw(func(p *ui.Painter, r ui.Rect) {
 		pad := float32(2)
@@ -1059,23 +1083,28 @@ func (a *App) editRecipeModal(c *ui.Context, be editPalette) {
 		return
 	}
 	ui.Modal(c, &st.recipeOpen, func() {
-		ui.Column(c.Key("edit-recipe-modal")).Width(380).Gap(12).Padding(4).
-			Background(be.sheet).Radius(12).Children(func() {
-			ui.Text(c, "存为配方").FontSize(16).FontWeight(500).TextColor(be.ink)
+		ui.Column(c.Key("edit-recipe-modal")).Width(380).Gap(12).Padding(16).
+			Background(be.tok.lift).Border(1, be.tok.borderStrong).Radius(be.tok.radiusL).
+			Shadow(0, 10, 28, 0, be.shadow).Children(func() {
+			ui.Text(c, "存为配方").FontSize(be.tok.display).FontWeight(600).TextColor(be.ink)
 			ui.Text(c, "保存当前生效的功能，之后一键套用。").FontSize(12).TextColor(be.muted)
 			ui.Text(c, "配方名称").FontSize(11.5).TextColor(be.muted)
-			name := ui.TextInput(c.Key("edit-recipe-name"), &st.recipeName).Height(30).FillWidth()
+			name := ui.TextInput(c.Key("edit-recipe-name"), &st.recipeName).Height(30).FillWidth().
+				Radius(be.tok.radiusS).Background(be.quiet).Border(1, be.rule).Padding(0, 8).
+				TextColor(be.ink).Label("配方名称")
 			name.FontSize(13)
 			if st.recipeErr != "" {
 				ui.Text(c, st.recipeErr).FontSize(11.5).TextColor(be.fault)
 			}
 			row := ui.Row(c).FillWidth().Justify(ui.End).Gap(8)
 			row.Children(func() {
-				cancel := ui.Button(c, "取消").FontSize(12).Padding(6, 12).Radius(7).
-					Background(be.quiet).TextColor(be.ink)
+				cancel := ui.Button(c, "取消").FontSize(12).Padding(6, 12).Radius(be.tok.radiusS).
+					Background(be.sheet).Border(1, be.rule).TextColor(be.ink)
+				hoverPressPose(cancel)
 				cancel.OnClick(func() { st.recipeOpen = false })
-				save := ui.Button(c, "保存").FontSize(12).Padding(6, 12).Radius(7).
+				save := ui.Button(c, "保存").FontSize(12).Padding(6, 12).Radius(be.tok.radiusS).
 					Background(be.transfer).TextColor(be.onTransfer)
+				hoverPressPose(save)
 				save.OnClick(func() { a.editSaveRecipe(st.recipeName) })
 			})
 		})
@@ -1090,10 +1119,11 @@ func (a *App) editResultModal(c *ui.Context, be editPalette) {
 	}
 	okN, failN := a.editRunCounts()
 	ui.Modal(c, &st.resultOpen, func() {
-		col := ui.Column(c.Key("edit-result-modal")).Width(440).Gap(10).Padding(4).
-			Background(be.sheet).Radius(12)
+		col := ui.Column(c.Key("edit-result-modal")).Width(440).Gap(10).Padding(16).
+			Background(be.tok.lift).Border(1, be.tok.borderStrong).Radius(be.tok.radiusL).
+			Shadow(0, 10, 28, 0, be.shadow)
 		col.Children(func() {
-			ui.Text(c, "处理结果").FontSize(16).FontWeight(500).TextColor(be.ink)
+			ui.Text(c, "处理结果").FontSize(be.tok.display).FontWeight(600).TextColor(be.ink)
 			summary := fmt.Sprintf("完成 %d 个", okN)
 			if failN > 0 {
 				summary += fmt.Sprintf(" · 失败 %d 个", failN)
@@ -1101,7 +1131,7 @@ func (a *App) editResultModal(c *ui.Context, be editPalette) {
 			if dir := strings.TrimSpace(st.outDir); dir != "" {
 				summary += " → " + dir
 			}
-			ui.Text(c, summary).FontSize(11.5).TextColor(be.muted).SingleLine()
+			ui.Text(c, summary).FontSize(11.5).TextColor(be.muted).FontFeatures("tnum").SingleLine()
 			if failN > 0 {
 				height := float32(math.Min(220, float64(failN)*38+4))
 				list := ui.Scroll(c.Key("edit-result-list")).FillWidth().Height(height)
@@ -1124,20 +1154,23 @@ func (a *App) editResultModal(c *ui.Context, be editPalette) {
 			footer := ui.Row(c).FillWidth().Justify(ui.End).Gap(8).AlignItems(ui.Center)
 			footer.Children(func() {
 				if strings.TrimSpace(st.outDir) != "" {
-					open := ui.Button(c, "打开输出目录").FontSize(12).Padding(6, 12).Radius(7).
-						Background(be.quiet).TextColor(be.ink)
+					open := ui.Button(c, "打开输出目录").FontSize(12).Padding(6, 12).Radius(be.tok.radiusS).
+						Background(be.sheet).Border(1, be.rule).TextColor(be.ink)
+					hoverPressPose(open)
 					open.OnClick(func() { a.editOpenOutDir() })
 				}
 				if failN > 0 {
-					retry := ui.Button(c, fmt.Sprintf("重试失败 %d 张", failN)).FontSize(12).Padding(6, 12).Radius(7).
+					retry := ui.Button(c, fmt.Sprintf("重试失败 %d 张", failN)).FontSize(12).Padding(6, 12).Radius(be.tok.radiusS).
 						Background(be.transfer).TextColor(be.onTransfer)
+					hoverPressPose(retry)
 					retry.OnClick(func() {
 						st.resultOpen = false
 						a.editRetryFailed()
 					})
 				}
-				close := ui.Button(c, "关闭").FontSize(12).Padding(6, 12).Radius(7).
-					Background(be.quiet).TextColor(be.ink)
+				close := ui.Button(c, "关闭").FontSize(12).Padding(6, 12).Radius(be.tok.radiusS).
+					Background(be.sheet).Border(1, be.rule).TextColor(be.ink)
+				hoverPressPose(close)
 				close.OnClick(func() { st.resultOpen = false })
 			})
 		})

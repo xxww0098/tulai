@@ -4,56 +4,307 @@
   <meta charset="utf-8">
   <title>tulai 页面桥</title>
   <style>
-    body {
-      font: 14px/1.45 system-ui, sans-serif;
-      width: 340px;
-      box-sizing: border-box;
-      margin: 0;
-      padding: 16px;
-      color: #1c1b19;
-      background: #fff;
+    :root {
+      color-scheme: light dark;
+      --bg: #F6F8FA;
+      --card: #FFFFFF;
+      --sunken: #F0F3F7;
+      --border: #E1E6EF;
+      --border-strong: #CBD4E1;
+      --text: #0F172A;
+      --muted: #5B677A;
+      --accent: #2563EB;
+      --accent-hover: #1D4ED8;
+      --on-accent: #FFFFFF;
+      --accent-soft: rgba(37, 99, 235, 0.10);
+      --focus-ring: rgba(37, 99, 235, 0.24);
+      --success: #15803D;
+      --success-bg: rgba(21, 128, 61, 0.08);
+      --success-border: rgba(21, 128, 61, 0.25);
+      --warning: #B45309;
+      --warning-bg: rgba(180, 83, 9, 0.08);
+      --warning-border: rgba(180, 83, 9, 0.25);
+      --danger: #DC2626;
+      --danger-bg: rgba(220, 38, 38, 0.08);
+      --danger-border: rgba(220, 38, 38, 0.25);
+      --shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
     }
-    h1 { font-size: 1.05rem; margin: 0 0 10px; }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0B0E14;
+        --card: #141923;
+        --sunken: #1B2230;
+        --border: #252F42;
+        --border-strong: #34425A;
+        --text: #F1F5F9;
+        --muted: #94A3B8;
+        --accent: #60A5FA;
+        --accent-hover: #3B82F6;
+        --on-accent: #090D16;
+        --accent-soft: rgba(96, 165, 250, 0.14);
+        --focus-ring: rgba(96, 165, 250, 0.28);
+        --success: #34D399;
+        --success-bg: rgba(52, 211, 153, 0.12);
+        --success-border: rgba(52, 211, 153, 0.28);
+        --warning: #FBBF24;
+        --warning-bg: rgba(251, 191, 36, 0.12);
+        --warning-border: rgba(251, 191, 36, 0.28);
+        --danger: #F87171;
+        --danger-bg: rgba(248, 113, 113, 0.12);
+        --danger-border: rgba(248, 113, 113, 0.28);
+        --shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    ::selection {
+      background: var(--accent-soft);
+      color: var(--text);
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      font-variant-numeric: tabular-nums;
+      width: 356px;
+      margin: 0;
+      padding: 14px;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .head-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .head-text { min-width: 0; }
+
+    h1 {
+      font-size: 16.5px;
+      font-weight: 600;
+      line-height: 1.25;
+      letter-spacing: -0.01em;
+      margin: 0;
+      color: var(--text);
+    }
+
+    .subtitle {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
     #status {
       white-space: pre-wrap;
-      margin: 0;
-      padding: 8px 10px;
-      background: #f7f6f3;
-      border: 1px solid #e4e0d8;
+      margin: 0 0 12px;
+      padding: 9px 11px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--text);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
     }
+
+    #status:not([data-state]):empty {
+      display: none;
+    }
+
+    #status[data-state="on"] {
+      background: var(--success-bg);
+      border-color: var(--success-border);
+    }
+
+    #status[data-state="error"] {
+      background: var(--danger-bg);
+      border-color: var(--danger-border);
+    }
+
+    #status[data-state="off"] {
+      background: var(--warning-bg);
+      border-color: var(--warning-border);
+    }
+
     #status::before {
       content: "";
       display: inline-block;
-      width: 8px;
-      height: 8px;
-      margin-right: 6px;
+      width: 7px;
+      height: 7px;
+      margin-right: 7px;
       border-radius: 50%;
-      background: #666666;
+      background: var(--muted);
       vertical-align: 1px;
     }
-    #status[data-state="on"]::before { background: #1b7f3a; }
-    #status[data-state="error"]::before { background: #8c2f2f; }
+
+    #status[data-state="on"]::before { background: var(--success); }
+    #status[data-state="off"]::before { background: var(--warning); }
+    #status[data-state="error"]::before { background: var(--danger); }
     #status:not([data-state])::before { display: none; }
-    p { color: #5c574e; margin: 12px 0 0; }
-    label { display: block; margin-top: 12px; font-weight: 600; }
-    input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; font: inherit; }
-    button { margin-top: 14px; margin-right: 8px; padding: 8px 14px; font: inherit; }
+
+    #form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    input {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      font: inherit;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--sunken);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      caret-color: var(--accent);
+      transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+    }
+
+    input:hover {
+      border-color: var(--border-strong);
+    }
+
+    input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 0;
+      border-color: var(--accent);
+      background: var(--card);
+      box-shadow: 0 0 0 3px var(--focus-ring);
+    }
+
+    #token,
+    #port {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    button {
+      flex: 1;
+      height: 32px;
+      padding: 0 12px;
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--border-strong);
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      transition: background-color 150ms ease, border-color 150ms ease, opacity 150ms ease;
+    }
+
+    button:hover {
+      background: var(--sunken);
+    }
+
+    button[type="submit"] {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--on-accent);
+      font-weight: 600;
+    }
+
+    button[type="submit"]:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      margin: 10px 2px 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
   </style>
 </head>
 <body>
-  <h1>tulai 页面桥</h1>
-  <div id="status" role="status"></div>
+  <header class="head">
+    <span class="head-icon" aria-hidden="true">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+    </span>
+    <div class="head-text">
+      <h1>tulai 页面桥</h1>
+      <p class="subtitle">桌面端与网页工作台实时通信配对</p>
+    </div>
+  </header>
+  <div id="status" role="status" aria-live="polite"></div>
   <form id="form">
-    <label>令牌
-      <input id="token" autocomplete="off" spellcheck="false">
-    </label>
-    <label>端口
-      <input id="port" inputmode="numeric" value="18765">
-    </label>
-    <button type="submit">保存并重连</button>
-    <button type="button" id="repair">恢复自动对接</button>
+    <div class="field">
+      <label for="token">令牌</label>
+      <input id="token" autocomplete="off" spellcheck="false" placeholder="桌面端自动写入或手动粘贴">
+    </div>
+    <div class="field">
+      <label for="port">端口</label>
+      <input id="port" inputmode="numeric" value="18765" placeholder="18765">
+    </div>
+    <div class="actions">
+      <button type="submit">保存并重连</button>
+      <button type="button" id="repair">恢复自动对接</button>
+    </div>
   </form>
-  <p>tulai 打开后会自动写入令牌和端口。自动对接失败时，再把桌面端的令牌粘贴到这里。</p>
+  <p class="hint">tulai 打开后会自动写入令牌和端口。自动对接失败时，再把桌面端的令牌粘贴到这里。</p>
   <script src="options.js"></script>
 </body>
 </html>
