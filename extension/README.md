@@ -1,6 +1,6 @@
 # tulai 页面桥
 
-这个目录包含 Chromium 的 Manifest V3 页面桥和 `firefox/` 中供绑定账号使用的 Firefox 页面桥，当前版本 **0.3.17**。桌面端和扩展的版本分别管理，hello 的 `payload.version` 与清单一致，打包方法见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
+这个目录包含 Chromium 的 Manifest V3 页面桥和 `firefox/` 中供绑定账号使用的 Firefox 页面桥，当前版本 **0.3.18**。桌面端和扩展的版本分别管理，hello 的 `payload.version` 与清单一致，打包方法见 [`docs/RELEASING.md`](../docs/RELEASING.md)。
 
 桌面端默认在每个绑定的 Camoufox 账号中自动加载临时 Firefox 页面桥，并将会话映射到原账号；可在「设置 → 账号与并发」关闭。无需手动安装或配对，任务结束后清理临时扩展；原账号登录资料继续保留。豆包洗图每批最多在一条消息中发送 10 张源图，使用回复中的参考图片 URI 将每个结果关联到上传的源图。数量不符、关联缺失或存在歧义时，已取回的图片放入待核对目录，不按顺序猜测。下文的 Chromium 步骤只保留作历史实现参考；本项目的运行和测试使用内置 Camoufox，详见 [AGENTS.md](../AGENTS.md)。
 
@@ -108,6 +108,8 @@ google-chrome \
 豆包源图关联（0.3.17 起）允许这一批只回来一部分图：`TULAIDoubaoSourceMap.resolve` 会校验消息序号和 uri 归属，返回已关联的结果和对应源图下标；`resolveFromConversation` 会再拉一次会话页，把同一轮里后续生成、还没出现在页面上的图补进结果，只有全部对上才补。张数不足时保存已确认的那几张，不再整批作废。
 
 网络流状态（0.3.17 起）：`network.js` 在开始接收响应流、收到数据和结束时通过 `NETWORK_STREAM` 告诉内容脚本，`waitResult` 把它算进「还在生成」，最近 45 秒内还在流式输出时不会提前收工。额度提示也扩展到「今天 / 本周 / 本月 / 近 N 天」的说法，并会从助手回复的第一句里识别额度用完的说明。
+
+结果收工等待（0.3.18 起）：图片已解码且地址和像素尺寸稳定时缩短确认等待；缩略图地址、没有自然尺寸的占位图和未齐的多图批次仍使用较长的等待窗口。
 
 豆包结果只收集本轮助手消息里的 `mdbox_image`。用户上传的 `message_image_content` 不会当成生成图。空 SVG 占位不会当成结果，下载只接受 PNG、JPEG、GIF、WebP。千问和豆包等待结果时都会把还没换成 http(s) 实图的生成卡滚进视口并改掉 `loading=lazy`；灰占位、blob、SVG 和很小的 data 图不算结果。
 
