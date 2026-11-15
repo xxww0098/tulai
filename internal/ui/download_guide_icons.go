@@ -40,16 +40,25 @@ func downloadGuideSiteIcons(c *ui.Context, hosts string, tok tokens) {
 		for start := 0; start < len(domains); start += 3 {
 			ui.Row(c).Gap(2).Children(func() {
 				for _, domain := range domains[start:min(start+3, len(domains))] {
-					tile := ui.Column(c).Size(size, size).Radius(5).Center().Shrink(0).
-						Background(ui.Hex("#FFFFFF")).Border(1, tok.border)
+					icon := downloadGuideIcons[domain]
+					tileBg := tok.sunken
+					if icon != nil {
+						tileBg = tok.card
+						if tok.dark {
+							// 透明底深色站点图标在暗色卡片上需要柔和浅色托盘，避免与深色背景融为一体。
+							tileBg = tok.text.Alpha(0.92)
+						}
+					}
+					tile := ui.Column(c).Size(size, size).Radius(tok.radiusS+1).Center().Shrink(0).
+						Background(tileBg).Border(1, tok.border)
 					if domain != "" {
 						tile.Tooltip(domain)
 					}
 					tile.Children(func() {
-						if icon := downloadGuideIcons[domain]; icon != nil {
+						if icon != nil {
 							ui.Image(c, icon).Size(size-4, size-4).Fit(ui.Contain)
 						} else {
-							ui.Icon(c, iconGlobe).FontSize(size - 8).TextColor(ui.Hex("#64708A"))
+							ui.Icon(c, iconGlobe).FontSize(size - 8).TextColor(tok.muted)
 						}
 					})
 				}

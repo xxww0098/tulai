@@ -141,63 +141,81 @@ func downloadGuideURL(host string) string {
 
 func (a *App) downloadGuide(c *ui.Context, tok tokens) {
 	w, h := c.Size()
-	width := min(float32(560), max(float32(240), w-80))
-	listHeight := min(float32(360), max(float32(120), h-312))
+	width := min(float32(580), max(float32(260), w-64))
+	listHeight := min(float32(360), max(float32(120), h-290))
 	groups := matchingDownloadGuide(a.dlGuideSearch)
 	count := 0
 	for _, group := range groups {
 		count += len(group.entries)
 	}
-	ui.Column(c.Key("dl-guide")).Width(width).Gap(12).Padding(4, 4, 4, 4).Children(func() {
-		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-			icon := ui.Column(c).Size(40, 40).Radius(12).Center().Background(dlTransferSoft(tok))
-			icon.Children(func() { ui.Icon(c, iconGlobe).FontSize(20).TextColor(dlTransferStrong(tok)) })
-			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-				ui.Text(c, "支持哪些页面？").FontSize(18).FontWeight(600).TextColor(tok.text)
+	accentFg, accentBg, accentBorder := badgeTone("accent", tok)
+	ui.Column(c.Key("dl-guide")).Width(width).Gap(10).Padding(2, 2, 2, 2).Children(func() {
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			icon := ui.Column(c).Size(32, 32).Radius(tok.radiusM).Center().Shrink(0).
+				Background(accentBg).Border(1, accentBorder)
+			icon.Children(func() { ui.Icon(c, iconGlobe).FontSize(16).TextColor(accentFg) })
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, "支持哪些页面？").FontSize(15).FontWeight(600).TextColor(tok.text)
 				ui.Text(c, "点击站点打开专用浏览器，找到目标页面后复制网址。部分站点需要登录或验证。").
-					FontSize(12).TextColor(tok.muted).FillWidth().Wrap()
+					FontSize(tok.caption).TextColor(tok.muted).FillWidth().Wrap()
 			})
 		})
-		ui.TextInput(c.Key("dl-guide-search"), &a.dlGuideSearch).FillWidth().Height(36).
-			Label("搜索网站或页面类型").Placeholder("搜索网站或页面类型，例如亚马逊、相册").
-			OnChange(func() { a.dlGuideScroll.Y = 0 })
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "网站与页面").FontSize(13).FontWeight(600).TextColor(tok.text)
-			ui.Spacer(c)
-			ui.Text(c, fmt.Sprintf("%d 条说明", count)).FontSize(12).TextColor(tok.muted)
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.TextInput(c.Key("dl-guide-search"), &a.dlGuideSearch).Grow(1).MinWidth(0).Height(32).
+				Label("搜索网站或页面类型").Placeholder("搜索网站或页面类型，例如亚马逊、相册").
+				OnChange(func() { a.dlGuideScroll.Y = 0 })
+			if strings.TrimSpace(a.dlGuideSearch) != "" {
+				uiIconBtn(c, "dl-guide-search-clear", "清空搜索", "清空搜索", iconX, 28, false, false, tok).
+					OnClick(func() {
+						a.dlGuideSearch = ""
+						a.dlGuideScroll.Y = 0
+					})
+			}
 		})
+		uiSectionTitle(c, "网站与页面", fmt.Sprintf("%d 条说明", count), tok)
 		ui.Scroll(c.Key("dl-guide-list")).FillWidth().Height(listHeight).Label("支持的页面列表").
 			TrackScroll(&a.dlGuideScroll).Children(func() {
-			ui.Column(c).FillWidth().Gap(12).Children(func() {
+			ui.Column(c).FillWidth().Gap(8).Children(func() {
 				if len(groups) == 0 {
-					ui.Row(c).FillWidth().Gap(8).Padding(8, 10).Radius(8).Background(dlQuiet(tok)).Children(func() {
+					ui.Row(c).FillWidth().Gap(8).Padding(10, 12).Radius(tok.radiusM).
+						Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
 						ui.Icon(c, iconSearch).FontSize(13).TextColor(tok.muted)
 						ui.Text(c, "没有找到匹配的站点；也可以尝试粘贴普通网页地址。").
-							FontSize(13).TextColor(tok.muted).Grow(1).MinWidth(0).Wrap()
+							FontSize(tok.body).TextColor(tok.muted).Grow(1).MinWidth(0).Wrap()
 					})
 					return
 				}
 				for i, group := range groups {
-					ui.Column(c.Key(fmt.Sprintf("dl-guide-group-%d", i))).FillWidth().Children(func() {
-						ui.Row(c).FillWidth().Padding(8, 10).Radius(8).Background(dlQuiet(tok)).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, group.title).FontSize(13).FontWeight(600).TextColor(tok.text).Grow(1).MinWidth(0).Wrap()
-							ui.Text(c, fmt.Sprintf("%d 条", len(group.entries))).FontSize(12).TextColor(tok.muted).Shrink(0)
+					uiCardSurface(ui.Column(c.Key(fmt.Sprintf("dl-guide-group-%d", i))).FillWidth().Clip(), tok).Children(func() {
+						ui.Row(c).FillWidth().Padding(6, 10).Background(tok.sunken).
+							BorderWidth(0, 0, 1, 0).BorderColor(tok.border).AlignItems(ui.Center).Gap(6).Children(func() {
+							ui.Text(c, group.title).FontSize(tok.body).FontWeight(600).TextColor(tok.text).Grow(1).MinWidth(0).Wrap()
+							uiBadge(c, fmt.Sprintf("dl-guide-cnt-%d", i), fmt.Sprintf("%d 条", len(group.entries)), "neutral", tok)
 						})
 						for j, entry := range group.entries {
-							ui.Row(c.Key(fmt.Sprintf("dl-guide-entry-%d", j))).FillWidth().Gap(10).Padding(9, 10).
-								BorderWidth(0, 0, 1, 0).BorderColor(tok.border.Alpha(0.7)).AlignItems(ui.Center).Children(func() {
+							row := ui.Row(c.Key(fmt.Sprintf("dl-guide-entry-%d", j))).FillWidth().Gap(10).Padding(8, 10).
+								AlignItems(ui.Center)
+							if j < len(group.entries)-1 {
+								row.BorderWidth(0, 0, 1, 0).BorderColor(tok.border)
+							}
+							row.Children(func() {
 								downloadGuideSiteIcons(c, entry.icons, tok)
 								ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-									ui.Text(c, entry.site).FontSize(13).FontWeight(500).TextColor(tok.text).FillWidth().Wrap()
-									ui.Text(c, entry.pages).FontSize(12).TextColor(tok.muted).FillWidth().Wrap()
+									ui.Text(c, entry.site).FontSize(tok.body).FontWeight(600).TextColor(tok.text).FillWidth().Wrap()
+									ui.Text(c, entry.pages).FontSize(tok.caption).TextColor(tok.muted).FillWidth().Wrap()
 									if entry.icons != "" {
-										ui.Row(c).FillWidth().Gap(5).Wrap().Children(func() {
+										ui.Row(c).FillWidth().Gap(5).Wrap().Margin(2, 0, 0, 0).Children(func() {
 											for _, host := range strings.Fields(entry.icons) {
-												ui.Button(c.Key("dl-guide-open-"+host), "打开 "+host).FontSize(11).Height(30).Padding(4, 8).
+												b := ui.Button(c.Key("dl-guide-open-"+host), "打开 "+host).
+													FontSize(tok.caption).Height(24).Padding(0, 8).Radius(tok.radiusS).
+													Background(tok.sunken).TextColor(tok.text).Border(1, tok.border).
 													Disabled(a.dlBrowserBusy).OnClick(func() {
 													a.dlBrowserMode = true
 													a.openDownloadBrowserURL(downloadGuideURL(host))
 												})
+												if !a.dlBrowserBusy && b.Hovered() {
+													b.Background(tok.sunkenHi).BorderColor(tok.borderStrong)
+												}
 											}
 										})
 									}
@@ -209,16 +227,22 @@ func (a *App) downloadGuide(c *ui.Context, tok tokens) {
 			})
 		})
 		if a.dlBrowserErr != "" {
-			ui.Text(c, a.dlBrowserErr).FontSize(12).TextColor(tok.danger).FillWidth().Wrap()
+			ui.Row(c).FillWidth().Gap(6).Padding(6, 8).Radius(tok.radiusS).
+				Background(tok.danger.Alpha(0.10)).Border(1, tok.danger.Alpha(0.24)).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, iconAlert).FontSize(13).TextColor(tok.danger)
+				ui.Text(c, a.dlBrowserErr).FontSize(tok.caption).TextColor(tok.danger).Grow(1).MinWidth(0).Wrap()
+			})
 		} else if a.dlBrowserBusy {
-			ui.Text(c, "正在打开下载浏览器…").FontSize(12).TextColor(tok.muted)
+			ui.Text(c, "正在打开下载浏览器…").FontSize(tok.caption).TextColor(tok.muted)
 		}
 		ui.Row(c).FillWidth().Padding(8, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(tok.border).AlignItems(ui.Center).Children(func() {
 			if len(groups) > 0 && strings.TrimSpace(a.dlGuideSearch) == "" {
-				ui.Text(c, "向下滚动查看更多站点").FontSize(12).TextColor(tok.muted)
+				ui.Text(c, "向下滚动查看更多站点").FontSize(tok.caption).TextColor(tok.muted)
 			}
 			ui.Spacer(c)
-			ui.Button(c.Key("dl-guide-back"), "返回新建任务").OnClick(func() { a.dlGuideOn = false })
+			uiBtn(ui.Button(c.Key("dl-guide-back"), "返回新建任务"), tok).Height(28).Padding(0, 12).
+				Background(tok.sunken).TextColor(tok.text).Border(1, tok.border).
+				OnClick(func() { a.dlGuideOn = false })
 		})
 	})
 }

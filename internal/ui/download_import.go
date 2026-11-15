@@ -144,60 +144,169 @@ func (a *App) downloadImportModal(c *ui.Context) {
 		return
 	}
 	tok := a.look
+	w, _ := c.Size()
+	width := min(float32(600), max(float32(300), w-80))
 	ui.Modal(c, &s.open, func() {
-		ui.Column(c.Key("dl-import")).Width(560).Gap(8).Padding(4, 4, 4, 4).Children(func() {
-			ui.Text(c, "导入表格图片").FontSize(18).FontWeight(500).TextColor(tok.text)
-			ui.Text(c, s.name).FontSize(12).TextColor(tok.muted).SingleLine()
+		ui.Column(c.Key("dl-import")).Width(width).Gap(10).Padding(2, 2, 2, 2).Children(func() {
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "导入表格图片").FontSize(15).FontWeight(600).TextColor(tok.text).Shrink(0)
+				uiBadge(c, "dl-import-file", s.name, "neutral", tok)
+				ui.Spacer(c)
+			})
 			if len(s.book.Sheets) > 1 {
 				labels := make([]string, len(s.book.Sheets))
 				for i := range s.book.Sheets {
 					labels[i] = s.book.Sheets[i].Name
 				}
-				ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "工作表").FontSize(13)
+				ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "工作表").FontSize(tok.body).FontWeight(500).TextColor(tok.text).Shrink(0)
 					motionSelect(c.Key("dl-import-sheet"), &s.sheet, labels).Grow(1).Label("选择工作表").OnChange(s.selectSheet)
 				})
 			}
-			ui.Text(c, "选择图片网址列和文件名列；每个单元格作为一个网址。").FontSize(12).TextColor(tok.muted)
-			ui.Scroll(c.Key("dl-import-columns")).FillWidth().MaxHeight(210).Children(func() {
-				ui.Column(c).FillWidth().Gap(6).Children(func() {
-					for i := range s.preview.Columns {
-						col := s.preview.Columns[i]
-						ui.Row(c.Key(fmt.Sprintf("dl-import-col-%d", i))).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-							ui.Checkbox(c.Key(fmt.Sprintf("dl-import-url-%d", i)), &s.urls[i], "图片网址").Label(fmt.Sprintf("图片网址列 %d：%s", i+1, col.Name)).OnChange(s.refresh)
-							ui.Checkbox(c.Key(fmt.Sprintf("dl-import-name-%d", i)), &s.names[i], "文件名").Label(fmt.Sprintf("文件名列 %d：%s", i+1, col.Name)).OnChange(func() { s.changeNameColumn(i) })
-							ui.Text(c, col.Name).FontSize(12).Grow(1).MinWidth(0).SingleLine().Tooltip(col.Name)
-							ui.Text(c, importPreviewText(col.Sample, 50)).FontSize(12).TextColor(tok.muted).Width(210).SingleLine().Tooltip(col.Sample)
-						})
-					}
+			ui.Text(c, "选择图片网址列和文件名列；每个单元格作为一个网址。").FontSize(tok.caption).TextColor(tok.muted)
+			uiCardSurface(ui.Column(c).FillWidth().Clip(), tok).Children(func() {
+				ui.Row(c).FillWidth().Padding(5, 8).Gap(10).Background(tok.sunken).
+					BorderWidth(0, 0, 1, 0).BorderColor(tok.border).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "图片网址").FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).Width(74).Shrink(0)
+					ui.Text(c, "文件名").FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).Width(64).Shrink(0)
+					ui.Text(c, "列名").FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).Grow(1).MinWidth(0)
+					ui.Text(c, "示例值").FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).Width(200).Shrink(0)
+				})
+				ui.Scroll(c.Key("dl-import-columns")).FillWidth().MaxHeight(176).Children(func() {
+					ui.Column(c).FillWidth().Children(func() {
+						for i := range s.preview.Columns {
+							col := s.preview.Columns[i]
+							row := ui.Row(c.Key(fmt.Sprintf("dl-import-col-%d", i))).FillWidth().Padding(5, 8).Gap(10).AlignItems(ui.Center)
+							if s.urls[i] || s.names[i] {
+								row.Background(tok.accent.Alpha(0.05))
+							}
+							if i < len(s.preview.Columns)-1 {
+								row.BorderWidth(0, 0, 1, 0).BorderColor(tok.border)
+							}
+							row.Children(func() {
+								ui.Row(c).Width(74).Shrink(0).AlignItems(ui.Center).Children(func() {
+									ui.Checkbox(c.Key(fmt.Sprintf("dl-import-url-%d", i)), &s.urls[i], "图片网址").
+										Label(fmt.Sprintf("图片网址列 %d：%s", i+1, col.Name)).OnChange(s.refresh)
+								})
+								ui.Row(c).Width(64).Shrink(0).AlignItems(ui.Center).Children(func() {
+									ui.Checkbox(c.Key(fmt.Sprintf("dl-import-name-%d", i)), &s.names[i], "文件名").
+										Label(fmt.Sprintf("文件名列 %d：%s", i+1, col.Name)).OnChange(func() { s.changeNameColumn(i) })
+								})
+								ui.Text(c, col.Name).FontSize(tok.body).FontWeight(500).TextColor(tok.text).
+									Grow(1).MinWidth(0).SingleLine().Tooltip(col.Name)
+								ui.Text(c, importPreviewText(col.Sample, 50)).FontSize(tok.caption).TextColor(tok.muted).
+									Width(200).Shrink(0).SingleLine().Tooltip(col.Sample)
+							})
+						}
+					})
 				})
 			})
 			ui.Checkbox(c.Key("dl-import-folders"), &s.folders, "多个图片列分别建立文件夹")
-			ui.Text(c, "前 5 行预览").FontSize(13).FontWeight(500)
 			sheet := s.book.Sheets[s.index]
-			ui.Column(c).FillWidth().Gap(3).Children(func() {
-				for i := s.preview.Start; i < len(sheet.Rows) && i < s.preview.Start+5; i++ {
-					var fields []string
-					for _, value := range sheet.Rows[i] {
-						fields = append(fields, importPreviewText(value, 35))
+			totalRows := max(0, len(sheet.Rows)-s.preview.Start)
+			uiSectionTitle(c, "前 5 行预览", fmt.Sprintf("共 %d 行", totalRows), tok)
+			previewCols := min(len(s.preview.Columns), 4)
+			if previewCols == 0 && len(sheet.Rows) > s.preview.Start {
+				previewCols = min(len(sheet.Rows[s.preview.Start]), 4)
+			}
+			uiCardSurface(ui.Column(c).FillWidth().Clip(), tok).Children(func() {
+				if previewCols > 0 {
+					ui.Row(c).FillWidth().Padding(4, 8).Gap(8).Background(tok.sunken).
+						BorderWidth(0, 0, 1, 0).BorderColor(tok.border).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "#").FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).
+							Width(28).TextAlign(ui.End).FontFeatures("tnum").Shrink(0)
+						for colIdx := 0; colIdx < previewCols; colIdx++ {
+							colTitle := fmt.Sprintf("列 %d", colIdx+1)
+							if colIdx < len(s.preview.Columns) && s.preview.Columns[colIdx].Name != "" {
+								colTitle = s.preview.Columns[colIdx].Name
+							}
+							ui.Text(c, colTitle).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).
+								Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(colTitle)
+						}
+						if len(s.preview.Columns) > previewCols {
+							ui.Text(c, fmt.Sprintf("+%d列", len(s.preview.Columns)-previewCols)).
+								FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").Shrink(0)
+						}
+					})
+				}
+				endRow := min(len(sheet.Rows), s.preview.Start+5)
+				for i := s.preview.Start; i < endRow; i++ {
+					row := ui.Row(c.Key(fmt.Sprintf("dl-import-row-%d", i))).FillWidth().Padding(4, 8).Gap(8).AlignItems(ui.Center)
+					if i < endRow-1 {
+						row.BorderWidth(0, 0, 1, 0).BorderColor(tok.border)
 					}
-					text := fmt.Sprintf("%d  %s", i+1, strings.Join(fields, " · "))
-					ui.Text(c.Key(fmt.Sprintf("dl-import-row-%d", i)), importPreviewText(text, 160)).FontSize(12).TextColor(tok.muted).SingleLine().Tooltip(text)
+					row.Children(func() {
+						ui.Text(c, fmt.Sprintf("%d", i+1)).FontSize(tok.caption).TextColor(tok.muted).
+							Width(28).TextAlign(ui.End).FontFeatures("tnum").Shrink(0)
+						cells := sheet.Rows[i]
+						if previewCols == 0 {
+							var fields []string
+							for _, value := range cells {
+								fields = append(fields, importPreviewText(value, 35))
+							}
+							text := strings.Join(fields, " · ")
+							ui.Text(c, importPreviewText(text, 160)).FontSize(tok.caption).TextColor(tok.muted).
+								Grow(1).MinWidth(0).SingleLine().Tooltip(text)
+							return
+						}
+						for colIdx := 0; colIdx < previewCols; colIdx++ {
+							val := "—"
+							if colIdx < len(cells) && strings.TrimSpace(cells[colIdx]) != "" {
+								val = importPreviewText(cells[colIdx], 35)
+							}
+							tip := val
+							if colIdx < len(cells) {
+								tip = cells[colIdx]
+							}
+							ui.Text(c, val).FontSize(tok.caption).TextColor(tok.text).
+								Grow(1).Basis(0).MinWidth(0).SingleLine().Tooltip(tip)
+						}
+						if len(s.preview.Columns) > previewCols {
+							ui.Text(c, "…").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
+						}
+					})
 				}
 			})
 			if s.err != "" {
-				ui.Text(c, s.err).FontSize(12).TextColor(tok.danger)
+				ui.Row(c).FillWidth().Gap(6).Padding(6, 8).Radius(tok.radiusS).
+					Background(tok.danger.Alpha(0.10)).Border(1, tok.danger.Alpha(0.24)).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, iconAlert).FontSize(13).TextColor(tok.danger)
+					ui.Text(c, s.err).FontSize(tok.caption).TextColor(tok.danger).Grow(1).MinWidth(0).Wrap()
+				})
 			} else {
 				message := fmt.Sprintf("将导入 %d 张图片", len(s.images))
 				if s.invalid > 0 {
 					message += fmt.Sprintf("，跳过 %d 个无效单元格", s.invalid)
 				}
-				ui.Text(c, message).FontSize(12).TextColor(tok.muted)
+				ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+					tone := "neutral"
+					if len(s.images) > 0 {
+						tone = "success"
+					}
+					uiBadge(c, "dl-import-summary", message, tone, tok)
+				})
 			}
 			a.dlComposerDest(c, tok)
 			ui.Row(c).FillWidth().Justify(ui.End).Gap(8).Children(func() {
-				ui.Button(c, "返回").OnClick(func() { s.open = false; a.dlComposerOn = true })
-				ui.Button(c, "开始导入").Disabled(len(s.images) == 0 || s.err != "").OnClick(func() { a.submitDownloadImport(s) })
+				back := uiBtn(ui.Button(c, "返回"), tok).Height(28).Padding(0, 14).
+					Background(tok.sunken).TextColor(tok.text).Border(1, tok.border)
+				hoverPressPose(back)
+				back.OnClick(func() { s.open = false; a.dlComposerOn = true })
+
+				disabled := len(s.images) == 0 || s.err != ""
+				start := uiBtn(ui.Button(c, "开始导入"), tok).Height(28).Padding(0, 14).
+					Disabled(disabled)
+				if disabled {
+					start.Background(tok.sunken).TextColor(tok.muted).Border(1, tok.border)
+				} else {
+					bg := tok.accent
+					if start.Hovered() {
+						bg = c.Theme().AccentHover
+					}
+					start.Background(bg).TextColor(tok.onAccent).Border(1, bg).Cursor(ui.CursorPointer)
+					hoverPressPose(start)
+					start.OnClick(func() { a.submitDownloadImport(s) })
+				}
 			})
 		})
 	})
