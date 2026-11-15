@@ -822,6 +822,40 @@ func TestShutdownSavesActiveSessionBeforeStoppingEngine(t *testing.T) {
 	}
 }
 
+func TestFrameCoalescesWorkspaceWrites(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{
+		store: st, tab: pageHome, statePage: pageHome, prompts: "画一只猫",
+		queue: []tasks.Task{{Index: 1, Platform: "豆包", Prompt: "画一只猫", Status: tasks.StatusPending}},
+	}
+	for i := 1; i <= 4; i++ {
+		text := strings.Repeat("进度", i)
+		a.postUI(func() {
+			a.progText = text
+			if !a.persistWorkspace(pageHome) {
+				t.Errorf("persist %q", text)
+			}
+		})
+	}
+	if a.workspaceWrites != 0 {
+		t.Fatalf("writes before the frame = %d", a.workspaceWrites)
+	}
+	a.flushUIUpdates()
+	if a.workspaceWrites != 1 {
+		t.Fatalf("writes in one frame = %d, want 1", a.workspaceWrites)
+	}
+	if a.progText != strings.Repeat("进度", 4) {
+		t.Fatalf("last update lost: %q", a.progText)
+	}
+	if !a.persistWorkspace(pageHome) || a.workspaceWrites != 2 {
+		t.Fatalf("a direct save must still write immediately, writes=%d", a.workspaceWrites)
+	}
+}
+
 func TestWashSoloPathsSelectsModerationUnwashed(t *testing.T) {
 	a := &App{
 		statePage: pageWash,

@@ -8,6 +8,41 @@ import (
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
+func TestResultSettleUsesDecodedPixels(t *testing.T) {
+	thumb := []Result{{URL: "https://cdn.example/a.png", Width: 32, Height: 32}}
+	if resultSettleFor(thumb) != imageStableFor {
+		t.Fatalf("small bitmap should keep the long settle, got %s", resultSettleFor(thumb))
+	}
+	if resultSettleFor([]Result{{URL: "https://cdn.example/a.png"}}) != imageStableFor {
+		t.Fatal("missing dimensions should keep the long settle")
+	}
+	full := []Result{{URL: "https://cdn.example/a.png", Width: 1024, Height: 1024}}
+	if resultSettleFor(full) != imagePixelStableFor {
+		t.Fatalf("decoded image should settle on the next poll, got %s", resultSettleFor(full))
+	}
+	thumbURL := []Result{{
+		URL:    "https://p6-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/x.jpeg~tplv-a9rns2rl98-cthumb_lwm3.png",
+		Width:  384,
+		Height: 384,
+	}}
+	if resultSettleFor(thumbURL) != imageStableFor {
+		t.Fatal("a decoded cthumb preview must keep the long settle")
+	}
+	original := []Result{{
+		URL:    "https://p26-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/x.jpeg~tplv-a9rns2rl98-cgen_lwm3.png",
+		Width:  1024,
+		Height: 1024,
+	}}
+	if resultSettleFor(original) != imagePixelStableFor {
+		t.Fatal("a decoded cgen original should use the short settle")
+	}
+	grown := liveKey([]Result{{URL: "https://cdn.example/a.png", Width: 256, Height: 256}})
+	settled := liveKey([]Result{{URL: "https://cdn.example/a.png", Width: 1024, Height: 1024}})
+	if grown == settled {
+		t.Fatal("a larger decode of the same URL must reset the settle clock")
+	}
+}
+
 func TestDetectLogOnlyOnChange(t *testing.T) {
 	start := len(logging.Log.Entries())
 	var last string

@@ -685,7 +685,9 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	if t.ranOn <= 0 {
 		t.ranOn = t.BrowserID
 	}
+	browserAt := time.Now()
 	sess, err := e.session(ctx, t.Platform, t.BrowserID, strat)
+	e.tracePhase(t, "browser", "浏览器就绪", time.Since(browserAt), 0, err)
 	if err != nil {
 		return err
 	}
@@ -755,9 +757,12 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 			}
 		}
 	}
+	submitAt := time.Now()
 	if err := e.submitTask(work, t, strat, sess); err != nil {
+		e.tracePhase(t, "submit", "上传并发送", time.Since(submitAt), len(t.Images), err)
 		return err
 	}
+	e.tracePhase(t, "submit", "上传并发送", time.Since(submitAt), len(t.Images), nil)
 	if !e.opts.WaitResult {
 		return nil
 	}
@@ -900,8 +905,18 @@ func (e *Engine) resultWaitFor(t *Task) time.Duration {
 
 func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session) error {
 	budget := e.resultWaitFor(t)
-	var used time.Duration
+	var used, waited, savedFor time.Duration
+	var waitedN, savedN int
+	var waitErrSeen, saveErrSeen error
 	lastProgress := time.Now()
+	defer func() {
+		if waited > 0 || waitErrSeen != nil {
+			e.tracePhase(t, "generate", "等待生成", waited, waitedN, waitErrSeen)
+		}
+		if savedFor > 0 || saveErrSeen != nil {
+			e.tracePhase(t, "save", "保存结果", savedFor, savedN, saveErrSeen)
+		}
+	}()
 	for used < budget {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -919,7 +934,11 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 		left := budget - used
 		start := time.Now()
 		results, waitErr := strat.WaitForResult(sess, left)
-		used += time.Since(start)
+		spent := time.Since(start)
+		used += spent
+		waited += spent
+		waitedN = len(results)
+		waitErrSeen = waitErr
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -951,9 +970,13 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 		if candidates := len(results) - downloads; candidates > 0 {
 			logging.Log.Debugf("#%d 截获 %d 个候选结果", t.Index, candidates)
 		}
+		saveAt := time.Now()
 		saved, err := e.saveResults(ctx, t, strat, sess, results)
+		savedFor += time.Since(saveAt)
 		t.Results = append(t.Results, saved...)
+		savedN += len(saved)
 		if err = errors.Join(waitErr, err); err != nil {
+			saveErrSeen = err
 			return err
 		}
 		if err := ctx.Err(); err != nil {
@@ -978,7 +1001,8 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 		}
 		used += time.Since(sleepStart)
 	}
-	return fmt.Errorf("出图超时，没有可保存的图片")
+	waitErrSeen = fmt.Errorf("出图超时，没有可保存的图片")
+	return waitErrSeen
 }
 
 // browsersOfPlatforms 返回每个平台可用的浏览器。

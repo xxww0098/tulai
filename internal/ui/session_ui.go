@@ -340,6 +340,31 @@ func (a *App) persistWorkspace(page int) bool {
 	if a == nil || a.store == nil {
 		return true
 	}
+	if a.persistDeferral > 0 {
+		if a.dirtyWorkspace == nil {
+			a.dirtyWorkspace = map[int]struct{}{}
+		}
+		a.dirtyWorkspace[page] = struct{}{}
+		return true
+	}
+	return a.writeWorkspace(page)
+}
+
+func (a *App) writeDirtyWorkspaces() {
+	if a == nil || len(a.dirtyWorkspace) == 0 {
+		return
+	}
+	pending := a.dirtyWorkspace
+	a.dirtyWorkspace = nil
+	for page := range pending {
+		a.writeWorkspace(page)
+	}
+}
+
+func (a *App) writeWorkspace(page int) bool {
+	if a == nil || a.store == nil {
+		return true
+	}
 	st := a.stateOf(page)
 	items := a.tasksToSave(page)
 	id := a.sessionID(page)
@@ -359,6 +384,7 @@ func (a *App) persistWorkspace(page int) bool {
 		logging.Log.Errorf("保存任务记录失败: %v", err)
 		return false
 	}
+	a.workspaceWrites++
 	a.setSessionID(page, saved)
 	return true
 }
