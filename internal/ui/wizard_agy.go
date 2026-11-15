@@ -260,9 +260,9 @@ func wizardBlurb(platform string) string {
 func (a *App) wizardInstallStep(c *ui.Context) {
 	tok := a.look
 	st := a.wizardAgy
-	title, detail, pill, pillColor := "还没有找到 agy", "装好后这里会自动识别，不用重启 tulai。", "未安装", tok.warning
+	title, detail, pill, pillTone := "还没有找到 agy", "装好后这里会自动识别，不用重启 tulai。", "未安装", "warning"
 	if st.found {
-		title, detail, pill, pillColor = "已找到 agy", st.path, "已就绪", tok.success
+		title, detail, pill, pillTone = "已找到 agy", st.path, "已就绪", "success"
 	}
 	wizardCard(ui.Row(c.Key("agy-card")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(12, 14), tok).Children(func() {
 		wizardTile(c, "agy-tile", iconTerminal, 36, tok)
@@ -270,7 +270,7 @@ func (a *App) wizardInstallStep(c *ui.Context) {
 			ui.Text(c, title).FontSize(tok.title).Bold()
 			ui.Text(c, detail).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(detail)
 		})
-		wizardPill(c, "agy-pill", pill, pillColor)
+		uiBadge(c, "agy-pill", pill, pillTone, tok)
 	})
 	if st.found {
 		return
@@ -279,9 +279,10 @@ func (a *App) wizardInstallStep(c *ui.Context) {
 	shell := agy.InstallShell(runtime.GOOS)
 	wizardCard(ui.Column(c.Key("agy-install")).FillWidth().Gap(8).Padding(12, 14), tok).Children(func() {
 		ui.Text(c, "在"+shell+"里运行这一行").FontSize(tok.body).Bold()
-		ui.Row(c.Key("agy-cmd")).FillWidth().Gap(8).AlignItems(ui.Center).Padding(6, 10).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
+		ui.Row(c.Key("agy-cmd")).FillWidth().Gap(8).AlignItems(ui.Center).Padding(7, 10).
+			Radius(tok.radiusS).Background(tok.sunken).Border(1, tok.border).Children(func() {
 			ui.Icon(c, iconTerminal).FontSize(13).TextColor(tok.muted).Shrink(0)
-			ui.Text(c, cmd).Font("monospace").FontSize(12).Selectable().Grow(1).MinWidth(0)
+			ui.Text(c, cmd).Font("monospace").FontSize(12).TextColor(tok.text).Selectable().Grow(1).MinWidth(0)
 		})
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			uiBtn(ui.Button(c, "复制命令"), tok).OnClick(func() {
@@ -289,7 +290,8 @@ func (a *App) wizardInstallStep(c *ui.Context) {
 				a.wizardAgy.copied = true
 			})
 			if st.copied {
-				ui.Text(c, "已复制，粘贴到"+shell+"后回车").FontSize(tok.caption).TextColor(tok.muted)
+				copiedFg, _, _ := semanticToneColors(tok.dark, tok.success, tok.success, 0.12)
+				ui.Text(c, "已复制，粘贴到"+shell+"后回车").FontSize(tok.caption).TextColor(copiedFg)
 			}
 		})
 	})

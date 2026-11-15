@@ -27,15 +27,61 @@ func (a *App) logFloat(c *ui.Context) {
 	}
 	winW, winH := c.Size()
 	a.placeLog(winW, winH)
-	panel := ui.Column(c.Key("run-log")).Label("运行日志区").Absolute().
-		Left(a.logX).Top(a.logY).Size(a.logW, a.logH).Padding(12, 16).Gap(8).
-		Background(ui.Hex("#101318")).Border(1, ui.Hex("#2A3140")).Radius(10).
-		Shadow(0, 16, 40, 0, ui.RGBA(0, 0, 0, 0.45)).TextColor(ui.Hex("#E7ECF3"))
+	panel := ui.Themed(c.Key("run-log"), logDarkTheme(c.Theme())).Label("运行日志区").Absolute().
+		Left(a.logX).Top(a.logY).Size(a.logW, a.logH).Gap(0).
+		Background(ui.Hex("#0B0E14")).Border(1, ui.Hex("#252F42")).Radius(8).
+		Shadow(0, 16, 40, 0, ui.RGBA(0, 0, 0, 0.50)).TextColor(ui.Hex("#F1F5F9"))
 	panel.Children(func() {
-		a.logHeader(c)
-		a.logToolbar(c)
+		ui.Column(c).FillWidth().Padding(10, 14, 9, 14).Gap(8).Radius(8, 8, 0, 0).
+			Background(ui.Hex("#0F131B")).BorderWidth(0, 0, 1, 0).BorderColor(ui.Hex("#252F42")).Children(func() {
+			a.logHeader(c)
+			a.logToolbar(c)
+		})
 		a.logRows(c)
 		a.logFooter(c)
+		a.logResizeGrip(c)
+	})
+}
+
+func logDarkTheme(base *ui.Theme) *ui.Theme {
+	tok := darkTokens()
+	var th ui.Theme
+	if base != nil {
+		th = *base
+	}
+	th.Dark = true
+	th.Background = ui.Hex("#141923")
+	th.Surface = ui.Hex("#1B2230")
+	th.SurfaceHover = ui.Hex("#242D3F")
+	th.SurfacePressed = ui.Hex("#242D3F")
+	th.Border = ui.Hex("#252F42")
+	th.Text = ui.Hex("#F1F5F9")
+	th.TextMuted = ui.Hex("#94A3B8")
+	th.Accent = tok.accent
+	th.AccentText = tok.onAccent
+	th.Selection = tok.accent.Alpha(0.22)
+	th.Focus = tok.accent.Alpha(0.55)
+	th.Scrollbar = ui.RGBA(148, 163, 184, 0.28)
+	th.Radius = 5
+	return &th
+}
+
+func (a *App) logResizeGrip(c *ui.Context) {
+	grip := ui.Box(c.Key("log-resize")).Label("调整日志大小").Absolute().Right(3).Bottom(3).Size(12, 12).
+		Cursor(ui.CursorResizeNWSE)
+	if dx, dy, ok := grip.Dragged(); ok {
+		a.logW += dx
+		a.logH += dy
+		a.logPlaced = true
+	}
+	grip.Draw(func(p *ui.Painter, r ui.Rect) {
+		col := ui.Hex("#475569")
+		if grip.Hovered() {
+			col = ui.Hex("#94A3B8")
+		}
+		p.Line(r.X+r.W-3, r.Y+r.H-1, r.X+r.W-1, r.Y+r.H-3, 1.25, col)
+		p.Line(r.X+r.W-7, r.Y+r.H-1, r.X+r.W-1, r.Y+r.H-7, 1.25, col)
+		p.Line(r.X+r.W-11, r.Y+r.H-1, r.X+r.W-1, r.Y+r.H-11, 1.25, col)
 	})
 }
 
@@ -56,23 +102,26 @@ func (a *App) placeLog(winW, winH float32) {
 }
 
 func (a *App) logHeader(c *ui.Context) {
-	head := ui.Row(c.Key("log-header")).Label("日志标题栏").FillWidth().Height(28).Gap(8).AlignItems(ui.Center)
+	head := ui.Row(c.Key("log-header")).Label("日志标题栏").FillWidth().Height(26).Gap(8).AlignItems(ui.Center)
 	if dx, dy, ok := head.Dragged(); ok && (dx != 0 || dy != 0) {
 		a.logX += dx
 		a.logY += dy
 		a.logPlaced = true
 	}
 	head.Cursor(ui.CursorGrab).Children(func() {
-		ui.Icon(c, iconTerminal).FontSize(13).TextColor(ui.Hex("#9AA6B8"))
-		ui.Text(c, "运行日志").FontSize(14).Bold().TextColor(ui.Hex("#F4F7FB")).SingleLine()
+		ui.Icon(c, iconTerminal).FontSize(13).TextColor(ui.Hex("#94A3B8"))
+		ui.Text(c, "运行日志").FontSize(13.5).FontWeight(600).TextColor(ui.Hex("#F1F5F9")).SingleLine()
 		live := "实时接收"
-		dot := ui.Hex("#3DDC97")
+		dot := ui.Hex("#34D399")
 		if a.logPaused {
 			live = "已暂停"
-			dot = ui.Hex("#8B95A7")
+			dot = ui.Hex("#94A3B8")
 		}
-		ui.Box(c).Size(7, 7).Radius(4).Background(dot)
-		ui.Text(c, live).FontSize(12).TextColor(ui.Hex("#9AA6B8")).SingleLine()
+		ui.Row(c).Height(20).Padding(0, 7).Radius(999).Gap(5).AlignItems(ui.Center).
+			Background(ui.Hex("#141923")).Border(1, ui.Hex("#252F42")).Children(func() {
+			ui.Box(c).Size(6, 6).Radius(3).Background(dot)
+			ui.Text(c, live).FontSize(11).TextColor(ui.Hex("#CBD5E1")).SingleLine()
+		})
 		ui.Spacer(c)
 		a.logTool(c, "log-follow", a.followLabel(), func() { a.logPaused = !a.logPaused })
 		a.logTool(c, "log-export", "导出", func() { a.exportLog() })
@@ -80,13 +129,6 @@ func (a *App) logHeader(c *ui.Context) {
 		a.logTool(c, "log-clear", "清空", func() { logging.Log.Clear() })
 		a.logTool(c, "log-close", "关闭", func() { a.logOpen = false })
 	})
-	grip := ui.Box(c.Key("log-resize")).Label("调整日志大小").Absolute().Right(2).Bottom(2).Size(14, 14).
-		Background(ui.Hex("#3A4456")).Radius(3).Cursor(ui.CursorResizeNWSE)
-	if dx, dy, ok := grip.Dragged(); ok {
-		a.logW += dx
-		a.logH += dy
-		a.logPlaced = true
-	}
 }
 
 func (a *App) followLabel() string {
@@ -97,12 +139,20 @@ func (a *App) followLabel() string {
 }
 
 func (a *App) logTool(c *ui.Context, key, label string, click func()) {
-	b := ui.ButtonBase(c.Key(key)).Height(24).Padding(0, 8).Radius(6).Center().
-		Background(ui.Hex("#1B212C")).Border(1, ui.Hex("#313A4A")).
+	b := ui.ButtonBase(c.Key(key)).Height(24).Padding(0, 8).Radius(5).Center().
 		Label(label).Cursor(ui.CursorPointer)
+	bg, border, fg := ui.Hex("#1B2230"), ui.Hex("#252F42"), ui.Hex("#CBD5E1")
+	switch {
+	case b.Pressed():
+		bg, border, fg = ui.Hex("#141923"), ui.Hex("#34425A"), ui.Hex("#F1F5F9")
+	case b.Hovered():
+		bg, border, fg = ui.Hex("#242D3F"), ui.Hex("#34425A"), ui.Hex("#F1F5F9")
+	}
+	b.Background(bg).Border(1, border)
+	hoverPressPose(b)
 	b.OnClick(click)
 	b.Children(func() {
-		ui.Text(c, label).FontSize(12).TextColor(ui.Hex("#D5DCE8")).SingleLine()
+		ui.Text(c, label).FontSize(11.5).TextColor(fg).SingleLine()
 	})
 }
 
@@ -111,7 +161,7 @@ func (a *App) logToolbar(c *ui.Context) {
 	counts := logging.CountLevels(entries)
 	ui.Column(c).FillWidth().Gap(6).Children(func() {
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "级别").FontSize(12).TextColor(ui.Hex("#8E9AAD")).Shrink(0).SingleLine()
+			ui.Text(c, "级别").FontSize(11.5).TextColor(ui.Hex("#94A3B8")).Shrink(0).SingleLine()
 			a.levelChip(c, "全部", counts.All, 0)
 			a.levelChip(c, "调试", counts.Debug, 1)
 			a.levelChip(c, "信息", counts.Info, 2)
@@ -127,16 +177,34 @@ func (a *App) logToolbar(c *ui.Context) {
 
 func (a *App) levelChip(c *ui.Context, name string, n int, pick int) {
 	on := a.logPick == pick
-	bg, fg := ui.Hex("#1B212C"), ui.Hex("#C5D0DE")
+	bg, border, fg := ui.Hex("#141923"), ui.Hex("#252F42"), ui.Hex("#CBD5E1")
 	if on {
-		bg, fg = ui.Hex("#E7ECF3"), ui.Hex("#12161C")
+		switch pick {
+		case 0:
+			bg, border, fg = ui.Hex("#F1F5F9"), ui.Hex("#F1F5F9"), ui.Hex("#090D16")
+		case 1:
+			bg, border, fg = ui.Hex("#242D3F"), ui.Hex("#475569"), ui.Hex("#F1F5F9")
+		case 2:
+			fg, bg, border = badgeTone("accent", darkTokens())
+		case 3:
+			fg, bg, border = badgeTone("warning", darkTokens())
+		case 4:
+			fg, bg, border = badgeTone("danger", darkTokens())
+		}
 	}
 	label := fmt.Sprintf("%s %d", name, n)
-	b := ui.ButtonBase(c.Key("log-level-"+name)).Height(24).Padding(0, 8).Radius(6).Center().
-		Background(bg).Label(label).Cursor(ui.CursorPointer)
+	b := ui.ButtonBase(c.Key("log-level-"+name)).Height(22).Padding(0, 8).Radius(5).Center().
+		Label(label).Cursor(ui.CursorPointer)
+	if !on && b.Hovered() {
+		bg, border, fg = ui.Hex("#1B2230"), ui.Hex("#34425A"), ui.Hex("#F1F5F9")
+	}
+	b.Background(bg).Border(1, border)
 	b.OnClick(func() { a.logPick = pick })
 	b.Children(func() {
-		ui.Text(c, label).FontSize(12).TextColor(fg).SingleLine()
+		t := ui.Text(c, label).FontSize(11.5).FontFeatures("tnum").TextColor(fg).SingleLine()
+		if on {
+			t.FontWeight(600)
+		}
 	})
 }
 
@@ -163,29 +231,31 @@ func (a *App) logRows(c *ui.Context) {
 	if !a.logPaused {
 		a.logScroll.Y = math.MaxFloat32
 	}
-	scroll := ui.Scroll(c.Key("run-log-lines")).Label("运行日志内容").FillWidth().Grow(1).MinHeight(0)
-	scroll.TrackScroll(&a.logScroll)
-	if len(rows) == 0 {
+	ui.Column(c).FillWidth().Grow(1).MinHeight(0).Padding(6, 10).Background(ui.Hex("#0B0E14")).Children(func() {
+		scroll := ui.Scroll(c.Key("run-log-lines")).Label("运行日志内容").FillWidth().Grow(1).MinHeight(0)
+		scroll.TrackScroll(&a.logScroll)
+		if len(rows) == 0 {
+			scroll.Children(func() {
+				msg := "每个任务的开始、提交和结束会写在这里"
+				if strings.TrimSpace(a.logQuery) != "" || a.logSource != "" || a.logPick != 0 {
+					msg = "没有匹配的日志"
+				}
+				ui.Text(c, msg).FontSize(12).TextColor(ui.Hex("#94A3B8"))
+			})
+			return
+		}
 		scroll.Children(func() {
-			msg := "每个任务的开始、提交和结束会写在这里"
-			if strings.TrimSpace(a.logQuery) != "" || a.logSource != "" || a.logPick != 0 {
-				msg = "没有匹配的日志"
+			win := logging.VisibleWindow(a.logRowHeights(rows), scroll.Bounds().H, a.logScroll.Y)
+			if win.Top > 0.5 {
+				ui.Box(c.Key("log-pad-top")).Height(win.Top)
 			}
-			ui.Text(c, msg).FontSize(12).TextColor(ui.Hex("#8E9AAD"))
+			for i := win.Start; i < win.End; i++ {
+				a.logRow(c, rows[i])
+			}
+			if win.Bottom > 0.5 {
+				ui.Box(c.Key("log-pad-bottom")).Height(win.Bottom)
+			}
 		})
-		return
-	}
-	scroll.Children(func() {
-		win := logging.VisibleWindow(a.logRowHeights(rows), scroll.Bounds().H, a.logScroll.Y)
-		if win.Top > 0.5 {
-			ui.Box(c.Key("log-pad-top")).Height(win.Top)
-		}
-		for i := win.Start; i < win.End; i++ {
-			a.logRow(c, rows[i])
-		}
-		if win.Bottom > 0.5 {
-			ui.Box(c.Key("log-pad-bottom")).Height(win.Bottom)
-		}
 	})
 }
 
@@ -221,31 +291,38 @@ func (a *App) visibleLogs() []logging.Entry {
 
 func (a *App) logRow(c *ui.Context, entry logging.Entry) {
 	open := a.logExpanded != nil && a.logExpanded[entry.Seq]
-	row := ui.Column(c.Key(fmt.Sprintf("log-row-%d", entry.Seq))).FillWidth()
+	row := ui.Column(c.Key(fmt.Sprintf("log-row-%d", entry.Seq))).FillWidth().Radius(4).Padding(0, 6).Cursor(ui.CursorPointer)
+	if open || row.Hovered() {
+		row.Background(ui.Hex("#141923"))
+	}
 	row.OnClick(func() {
 		if a.logExpanded == nil {
 			a.logExpanded = map[int]bool{}
 		}
 		a.logExpanded[entry.Seq] = !a.logExpanded[entry.Seq]
 	})
+	badgeFg, badgeBg, badgeBorder := levelBadgeStyle(entry.Level)
 	row.Children(func() {
 		ui.Row(c).FillWidth().Height(logRowH).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, entry.Time.Local().Format("15:04:05.000")).Width(108).Shrink(0).
-				FontSize(12).FontFeatures("tnum").TextColor(ui.Hex("#8E9AAD")).SingleLine()
-			ui.Text(c, logging.LevelCode(entry.Level)).Width(32).Shrink(0).
-				FontSize(12).Bold().TextColor(levelInk(entry.Level)).SingleLine()
+			ui.Text(c, entry.Time.Local().Format("15:04:05.000")).Width(100).Shrink(0).
+				FontSize(11.5).FontFeatures("tnum").TextColor(ui.Hex("#94A3B8")).SingleLine()
+			ui.Row(c).Width(36).Height(16).Radius(4).Center().Shrink(0).
+				Background(badgeBg).Border(1, badgeBorder).Children(func() {
+				ui.Text(c, logging.LevelCode(entry.Level)).FontSize(10).FontWeight(700).
+					TextColor(badgeFg).SingleLine()
+			})
 			ui.Text(c, "["+trimSource(entry.Source)+"]").Width(108).Shrink(0).
-				FontSize(12).TextColor(ui.Hex("#7EB6FF")).SingleLine()
+				FontSize(11.5).TextColor(ui.Hex("#7EB6FF")).SingleLine()
 			ui.Text(c, entry.Text).Grow(1).MinWidth(0).FontSize(12).
-				TextColor(ui.Hex("#E7ECF3")).SingleLine().Tooltip(entry.Text)
+				TextColor(ui.Hex("#F1F5F9")).SingleLine().Tooltip(entry.Text)
 			if entry.Elapsed > 0 {
 				ui.Text(c, entry.Elapsed.Round(time.Millisecond).String()).Width(64).Shrink(0).
-					FontSize(12).FontFeatures("tnum").TextColor(ui.Hex("#7EB6FF")).SingleLine()
+					FontSize(11.5).FontFeatures("tnum").TextColor(ui.Hex("#93C5FD")).SingleLine()
 			}
 		})
 		if open && entry.Detail != "" {
-			ui.Text(c, entry.Detail).FillWidth().Height(logDetailH).FontSize(11).
-				TextColor(ui.Hex("#9AA6B8")).SingleLine()
+			ui.Text(c, entry.Detail).FillWidth().Height(logDetailH).Padding(0, 6, 0, 8).FontSize(11).
+				TextColor(ui.Hex("#94A3B8")).SingleLine()
 		}
 	})
 }
@@ -253,21 +330,23 @@ func (a *App) logRow(c *ui.Context, entry logging.Entry) {
 func (a *App) logFooter(c *ui.Context) {
 	all := logging.Log.Entries()
 	shown := a.visibleLogs()
-	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-		dot := ui.Hex("#3DDC97")
+	ui.Row(c).FillWidth().Padding(8, 22, 8, 14).Gap(10).AlignItems(ui.Center).
+		Radius(0, 0, 8, 8).Background(ui.Hex("#0F131B")).
+		BorderWidth(1, 0, 0, 0).BorderColor(ui.Hex("#252F42")).Children(func() {
+		dot := ui.Hex("#34D399")
 		label := "实时跟随"
 		if a.logPaused {
-			dot = ui.Hex("#8B95A7")
+			dot = ui.Hex("#94A3B8")
 			label = "已暂停跟随"
 		}
 		ui.Box(c).Size(7, 7).Radius(4).Background(dot)
-		ui.Text(c, label).FontSize(12).TextColor(ui.Hex("#9AA6B8")).SingleLine()
-		ui.Text(c, fmt.Sprintf("共 %d 条", len(all))).FontSize(12).TextColor(ui.Hex("#C5D0DE")).SingleLine()
-		ui.Text(c, fmt.Sprintf("显示 %d 条", len(shown))).FontSize(12).TextColor(ui.Hex("#8E9AAD")).SingleLine()
+		ui.Text(c, label).FontSize(11.5).TextColor(ui.Hex("#CBD5E1")).SingleLine()
+		ui.Text(c, fmt.Sprintf("共 %d 条", len(all))).FontSize(11.5).FontFeatures("tnum").TextColor(ui.Hex("#CBD5E1")).SingleLine()
+		ui.Text(c, fmt.Sprintf("显示 %d 条", len(shown))).FontSize(11.5).FontFeatures("tnum").TextColor(ui.Hex("#94A3B8")).SingleLine()
 		ui.Spacer(c)
 		if n := len(all); n > 0 {
 			ui.Text(c, "最近收到 "+all[n-1].Time.Local().Format("15:04:05.000")).
-				FontSize(12).TextColor(ui.Hex("#8E9AAD")).SingleLine()
+				FontSize(11.5).FontFeatures("tnum").TextColor(ui.Hex("#94A3B8")).SingleLine()
 		}
 	})
 }
@@ -286,18 +365,19 @@ func (a *App) exportLog() {
 	_ = os.WriteFile(path, []byte(text), 0o600)
 }
 
-func levelInk(level logging.Level) ui.Color {
+func levelBadgeStyle(level logging.Level) (fg, bg, border ui.Color) {
+	tok := darkTokens()
 	switch level {
 	case logging.Debug:
-		return ui.Hex("#8E9AAD")
+		return badgeTone("neutral", tok)
 	case logging.Warning:
-		return ui.Hex("#E2B340")
+		return badgeTone("warning", tok)
 	case logging.Error:
-		return ui.Hex("#F07178")
+		return badgeTone("danger", tok)
 	case logging.Success:
-		return ui.Hex("#3DDC97")
+		return badgeTone("success", tok)
 	default:
-		return ui.Hex("#7EB6FF")
+		return badgeTone("accent", tok)
 	}
 }
 
