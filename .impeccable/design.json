@@ -1,0 +1,819 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-15T19:55:00Z",
+  "title": "Design System: tulai",
+  "extensions": {
+    "colorMeta": {
+      "primary-blue-light": {
+        "role": "primary",
+        "displayName": "Dispatch Cobalt Light",
+        "canonical": "oklch(54.6% 0.215 262.9)",
+        "tonalRamp": [
+          "#000B38",
+          "#001F71",
+          "#0438AC",
+          "#1E5BE1",
+          "#4A85FF",
+          "#87B0FF",
+          "#BED5FF",
+          "#EBF2FF"
+        ]
+      },
+      "primary-blue-hover-light": {
+        "role": "primary",
+        "displayName": "Dispatch Cobalt Hover Light",
+        "canonical": "oklch(48.8% 0.217 264.4)",
+        "tonalRamp": [
+          "#000442",
+          "#021A78",
+          "#0F36AD",
+          "#2659E2",
+          "#4F84FF",
+          "#8AAFFF",
+          "#C0D5FF",
+          "#EBF2FF"
+        ]
+      },
+      "primary-blue-pressed-light": {
+        "role": "primary",
+        "displayName": "Dispatch Cobalt Pressed Light",
+        "canonical": "oklch(42.4% 0.181 265.6)",
+        "tonalRamp": [
+          "#02093A",
+          "#0B216B",
+          "#1D3C9C",
+          "#365ECE",
+          "#5A85F3",
+          "#8CAFFF",
+          "#C0D4FF",
+          "#ECF2FF"
+        ]
+      },
+      "on-primary-light": {
+        "role": "primary",
+        "displayName": "On-Primary Ink Light",
+        "canonical": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#121212",
+          "#2B2B2B",
+          "#484848",
+          "#696969",
+          "#8C8C8C",
+          "#B1B1B1",
+          "#D4D4D4",
+          "#F2F2F2"
+        ]
+      },
+      "cool-paper-light": {
+        "role": "neutral",
+        "displayName": "Cool Paper Light",
+        "canonical": "oklch(97.8% 0.003 247.9)",
+        "tonalRamp": [
+          "#111212",
+          "#2A2B2C",
+          "#464849",
+          "#67696B",
+          "#8B8C8E",
+          "#B0B1B3",
+          "#D3D4D5",
+          "#F1F2F3"
+        ]
+      },
+      "rail-light": {
+        "role": "neutral",
+        "displayName": "Porcelain Rail Light",
+        "canonical": "oklch(98.5% 0.003 264.5)",
+        "tonalRamp": [
+          "#111212",
+          "#2B2B2C",
+          "#474849",
+          "#68696B",
+          "#8B8C8E",
+          "#B0B1B2",
+          "#D3D4D5",
+          "#F1F2F3"
+        ]
+      },
+      "surface-card-light": {
+        "role": "neutral",
+        "displayName": "Crisp Card White",
+        "canonical": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#121212",
+          "#2B2B2B",
+          "#484848",
+          "#696969",
+          "#8C8C8C",
+          "#B1B1B1",
+          "#D4D4D4",
+          "#F2F2F2"
+        ]
+      },
+      "sunken-track-light": {
+        "role": "neutral",
+        "displayName": "Mist Slate Light",
+        "canonical": "oklch(96.3% 0.006 255.5)",
+        "tonalRamp": [
+          "#111213",
+          "#2A2B2E",
+          "#46484B",
+          "#67696C",
+          "#8A8C90",
+          "#AFB1B4",
+          "#D2D4D7",
+          "#F0F2F4"
+        ]
+      },
+      "sunken-hover-light": {
+        "role": "neutral",
+        "displayName": "Steel Hover Light",
+        "canonical": "oklch(93.8% 0.011 256.7)",
+        "tonalRamp": [
+          "#101214",
+          "#292C2F",
+          "#44484D",
+          "#65696F",
+          "#888C93",
+          "#ADB1B7",
+          "#D1D4D9",
+          "#F0F2F5"
+        ]
+      },
+      "border-hairline-light": {
+        "role": "neutral",
+        "displayName": "Hairline Mist Light",
+        "canonical": "oklch(92.4% 0.013 262.4)",
+        "tonalRamp": [
+          "#101215",
+          "#292B30",
+          "#44484E",
+          "#656971",
+          "#888C94",
+          "#ADB1B8",
+          "#D1D4DA",
+          "#F0F2F6"
+        ]
+      },
+      "border-strong-light": {
+        "role": "neutral",
+        "displayName": "Slate Hairline Strong Light",
+        "canonical": "oklch(86.7% 0.020 257.5)",
+        "tonalRamp": [
+          "#0F1216",
+          "#272C33",
+          "#424852",
+          "#626A75",
+          "#858D98",
+          "#ABB2BC",
+          "#CFD5DD",
+          "#EEF2F8"
+        ]
+      },
+      "ink-slate-light": {
+        "role": "neutral",
+        "displayName": "Ink Slate Light",
+        "canonical": "oklch(20.8% 0.040 265.8)",
+        "tonalRamp": [
+          "#0D111B",
+          "#242B3A",
+          "#3F485B",
+          "#5E6980",
+          "#818CA4",
+          "#A7B1C6",
+          "#CCD4E5",
+          "#ECF2FE"
+        ]
+      },
+      "muted-slate-light": {
+        "role": "neutral",
+        "displayName": "Graphite Muted Light",
+        "canonical": "oklch(51.1% 0.034 259.5)",
+        "tonalRamp": [
+          "#0D1219",
+          "#242C38",
+          "#3E4858",
+          "#5E6A7D",
+          "#818DA0",
+          "#A7B2C3",
+          "#CCD5E2",
+          "#ECF2FC"
+        ]
+      },
+      "subtle-slate-light": {
+        "role": "neutral",
+        "displayName": "Silver Subtle Light",
+        "canonical": "oklch(67.0% 0.030 258.4)",
+        "tonalRamp": [
+          "#0D1219",
+          "#252C36",
+          "#3F4856",
+          "#5F6A7A",
+          "#828D9E",
+          "#A8B2C1",
+          "#CDD5E1",
+          "#ECF2FB"
+        ]
+      },
+      "signal-emerald-light": {
+        "role": "semantic",
+        "displayName": "Signal Emerald Light",
+        "canonical": "oklch(52.7% 0.137 150.1)",
+        "tonalRamp": [
+          "#001705",
+          "#003614",
+          "#005725",
+          "#137E3B",
+          "#48A260",
+          "#7BC58B",
+          "#ACE5B7",
+          "#D6FEDD"
+        ]
+      },
+      "amber-alert-light": {
+        "role": "semantic",
+        "displayName": "Amber Alert Light",
+        "canonical": "oklch(55.5% 0.146 49.0)",
+        "tonalRamp": [
+          "#220900",
+          "#491D00",
+          "#743200",
+          "#A64A00",
+          "#CE6F37",
+          "#ED9A6C",
+          "#FFC6A8",
+          "#FFEEE5"
+        ]
+      },
+      "crimson-fault-light": {
+        "role": "semantic",
+        "displayName": "Crimson Fault Light",
+        "canonical": "oklch(57.7% 0.215 27.3)",
+        "tonalRamp": [
+          "#2A0001",
+          "#580003",
+          "#8B0009",
+          "#C60012",
+          "#EF4840",
+          "#FF8B7E",
+          "#FFC4BC",
+          "#FFEDEB"
+        ]
+      },
+      "primary-blue-dark": {
+        "role": "primary",
+        "displayName": "Electric Sky Dark",
+        "canonical": "oklch(71.4% 0.143 254.6)",
+        "tonalRamp": [
+          "#00112A",
+          "#002A58",
+          "#03468A",
+          "#2469B8",
+          "#4E8EDD",
+          "#7DB4F9",
+          "#B8D7FF",
+          "#E9F3FF"
+        ]
+      },
+      "primary-blue-hover-dark": {
+        "role": "primary",
+        "displayName": "Electric Sky Hover Dark",
+        "canonical": "oklch(80.9% 0.096 251.8)",
+        "tonalRamp": [
+          "#011227",
+          "#0C2C4D",
+          "#214974",
+          "#3D6C9E",
+          "#6290C2",
+          "#8DB5E1",
+          "#B8D8FB",
+          "#E9F3FF"
+        ]
+      },
+      "primary-blue-pressed-dark": {
+        "role": "primary",
+        "displayName": "Electric Sky Pressed Dark",
+        "canonical": "oklch(62.3% 0.188 259.8)",
+        "tonalRamp": [
+          "#000F31",
+          "#002664",
+          "#00409C",
+          "#1A61D2",
+          "#4588F7",
+          "#82B2FF",
+          "#BCD6FF",
+          "#EAF2FF"
+        ]
+      },
+      "on-primary-dark": {
+        "role": "primary",
+        "displayName": "Obsidian On-Primary Dark",
+        "canonical": "oklch(16.0% 0.020 265.6)",
+        "tonalRamp": [
+          "#0F1216",
+          "#282B33",
+          "#434852",
+          "#636975",
+          "#868C98",
+          "#ACB1BC",
+          "#D0D4DD",
+          "#EFF2F8"
+        ]
+      },
+      "cool-paper-dark": {
+        "role": "neutral",
+        "displayName": "Obsidian Canvas Dark",
+        "canonical": "oklch(16.3% 0.014 264.1)",
+        "tonalRamp": [
+          "#101215",
+          "#292B30",
+          "#44484E",
+          "#656971",
+          "#888C94",
+          "#ADB1B8",
+          "#D1D4DA",
+          "#F0F2F6"
+        ]
+      },
+      "rail-dark": {
+        "role": "neutral",
+        "displayName": "Midnight Rail Dark",
+        "canonical": "oklch(18.6% 0.018 264.0)",
+        "tonalRamp": [
+          "#0F1216",
+          "#282B32",
+          "#434850",
+          "#646973",
+          "#878C97",
+          "#ACB1BA",
+          "#D0D4DC",
+          "#EFF2F7"
+        ]
+      },
+      "surface-card-dark": {
+        "role": "neutral",
+        "displayName": "Carbon Slate Card Dark",
+        "canonical": "oklch(21.3% 0.021 264.0)",
+        "tonalRamp": [
+          "#0F1217",
+          "#272B33",
+          "#424852",
+          "#636976",
+          "#868C99",
+          "#ABB1BC",
+          "#D0D4DD",
+          "#EFF2F8"
+        ]
+      },
+      "sunken-track-dark": {
+        "role": "neutral",
+        "displayName": "Deep Recessed Slate Dark",
+        "canonical": "oklch(25.2% 0.029 263.9)",
+        "tonalRamp": [
+          "#0E1218",
+          "#262B36",
+          "#414856",
+          "#61697A",
+          "#848C9D",
+          "#AAB1C0",
+          "#CED4E0",
+          "#EDF2FB"
+        ]
+      },
+      "sunken-hover-dark": {
+        "role": "neutral",
+        "displayName": "Elevated Slate Hover Dark",
+        "canonical": "oklch(29.7% 0.035 263.8)",
+        "tonalRamp": [
+          "#0D121A",
+          "#252B38",
+          "#3F4859",
+          "#5F697E",
+          "#828CA1",
+          "#A8B1C4",
+          "#CDD4E3",
+          "#ECF2FD"
+        ]
+      },
+      "border-hairline-dark": {
+        "role": "neutral",
+        "displayName": "Abyssal Hairline Dark",
+        "canonical": "oklch(30.5% 0.037 262.9)",
+        "tonalRamp": [
+          "#0D121A",
+          "#242B39",
+          "#3E485A",
+          "#5E697F",
+          "#818DA2",
+          "#A7B2C5",
+          "#CCD5E4",
+          "#ECF2FD"
+        ]
+      },
+      "border-strong-dark": {
+        "role": "neutral",
+        "displayName": "Steel Hairline Strong Dark",
+        "canonical": "oklch(37.7% 0.045 261.0)",
+        "tonalRamp": [
+          "#0C121C",
+          "#222C3C",
+          "#3B485E",
+          "#5A6A83",
+          "#7E8DA7",
+          "#A4B2C9",
+          "#CAD5E7",
+          "#EBF2FF"
+        ]
+      },
+      "ink-slate-dark": {
+        "role": "neutral",
+        "displayName": "Frost White Dark",
+        "canonical": "oklch(96.8% 0.007 247.9)",
+        "tonalRamp": [
+          "#101213",
+          "#292C2E",
+          "#45484B",
+          "#66696D",
+          "#898D90",
+          "#AEB1B4",
+          "#D2D4D7",
+          "#F0F2F4"
+        ]
+      },
+      "muted-slate-dark": {
+        "role": "neutral",
+        "displayName": "Cool Pewter Dark",
+        "canonical": "oklch(71.1% 0.035 256.8)",
+        "tonalRamp": [
+          "#0C121A",
+          "#232C38",
+          "#3D4959",
+          "#5C6A7D",
+          "#7F8DA1",
+          "#A6B2C3",
+          "#CBD5E3",
+          "#EBF2FC"
+        ]
+      },
+      "subtle-slate-dark": {
+        "role": "neutral",
+        "displayName": "Slate Subtle Dark",
+        "canonical": "oklch(55.4% 0.041 257.4)",
+        "tonalRamp": [
+          "#0C121B",
+          "#222C3A",
+          "#3B495B",
+          "#5A6A80",
+          "#7E8DA4",
+          "#A4B2C6",
+          "#CAD5E5",
+          "#EAF3FE"
+        ]
+      },
+      "signal-emerald-dark": {
+        "role": "semantic",
+        "displayName": "Mint Signal Dark",
+        "canonical": "oklch(77.3% 0.153 163.2)",
+        "tonalRamp": [
+          "#00170D",
+          "#003522",
+          "#00563A",
+          "#007C56",
+          "#00A574",
+          "#5ACA9B",
+          "#98E8C3",
+          "#CFFFE7"
+        ]
+      },
+      "amber-alert-dark": {
+        "role": "semantic",
+        "displayName": "Warm Amber Dark",
+        "canonical": "oklch(83.7% 0.164 84.4)",
+        "tonalRamp": [
+          "#191000",
+          "#392800",
+          "#5C4300",
+          "#856300",
+          "#B18400",
+          "#D8A93E",
+          "#F4CF84",
+          "#FFF0D3"
+        ]
+      },
+      "crimson-fault-dark": {
+        "role": "semantic",
+        "displayName": "Coral Alert Dark",
+        "canonical": "oklch(71.1% 0.166 22.2)",
+        "tonalRamp": [
+          "#2A0003",
+          "#58000D",
+          "#851220",
+          "#B4343B",
+          "#DB5E5F",
+          "#FB8D8A",
+          "#FFC3C0",
+          "#FFEDEC"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Image-edit header, modal titles, empty-state headlines, wizard step headers, and floating log console title (13.5px desktop; 16.5px–20px in WebExtension HTML)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Standard uiPageHeader titles, workbench composer card headings, operation stack titles, and browser drawer headers (11.5px)."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default theme font size, navigation rail labels, uiBtn triggers, uiSectionTitle headings, and tabular table cells (11px desktop; 13px–14px in WebExtension HTML)."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Status badges, lane chips, table headers, quota ratios, elapsed timers, download ETAs, and compact helper hints with tabular numerals (10px)."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-light",
+        "value": "0 1px 2px 0 rgba(15, 23, 42, 0.06)",
+        "purpose": "Rest card shadow (laneTable, stepCard, enabled editFeatureCard, active light-mode stageButton)."
+      },
+      {
+        "name": "shadow-dark",
+        "value": "0 1px 2px 0 rgba(0, 0, 0, 0.36)",
+        "purpose": "Dark-mode equivalent rest card elevation token."
+      },
+      {
+        "name": "card-inset-light",
+        "value": "inset 0 1px 0 0 rgba(255, 255, 255, 0.9)",
+        "purpose": "Top 1px inner specular edge on Light-mode stepCard and wizardCard panels."
+      },
+      {
+        "name": "card-active",
+        "value": "0 3px 10px 0 rgba(15, 23, 42, 0.08)",
+        "purpose": "Active workbench stepCurrent card lift (uses lift-dark rgba(0, 0, 0, 0.46) in Dark mode)."
+      },
+      {
+        "name": "tooltip-float",
+        "value": "0 4px 14px 0 rgba(16, 32, 64, 0.18)",
+        "purpose": "Floating inverse tooltips (railTip, dlTip)."
+      },
+      {
+        "name": "popover-menu",
+        "value": "0 6px 20px 0 rgba(0, 0, 0, 0.18)",
+        "purpose": "Select dropdown popup menus (motionSelect, renameTemplateSelect)."
+      },
+      {
+        "name": "search-popover",
+        "value": "0 8px 24px 0 rgba(15, 23, 42, 0.08)",
+        "purpose": "Search popovers and floating update notices (downloadSearchFab, updateBanner)."
+      },
+      {
+        "name": "modal-dialog",
+        "value": "0 10px 28px 0 rgba(15, 23, 42, 0.06)",
+        "purpose": "Centered tool modals (editRecipeModal, editResultModal; 0 14px 36px 0 lift on galleryModal)."
+      },
+      {
+        "name": "drawer-left",
+        "value": "-8px 0 28px 0 rgba(15, 23, 42, 0.08)",
+        "purpose": "Right-docked Camoufox browser drawer shadow separating the drawer from backdrop scrim."
+      },
+      {
+        "name": "log-console",
+        "value": "0 16px 40px 0 rgba(0, 0, 0, 0.50)",
+        "purpose": "Always-dark floating runtime log window (logFloat)."
+      }
+    ],
+    "motion": [
+      {
+        "name": "motion-fast",
+        "value": "150ms",
+        "purpose": "Micro-interaction duration for color transitions, hover/press poses, popup menus, and floating labels."
+      },
+      {
+        "name": "motion-ui",
+        "value": "220ms",
+        "purpose": "Page transitions, wizard step shifts, banner slides, thumbnail item FLIP, and progress bar easing."
+      },
+      {
+        "name": "ease-out",
+        "value": "ease-out",
+        "purpose": "Default GPU easing curve (ui.EaseOut) for both motionFast and motionUI."
+      },
+      {
+        "name": "pulse-loop",
+        "value": "1200ms",
+        "purpose": "Continuous bounce/in-out pulse cycle for waitingDot and paintGenBar scan highlight."
+      },
+      {
+        "name": "motion-slide",
+        "value": "12px",
+        "purpose": "Banner vertical entry offset and browser drawer slide-in travel distance."
+      },
+      {
+        "name": "hover-press-pose",
+        "value": "scale(1.012) / scale(0.985)",
+        "purpose": "GPU-only AnimatePose scale treatment on interactive buttons and dropzones without layout reflow."
+      },
+      {
+        "name": "reduce-motion",
+        "value": "opacity-only / static",
+        "purpose": "When c.Preferences().ReduceMotion or prefers-reduced-motion: reduce is active, suppresses travel/scale and stops waitingDot, paintGenBar, gapRing, and indeterminate motionProgress loops."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "prompt-split",
+        "value": "720px"
+      },
+      {
+        "name": "dedup-split",
+        "value": "760px"
+      },
+      {
+        "name": "workbench-split",
+        "value": "810px"
+      },
+      {
+        "name": "rename-split",
+        "value": "820px"
+      },
+      {
+        "name": "rail-fold",
+        "value": "840px"
+      },
+      {
+        "name": "download-toolbar",
+        "value": "860px"
+      },
+      {
+        "name": "browser-id-col",
+        "value": "900px"
+      },
+      {
+        "name": "topbar-pool",
+        "value": "920px"
+      },
+      {
+        "name": "browser-usage-col",
+        "value": "1000px"
+      },
+      {
+        "name": "rename-wide-side",
+        "value": "1040px"
+      },
+      {
+        "name": "browser-proxy-col",
+        "value": "1100px"
+      },
+      {
+        "name": "lane-full-cols",
+        "value": "1150px"
+      },
+      {
+        "name": "composer-wide",
+        "value": "1200px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Action Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Compact cobalt primary execution CTA with 150ms hover/press pose and Play SVG.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><polygon points=\"6 3 20 12 6 21 6 3\"/></svg><span>开始出图</span></button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 26px; padding: 0 12px; border-radius: 5px; border: 1px solid #2563EB; background: #2563EB; color: #FFFFFF; font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; font-size: 11px; font-weight: 600; cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out; } .ds-btn-primary:hover { background: #1D4ED8; border-color: #1D4ED8; transform: scale(1.012); } .ds-btn-primary:active { background: #1E40AF; border-color: #1E40AF; transform: scale(0.985); } .ds-btn-primary:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary & Icon Action Buttons",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Low-height sunken toolbar actions (`uiBtn` / `uiIconBtn`) with hairline borders and pointer feedback.",
+      "html": "<div class=\"ds-btn-group\"><button class=\"ds-btn-secondary\" type=\"button\">模型设置</button><button class=\"ds-btn-icon\" type=\"button\" aria-label=\"刷新列表\" title=\"刷新列表\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\"/><path d=\"M21 3v5h-5\"/><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\"/><path d=\"M8 16H3v5\"/></svg></button></div>",
+      "css": ".ds-btn-group { display: inline-flex; align-items: center; gap: 4px; } .ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; height: 24px; padding: 0 8px; border-radius: 4px; border: 1px solid #E1E6EF; background: #F0F3F7; color: #0F172A; font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; font-size: 11px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out; } .ds-btn-secondary:hover { background: #E6EBF2; border-color: #CBD4E1; transform: scale(1.012); } .ds-btn-secondary:active { transform: scale(0.985); } .ds-btn-secondary:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 2px; } .ds-btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border-radius: 4px; border: 1px solid #E1E6EF; background: #F0F3F7; color: #0F172A; cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out; } .ds-btn-icon:hover { background: #E6EBF2; border-color: #CBD4E1; transform: scale(1.012); } .ds-btn-icon:active { transform: scale(0.985); } .ds-btn-icon:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 2px; }"
+    },
+    {
+      "name": "Filter Pill & Semantic Status Badges",
+      "kind": "chip",
+      "refersTo": "badge-neutral",
+      "description": "Interactive `uiPill` filter chips alongside high-contrast `uiBadge` / `laneChip` operational pills.",
+      "html": "<div class=\"ds-pill-row\"><button class=\"ds-pill ds-pill-active\" type=\"button\">全部</button><button class=\"ds-pill\" type=\"button\">生图</button><span class=\"ds-badge ds-badge-accent\">出图中</span><span class=\"ds-badge ds-badge-success\">完成</span><span class=\"ds-badge ds-badge-warning\">等待间隔 12</span><span class=\"ds-badge ds-badge-danger\">需登录</span></div>",
+      "css": ".ds-pill-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; font-variant-numeric: tabular-nums; } .ds-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; border: 1px solid #E1E6EF; background: #F0F3F7; color: #5B677A; font-size: 10px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, transform 150ms ease-out; } .ds-pill:hover { background: #E6EBF2; border-color: #CBD4E1; color: #0F172A; transform: scale(1.012); } .ds-pill:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 2px; } .ds-pill-active { background: rgba(37, 99, 235, 0.14); border-color: rgba(32, 80, 187, 0.22); color: #2050BB; font-weight: 600; } .ds-pill-active:hover { background: rgba(37, 99, 235, 0.20); border-color: rgba(32, 80, 187, 0.42); color: #2050BB; } .ds-badge { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 10px; font-weight: 500; white-space: nowrap; } .ds-badge-accent { background: rgba(37, 99, 235, 0.12); border: 1px solid rgba(32, 80, 187, 0.22); color: #2050BB; } .ds-badge-success { background: rgba(21, 128, 61, 0.12); border: 1px solid rgba(20, 102, 56, 0.22); color: #146638; } .ds-badge-warning { background: rgba(180, 83, 9, 0.12); border: 1px solid rgba(139, 68, 17, 0.22); color: #8B4411; } .ds-badge-danger { background: rgba(220, 38, 38, 0.12); border: 1px solid rgba(169, 34, 39, 0.22); color: #A92227; }"
+    },
+    {
+      "name": "Floating-Label Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Recessed `sunken` field (`renameField`) that lifts its placeholder over 150ms and elevates to `card` on focus.",
+      "html": "<div class=\"ds-field-wrap\"><input class=\"ds-field-input\" id=\"ds-find-demo\" type=\"text\" placeholder=\" \" value=\"IMG_\" /><label class=\"ds-field-label\" for=\"ds-find-demo\">查找</label></div>",
+      "css": ".ds-field-wrap { position: relative; width: 220px; height: 34px; font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; } .ds-field-input { width: 100%; height: 34px; padding: 11px 8px 0 8px; border-radius: 4px; border: 1px solid #E1E6EF; background: #F0F3F7; color: #0F172A; font-family: inherit; font-size: 12px; transition: border-color 150ms ease-out, background-color 150ms ease-out; } .ds-field-input:hover { border-color: #CBD4E1; } .ds-field-input:focus-visible { outline: none; background: #FFFFFF; border-color: #2563EB; } .ds-field-label { position: absolute; left: 8px; top: 9px; font-size: 12px; color: #5B677A; pointer-events: none; transform-origin: 0 0; transition: transform 150ms ease-out, color 150ms ease-out; } .ds-field-input:focus-visible + .ds-field-label, .ds-field-input:not(:placeholder-shown) + .ds-field-label { transform: translateY(-7px) scale(0.75); } .ds-field-input:focus-visible + .ds-field-label { color: #2563EB; }"
+    },
+    {
+      "name": "Topbar Dispatch Controls",
+      "kind": "nav",
+      "refersTo": "topbar-shell",
+      "description": "34px global header combining segmented workbench mode tabs with tabular account-pool and log counters.",
+      "html": "<header class=\"ds-topbar\"><div class=\"ds-topbar-left\"><button class=\"ds-topbar-toggle\" type=\"button\" aria-label=\"收起侧栏\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M9 3v18\"/></svg></button><div class=\"ds-seg-tabs\" role=\"tablist\"><button class=\"ds-seg-tab ds-seg-tab-active\" type=\"button\">自由生图</button><button class=\"ds-seg-tab\" type=\"button\">批量洗图</button><button class=\"ds-seg-tab\" type=\"button\">裂变图片</button></div></div><div class=\"ds-topbar-right\"><button class=\"ds-pool-btn\" type=\"button\"><span class=\"ds-pool-dot\"></span><span>3/4 账号</span></button><button class=\"ds-log-btn\" type=\"button\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m4 17 6-6-6-6\"/><path d=\"M12 19h8\"/></svg><span>日志</span><span class=\"ds-log-count\">12</span></button></div></header>",
+      "css": ".ds-topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; max-width: 560px; height: 34px; padding: 0 10px; background: #FFFFFF; border: 1px solid #E1E6EF; border-radius: 6px; font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; font-variant-numeric: tabular-nums; } .ds-topbar-left, .ds-topbar-right { display: inline-flex; align-items: center; gap: 6px; } .ds-topbar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border-radius: 4px; border: 1px solid rgba(32, 80, 187, 0.22); background: rgba(37, 99, 235, 0.14); color: #2050BB; cursor: pointer; transition: background-color 150ms ease-out; } .ds-topbar-toggle:hover { background: rgba(37, 99, 235, 0.20); } .ds-topbar-toggle:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 1px; } .ds-seg-tabs { display: inline-flex; align-items: stretch; height: 24px; padding: 2px; gap: 2px; border-radius: 4px; border: 1px solid #E1E6EF; background: #F0F3F7; } .ds-seg-tab { display: inline-flex; align-items: center; padding: 0 8px; border-radius: 3px; border: 1px solid transparent; background: transparent; color: #5B677A; font-size: 10px; font-weight: 500; cursor: pointer; transition: color 150ms ease-out, background-color 150ms ease-out; } .ds-seg-tab:hover { color: #0F172A; } .ds-seg-tab:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 1px; } .ds-seg-tab-active { background: #FFFFFF; border-color: #CBD4E1; color: #0F172A; font-weight: 600; } .ds-pool-btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: 4px; border: 1px solid rgba(20, 102, 56, 0.22); background: rgba(21, 128, 61, 0.12); color: #146638; font-size: 10px; font-weight: 600; cursor: pointer; transition: transform 150ms ease-out; } .ds-pool-btn:hover { transform: scale(1.012); } .ds-pool-btn:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 1px; } .ds-pool-dot { width: 6px; height: 6px; border-radius: 3px; background: #15803D; } .ds-log-btn { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px; border-radius: 4px; border: 1px solid #E1E6EF; background: #F0F3F7; color: #0F172A; font-size: 10px; cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out; } .ds-log-btn:hover { background: #E6EBF2; border-color: #CBD4E1; } .ds-log-btn:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 1px; } .ds-log-count { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 999px; background: #FFFFFF; border: 1px solid #E1E6EF; font-size: 9.5px; color: #0F172A; }"
+    },
+    {
+      "name": "Navigation Rail",
+      "kind": "nav",
+      "refersTo": "nav-rail",
+      "description": "134px left rail with brand header, 9.5px group captions, and 2.5px cobalt active accent bar.",
+      "html": "<nav class=\"ds-rail\" aria-label=\"主导航\"><div class=\"ds-rail-brand\"><span class=\"ds-rail-logo\"><svg width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"8.5\" y=\"3.5\" width=\"12\" height=\"10\" rx=\"2\"/><rect x=\"3.5\" y=\"9.5\" width=\"12\" height=\"11\" rx=\"2\"/><circle cx=\"7.2\" cy=\"13.2\" r=\"1.15\"/></svg></span><span class=\"ds-rail-title\">tulai</span><span class=\"ds-rail-local\">本地</span></div><div class=\"ds-rail-group\">工作台</div><button class=\"ds-nav-item ds-nav-active\" type=\"button\"><span class=\"ds-nav-bar\"></span><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m22 11-1.296-1.296a2.4 2.4 0 0 0-3.408 0L11 16\"/><path d=\"M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2\"/><circle cx=\"13\" cy=\"7\" r=\"1\" fill=\"currentColor\"/><rect x=\"8\" y=\"2\" width=\"14\" height=\"14\" rx=\"2\"/></svg><span>图片生成</span></button><button class=\"ds-nav-item\" type=\"button\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"8\" y=\"8\" width=\"14\" height=\"14\" rx=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/><path d=\"m12 15 2 2 4-4\"/></svg><span>去重</span></button><button class=\"ds-nav-item\" type=\"button\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20\"/><path d=\"M2 12h20\"/></svg><span>浏览器</span></button></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; gap: 3px; width: 134px; padding: 8px 6px; background: #F9FAFC; border: 1px solid #E1E6EF; border-radius: 6px; font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; } .ds-rail-brand { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px; margin-bottom: 4px; background: #FFFFFF; border: 1px solid #E1E6EF; border-radius: 4px; } .ds-rail-logo { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 4px; background: rgba(37, 99, 235, 0.12); border: 1px solid rgba(32, 80, 187, 0.22); color: #2050BB; } .ds-rail-title { flex: 1; font-size: 11px; font-weight: 700; color: #0F172A; } .ds-rail-local { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #F0F3F7; border: 1px solid #E1E6EF; font-size: 9px; font-weight: 600; color: #5B677A; } .ds-rail-group { padding: 2px 6px 1px; font-size: 9.5px; font-weight: 600; color: #8A96A8; } .ds-nav-item { position: relative; display: flex; align-items: center; gap: 7px; width: 100%; height: 26px; padding: 0 8px; border-radius: 6px; border: 1px solid transparent; background: #F9FAFC; color: #5B677A; font-size: 11px; text-align: left; cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out; } .ds-nav-item:hover { background: #E6EBF2; color: #0F172A; border-color: rgba(225, 230, 239, 0.75); } .ds-nav-item:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 1px; } .ds-nav-active { background: rgba(37, 99, 235, 0.12); border-color: #E1E6EF; color: #2563EB; font-weight: 600; } .ds-nav-active:hover { background: rgba(37, 99, 235, 0.12); color: #2563EB; border-color: #E1E6EF; } .ds-nav-bar { position: absolute; left: 1px; top: 5px; width: 2.5px; height: 16px; border-radius: 1.5px; background: #2563EB; }"
+    },
+    {
+      "name": "Multi-Tenant Account Lane Card",
+      "kind": "card",
+      "refersTo": "card-surface",
+      "description": "Compact 34px-row dispatch lane card displaying account toggle, status badge, tnum quota bar, and elapsed job telemetry.",
+      "html": "<section class=\"ds-lane-card\"><div class=\"ds-lane-head\"><span class=\"ds-lane-title\">豆包 账号</span><span class=\"ds-lane-meta\">1 个账号出图中</span><button class=\"ds-lane-add\" type=\"button\">+ 添加账号</button></div><div class=\"ds-lane-row\"><span class=\"ds-switch\" aria-hidden=\"true\"><span class=\"ds-switch-knob\"></span></span><span class=\"ds-lane-name\">主号 · doubao-01</span><span class=\"ds-lane-chip\">出图中</span><div class=\"ds-quota\"><span class=\"ds-quota-text\">14/20</span><div class=\"ds-quota-track\"><div class=\"ds-quota-fill\"></div></div></div><span class=\"ds-lane-elapsed\">已用 18 秒</span></div></section>",
+      "css": ".ds-lane-card { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 520px; padding: 6px 9px; border-radius: 6px; border: 1px solid #E1E6EF; background: #FFFFFF; box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.06); font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; font-variant-numeric: tabular-nums; } .ds-lane-head { display: flex; align-items: center; gap: 6px; } .ds-lane-title { font-size: 11px; font-weight: 600; color: #0F172A; } .ds-lane-meta { flex: 1; font-size: 10px; color: #5B677A; } .ds-lane-add { height: 22px; padding: 0 8px; border-radius: 4px; border: none; background: #2563EB; color: #FFFFFF; font-size: 10px; font-weight: 500; cursor: pointer; transition: background-color 150ms ease-out; } .ds-lane-add:hover { background: #1D4ED8; } .ds-lane-add:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 1px; } .ds-lane-row { display: flex; align-items: center; gap: 8px; height: 34px; padding: 3px 6px; border-radius: 4px; background: rgba(37, 99, 235, 0.05); border-bottom: 1px solid rgba(225, 230, 239, 0.6); transition: background-color 150ms ease-out; } .ds-lane-row:hover { background: #F0F3F7; } .ds-switch { position: relative; width: 26px; height: 15px; border-radius: 7.5px; background: #2563EB; flex-shrink: 0; } .ds-switch-knob { position: absolute; right: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: #FFFFFF; } .ds-lane-name { flex: 1; min-width: 0; font-size: 11px; font-weight: 500; color: #0F172A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-lane-chip { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px; background: rgba(37, 99, 235, 0.14); border: 1px solid rgba(32, 80, 187, 0.22); color: #2050BB; font-size: 10px; font-weight: 500; } .ds-quota { display: inline-flex; align-items: center; gap: 4px; width: 110px; } .ds-quota-text { font-size: 10px; font-weight: 600; color: #0F172A; } .ds-quota-track { flex: 1; height: 5px; border-radius: 3px; background: rgba(15, 23, 42, 0.12); overflow: hidden; } .ds-quota-fill { width: 70%; height: 100%; border-radius: 4px; background: #2563EB; } .ds-lane-elapsed { font-size: 10px; color: #5B677A; white-space: nowrap; }"
+    },
+    {
+      "name": "Dashed Image Dropzone",
+      "kind": "custom",
+      "refersTo": "card-surface",
+      "description": "Sunken dashed upload target (`compactDrop`) shifting to an 8% cobalt wash and solid accent border on hover.",
+      "html": "<button class=\"ds-dropzone\" type=\"button\"><span class=\"ds-dropzone-row\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7\"/><path d=\"m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21\"/><circle cx=\"9\" cy=\"9\" r=\"1.6\"/><path d=\"M19 3v6M16 6h6\"/></svg><span>拖入或点击添加图片</span></span><span class=\"ds-dropzone-hint\">支持多张或整文件夹</span></button>",
+      "css": ".ds-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 228px; height: 68px; border-radius: 6px; border: 1px dashed #CBD4E1; background: #F0F3F7; color: #0F172A; font-family: Inter, \"WenQuanYi Micro Hei\", sans-serif; cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out; } .ds-dropzone:hover { border-style: solid; border-color: #2563EB; background: rgba(37, 99, 235, 0.08); transform: scale(1.012); } .ds-dropzone:active { transform: scale(0.985); } .ds-dropzone:focus-visible { outline: 2px solid rgba(37, 99, 235, 0.55); outline-offset: 2px; } .ds-dropzone-row { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; } .ds-dropzone-row svg { color: #5B677A; transition: color 150ms ease-out; } .ds-dropzone:hover .ds-dropzone-row svg { color: #2563EB; } .ds-dropzone-hint { font-size: 10px; color: #5B677A; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Multi-Tenant Dispatch Console",
+    "overview": "`tulai` is built as a dense, high-trust desktop operational workbench where window chrome steps back behind live generation queues, multi-account health telemetry, and image output grids. Every surface across the Go/MyGo desktop application and its companion WebExtension page-bridge views operates under unified Light and Dark parity, pairing cool-slate tonal layering with crisp hairline borders so operators can track concurrent jobs across `豆包`, `千问`, `Antigravity`, and `ChatGPT` without visual fatigue.\n\nIn Operate mode, density and legibility are deliberate engineering constraints rather than compromises. Fixed-height global bars, compact four-step typography, tabular numerals (`tnum`), and unambiguous semantic states (`空闲`, `出图中`, `等待间隔`, `需要人工验证`, `需登录`, `额度用尽`) keep multi-account pools observable at a glance even at `1024×700`. The system explicitly rejects fragmented Material or Xunlei-style per-page palettes, decorative gradients or glassmorphism blur backdrops, low-contrast grey-on-grey labels, and bloated modal-first workflows that interrupt batch throughput.",
+    "keyCharacteristics": [
+      "Cool-slate tonal hierarchy (`paper` canvas, `rail` navigation, `card` panels, `sunken` / `sunkenHi` recessed tracks) across full Light and Dark theme parity.",
+      "Hairline `1px` borders (`border` / `borderStrong`) for structural clarity at rest, reserving diffuse `shadow` / `lift` layers for active focus, popovers, drawers, and modals.",
+      "Compact desktop typography (`10px` to `13.5px`) paired with `Inter, WenQuanYi Micro Hei` and mandatory `FontFeatures(\"tnum\")` alignment across counters, quotas, speeds, and timers.",
+      "High-contrast semantic status pills (`>= 4.5:1` contrast via `semanticToneColors` mixing in Light mode and `#090D16` foreground on `#60A5FA` primary CTAs in Dark mode).",
+      "GPU-driven micro-interactions (`150ms` fast transitions, `220ms` UI travel) with explicit `ReduceMotion` / `prefers-reduced-motion` static fallbacks."
+    ],
+    "rules": [
+      {
+        "name": "The Single-Accent Dispatch Rule",
+        "body": "Primary cobalt (`#2563EB` Light / `#60A5FA` Dark) is reserved for active execution CTAs, focused input borders, the `2.5px` active navigation indicator, and running state telemetry; secondary actions and structural chrome stay cool-slate neutral.",
+        "section": "colors"
+      },
+      {
+        "name": "The Semantic Contrast Floor Rule",
+        "body": "Every badge, lane chip, and alert bar maintains `>= 4.5:1` foreground contrast by mixing Light-mode semantic foregrounds `25%` toward `ink-slate-light` and switching Dark-mode primary button ink to `on-primary-dark` (`#090D16`).",
+        "section": "colors"
+      },
+      {
+        "name": "The Cool-Slate Parity Rule",
+        "body": "Desktop MyGo views and `extension/*.html` WebExtension popups/options share identical Light and Dark hex tokens with zero per-page legacy palettes.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Telemetry Rule",
+        "body": "Apply `FontFeatures(\"tnum\")` (or `font-variant-numeric: tabular-nums` in HTML) to every counter, quota meter, elapsed timer, row index, percentage, download speed, and ETA so live updates never jitter horizontally.",
+        "section": "typography"
+      },
+      {
+        "name": "The Compact Scale Ceiling Rule",
+        "body": "Desktop workbench copy stays within the four-step `10px`–`13.5px` scale (`display: 13.5px`, `title: 11.5px`, `body: 11px`, `caption: 10px`); larger `16.5px`–`20px` headings appear only inside standalone WebExtension `popup.html` and `options.html` surfaces.",
+        "section": "typography"
+      },
+      {
+        "name": "The Stage-First Viewport Rule",
+        "body": "Navigation rails (`134px` / `42px`), workbench composers (`248px` / `272px`), and tool asides (`248px`–`344px`) stay strictly bounded so live account lanes, image grids, and batch tables command the majority of `1024×700`+ windows.",
+        "section": "layout"
+      },
+      {
+        "name": "The Hairline-First Elevation Rule",
+        "body": "Rest panels separate by cool-slate tonal step and `1px` `border` strokes; reserve `lift` shadows strictly for active step focus, popovers, drawers, modals, and floating consoles.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Reduced-Motion Fidelity Rule",
+        "body": "GPU transitions run at `150ms` (`motionFast`) for micro-interactions (`scale(1.012)` hover, `scale(0.985)` press, floating labels, color anims) and `220ms` (`motionUI`) for `12px` travel/reveal transitions without list-height reflow, degrading cleanly to static or opacity-only states when `ReduceMotion` is enabled.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Tight Corner Hierarchy Rule",
+        "body": "Keep interactive buttons and fields at `4px`, cards/tables/nav items at `6px`, floating dialogs and consoles at `8px`, and status pills at `999px`—never mix oversized decorative corner radii into desktop tooling.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "**Do** derive every surface, border, text, and semantic tone from `workbenchTokens(dark)` and shared helpers (`uiCardSurface`, `uiBadge`, `uiBtn`, `uiMiniBtn`, `uiIconBtn`, `uiPill`) in `internal/ui/design.go` so Light and Dark modes stay synchronized.",
+      "**Do** apply `FontFeatures(\"tnum\")` (and `font-variant-numeric: tabular-nums` in HTML) on all task counters, quota meters, elapsed timers, row indices, percentages, download speeds, and ETAs.",
+      "**Do** enforce `>= 4.5:1` contrast across all semantic badges and primary CTAs using `semanticToneColors` in Light mode and `on-primary-dark` (`#090D16`) ink on `#60A5FA` primary buttons in Dark mode.",
+      "**Do** honor `c.Preferences().ReduceMotion` and `@media (prefers-reduced-motion: reduce)` by omitting positional/scale transitions and halting continuous pulse animations (`waitingDot`, `paintGenBar`, `gapRing`, indeterminate `motionProgress`).",
+      "**Do** keep all browser login, verification, and page-bridge workflows inside built-in `Camoufox` environments (`browserDrawerView`) and `extbridge` extension surfaces.",
+      "**Do** preserve compact shell dimensions (`topbarH: 34px`, `sidebarExpandedW: 134px`, `sidebarCollapsedW: 42px` below `840px`, `composerW: 248px` / `272px` at `>= 1200px`) so live account lanes and output grids dominate `1024×700`+ viewports."
+    ],
+    "donts": [
+      "**Don't** introduce per-page legacy palettes, Material-default theme overrides, or Xunlei-style sub-page colors outside the unified cool-slate `workbenchTokens` system.",
+      "**Don't** add decorative color gradients, glassmorphism blur backdrops, or vanity summary metric cards that steal vertical operational real estate.",
+      "**Don't** render low-contrast grey-on-grey labels, unbordered status pills, or `#FFFFFF` white text over Dark-mode `#60A5FA` primary buttons.",
+      "**Don't** put top-level `motion`, `shadows`, or `breakpoints` keys in `DESIGN.md` YAML frontmatter (keep them in `.impeccable/design.json` `extensions`), and don't animate list row heights during enter/exit transitions.",
+      "**Don't** launch, control, or design UI flows around external browsers (`Chrome`, `Edge`, `Chromium`) outside the built-in `Camoufox` runtime and `extbridge` extension UI."
+    ]
+  }
+}
