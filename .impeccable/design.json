@@ -531,6 +531,22 @@
       "caption": {
         "displayName": "Caption",
         "purpose": "Status badges, lane chips, table headers, quota ratios, elapsed timers, download ETAs, and compact helper hints with tabular numerals (10px)."
+      },
+      "ext-headline": {
+        "displayName": "Extension Headline",
+        "purpose": "Standalone WebExtension options page hero heading in extension/options.html using the PingFang SC / system sans fallback stack (20px)."
+      },
+      "ext-title": {
+        "displayName": "Extension Popup Title",
+        "purpose": "WebExtension popup header title in extension/popup.html using the PingFang SC / system sans fallback stack (16.5px)."
+      },
+      "ext-body": {
+        "displayName": "Extension Body",
+        "purpose": "WebExtension popup/options labels, status banners, leads, and form input text with tabular numerals (13px; 14px base on options body)."
+      },
+      "ext-mono": {
+        "displayName": "Extension Monospace",
+        "purpose": "Bridge token (#token) and port (#port) inputs plus compact action buttons in extension/popup.html using ui-monospace / SFMono-Regular with tabular-nums (12.5px; 13px in options)."
       }
     },
     "shadows": [

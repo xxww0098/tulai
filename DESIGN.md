@@ -55,6 +55,29 @@ typography:
     fontSize: "10px"
     fontWeight: 500
     fontFeature: "tnum"
+  ext-headline:
+    fontFamily: "Inter, PingFang SC, Hiragino Sans GB, Microsoft YaHei, WenQuanYi Micro Hei, sans-serif"
+    fontSize: "20px"
+    fontWeight: 600
+    lineHeight: 1.25
+    letterSpacing: "-0.015em"
+  ext-title:
+    fontFamily: "Inter, PingFang SC, Hiragino Sans GB, Microsoft YaHei, WenQuanYi Micro Hei, sans-serif"
+    fontSize: "16.5px"
+    fontWeight: 600
+    lineHeight: 1.25
+    letterSpacing: "-0.01em"
+  ext-body:
+    fontFamily: "Inter, PingFang SC, Hiragino Sans GB, Microsoft YaHei, WenQuanYi Micro Hei, sans-serif"
+    fontSize: "13px"
+    fontWeight: 400
+    lineHeight: 1.5
+    fontFeature: "tnum"
+  ext-mono:
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    fontSize: "12.5px"
+    fontWeight: 400
+    fontFeature: "tnum"
 rounded:
   sm: "4px"
   md: "6px"
