@@ -245,23 +245,26 @@ func doneMark(c *ui.Context) {
 
 func statusPill(c *ui.Context, status string) ui.Element {
 	t := c.Theme()
-	fg, bg := t.TextMuted, t.Text.Alpha(0.08)
+	base, wash := t.TextMuted, float32(0.10)
 	switch status {
 	case "完成":
-		fg, bg = t.Success, t.Success.Alpha(0.16)
+		base, wash = t.Success, 0.12
 	case "失败":
-		fg, bg = t.Danger, t.Danger.Alpha(0.14)
+		base, wash = t.Danger, 0.12
 	case "生成中", "进行中":
-		fg, bg = t.Accent, t.Accent.Alpha(0.14)
+		base, wash = t.Accent, 0.12
 	case "排队中":
-		fg, bg = t.TextMuted, t.Text.Alpha(0.08)
+		base, wash = t.TextMuted, 0.10
 	case "待验证", "需要人工验证", "需核对":
-		fg, bg = t.Warning, t.Warning.Alpha(0.16)
+		base, wash = t.Warning, 0.12
 	}
-	pill := ui.Row(c.Key("status")).Padding(1, 5).Radius(999).Shrink(0).AlignItems(ui.Center)
+	fg, bg, border := semanticToneColors(t.Dark, t.Text, base, wash)
+	pill := ui.Row(c.Key("status")).Height(18).Padding(0, 6).Radius(999).Shrink(0).
+		AlignItems(ui.Center).Border(1, border)
 	pill.Background(pill.AnimateColor("bg", bg, motionEaseFast))
 	pill.Children(func() {
-		ui.Text(c.Key("status-label"), status).FontSize(10.5).TextColor(fg).SingleLine().
+		ui.Text(c.Key("status-label"), status).FontSize(10.5).FontWeight(500).TextColor(fg).
+			SingleLine().FontFeatures("tnum").
 			ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
 	})
 	return pill
