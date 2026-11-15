@@ -20,10 +20,19 @@ import (
 )
 
 func main() {
+	executable, err := os.Executable()
+	var registrationSyncErr error
+	if err == nil {
+		// Older versions perform the update themselves, so the new binary must
+		// also repair the installer entry when it first starts.
+		registrationSyncErr = update.SyncWindowsInstalledVersion(executable, runningVersion())
+		if registrationSyncErr != nil {
+			log.Printf("同步 Windows 应用列表版本失败: %v", registrationSyncErr)
+		}
+	}
 	if handleCommand(os.Args) {
 		return
 	}
-	executable, err := os.Executable()
 	if err != nil {
 		log.Fatalf("定位应用失败: %v", err)
 	}
@@ -50,6 +59,9 @@ func main() {
 		logging.Log.Errorf("打开日志文件失败: %v", err)
 	} else {
 		defer logging.Close()
+	}
+	if registrationSyncErr != nil {
+		logging.Log.Warning("同步 Windows 应用列表版本失败: %v", registrationSyncErr)
 	}
 	dataRoot := "BrowserData"
 	db, err := store.Open(filepath.Join("database", "config.db"))

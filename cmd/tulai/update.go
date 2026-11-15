@@ -151,6 +151,9 @@ func runUpdateWith(args []string, run updateRun) int {
 				fmt.Fprintf(run.Stderr, "安装签名更新失败: %v\n", err)
 				return 1
 			}
+			if err := update.SyncWindowsInstalledVersion(run.Executable, signed.Version); err != nil {
+				fmt.Fprintf(run.Stderr, "更新已安装，但同步 Windows 应用列表版本失败: %v\n", err)
+			}
 			fmt.Fprintln(run.Stdout, "更新已安装，重新打开应用后生效。")
 			return 0
 		}

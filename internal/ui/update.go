@@ -433,6 +433,9 @@ func (a *App) downloadAndInstall() {
 			a.failUpdate(err)
 			return
 		}
+		if err := update.SyncWindowsInstalledVersion(exe, signed.Version); err != nil {
+			logging.Log.Warning("更新已安装，但同步 Windows 应用列表版本失败: %v", err)
+		}
 		logging.Log.Success("已安装签名更新 %s", ver)
 		a.finishSignedUpdate(exe, ver)
 		return
