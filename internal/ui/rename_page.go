@@ -117,20 +117,29 @@ func (a *App) renamePlan() ([]fileren.Change, error) {
 }
 
 type renamePalette struct {
+	tok                                         tokens
 	frame, rule, field, text, muted, line, blue ui.Color
 }
 
 func renameColors(dark bool) renamePalette {
-	if dark {
-		return renamePalette{ui.Hex("#303133"), ui.Hex("#282828"), ui.Hex("#383838"), ui.Hex("#F1F1F1"), ui.Hex("#AAAAAA"), ui.Hex("#555555"), ui.Hex("#A4C7F4")}
+	tok := workbenchTokens(dark)
+	return renamePalette{
+		tok:   tok,
+		frame: tok.paper,
+		rule:  tok.card,
+		field: tok.sunken,
+		text:  tok.text,
+		muted: tok.muted,
+		line:  tok.border,
+		blue:  tok.accent,
 	}
-	return renamePalette{ui.Hex("#F4F4F4"), ui.Hex("#FAFBFB"), ui.Hex("#E9E9E9"), ui.Hex("#222222"), ui.Hex("#777777"), ui.Hex("#D5D5D5"), ui.Hex("#3F51B5")}
 }
 
 func (a *App) renamePage(c *ui.Context) {
 	s := &a.fileRename
 	s.init()
 	colors := renameColors(a.look.dark)
+	tok := colors.tok
 	if !s.busy && c.Shortcut(ui.Cmd, ui.KeyV) {
 		data := c.Services().ReadClipboardData(transfer.FileList, transfer.URIList)
 		if paths, err := data.Files(); err == nil && len(paths) > 0 {
@@ -149,43 +158,124 @@ func (a *App) renamePage(c *ui.Context) {
 		a.renameIngest(dropped)
 	}
 	page.Children(func() {
-		ui.Column(c.Key("rename-tab-bar")).FillWidth().Padding(6, 10, 4, 10).Background(colors.frame).Children(func() {
+		ui.Column(c.Key("rename-top")).FillWidth().Padding(8, 12, 0, 12).Gap(8).Children(func() {
+			uiPageHeader(c, "rename-header", iconRename, "批量重命名", "规则替换、插入、自动编号与 AI 命名建议", tok, func() {
+				uiBadge(c, "rename-total-badge", fmt.Sprintf("%d 项", len(s.items)), "neutral", tok)
+				if changed > 0 {
+					uiBadge(c, "rename-changed-badge", fmt.Sprintf("%d 待改", changed), "accent", tok)
+				}
+				if planErr != nil && len(s.items) > 0 {
+					uiBadge(c, "rename-conflict-badge", "存在冲突", "danger", tok)
+				}
+			})
 			a.renameTabs(c, colors)
 		})
-		a.renameRules(c, colors)
-		a.renameList(c, colors, changes)
-		message := s.err
-		if message == "" && planErr != nil && len(s.items) > 0 {
-			message = planErr.Error()
-		}
-		if message != "" {
-			services := c.Services()
-			ui.Row(c).FillWidth().Padding(4, 10).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Scroll(c).Grow(1).MinWidth(0).MaxHeight(80).Children(func() {
-					ui.Text(c, message).FillWidth().FontSize(a.look.caption).TextColor(a.look.danger)
+
+		w, _ := c.Size()
+		split := w >= 820 && s.mode != 4
+		body := ui.Column(c.Key("rename-workspace")).Grow(1).MinHeight(0).FillWidth().Padding(8, 12, 8, 12).Gap(8)
+		body.Children(func() {
+			if split {
+				sideW := float32(316)
+				if w >= 1040 {
+					sideW = 344
+				}
+				ui.Row(c.Key("rename-split")).Grow(1).MinHeight(0).FillWidth().Gap(8).AlignItems(ui.Stretch).Children(func() {
+					ruleCard := uiCard(c, "rename-rules-card", tok).Width(sideW).Shrink(0).MinHeight(0).Padding(9, 10).Gap(8)
+					ruleCard.Children(func() {
+						uiSectionTitle(c, renameModeTitle(s.mode), renameModeMeta(s), tok)
+						ui.Box(c).FillWidth().Height(1).Background(colors.line)
+						a.renameRules(c, colors, true)
+					})
+					a.renameList(c, colors, changes, planErr).Grow(1).Basis(0).MinWidth(0)
 				})
-				uiMiniBtn(ui.Button(c, "复制错误"), a.look).OnClick(func() { services.WriteClipboardData(transfer.TextData(message)) })
-			})
-		}
+			} else {
+				if s.mode == 4 {
+					ui.Row(c.Key("rename-manual-hint")).FillWidth().MinHeight(26).Padding(4, 10).Gap(6).
+						AlignItems(ui.Center).Radius(tok.radiusS).Background(colors.field).Border(1, colors.line).Children(func() {
+						ui.Icon(c, iconInfo).FontSize(12).TextColor(colors.blue).Shrink(0)
+						ui.Text(c, "提示：粘贴多行文本（如 Excel 复制的列），将自动向下批量替换").
+							FontSize(tok.caption).TextColor(colors.muted).Grow(1).MinWidth(0).SingleLine()
+					})
+				} else {
+					ruleCard := uiCard(c, "rename-rules-card", tok).Shrink(0).Padding(8, 10).Gap(6)
+					ruleCard.Children(func() {
+						a.renameRules(c, colors, false)
+					})
+				}
+				a.renameList(c, colors, changes, planErr).Grow(1).MinHeight(120).FillWidth()
+			}
+
+			message := s.err
+			if message == "" && planErr != nil && len(s.items) > 0 {
+				message = planErr.Error()
+			}
+			if message != "" {
+				services := c.Services()
+				fg, bg, border := semanticToneColors(tok.dark, tok.text, tok.danger, 0.10)
+				ui.Row(c.Key("rename-error-bar")).FillWidth().Padding(5, 8).Gap(6).AlignItems(ui.Center).
+					Radius(tok.radiusS).Background(bg).Border(1, border).Children(func() {
+					ui.Icon(c, iconAlert).FontSize(13).TextColor(fg).Shrink(0)
+					ui.Scroll(c).Grow(1).MinWidth(0).MaxHeight(72).Children(func() {
+						ui.Text(c, message).FillWidth().FontSize(tok.caption).TextColor(fg)
+					})
+					uiMiniBtn(ui.Button(c, "复制错误"), tok).OnClick(func() { services.WriteClipboardData(transfer.TextData(message)) })
+				})
+			}
+		})
+
 		a.renameToolbar(c, colors, changes, changed, planErr)
 	})
 }
 
+func renameModeTitle(mode int) string {
+	switch mode {
+	case 1:
+		return "AI 智能重命名"
+	case 2:
+		return "插入内容规则"
+	case 3:
+		return "自动编号规则"
+	case 4:
+		return "手动编辑"
+	default:
+		return "查找与替换规则"
+	}
+}
+
+func renameModeMeta(s *renameState) string {
+	switch s.mode {
+	case 0:
+		return fmt.Sprintf("%d 条规则", len(s.rules))
+	case 2:
+		return s.insertKind + " · " + s.position
+	case 3:
+		return s.numFormat
+	default:
+		return ""
+	}
+}
+
 func (a *App) renameTabs(c *ui.Context, colors renamePalette) {
 	s := &a.fileRename
+	tok := colors.tok
+	if tok.body == 0 {
+		tok = workbenchTokens(false)
+	}
 	labels := []string{"查找替换", "智能重命名", "插入内容", "自动编号", "手动编辑"}
 	icons := []*ui.SVG{iconSearch, iconSparkles, iconLayers, iconListOrdered, iconPen}
 	tabs := ui.TabsBase(c.Key("rename-modes"), &s.mode, len(labels))
-	bar := tabs.List.Row().FillWidth().Height(32).Padding(3).Radius(16).Background(colors.field).AlignItems(ui.Stretch)
+	bar := tabs.List.Row().FillWidth().Height(32).Padding(3).Radius(tok.radiusM).
+		Background(colors.field).Border(1, colors.line).AlignItems(ui.Stretch)
 	position := bar.AnimateTo("selected", float32(s.mode), motionEaseOut)
 	bar.Draw(func(p *ui.Painter, r ui.Rect) {
 		width := (r.W - 6) / float32(len(labels))
-		p.Fill(ui.Rect{X: r.X + 3 + width*position, Y: r.Y + 3, W: width, H: r.H - 6}, colors.rule, 13)
+		p.Fill(ui.Rect{X: r.X + 3 + width*position, Y: r.Y + 3, W: width, H: r.H - 6}, colors.rule, tok.radiusS)
 	})
 	bar.Children(func() {
 		for i, label := range labels {
-			tab := tabs.Tab(i).Grow(1).Basis(0).MinWidth(0).Height(26).Gap(4).Center().Radius(13).
-				Label(label).Disabled(s.busy).TextColor(colors.text.Alpha(0.7))
+			tab := tabs.Tab(i).Grow(1).Basis(0).MinWidth(0).Height(26).Gap(4).Center().Radius(tok.radiusS).
+				Label(label).Disabled(s.busy).TextColor(colors.muted)
 			if i == s.mode {
 				tab.TextColor(colors.text)
 			}
@@ -194,9 +284,9 @@ func (a *App) renameTabs(c *ui.Context, colors renamePalette) {
 			}
 			tab.Children(func() {
 				ui.Icon(c, icons[i]).FontSize(12).Shrink(0)
-				text := ui.Text(c, label).FontSize(a.look.body).SingleLine()
+				text := ui.Text(c, label).FontSize(tok.body).SingleLine()
 				if i == s.mode {
-					text.Bold()
+					text.FontWeight(600)
 				}
 			})
 		}
@@ -204,22 +294,30 @@ func (a *App) renameTabs(c *ui.Context, colors renamePalette) {
 }
 
 func renameField(c *ui.Context, colors renamePalette, key string, value *string, label, placeholder string, busy bool) ui.Element {
-	field := ui.Column(c.Key(key)).Height(34).Padding(0, 8).Radius(3).
-		Background(colors.field).BorderWidth(0, 0, 1, 0).BorderColor(colors.muted)
+	tok := colors.tok
+	if tok.radiusS == 0 {
+		tok = workbenchTokens(false)
+	}
+	field := ui.Column(c.Key(key)).Height(34).Padding(0, 8).Radius(tok.radiusS).
+		Background(colors.field).Border(1, colors.line)
 	focused := field.FocusWithin()
 	target := float32(0)
 	if focused || *value != "" {
 		target = 1
 	}
 	position := field.AnimateTo("label", target, motionEaseFast)
+	surface := colors.field
 	labelColor := colors.muted
 	if focused {
+		surface = colors.rule
 		labelColor = colors.blue
-		field.BorderWidth(0, 0, 2, 0).BorderColor(colors.blue)
+		field.Background(surface).Border(1, colors.blue)
+	} else if field.Hovered() && !busy {
+		field.BorderColor(tok.borderStrong)
 	}
 	field.Children(func() {
 		ui.TextInput(c.Key("input"), value).Grow(1).MinHeight(0).FillWidth().Padding(11*target, 0, 0, 0).Radius(0).
-			Background(colors.field).BorderWidth(0).FontSize(12).TextColor(colors.text).
+			Background(surface).BorderWidth(0).FontSize(12).TextColor(colors.text).
 			Label(label).Placeholder("").Disabled(busy)
 		ui.Text(c, placeholder).Absolute().Top(9).Left(8).Right(8).FontSize(12).TextColor(labelColor).SingleLine().
 			Translate(0, -7*position).TransformOrigin(0, 0).Scale(1-position/4, 1-position/4).IgnoreInput(true)
@@ -228,20 +326,31 @@ func renameField(c *ui.Context, colors renamePalette, key string, value *string,
 }
 
 func (a *App) renameTemplateSelect(c *ui.Context, colors renamePalette, rule *renameRule) {
+	tok := colors.tok
 	labels := []string{"普通查找", "前 N 位", "后 N 位", "从第 X 位开始的 N 位", "某字符之后的内容", "某字符之前的内容", "某字符之后的 N 位", "某字符之前的 N 位"}
 	sel := ui.SelectBase(c.Key("rename-template"), &rule.template)
-	sel.Trigger.Size(26, 32).Center().Label("选择查找模板").TextColor(colors.muted).Disabled(a.fileRename.busy).Children(func() {
+	tr := sel.Trigger.Size(28, 34).Center().Radius(tok.radiusS).Background(colors.field).Border(1, colors.line).
+		Label("选择查找模板").Tooltip("选择查找模板").TextColor(colors.muted).Disabled(a.fileRename.busy)
+	if tr.Hovered() && !a.fileRename.busy {
+		tr.Background(tok.sunkenHi).BorderColor(tok.borderStrong).TextColor(colors.text)
+	}
+	tr.Children(func() {
 		ui.Icon(c, iconChevronDown).FontSize(13)
 	})
 	sel.Popup(func(panel ui.Element) {
-		panel.Width(196).Padding(4).Radius(4).Background(colors.rule).Border(1, colors.line).Children(func() {
-			ui.Column(c).FillWidth().Children(func() {
+		panel.Width(204).Padding(4).Radius(tok.radiusM).Background(colors.rule).Border(1, colors.line).
+			Shadow(0, 6, 20, 0, tok.lift).Transition(motionPopup()).Children(func() {
+			ui.Column(c).FillWidth().Gap(1).Children(func() {
 				for i, label := range labels {
-					item := sel.Item(i).FillWidth().Padding(5, 8).Radius(3).Label(label)
+					item := sel.Item(i).FillWidth().Padding(5, 8).Radius(tok.radiusS).Label(label)
 					if item.Highlighted() {
-						item.Background(colors.field)
+						item.Background(tok.accent).TextColor(tok.onAccent)
+					} else if i == rule.template {
+						item.Background(colors.field).TextColor(colors.text)
+					} else {
+						item.TextColor(colors.text)
 					}
-					item.Children(func() { ui.Text(c, label).FontSize(11.5).TextColor(colors.text).SingleLine() })
+					item.Children(func() { ui.Text(c, label).FontSize(tok.body).SingleLine() })
 				}
 			})
 		})
@@ -249,13 +358,14 @@ func (a *App) renameTemplateSelect(c *ui.Context, colors renamePalette, rule *re
 }
 
 func (a *App) renameTemplateFields(c *ui.Context, colors renamePalette, rule *renameRule) {
-	ui.Row(c).Grow(1).MinWidth(0).Padding(0, 6).Gap(4).AlignItems(ui.Center).Children(func() {
-		word := func(text string) { ui.Text(c, text).FontSize(11.5).TextColor(colors.text).Shrink(0) }
+	ui.Row(c).Grow(1).MinWidth(0).Height(34).Padding(0, 6).Gap(4).Radius(colors.tok.radiusS).
+		Background(colors.field).Border(1, colors.line).AlignItems(ui.Center).Children(func() {
+		word := func(text string) { ui.Text(c, text).FontSize(11).TextColor(colors.text).Shrink(0) }
 		number := func(key, label string, value *float64) {
-			ui.NumberInput(c.Key(key), value, 0, 9999, 1).Width(116).Shrink(0).Label(label).Disabled(a.fileRename.busy)
+			ui.NumberInput(c.Key(key), value, 0, 9999, 1).Width(92).MinWidth(60).Shrink(1).Label(label).Disabled(a.fileRename.busy)
 		}
 		character := func() {
-			ui.TextInput(c.Key("template-text"), &rule.text).Width(84).MinWidth(44).Label("指定字符").Placeholder("指定字符").Disabled(a.fileRename.busy)
+			ui.TextInput(c.Key("template-text"), &rule.text).Width(78).MinWidth(44).Label("指定字符").Placeholder("指定字符").Disabled(a.fileRename.busy)
 		}
 		switch rule.template {
 		case 1, 2:
@@ -269,7 +379,7 @@ func (a *App) renameTemplateFields(c *ui.Context, colors renamePalette, rule *re
 		case 3:
 			word("从第")
 			number("template-offset", "起始位置", &rule.offset)
-			word("位后的")
+			word("位后")
 			number("template-count", "字符位数", &rule.count)
 			word("位")
 		case 4, 5, 6, 7:
@@ -289,96 +399,112 @@ func (a *App) renameTemplateFields(c *ui.Context, colors renamePalette, rule *re
 	})
 }
 
-func (a *App) renameRules(c *ui.Context, colors renamePalette) {
+func (a *App) renameRules(c *ui.Context, colors renamePalette, compact bool) {
 	s := &a.fileRename
-	tok := a.look
-	if s.mode == 4 {
-		ui.Row(c.Key("rename-manual-hint")).FillWidth().Height(24).Padding(0, 10).AlignItems(ui.Center).
-			Justify(ui.Center).Background(colors.rule).Children(func() {
-			ui.Text(c, "提示：粘贴多行文本（如 Excel 复制的列），将自动向下批量替换").FontSize(tok.caption).TextColor(colors.muted).SingleLine()
-		})
-		return
-	}
-	panel := ui.Column(c.Key("rename-rules")).FillWidth().Shrink(0).MinHeight(84).
-		Padding(8, 12).Gap(6).Background(colors.rule)
-	panel.Children(func() {
-		switch s.mode {
-		case 0:
-			ui.Scroll(c.Key("rename-replace-scroll")).FillWidth().MaxHeight(112).MinHeight(36).Children(func() {
-				ui.Column(c).FillWidth().Gap(6).Children(func() {
-					for i := range s.rules {
-						i := i
-						find := func() {
-							ui.Row(c).Grow(1).Basis(0).MinWidth(0).Height(34).AlignItems(ui.Center).Background(colors.field).
-								BorderWidth(0, 0, 1, 0).BorderColor(colors.muted).Children(func() {
-								if s.rules[i].template == 0 {
-									renameField(c, colors, "find", &s.rules[i].Find, fmt.Sprintf("查找 %d", i+1), "查找", s.busy).Grow(1).MinWidth(0)
-								} else {
-									a.renameTemplateFields(c, colors, &s.rules[i])
-								}
-								a.renameTemplateSelect(c, colors, &s.rules[i])
-							})
-						}
-						remove := func() {
-							if len(s.rules) > 1 {
-								uiMiniBtn(ui.Button(c.Key("remove"), "移除"), tok).Label(fmt.Sprintf("移除替换规则 %d", i+1)).Disabled(s.busy).OnClick(func() { s.rules = append(s.rules[:i], s.rules[i+1:]...) })
+	tok := colors.tok
+	switch s.mode {
+	case 0:
+		scroll := ui.Scroll(c.Key("rename-replace-scroll")).FillWidth()
+		if compact {
+			scroll.Grow(1).MinHeight(0)
+		} else {
+			scroll.MaxHeight(132).MinHeight(36)
+		}
+		scroll.Children(func() {
+			ui.Column(c).FillWidth().Gap(8).Children(func() {
+				for i := range s.rules {
+					i := i
+					find := func() {
+						ui.Row(c).Grow(1).Basis(0).MinWidth(0).Gap(4).AlignItems(ui.Center).Children(func() {
+							if s.rules[i].template == 0 {
+								renameField(c, colors, "find", &s.rules[i].Find, fmt.Sprintf("查找 %d", i+1), "查找", s.busy).Grow(1).MinWidth(0)
+							} else {
+								a.renameTemplateFields(c, colors, &s.rules[i])
 							}
+							a.renameTemplateSelect(c, colors, &s.rules[i])
+						})
+					}
+					remove := func() {
+						if len(s.rules) > 1 {
+							uiMiniBtn(ui.Button(c.Key("remove"), "移除"), tok).Label(fmt.Sprintf("移除替换规则 %d", i+1)).
+								Disabled(s.busy).OnClick(func() { s.rules = append(s.rules[:i], s.rules[i+1:]...) })
 						}
-						w, _ := c.Size()
-						if w < 1000 && s.rules[i].template != 0 {
-							ui.Column(c.Key(fmt.Sprintf("rename-rule-%d", i))).FillWidth().Gap(4).Children(func() {
-								ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() { find(); remove() })
-								renameField(c, colors, "with", &s.rules[i].With, fmt.Sprintf("替换为 %d", i+1), "替换成", s.busy).FillWidth()
-							})
-						} else {
-							ui.Row(c.Key(fmt.Sprintf("rename-rule-%d", i))).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+					}
+					ruleBox := ui.Column(c.Key(fmt.Sprintf("rename-rule-%d", i))).FillWidth().Gap(5)
+					if i < len(s.rules)-1 {
+						ruleBox.Padding(0, 0, 8, 0).BorderWidth(0, 0, 1, 0).BorderColor(colors.line)
+					}
+					w, _ := c.Size()
+					if compact || w < 1000 && s.rules[i].template != 0 || w < 720 {
+						ruleBox.Children(func() {
+							if len(s.rules) > 1 {
+								ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+									ui.Text(c, fmt.Sprintf("规则 #%d", i+1)).FontSize(tok.caption).FontWeight(600).
+										TextColor(colors.muted).FontFeatures("tnum").Grow(1)
+									remove()
+								})
+							}
+							ui.Row(c).FillWidth().Children(func() { find() })
+							renameField(c, colors, "with", &s.rules[i].With, fmt.Sprintf("替换为 %d", i+1), "替换成", s.busy).FillWidth()
+						})
+					} else {
+						ruleBox.Children(func() {
+							ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 								find()
-								ui.Icon(c, iconArrowRight).FontSize(14).TextColor(colors.muted).Margin(0, 4).Shrink(0)
+								ui.Icon(c, iconArrowRight).FontSize(13).TextColor(colors.muted).Margin(0, 2).Shrink(0)
 								renameField(c, colors, "with", &s.rules[i].With, fmt.Sprintf("替换为 %d", i+1), "替换成", s.busy).Grow(1).Basis(0).MinWidth(0)
 								remove()
 							})
-						}
-					}
-				})
-			})
-			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Checkbox(c, &s.includeExt, "替换文件扩展名").Disabled(s.busy)
-				ui.Spacer(c)
-				uiMiniBtn(ui.Button(c, "+  添加替换规则"), tok).Label("添加替换规则").Disabled(s.busy).
-					OnClick(func() { s.rules = append(s.rules, renameRule{count: 1, offset: 1}) })
-			})
-		case 1:
-			ui.Scroll(c.Key("rename-ai-scroll")).FillWidth().MaxHeight(176).MinHeight(0).Children(func() {
-				ui.Column(c).FillWidth().Center().Children(func() {
-					w, _ := c.Size()
-					width := max(float32(240), min(float32(580), w-a.sidebarWidth(w)-80))
-					ui.Column(c).Width(width).MaxWidth(width).Padding(8, 10).Gap(5).Radius(tok.radiusM).
-						Background(colors.rule).Border(1, colors.line).Children(func() {
-						ui.TextArea(c.Key("rename-ai-prompt"), &s.aiPrompt).Height(50).FillWidth().Label("智能重命名要求").
-							Placeholder("用一句话描述重命名规则，例如：中文转英文 / 加序号").Disabled(s.busy)
-						ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-							uiMiniBtn(ui.Button(c, "模型设置"), tok).Disabled(s.busy).OnClick(func() { s.aiSettings = !s.aiSettings })
-							ui.Text(c, "与验证码自定义模型共用").FontSize(tok.caption).TextColor(colors.muted).Grow(1).MinWidth(0).SingleLine()
-							uiBtn(ui.Button(c, "生成名称建议"), tok).Disabled(s.busy || len(s.items) == 0 || strings.TrimSpace(s.aiPrompt) == "").OnClick(a.renameSuggest)
 						})
-						if s.aiSettings {
-							ui.TextInput(c.Key("rename-ai-url"), &a.customURL).FillWidth().Label("模型 API 地址").Placeholder("模型 API 地址").Disabled(s.busy)
-							ui.TextInput(c.Key("rename-ai-key"), &a.customKey).FillWidth().Label("模型 API Key").Placeholder("API Key").Password().Disabled(s.busy)
-							ui.Row(c).FillWidth().Gap(6).Children(func() {
-								ui.TextInput(c.Key("rename-ai-model"), &a.customModel).Grow(1).MinWidth(0).Label("模型名称").Placeholder("模型名称").Disabled(s.busy)
-								uiBtn(ui.Button(c, "保存模型"), tok).Disabled(s.busy).OnClick(a.saveRenameModel)
-							})
-						}
-					})
-					ui.Text(c, "文件名会发送给模型，文件内容不会发送。").FontSize(tok.caption).TextColor(colors.muted).Margin(4, 0, 0, 0)
-				})
+					}
+				}
 			})
-		case 2:
+		})
+		ui.Row(c).FillWidth().Gap(6).Padding(4, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(colors.line).
+			AlignItems(ui.Center).Children(func() {
+			ui.Checkbox(c, &s.includeExt, "替换文件扩展名").Disabled(s.busy)
+			ui.Spacer(c)
+			uiMiniBtn(ui.Button(c, "+ 添加替换规则"), tok).Label("添加替换规则").Disabled(s.busy).
+				OnClick(func() { s.rules = append(s.rules, renameRule{count: 1, offset: 1}) })
+		})
+	case 1:
+		scroll := ui.Scroll(c.Key("rename-ai-scroll")).FillWidth().MinHeight(0)
+		if compact {
+			scroll.Grow(1)
+		} else {
+			scroll.MaxHeight(180)
+		}
+		scroll.Children(func() {
+			ui.Column(c).FillWidth().Gap(6).Children(func() {
+				ui.TextArea(c.Key("rename-ai-prompt"), &s.aiPrompt).Height(68).FillWidth().Label("智能重命名要求").
+					Placeholder("用一句话描述重命名规则，例如：中文转英文 / 加序号").Disabled(s.busy)
+				ui.Row(c).FillWidth().Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
+					uiMiniBtn(ui.Button(c, "模型设置"), tok).Disabled(s.busy).OnClick(func() { s.aiSettings = !s.aiSettings })
+					ui.Text(c, "与验证码自定义模型共用").FontSize(tok.caption).TextColor(colors.muted).Grow(1).MinWidth(0).SingleLine()
+					uiBtn(ui.PrimaryButton(c, "生成名称建议"), tok).
+						Disabled(s.busy || len(s.items) == 0 || strings.TrimSpace(s.aiPrompt) == "").
+						OnClick(a.renameSuggest)
+				})
+				if s.aiSettings {
+					ui.Column(c).FillWidth().Gap(5).Padding(6, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(colors.line).Children(func() {
+						ui.TextInput(c.Key("rename-ai-url"), &a.customURL).FillWidth().Label("模型 API 地址").Placeholder("模型 API 地址").Disabled(s.busy)
+						ui.TextInput(c.Key("rename-ai-key"), &a.customKey).FillWidth().Label("模型 API Key").Placeholder("API Key").Password().Disabled(s.busy)
+						ui.Row(c).FillWidth().Gap(6).Children(func() {
+							ui.TextInput(c.Key("rename-ai-model"), &a.customModel).Grow(1).MinWidth(0).Label("模型名称").Placeholder("模型名称").Disabled(s.busy)
+							uiBtn(ui.Button(c, "保存模型"), tok).Disabled(s.busy).OnClick(a.saveRenameModel)
+						})
+					})
+				}
+				ui.Text(c, "文件名会发送给模型，文件内容不会发送。").FontSize(tok.caption).TextColor(colors.muted)
+			})
+		})
+	case 2:
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
 			ui.Row(c).FillWidth().Gap(4).Wrap().AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "内容：").FontSize(12).TextColor(colors.text)
+				ui.Text(c, "内容").FontSize(tok.caption).FontWeight(600).TextColor(colors.muted).Margin(0, 4, 0, 0)
 				for _, choice := range []string{"文本", "序号", "文件信息"} {
 					selected := s.insertKind == choice || choice == "文件信息" && s.insertKind != "文本" && s.insertKind != "序号"
-					renameChoice(c, colors, choice, selected, s.busy, func() {
+					renameChoice(c, colors, "kind-"+choice, choice, selected, s.busy, func() {
 						if choice == "文件信息" {
 							s.insertKind = "创建时间"
 						} else {
@@ -386,88 +512,102 @@ func (a *App) renameRules(c *ui.Context, colors renamePalette) {
 						}
 					})
 				}
-				ui.Spacer(c)
-				ui.Text(c, "位置：").FontSize(12).TextColor(colors.text)
+			})
+			ui.Row(c).FillWidth().Gap(4).Wrap().AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "位置").FontSize(tok.caption).FontWeight(600).TextColor(colors.muted).Margin(0, 4, 0, 0)
 				for _, choice := range []string{"开头", "指定位置", "末尾"} {
-					renameChoice(c, colors, choice, s.position == choice, s.busy, func() { s.position = choice })
+					renameChoice(c, colors, "pos-"+choice, choice, s.position == choice, s.busy, func() { s.position = choice })
 				}
 				if s.position == "指定位置" {
 					ui.NumberInput(c.Key("rename-position-index"), &s.index, 0, 9999, 1).Width(68).Label("位置").Disabled(s.busy)
 				}
 			})
-			ui.Column(c).FillWidth().Gap(6).Children(func() {
-				switch s.insertKind {
-				case "文本":
-					renameField(c, colors, "rename-text", &s.text, "插入文本", "固定文本", s.busy).FillWidth()
-				case "序号":
-					a.renameNumberFields(c, colors)
-				default:
+			ui.Box(c).FillWidth().Height(1).Background(colors.line)
+			switch s.insertKind {
+			case "文本":
+				renameField(c, colors, "rename-text", &s.text, "插入文本", "固定文本", s.busy).FillWidth()
+			case "序号":
+				a.renameNumberFields(c, colors, compact)
+			default:
+				if compact {
+					ui.Column(c).FillWidth().Gap(6).Children(func() {
+						motionSelect(c.Key("rename-insert-kind"), &s.insertKind, []string{"创建时间", "修改时间", "大小", "图片宽度", "图片高度", "照片拍摄时间"}).FillWidth().Label("文件信息类型").Disabled(s.busy)
+						ui.Row(c).FillWidth().Gap(6).Children(func() {
+							renameField(c, colors, "rename-prefix", &s.prefix, "信息前缀", "信息前缀", s.busy).Grow(1).Basis(0).MinWidth(0)
+							renameField(c, colors, "rename-suffix", &s.suffix, "信息后缀", "信息后缀", s.busy).Grow(1).Basis(0).MinWidth(0)
+						})
+					})
+				} else {
 					ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 						renameField(c, colors, "rename-prefix", &s.prefix, "信息前缀", "信息前缀", s.busy).Grow(1).Basis(0).MinWidth(0)
 						motionSelect(c.Key("rename-insert-kind"), &s.insertKind, []string{"创建时间", "修改时间", "大小", "图片宽度", "图片高度", "照片拍摄时间"}).Width(124).Label("文件信息类型").Disabled(s.busy)
 						renameField(c, colors, "rename-suffix", &s.suffix, "信息后缀", "信息后缀", s.busy).Grow(1).Basis(0).MinWidth(0)
 					})
 				}
-			})
-		case 3:
-			a.renameNumberFields(c, colors)
-		}
-	})
-}
-
-func renameChoice(c *ui.Context, colors renamePalette, label string, selected, busy bool, click func()) {
-	b := ui.Button(c, label).FontSize(11).Height(22).Padding(0, 7).Radius(3).Border(1, colors.line).Disabled(busy)
-	if selected {
-		b.Background(colors.blue.Alpha(0.1)).TextColor(colors.blue)
-	} else {
-		b.Background(colors.rule).TextColor(colors.muted)
+			}
+		})
+	case 3:
+		a.renameNumberFields(c, colors, compact)
 	}
-	b.OnClick(click)
 }
 
-func (a *App) renameNumberFields(c *ui.Context, colors renamePalette) {
+func renameChoice(c *ui.Context, colors renamePalette, key, label string, selected, busy bool, click func()) {
+	uiPill(c, key, label, selected, colors.tok).Disabled(busy).OnClick(click)
+}
+
+func (a *App) renameNumberFields(c *ui.Context, colors renamePalette, compact bool) {
 	s := &a.fileRename
-	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-		renameField(c, colors, "rename-number-prefix", &s.numPrefix, "序号前缀", "序号前面字符", s.busy).Grow(1).Basis(0).MinWidth(0)
-		ui.Row(c).Shrink(0).Padding(5, 8).Gap(6).Radius(3).Border(1, colors.line).AlignItems(ui.End).Children(func() {
-			ui.Column(c).Width(84).Gap(2).Children(func() {
-				ui.Text(c, "开始序号").FontSize(10.5).TextColor(colors.muted)
+	tok := colors.tok
+	w, _ := c.Size()
+	controls := func() {
+		ui.Row(c).Gap(6).Padding(6, 8).Radius(tok.radiusS).Background(colors.field).Border(1, colors.line).AlignItems(ui.End).Children(func() {
+			ui.Column(c).Grow(1).Basis(0).MinWidth(68).Gap(2).Children(func() {
+				ui.Text(c, "开始序号").FontSize(tok.caption).TextColor(colors.muted)
 				ui.NumberInput(c.Key("rename-number-start"), &s.numStart, 0, 9_000_000_000_000_000, 1).FillWidth().Label("编号起始值").Disabled(s.busy)
 			})
-			ui.Column(c).Width(96).Gap(2).Children(func() {
-				ui.Text(c, "序号类型").FontSize(10.5).TextColor(colors.muted)
+			ui.Column(c).Grow(1).Basis(0).MinWidth(82).Gap(2).Children(func() {
+				ui.Text(c, "序号类型").FontSize(tok.caption).TextColor(colors.muted)
 				motionSelect(c.Key("rename-number-format"), &s.numFormat, []string{"阿拉伯数字", "中文小写", "中文大写", "英文小写", "英文大写"}).FillWidth().Label("编号格式").Disabled(s.busy)
 			})
 			if s.numFormat == "阿拉伯数字" {
-				ui.Column(c).Width(68).Gap(2).Children(func() {
-					ui.Text(c, "固定位数").FontSize(10.5).TextColor(colors.muted)
+				ui.Column(c).Width(62).Shrink(0).Gap(2).Children(func() {
+					ui.Text(c, "固定位数").FontSize(tok.caption).TextColor(colors.muted)
 					ui.NumberInput(c.Key("rename-number-width"), &s.numWidth, 0, 16, 1).FillWidth().Label("补零位数").Disabled(s.busy)
 				})
 			}
 		})
+	}
+	if compact || w < 760 {
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			ui.Row(c).FillWidth().Gap(6).Children(func() {
+				renameField(c, colors, "rename-number-prefix", &s.numPrefix, "序号前缀", "序号前面字符", s.busy).Grow(1).Basis(0).MinWidth(0)
+				renameField(c, colors, "rename-number-suffix", &s.numSuffix, "序号后缀", "序号后面字符", s.busy).Grow(1).Basis(0).MinWidth(0)
+			})
+			controls()
+		})
+		return
+	}
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		renameField(c, colors, "rename-number-prefix", &s.numPrefix, "序号前缀", "序号前面字符", s.busy).Grow(1).Basis(0).MinWidth(0)
+		controls()
 		renameField(c, colors, "rename-number-suffix", &s.numSuffix, "序号后缀", "序号后面字符", s.busy).Grow(1).Basis(0).MinWidth(0)
 	})
 }
 
 func renameTool(c *ui.Context, colors renamePalette, key, label string, icon *ui.SVG, disabled bool, click func()) {
-	b := ui.ButtonBase(c.Key(key)).Size(24, 24).Radius(4).Center().Label(label).Tooltip(label).Disabled(disabled)
-	if !disabled {
-		b.Cursor(ui.CursorPointer).OnClick(click)
-	}
-	if b.Hovered() && !disabled {
-		b.Background(colors.line.Alpha(0.4))
-	}
-	b.TextColor(colors.muted).Children(func() { ui.Icon(c, icon).FontSize(13) })
+	uiIconBtn(c, key, label, label, icon, 24, false, true, colors.tok).Disabled(disabled).OnClick(click)
 }
 
 func (a *App) renameToolbar(c *ui.Context, colors renamePalette, changes []fileren.Change, changed int, planErr error) {
 	s := &a.fileRename
-	tok := a.look
+	tok := colors.tok
 	services := c.Services()
-	ui.Row(c.Key("rename-toolbar")).FillWidth().MinHeight(34).Padding(4, 8).Gap(4).Wrap().AlignItems(ui.Center).
-		BorderWidth(1, 0, 0, 0).BorderColor(colors.line).Background(colors.frame).Children(func() {
-		renameTool(c, colors, "rename-import-folder", "读取文件夹内容", iconFolderOpen, s.busy, func() { a.renamePick(true, true) })
-		renameTool(c, colors, "rename-import-files", "添加文件", iconFilePlus, s.busy, func() { a.renamePick(false, false) })
+	ui.Row(c.Key("rename-toolbar")).FillWidth().MinHeight(38).Padding(6, 12).Gap(5).Wrap().AlignItems(ui.Center).
+		BorderWidth(1, 0, 0, 0).BorderColor(colors.line).Background(colors.rule).Children(func() {
+		uiIconTextBtn(c, "rename-import-folder", "读取文件夹内容", "读取文件夹及其子目录内所有文件", iconFolderOpen, 24, false, tok).
+			Disabled(s.busy).OnClick(func() { a.renamePick(true, true) })
+		uiIconTextBtn(c, "rename-import-files", "添加文件", "选择一个或多个文件", iconFilePlus, 24, false, tok).
+			Disabled(s.busy).OnClick(func() { a.renamePick(false, false) })
 		renameTool(c, colors, "rename-import-dir", "添加文件夹", iconFolder, s.busy, func() { a.renamePick(true, false) })
 		renameTool(c, colors, "rename-clear", "清空列表", iconTrash, s.busy || len(s.items) == 0, func() { s.items, s.undo, s.note, s.err = nil, nil, "", "" })
 		if s.mode == 4 {
@@ -481,39 +621,56 @@ func (a *App) renameToolbar(c *ui.Context, colors renamePalette, changes []filer
 			})
 		}
 		motionSelect(c.Key("rename-sort"), &s.sortBy, []string{"名称升序", "名称降序", "大小升序", "大小降序", "修改时间升序", "修改时间降序", "创建时间升序", "创建时间降序"}).
-			Width(116).Label("文件排序").Disabled(s.busy).BorderStyle(ui.BorderDashed).OnChange(a.renameSort)
+			Height(24).Width(116).Label("文件排序").Disabled(s.busy).OnChange(a.renameSort)
 		count := fmt.Sprintf("已选 %d 个文件", len(s.items))
-		ui.Text(c, count).FontSize(tok.caption).TextColor(colors.muted).SingleLine().Tooltip(count)
+		ui.Text(c, count).FontSize(tok.caption).TextColor(colors.muted).SingleLine().FontFeatures("tnum").Tooltip(count)
 		if s.note != "" {
-			ui.Text(c, s.note).FontSize(tok.caption).TextColor(colors.muted).SingleLine().Tooltip(s.note)
+			ui.Text(c, s.note).FontSize(tok.caption).TextColor(tok.success).SingleLine().Tooltip(s.note)
 		}
 		ui.Spacer(c)
 		if len(s.undo) > 0 {
 			uiIconBtn(c, "rename-undo", "撤销上次重命名", "撤销上次重命名", iconRotateCcw, 24, false, false, tok).
 				Disabled(s.busy || a.renameUpdateActive()).OnClick(func() { a.renameApply(s.undo, true) })
 		}
-		buttonText := ui.Hex("#FFFFFF")
-		if tok.dark {
-			buttonText = ui.Hex("#171717")
-		}
-		ui.Button(c.Key("rename-apply"), "执行重命名").FontSize(tok.body).Height(24).Padding(0, 10).Radius(tok.radiusS).
-			Background(colors.blue).TextColor(buttonText).Disabled(s.busy || a.renameUpdateActive() || planErr != nil || changed == 0).
+		uiBtn(ui.Button(c.Key("rename-apply"), "执行重命名"), tok).
+			Background(tok.accent).TextColor(tok.onAccent).
+			Disabled(s.busy || a.renameUpdateActive() || planErr != nil || changed == 0).
 			OnClick(func() { a.renameApply(changes, false) })
 	})
 }
 
-func (a *App) renameList(c *ui.Context, colors renamePalette, changes []fileren.Change) {
+func (a *App) renameList(c *ui.Context, colors renamePalette, changes []fileren.Change, planErr error) ui.Element {
 	s := &a.fileRename
-	panel := ui.Column(c.Key("rename-list-panel")).Grow(1).MinHeight(120).FillWidth().
-		Background(colors.frame).BorderWidth(1, 0, 0, 0).BorderColor(colors.line)
+	tok := colors.tok
+	panel := uiCardSurface(ui.Column(c.Key("rename-list-panel")).MinHeight(120).FillWidth().Clip(), tok)
 	panel.Children(func() {
 		if len(s.items) == 0 {
-			ui.Column(c.Key("rename-empty")).Grow(1).FillWidth().Center().Gap(4).Children(func() {
-				ui.Icon(c, iconFolderOpen).FontSize(26).TextColor(colors.muted)
-				ui.Text(c, "拖放 / 粘贴文件（夹）到这里").FontSize(a.look.body).TextColor(colors.muted)
+			ui.Column(c.Key("rename-empty")).Grow(1).FillWidth().Center().Gap(6).Padding(16).Children(func() {
+				ui.Row(c).Size(38, 38).Radius(tok.radiusM).Center().Background(colors.field).Border(1, colors.line).Children(func() {
+					ui.Icon(c, iconFolderOpen).FontSize(18).TextColor(colors.muted)
+				})
+				ui.Text(c, "拖放 / 粘贴文件（夹）到这里").FontSize(tok.title).FontWeight(600).TextColor(colors.text)
+				ui.Text(c, "支持拖动调整顺序，或使用底部「添加文件」「读取文件夹内容」导入").FontSize(tok.caption).TextColor(colors.muted)
 			})
 			return
 		}
+		targetCounts := make(map[string]int, len(changes))
+		for _, ch := range changes {
+			targetCounts[strings.ToLower(ch.To)]++
+		}
+		ui.Row(c.Key("rename-table-head")).FillWidth().Height(26).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+			Background(colors.field).BorderWidth(0, 0, 1, 0).BorderColor(colors.line).Children(func() {
+			ui.Text(c, "#").Width(24).FontSize(tok.caption).FontWeight(600).TextColor(colors.muted).FontFeatures("tnum").Shrink(0)
+			ui.Box(c).Width(13).Shrink(0)
+			ui.Text(c, "原名称").Grow(1).Basis(0).MinWidth(0).FontSize(tok.caption).FontWeight(600).TextColor(colors.muted).SingleLine()
+			ui.Text(c, "状态").Width(48).FontSize(tok.caption).FontWeight(600).TextColor(colors.muted).Shrink(0)
+			newLabel := "预览新名称"
+			if s.mode == 1 || s.mode == 4 {
+				newLabel = "新名称（可编辑）"
+			}
+			ui.Text(c, newLabel).Grow(1).Basis(0).MinWidth(0).FontSize(tok.caption).FontWeight(600).TextColor(colors.muted).SingleLine()
+			ui.Box(c).Width(24).Shrink(0)
+		})
 		s.list.Key = func(i int) any { return s.items[i].path }
 		s.list.Label = func(i int) string { return filepath.Base(s.items[i].path) }
 		if !s.busy {
@@ -526,29 +683,63 @@ func (a *App) renameList(c *ui.Context, colors renamePalette, changes []fileren.
 				return
 			}
 			item := &s.items[i]
-			ui.Row(c.Key(item.path)).FillWidth().Height(28).Padding(0, 8).Gap(6).AlignItems(ui.Center).
-				BorderWidth(0, 0, 1, 0).BorderColor(colors.line).Children(func() {
+			changedRow := i < len(changes) && changes[i].From != changes[i].To
+			conflictRow := false
+			if i < len(changes) {
+				ch := changes[i]
+				if ch.To == "" || filepath.Dir(ch.To) != filepath.Dir(ch.From) ||
+					(changedRow && targetCounts[strings.ToLower(ch.To)] > 1) ||
+					(planErr != nil && changedRow && strings.Contains(planErr.Error(), ch.To)) {
+					conflictRow = true
+				}
+			}
+			row := ui.Row(c.Key(item.path)).FillWidth().Height(30).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+				BorderWidth(0, 0, 1, 0).BorderColor(colors.line)
+			if row.Hovered() {
+				row.Background(colors.field)
+			}
+			row.Children(func() {
+				ui.Text(c, fmt.Sprintf("%02d", i+1)).Width(24).FontSize(tok.caption).TextColor(tok.subtle).
+					FontFeatures("tnum").SingleLine().Shrink(0)
 				icon := iconFile
 				if info, err := os.Lstat(item.path); err == nil && info.IsDir() {
 					icon = iconFolder
 				}
 				ui.Icon(c, icon).FontSize(13).TextColor(colors.muted).Shrink(0)
-				ui.Text(c, filepath.Base(item.path)).Grow(1).Basis(0).MinWidth(0).FontSize(12).TextColor(colors.text).SingleLine().Tooltip(item.path)
-				mark := ui.Box(c).Size(5, 5).Radius(3).Shrink(0)
-				if i < len(changes) && changes[i].From != changes[i].To {
-					mark.Background(ui.Hex("#FF6D00"))
-				}
+				ui.Text(c, filepath.Base(item.path)).Grow(1).Basis(0).MinWidth(0).FontSize(11.5).TextColor(colors.text).SingleLine().Tooltip(item.path)
+				ui.Row(c).Width(48).Shrink(0).AlignItems(ui.Center).Children(func() {
+					switch {
+					case conflictRow:
+						uiBadge(c, "status", "冲突", "danger", tok)
+					case changedRow:
+						uiBadge(c, "status", "待改", "accent", tok)
+					default:
+						uiBadge(c, "status", "不变", "neutral", tok)
+					}
+				})
 				if s.mode == 1 || s.mode == 4 {
-					ui.TextInput(c.Key(fmt.Sprintf("rename-draft-%d", s.editVersion)), &item.draft).Grow(1).Basis(0).MinWidth(0).Height(24).Padding(2, 0).
-						Radius(0).Background(colors.frame).BorderWidth(0, 0, 1, 0).BorderColor(colors.line).FontSize(12).
-						Label("新名称 " + filepath.Base(item.path)).Disabled(s.busy).OnPaste(func(text string) bool { return a.renamePasteAt(i, text) })
+					in := ui.TextInput(c.Key(fmt.Sprintf("rename-draft-%d", s.editVersion)), &item.draft).
+						Grow(1).Basis(0).MinWidth(0).Height(22).Padding(0, 6).Radius(tok.radiusS).
+						Background(colors.field).Border(1, colors.line).FontSize(11.5).TextColor(colors.text).
+						Label("新名称 " + filepath.Base(item.path)).Disabled(s.busy).
+						OnPaste(func(text string) bool { return a.renamePasteAt(i, text) })
+					if in.Focused() {
+						in.Background(colors.rule).BorderColor(colors.blue)
+					}
 				} else {
 					name := "—"
 					if i < len(changes) {
 						name = filepath.Base(changes[i].To)
 					}
-					ui.Text(c, name).Grow(1).Basis(0).MinWidth(0).Height(24).Padding(4, 0).FontSize(12).
-						TextColor(colors.muted).BorderWidth(0, 0, 1, 0).BorderColor(colors.line).SingleLine().Tooltip(name)
+					t := ui.Text(c, name).Grow(1).Basis(0).MinWidth(0).FontSize(11.5).SingleLine().Tooltip(name)
+					switch {
+					case conflictRow:
+						t.TextColor(tok.danger).FontWeight(500)
+					case changedRow:
+						t.TextColor(colors.text).FontWeight(500)
+					default:
+						t.TextColor(colors.muted)
+					}
 				}
 				renameTool(c, colors, "remove", "移除 "+filepath.Base(item.path), iconX, s.busy, func() {
 					s.items = append(s.items[:i], s.items[i+1:]...)
@@ -557,6 +748,7 @@ func (a *App) renameList(c *ui.Context, colors renamePalette, changes []fileren.
 			})
 		}).Grow(1).MinHeight(0).FillWidth()
 	})
+	return panel
 }
 
 func (a *App) renameIngest(paths []string) {

@@ -13,81 +13,130 @@ const (
 	editThumbGap  float32 = 6
 )
 
-// editStage 是右侧舞台：空态放拖放区，有图时是大图预览加胶片条。
+// editStage 是右侧舞台：空态放拖放区，有图时是信息栏、大图预览加胶片条。
 func (a *App) editStage(c *ui.Context, be editPalette) {
 	st := &a.edit
 	stage := ui.Column(c.Key("edit-stage")).Grow(1).MinWidth(0).MinHeight(0).
-		Padding(10, 12).Background(be.paper)
+		Background(be.paper)
 	// 舞台自己也标了可拖放，落点在这里时只有它能收到文件。
 	if paths := stage.DroppedFiles(); len(paths) > 0 {
 		a.editAddPaths(paths)
 	}
 	stage.Children(func() {
 		if len(st.files) == 0 {
-			a.editDropzone(c, be)
+			wrap := ui.Column(c).Fill().Padding(14)
+			wrap.Children(func() {
+				a.editDropzone(c, be)
+			})
 		} else {
 			loaded := ui.Column(c).Fill().MinHeight(0)
 			loaded.Children(func() {
+				a.editStageBar(c, be)
 				a.editPreview(c, be)
 				a.editFilmstrip(c, be)
 			})
 		}
 		if stage.FileDragOver() {
-			overlay := ui.Box(c).Absolute().Left(10).Top(10).Right(10).Bottom(10).Center().
-				Radius(14).Background(be.transfer.Mix(be.sheet, 0.92)).
+			overlay := ui.Box(c).Absolute().Left(12).Top(12).Right(12).Bottom(12).Center().
+				Radius(be.tok.radiusL).Background(be.transferSoft).
 				BorderWidth(2).BorderStyle(ui.BorderDashed).BorderColor(be.transfer)
 			overlay.Children(func() {
-				ui.Text(c, "松开以添加图片").FontSize(14).FontWeight(500).TextColor(be.transferStrong)
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, iconImagePlus).FontSize(18).TextColor(be.transferStrong)
+					ui.Text(c, "松开以添加图片").FontSize(14).FontWeight(600).TextColor(be.transferStrong)
+				})
 			})
+		}
+	})
+}
+
+func (a *App) editStageBar(c *ui.Context, be editPalette) {
+	st := &a.edit
+	f := st.selectedFile()
+	if f == nil {
+		return
+	}
+	bar := ui.Row(c.Key("edit-stage-bar")).FillWidth().Height(32).Padding(0, 12).Gap(8).
+		AlignItems(ui.Center).Background(be.sheet).BorderWidth(0, 0, 1, 0).BorderColor(be.rule)
+	bar.Children(func() {
+		ui.Icon(c, iconFileImage).FontSize(13).TextColor(be.muted).Shrink(0)
+		ui.Text(c, f.Name).FontSize(be.tok.body).FontWeight(500).TextColor(be.ink).SingleLine().Shrink(1).MinWidth(0)
+		if st.srcW > 0 && st.srcH > 0 {
+			ui.Box(c).Size(1, 12).Background(be.rule).Shrink(0)
+			ui.Text(c, fmt.Sprintf("%d × %d", st.srcW, st.srcH)).FontSize(be.tok.caption).
+				TextColor(be.muted).FontFeatures("tnum").SingleLine().Shrink(0)
+			if st.outW > 0 && st.outH > 0 && (st.outW != st.srcW || st.outH != st.srcH) {
+				ui.Icon(c, iconChevronRight).FontSize(11).TextColor(be.muted).Shrink(0)
+				uiBadge(c, "edit-out-dims", fmt.Sprintf("%d × %d", st.outW, st.outH), "accent", be.tok)
+			}
+		}
+		ui.Box(c).Grow(1)
+		switch {
+		case f.Status == "ok":
+			uiBadge(c, "edit-file-status", "已导出", "success", be.tok)
+		case f.Status == "failed":
+			uiBadge(c, "edit-file-status", "处理失败", "danger", be.tok)
+		case st.compare && !a.editShowCropUI():
+			uiBadge(c, "edit-mode-badge", "分屏对比", "accent", be.tok)
+		case a.editShowCropUI():
+			uiBadge(c, "edit-mode-badge", "框选裁切区域", "accent", be.tok)
 		}
 	})
 }
 
 func (a *App) editDropzone(c *ui.Context, be editPalette) {
 	zone := ui.Column(c.Key("edit-dropzone")).Fill().MinHeight(220).Center().Gap(12).
-		Radius(10).Cursor(ui.CursorPointer)
-	zone.BorderWidth(2).BorderStyle(ui.BorderDashed).
-		BorderColor(be.transfer.Mix(be.rule, 0.55))
+		Radius(be.tok.radiusL).Background(be.sheet).Cursor(ui.CursorPointer)
+	zone.BorderWidth(1.5).BorderStyle(ui.BorderDashed).
+		BorderColor(be.tok.borderStrong)
 	zone.Draw(func(p *ui.Painter, r ui.Rect) {
 		if zone.Hovered() {
-			p.Fill(r, be.transfer.Alpha(0.03), 10)
+			p.Fill(r, be.transferSoft.Alpha(0.55), be.tok.radiusL)
+			p.Stroke(r, be.transferBorder, be.tok.radiusL, 1.5)
 		}
 	})
 	zone.OnClick(func() { a.editPickFiles() })
 	zone.Children(func() {
-		actions := ui.Row(c).Gap(8).AlignItems(ui.Center)
+		hero := ui.Box(c).Size(44, 44).Center().Radius(be.tok.radiusM).Background(be.transferSoft).
+			Border(1, be.transferBorder)
+		hero.Children(func() { ui.Icon(c, iconImagePlus).FontSize(20).TextColor(be.transfer) })
+		ui.Column(c).Center().Gap(4).Children(func() {
+			ui.Text(c, "拖入图片或文件夹开始批处理").FontSize(be.tok.display).FontWeight(600).TextColor(be.ink)
+			ui.Text(c, "支持 PNG / JPEG / WebP / AVIF，也可直接粘贴文件或路径").FontSize(be.tok.caption).TextColor(be.muted)
+		})
+		actions := ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(4, 0, 0, 0)
 		actions.Children(func() {
 			open := a.editPillButton(c, be, "打开图片", iconImagePlus, true)
 			open.OnClick(func() { a.editPickFiles() })
 			folder := a.editPillButton(c, be, "打开文件夹", iconFolderOpen, false)
 			folder.OnClick(func() { a.editPickFolder() })
 		})
-		ui.Text(c, "OR").FontSize(11).TextColor(be.faint)
-		ui.Text(c, "试试拖放或粘贴此处打开").FontSize(11.5).TextColor(be.faint)
 	})
 }
 
 func (a *App) editPillButton(c *ui.Context, be editPalette, label string, icon *ui.SVG, primary bool) ui.Element {
 	ink := be.ink
-	el := ui.Row(c).Height(28).Padding(0, 10).Gap(5).Radius(7).AlignItems(ui.Center).
+	el := ui.Row(c).Height(30).Padding(0, 12).Gap(6).Radius(be.tok.radiusS).AlignItems(ui.Center).
 		Cursor(ui.CursorPointer)
 	if primary {
 		ink = be.onTransfer
 		el.Background(be.transfer).Shadow(0, 1, 2, 0, be.shadow)
+	} else {
+		el.Background(be.sheet).Border(1, be.rule)
 	}
 	el.Draw(func(p *ui.Painter, r ui.Rect) {
 		if !el.Hovered() {
 			return
 		}
 		if primary {
-			p.Fill(r, ui.RGBA(0, 0, 0, 0.08), 7)
+			p.Fill(r, ui.RGBA(0, 0, 0, 0.08), be.tok.radiusS)
 		} else {
-			p.Fill(r, be.quiet, 7)
+			p.Fill(r, be.quiet, be.tok.radiusS)
 		}
 	})
 	el.Children(func() {
 		ui.Icon(c, icon).FontSize(14).TextColor(ink)
-		ui.Text(c, label).FontSize(12.5).FontWeight(500).TextColor(ink).SingleLine()
+		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(ink).SingleLine()
 	})
 	return el
 }
@@ -145,8 +194,8 @@ func (a *App) editImageLayout(r ui.Rect) (ui.Rect, bool) {
 	if bw <= 0 || bh <= 0 {
 		return ui.Rect{}, false
 	}
-	innerW := float32(math.Max(1, float64(r.W-16)))
-	innerH := float32(math.Max(1, float64(r.H-16)))
+	innerW := float32(math.Max(1, float64(r.W-20)))
+	innerH := float32(math.Max(1, float64(r.H-20)))
 	// 界面缩放不应把尺寸小于舞台的图片缩到实际大小以下。
 	fit := float32(math.Min(1/float64(interfaceZoom), math.Min(float64(innerW)/float64(bw), float64(innerH)/float64(bh))))
 	baseW, baseH := float32(bw)*fit, float32(bh)*fit
@@ -231,10 +280,31 @@ func (a *App) editDrawBitmap(p *ui.Painter, bmp *ui.Bitmap, dst ui.Rect, radius 
 	if bmp == nil || dst.W <= 0 || dst.H <= 0 {
 		return
 	}
-	p.Shadow(dst, radius, 0, 1, 2, 0, be.shadow)
+	p.Shadow(dst, radius, 0, 2, 8, 0, be.shadow)
 	p.Clip(dst, radius, func() {
+		p.Fill(dst, be.sheet, 0)
+		// 透明区域棋盘格，格数随缩放限制上限以保证绘制轻量。
+		tile := float32(10)
+		for float32(dst.W/tile)*float32(dst.H/tile) > 900 {
+			tile *= 1.5
+		}
+		cols := int(math.Ceil(float64(dst.W / tile)))
+		rows := int(math.Ceil(float64(dst.H / tile)))
+		for row := 0; row < rows; row++ {
+			for col := 0; col < cols; col++ {
+				if (row+col)%2 == 0 {
+					continue
+				}
+				x := dst.X + float32(col)*tile
+				y := dst.Y + float32(row)*tile
+				w := float32(math.Min(float64(tile), float64(dst.X+dst.W-x)))
+				h := float32(math.Min(float64(tile), float64(dst.Y+dst.H-y)))
+				p.Fill(ui.Rect{X: x, Y: y, W: w, H: h}, be.quiet, 0)
+			}
+		}
 		p.ImageRegion(bmp, ui.Rect{}, dst, ui.ImageOptions{})
 	})
+	p.Stroke(dst, be.rule.Alpha(0.85), radius, 1)
 }
 
 func (a *App) editDrawCompareTags(p *ui.Painter, c *ui.Context, img ui.Rect) {
@@ -244,29 +314,29 @@ func (a *App) editDrawCompareTags(p *ui.Painter, c *ui.Context, img ui.Rect) {
 
 func (a *App) editDrawChipText(p *ui.Painter, c *ui.Context, text string, x, y, size float32) {
 	w, h := c.MeasureText(0, ui.Span{Text: text, Size: size})
-	r := ui.Rect{X: x, Y: y, W: w + 18, H: h + 4}
-	p.Fill(r, ui.RGBA(0, 0, 0, 0.52), r.H/2)
-	p.Text(x+9, y+2, text, size, ui.RGBA(255, 255, 255, 1))
+	r := ui.Rect{X: x, Y: y, W: w + 16, H: h + 6}
+	p.Fill(r, ui.RGBA(15, 23, 42, 0.78), 4)
+	p.Text(x+8, y+3, text, size, ui.RGBA(248, 250, 252, 1))
 }
 
 func (a *App) editDrawChipTextRight(p *ui.Painter, c *ui.Context, text string, right, y, size float32) {
 	w, h := c.MeasureText(0, ui.Span{Text: text, Size: size})
-	x := right - (w + 18)
-	r := ui.Rect{X: x, Y: y, W: w + 18, H: h + 4}
-	p.Fill(r, ui.RGBA(0, 0, 0, 0.52), r.H/2)
-	p.Text(x+9, y+2, text, size, ui.RGBA(255, 255, 255, 1))
+	x := right - (w + 16)
+	r := ui.Rect{X: x, Y: y, W: w + 16, H: h + 6}
+	p.Fill(r, ui.RGBA(15, 23, 42, 0.78), 4)
+	p.Text(x+8, y+3, text, size, ui.RGBA(248, 250, 252, 1))
 }
 
 func (a *App) editDrawSplit(p *ui.Painter, img ui.Rect, x float32, be editPalette) {
 	line := ui.Rect{X: x - 1, Y: img.Y, W: 2, H: img.H}
 	p.Shadow(line, 0, 0, 0, 4, 0, ui.RGBA(0, 0, 0, 0.45))
-	p.Fill(line, ui.RGBA(255, 255, 255, 1), 0)
+	p.Fill(line, be.sheet, 0)
 	cx := x
 	cy := img.Y + img.H/2
 	knob := ui.Rect{X: cx - 12, Y: cy - 12, W: 24, H: 24}
-	p.Shadow(knob, 12, 0, 1, 2, 0, be.shadow)
+	p.Shadow(knob, 12, 0, 1, 3, 0, be.shadow)
 	p.Fill(knob, be.sheet, 12)
-	p.Stroke(knob, be.rule, 12, 1)
+	p.Stroke(knob, be.transfer, 12, 1.5)
 	ink := be.ink
 	p.StrokePolyline([][2]float32{{cx - 3, cy - 4}, {cx - 7, cy}, {cx - 3, cy + 4}}, 1.5, ink)
 	p.StrokePolyline([][2]float32{{cx + 3, cy - 4}, {cx + 7, cy}, {cx + 3, cy + 4}}, 1.5, ink)
@@ -680,29 +750,31 @@ func (a *App) editPreviewHUD(c *ui.Context, be editPalette, showCrop bool) {
 		if st.previewPending {
 			ui.Spinner(c).Size(16, 16)
 		}
-		group := ui.Row(c).Height(26).Padding(2).Gap(2).Radius(13).
-			Border(1, be.rule).Background(be.sheet.Alpha(0.88)).AlignItems(ui.Center)
+		group := ui.Row(c).Height(28).Padding(2).Gap(2).Radius(be.tok.radiusM).
+			Border(1, be.tok.borderStrong).Background(be.tok.lift.Alpha(0.95)).
+			Shadow(0, 4, 14, 0, be.shadow).AlignItems(ui.Center)
 		group.Children(func() {
 			a.editZoomButton(c, be, "−", "缩小", 24, func() {
 				a.editZoomBy(1/1.2, 0, 0)
 				a.editClampPan()
 			})
-			pct := ui.Box(c).Height(22).MinWidth(44).Center().Radius(11).Cursor(ui.CursorPointer).
+			pct := ui.Box(c).Height(22).MinWidth(44).Center().Radius(be.tok.radiusS).Cursor(ui.CursorPointer).
 				Tooltip("重置为适合窗口")
 			pct.Draw(func(p *ui.Painter, r ui.Rect) {
 				if pct.Hovered() {
-					p.Fill(r, be.quiet, 11)
+					p.Fill(r, be.quiet, be.tok.radiusS)
 				}
 			})
 			pct.OnClick(func() { st.zoom, st.panX, st.panY = 1, 0, 0 })
 			pct.Children(func() {
-				ui.Text(c, fmt.Sprintf("%.0f%%", st.zoom*100)).FontSize(11).
-					TextColor(be.muted).FontFeatures("tnum").SingleLine()
+				ui.Text(c, fmt.Sprintf("%.0f%%", st.zoom*100)).FontSize(11).FontWeight(500).
+					TextColor(be.ink).FontFeatures("tnum").SingleLine()
 			})
 			a.editZoomButton(c, be, "+", "放大", 24, func() {
 				a.editZoomBy(1.2, 0, 0)
 				a.editClampPan()
 			})
+			ui.Box(c).Size(1, 14).Background(be.rule).Margin(0, 2)
 			a.editZoomButton(c, be, "1:1", "实际大小", 34, func() {
 				if st.baseW > 0 && st.srcW > 0 {
 					z := math.Min(4, math.Max(0.1, float64(st.srcW)/(float64(st.baseW)*contentZoom)))
@@ -713,19 +785,25 @@ func (a *App) editPreviewHUD(c *ui.Context, be editPalette, showCrop bool) {
 			})
 		})
 		if !showCrop && st.orig != nil && st.out != nil {
-			compare := ui.Box(c).Height(26).Padding(0, 12).Center().Radius(13).
-				Border(1, be.rule).Background(be.sheet.Alpha(0.88)).
+			compare := ui.Box(c).Height(28).Padding(0, 12).Center().Radius(be.tok.radiusM).
+				Border(1, be.tok.borderStrong).Background(be.tok.lift.Alpha(0.95)).
+				Shadow(0, 4, 14, 0, be.shadow).
 				Cursor(ui.CursorPointer).Tooltip("分割对比：左原图右效果，拖动分割线")
 			if st.compare {
-				compare.BorderColor(be.transferBorder)
+				compare.Background(be.transferSoft).BorderColor(be.transferBorder)
 			}
+			compare.Draw(func(p *ui.Painter, r ui.Rect) {
+				if !st.compare && compare.Hovered() {
+					p.Fill(r, be.quiet, be.tok.radiusM)
+				}
+			})
 			compare.OnClick(func() { st.compare = !st.compare })
 			compare.Children(func() {
 				ink := be.ink
 				if st.compare {
 					ink = be.transferStrong
 				}
-				ui.Text(c, "对比").FontSize(11.5).TextColor(ink)
+				ui.Text(c, "对比").FontSize(11.5).FontWeight(500).TextColor(ink)
 			})
 		}
 		a.editPreviewProgress(c, be)
@@ -733,11 +811,11 @@ func (a *App) editPreviewHUD(c *ui.Context, be editPalette, showCrop bool) {
 }
 
 func (a *App) editZoomButton(c *ui.Context, be editPalette, label, tip string, width float32, fn func()) {
-	btn := ui.Box(c).Height(22).MinWidth(width).Padding(0, 6).Center().Radius(11).
+	btn := ui.Box(c).Height(22).MinWidth(width).Padding(0, 6).Center().Radius(be.tok.radiusS).
 		Cursor(ui.CursorPointer).Tooltip(tip)
 	btn.Draw(func(p *ui.Painter, r ui.Rect) {
 		if btn.Hovered() {
-			p.Fill(r, be.quiet, 11)
+			p.Fill(r, be.quiet, be.tok.radiusS)
 		}
 	})
 	btn.OnClick(fn)
@@ -751,17 +829,18 @@ func (a *App) editPreviewProgress(c *ui.Context, be editPalette) {
 	if !st.running || st.progressTotal <= 0 {
 		return
 	}
-	bar := ui.Row(c).Height(18).MaxWidth(320).Radius(9).Clip().
-		Background(be.quiet).AlignItems(ui.Center)
+	bar := ui.Row(c).Height(28).MaxWidth(320).Radius(be.tok.radiusM).Clip().
+		Border(1, be.tok.borderStrong).Background(be.tok.lift.Alpha(0.95)).
+		Shadow(0, 4, 14, 0, be.shadow).AlignItems(ui.Center)
 	bar.Draw(func(p *ui.Painter, r ui.Rect) {
 		frac := float32(st.progressDone) / float32(st.progressTotal)
 		if frac > 0 {
-			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * frac, H: r.H}, be.transfer.Alpha(0.22), 9)
+			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W * frac, H: r.H}, be.transferSoft, 0)
 		}
 	})
 	bar.Children(func() {
 		label := fmt.Sprintf("%d/%d %s", st.progressDone, st.progressTotal, st.progressCurrent)
-		ui.Text(c, label).FontSize(10.5).TextColor(be.faint).SingleLine().Padding(0, 8)
+		ui.Text(c, label).FontSize(11).TextColor(be.ink).FontFeatures("tnum").SingleLine().Padding(0, 10)
 	})
 }
 
@@ -769,16 +848,16 @@ func (a *App) editPreviewProgress(c *ui.Context, be editPalette) {
 
 func (a *App) editFilmstrip(c *ui.Context, be editPalette) {
 	st := &a.edit
-	strip := ui.Column(c.Key("edit-filmstrip")).FillWidth().Shrink(0).Gap(4).
-		Padding(6, 10, 6, 10).BorderWidth(1, 0, 0, 0).BorderColor(be.rule)
+	strip := ui.Column(c.Key("edit-filmstrip")).FillWidth().Shrink(0).Gap(5).
+		Padding(7, 12, 7, 12).Background(be.sheet).BorderWidth(1, 0, 0, 0).BorderColor(be.rule)
 	strip.Children(func() {
 		top := ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center)
 		top.Children(func() {
 			actions := ui.Row(c).Shrink(0).Gap(4).AlignItems(ui.Center)
 			actions.Children(func() {
-				uiIconBtn(c, "edit-add-img", "打开图片", "打开图片", iconImagePlus, 22, false, false, a.look).
+				uiIconBtn(c, "edit-add-img", "打开图片", "打开图片", iconImagePlus, 22, false, false, be.tok).
 					OnClick(func() { a.editPickFiles() })
-				uiIconBtn(c, "edit-add-dir", "打开文件夹", "打开文件夹", iconFolderOpen, 22, false, false, a.look).
+				uiIconBtn(c, "edit-add-dir", "打开文件夹", "打开文件夹", iconFolderOpen, 22, false, false, be.tok).
 					OnClick(func() { a.editPickFolder() })
 			})
 			if picked := len(st.picks); picked > 0 {
@@ -786,16 +865,16 @@ func (a *App) editFilmstrip(c *ui.Context, be editPalette) {
 				middle := ui.Row(c).Grow(1).MinWidth(0).Gap(6).Justify(ui.Center).
 					AlignItems(ui.Center)
 				middle.Children(func() {
-					ui.Text(c, fmt.Sprintf("已选 %d 张，保存只处理这些", picked)).FontSize(a.look.caption).
-						TextColor(be.muted).SingleLine()
-					uiIconBtn(c, "edit-clear-picks", "清空选择", "清空选择", iconX, 18, false, true, a.look).
+					uiBadge(c, "edit-picked-count", fmt.Sprintf("已选 %d 张，保存只处理这些", picked), "accent", be.tok)
+					uiIconBtn(c, "edit-clear-picks", "清空选择", "清空选择", iconX, 18, false, true, be.tok).
 						OnClick(func() { a.editClearPicks() })
 				})
 			} else {
-				ui.Text(c, "切换图片预览效果，保存将批量应用").FontSize(a.look.caption).TextColor(be.faint).
+				ui.Text(c, fmt.Sprintf("共 %d 张 · Cmd/Shift 多选，单击切换预览，保存将批量导出", len(st.files))).
+					FontSize(be.tok.caption).TextColor(be.muted).FontFeatures("tnum").
 					Grow(1).TextAlign(ui.Center).SingleLine()
 			}
-			uiIconBtn(c, "edit-clear-files", fmt.Sprintf("清空%d张", len(st.files)), fmt.Sprintf("清空全部 %d 张图片", len(st.files)), iconTrash, 22, false, false, a.look).
+			uiIconBtn(c, "edit-clear-files", fmt.Sprintf("清空%d张", len(st.files)), fmt.Sprintf("清空全部 %d 张图片", len(st.files)), iconTrash, 22, false, false, be.tok).
 				Disabled(st.running || len(st.files) == 0).OnClick(func() { a.editClearFiles() })
 		})
 
@@ -817,20 +896,25 @@ func (a *App) editFilmstrip(c *ui.Context, be editPalette) {
 		})
 
 		if st.stripScroll.MaxX > 0 && st.stripViewW > 0 {
-			track := ui.Box(c).Size(64, 3).Radius(2).Background(be.rule.Alpha(0.6))
+			track := ui.Box(c).Size(64, 3).Radius(2).Background(be.rule)
 			track.Draw(func(p *ui.Painter, r ui.Rect) {
 				total := st.stripViewW + st.stripScroll.MaxX
 				frac := st.stripViewW / total
 				width := float32(math.Max(0.18, float64(frac))) * r.W
 				left := st.stripScroll.X / st.stripScroll.MaxX * (r.W - width)
-				p.Fill(ui.Rect{X: r.X + left, Y: r.Y, W: width, H: r.H}, be.faint, 2)
+				p.Fill(ui.Rect{X: r.X + left, Y: r.Y, W: width, H: r.H}, be.muted, 2)
 			})
 		}
 	})
 }
 
 func (a *App) editStripArrow(c *ui.Context, be editPalette, icon *ui.SVG, delta float32) {
-	btn := ui.Box(c).Size(18, 34).Center().Shrink(0).Cursor(ui.CursorPointer)
+	btn := ui.Box(c).Size(18, 34).Center().Radius(be.tok.radiusS).Shrink(0).Cursor(ui.CursorPointer)
+	btn.Draw(func(p *ui.Painter, r ui.Rect) {
+		if btn.Hovered() {
+			p.Fill(r, be.quiet, be.tok.radiusS)
+		}
+	})
 	btn.OnClick(func() {
 		st := &a.edit
 		target := st.stripScroll.X + delta
@@ -838,7 +922,7 @@ func (a *App) editStripArrow(c *ui.Context, be editPalette, icon *ui.SVG, delta 
 		st.stripScroll.ScrollTo(target, 0, ui.Smooth)
 	})
 	btn.Children(func() {
-		ink := be.faint
+		ink := be.muted
 		if btn.Hovered() {
 			ink = be.ink
 		}
@@ -860,7 +944,7 @@ func (a *App) editThumb(c *ui.Context, be editPalette, index int, f *editFile) {
 	if on {
 		thumb.BorderColor(be.transfer)
 	} else {
-		thumb.BorderColor(ui.Color{})
+		thumb.BorderColor(be.rule)
 	}
 	thumb.OnClick(func() {
 		// Cmd 切换勾选、Shift 连选，普通点击只换预览。
@@ -872,7 +956,7 @@ func (a *App) editThumb(c *ui.Context, be editPalette, index int, f *editFile) {
 			img.Disabled(true)
 		} else {
 			holder := ui.Box(c).Fill().Center()
-			holder.Children(func() { ui.Icon(c, iconFileImage).FontSize(20).TextColor(be.faint) })
+			holder.Children(func() { ui.Icon(c, iconFileImage).FontSize(20).TextColor(be.muted) })
 		}
 		if f.Status == "ok" || f.Status == "failed" {
 			dot := ui.Box(c).Absolute().Top(3).Right(3).Size(7, 7).Radius(4)
@@ -892,10 +976,10 @@ func (a *App) editThumb(c *ui.Context, be editPalette, index int, f *editFile) {
 		}
 		if thumb.Hovered() && !st.running {
 			x := ui.Box(c).Absolute().Top(2).Left(2).Size(14, 14).Center().Radius(7).
-				Background(ui.RGBA(0, 0, 0, 0.58)).Cursor(ui.CursorPointer)
+				Background(ui.RGBA(15, 23, 42, 0.72)).Cursor(ui.CursorPointer)
 			x.OnClick(func() { a.editRemoveFile(index) })
 			x.Children(func() {
-				ui.Icon(c, iconX).FontSize(8).TextColor(ui.RGBA(255, 255, 255, 1))
+				ui.Icon(c, iconX).FontSize(8).TextColor(ui.RGBA(248, 250, 252, 1))
 			})
 		}
 	})
