@@ -334,7 +334,7 @@ func (a *App) washPromptCard(c *ui.Context) {
 	minPromptHeight := promptHeight
 	if winH >= 560 && winH < 640 {
 		// 紧凑窗口里登录提示和输出选项会占去空间；允许输入框缩小，避免盖住选择器。
-		minPromptHeight = 32
+		minPromptHeight = 24
 	}
 	hint := "按「原文件名_01.png」保存"
 	batch := a.store != nil && a.store.Get("browserBackend") == "camoufox_extension" && a.waitResult && a.stagePlatform() == "豆包"
@@ -347,6 +347,9 @@ func (a *App) washPromptCard(c *ui.Context) {
 		hint = "每批最多 10 张 · 按源文件名保存"
 	}
 	card := a.stepCard(c, "wash-prompt", stepDone).Label("洗图指令区")
+	if winH >= 560 && winH < 640 {
+		card.Padding(4, 12).Gap(3)
+	}
 	if homeSplit(winW) {
 		card.Grow(1)
 	}

@@ -35,7 +35,7 @@ Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文�
 | 系统与浏览器身份 | 选择宿主系统的 Firefox 指纹；内核升级后更新 UA 中 Firefox 版本，保留其他设备参数 |
 | 代理隔离 | 账号独立代理优先于全局代理；修改前必须关闭账号；启动前通过 `SamePlatformSharedExit` / `NormalizeProxyKey` 检查同平台已启用账号是否共享同一出口或直连并记录脱敏告警（不阻断单出口用法） |
 | 地理一致性 | 配置代理时由官方 GeoIP 查询出口；启动前清除旧出口派生字段，再计算时区、语言、地理位置和 WebRTC 地址 |
-| 渲染连续性 | 默认启用 `canvas_noise` 随机画布读数保护；重启时核对保存的 GPU 与当前设备并延续保存的 WebGL/渲染策略 |
+| 渲染连续性 | 检测到硬件 GPU 时启用 `canvas_noise` 随机画布读数保护，软件渲染时不启用；重启时保留已保存的 WebGL 身份 |
 | Cookie 和存储 | 持久化 profile；账号进程彼此独立；采集中的匿名上下文继承独立代理且不继承账号 Cookie，结束时清理关联事件与绑定 |
 | 扩展与页面隐身 | 每个账号生成独立确定性 Gecko UUID 与中性清单命名；移除 Firefox `content_scripts` 中的 `doubao/raw.js`；页面注入使用闭包/`WeakMap`、随机 `CustomEvent` 令牌与保留原生 `Function.prototype.toString` 的 `Proxy` 包装，不在 DOM/`window` 暴露 `tulai` 标识 |
 | 主页面、iframe、Worker | 本地集成测试比较 UA、platform、language、languages、hardwareConcurrency 和时区，并检查 UA、语言与请求头一致 |
@@ -47,7 +47,7 @@ Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文�
 
 屏幕、视口与 Navigator 的可用组合有限。新账号生成身份时通过 `collisionRoots` 同时扫描 `BrowserData/Camoufox` 与 `DownloadBrowser` 目录并钉住 `pin_cpu_cores: true`，若连续 128 次抽取都与已有设备/视口组合重复，启动会报错，不会覆盖或更改已有账号的指纹；`.tulai-fingerprint-locks` 中超过 5 分钟的过期互斥锁会自动回收。
 
-启动器不会继承外部 `CAMOU_CONFIG_*`、`CAMOU_PREFS_*`、`FONTCONFIG_FILE`、`NAPI_RS_*` 或 `TULAI_CAMOUFOX_MIRROR`，避免其他程序的配置覆盖账号指纹、字体或原生模块，镜像重试也只由安装流程控制。无头启动会核对 GPU；有窗口启动在 macOS 和 Windows 核对（Windows 的有头 / 无头读数已在 AMD GPU 上验证一致），且核对始终以无头窗口进行——否则新账号首次生成指纹时会先闪出一个临时探测窗口，看起来像浏览器打开了两次。`canvas_noise` 默认开启以随机化 2D Canvas 像素读数，同时重启继续保留首次写入 `.tulai-identity.json` 的 `webGl:vendor` / `webGl:renderer` 及音频配置。设备更换、未核对或 GPU 探测失败时，Canvas 仍由 Camoufox 的保护策略处理，输出可能发生变化。
+启动器不会继承外部 `CAMOU_CONFIG_*`、`CAMOU_PREFS_*`、`FONTCONFIG_FILE`、`NAPI_RS_*` 或 `TULAI_CAMOUFOX_MIRROR`，避免其他程序的配置覆盖账号指纹、字体或原生模块，镜像重试也只由安装流程控制。无头启动会核对 GPU；有窗口启动在 macOS 和 Windows 核对（Windows 的有头 / 无头读数已在 AMD GPU 上验证一致），且核对始终以无头窗口进行——否则新账号首次生成指纹时会先闪出一个临时探测窗口，看起来像浏览器打开了两次。检测到硬件 GPU 时启用 `canvas_noise` 随机化 2D Canvas 像素读数，软件渲染时不启用；重启继续保留首次写入 `.tulai-identity.json` 的 `webGl:vendor` / `webGl:renderer` 及音频配置。设备更换、未核对或 GPU 探测失败时，Canvas 仍由 Camoufox 的保护策略处理，输出可能发生变化。
 
 当前没有自编译 Gecko、增加 C++ 补丁或修改 NSS。Audio / RFP 的策略沿用所固定 Camoufox 版本的默认值，没有把参考清单中的旧噪声开关直接叠加进去。特别是当前上游已经调整了音频种子行为，不能把旧文档当成当前版本的可用配置。
 

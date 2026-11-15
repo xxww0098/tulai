@@ -559,11 +559,30 @@ func TestCamoufoxMultiAccountAntiCorrelationAndBridgeStealth(t *testing.T) {
 	evalInto(t, ctx, pAlpha, tAlpha, canvasHashJS, &canvasAlpha1)
 	evalInto(t, ctx, pAlpha, tAlpha, canvasHashJS, &canvasAlpha2)
 	evalInto(t, ctx, pBeta, tBeta, canvasHashJS, &canvasBeta)
-	if canvasAlpha1 == "" || canvasBeta == "" || canvasAlpha1 == canvasBeta {
-		t.Fatalf("2D canvas hashes collided or were empty: alpha=%q beta=%q", canvasAlpha1, canvasBeta)
+	if canvasAlpha1 == "" || canvasAlpha2 == "" || canvasBeta == "" {
+		t.Fatalf("2D canvas hashes were empty: alpha=%q repeat=%q beta=%q", canvasAlpha1, canvasAlpha2, canvasBeta)
 	}
-	if canvasAlpha1 == canvasAlpha2 {
-		t.Fatalf("expected randomized canvas noise across repeated readbacks on acc-alpha, got identical %q", canvasAlpha1)
+	rt, _ := camoufox.Installed(runtimeDir)
+	probe := exec.CommandContext(ctx, rt.Node, "--input-type=module", "-e", `
+import {hostGpu} from 'camoufox/dist/host_rendering.js';
+console.log(JSON.stringify(await hostGpu(process.argv[1], true, process.env, {})));
+`, rt.Executable)
+	probe.Dir = rt.Dir
+	output, err := probe.Output()
+	if err != nil {
+		t.Fatalf("probe canvas rendering device: %v", err)
+	}
+	var gpu []string
+	if err := json.Unmarshal(output, &gpu); err != nil {
+		t.Fatalf("decode canvas rendering device: %v", err)
+	}
+	device := strings.ToLower(strings.TrimSpace(strings.Join(gpu, " ")))
+	software := device == "" || strings.Contains(device, "llvmpipe") || strings.Contains(device, "microsoft basic render driver") ||
+		strings.Contains(device, "swiftshader") || strings.Contains(device, "generic renderer")
+	if software {
+		t.Logf("canvas noise is disabled for the software renderer %q", device)
+	} else if canvasAlpha1 == canvasBeta || canvasAlpha1 == canvasAlpha2 {
+		t.Fatalf("expected randomized canvas readbacks: alpha=%q repeat=%q beta=%q", canvasAlpha1, canvasAlpha2, canvasBeta)
 	}
 
 	assertStorageAndCookie(t, ctx, pAlpha, tAlpha, "alpha")

@@ -21,7 +21,7 @@ const (
 	laneColQuota       = 132
 	laneColOps         = 96
 	laneColOpsMail     = 72
-	laneRowH           = 34
+	laneRowH           = 38
 )
 
 func laneColumns(winW float32, mail bool) (accountW, stateW, quotaW, opsW float32) {
