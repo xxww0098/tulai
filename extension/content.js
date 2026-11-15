@@ -585,8 +585,15 @@ const MIN_RESULT_SIDE = 128
 const PIXEL_STABLE_MS = 400
 const URL_STABLE_MS = 3000
 
+// 豆包 cthumb、千问 x-oss-process 都是先出现的缩略图。像素够大也不代表原图已经换上。
+function resultIsThumbnail(item) {
+  const url = String((item && item.url) || '')
+  return /cthumb|thumbnail|downsize/i.test(url) || /[?&]x-oss-process=/i.test(url)
+}
+
 // 用已解码像素判断这张是不是占位壳。CSS 宽高和 srcset 声明不算，自然尺寸才算。
 function resultHasPixels(item) {
+  if (resultIsThumbnail(item)) return false
   const img = item && item.img
   const w = Number(img && img.naturalWidth) || 0
   const h = Number(img && img.naturalHeight) || 0
@@ -603,7 +610,7 @@ function resultStableKey(images) {
 }
 
 // 批量还没齐时返回 0，调用方继续用更长的滚动窗口。
-// 每张都有实像素时只再确认一拍；否则维持 3 秒，避免地址还在从预览换成原图。
+// 每张都有原图像素时只再确认一拍。缩略图地址、缺尺寸或小占位仍维持 3 秒。
 function resultStableWait(images, expectedCount) {
   const count = Number(expectedCount) || 0
   if (count > 1 && images.length < count) return 0

@@ -217,6 +217,10 @@ async function main() {
   const stableCall = load(composerPage())
   const full = [{ url: 'https://cdn.example/full.png', img: { naturalWidth: 1024, naturalHeight: 1024 } }]
   assert.strictEqual(stableCall.stableWait(full, 0), 400)
+  const thumbURL = 'https://p6-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/x.jpeg~tplv-a9rns2rl98-cthumb_lwm3.png'
+  const originalURL = 'https://p26-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/x.jpeg~tplv-a9rns2rl98-cgen_lwm3.png'
+  assert.strictEqual(stableCall.stableWait([{ url: thumbURL, img: { naturalWidth: 384, naturalHeight: 384 } }], 1), 3000, '已解码的缩略图地址不能提前结束')
+  assert.strictEqual(stableCall.stableWait([{ url: originalURL, img: { naturalWidth: 1024, naturalHeight: 1024 } }], 1), 400)
   assert.strictEqual(stableCall.stableWait([{ url: 'https://cdn.example/full.png', img: { naturalWidth: 16, naturalHeight: 16 } }], 1), 3000)
   assert.strictEqual(stableCall.stableWait([{ url: 'https://cdn.example/full.png' }], 1), 3000)
   assert.strictEqual(stableCall.stableWait(full, 2), 0, '批量未齐时不能靠单张尺寸提前结束')
@@ -235,6 +239,25 @@ async function main() {
   const sizedElapsed = Date.now() - sizedStarted
   assert.strictEqual(sizedAck.payload.ok, true, JSON.stringify(sizedAck.payload))
   assert.ok(sizedElapsed >= 350 && sizedElapsed < 1500, '已解码的实图不应再固定等 3 秒，用时 ' + sizedElapsed)
+
+  let showOriginal = false
+  const preview = composerPage({
+    resultImages() {
+      if (!showOriginal) return [{ url: thumbURL, img: { naturalWidth: 384, naturalHeight: 384 } }]
+      return [{ url: originalURL, img: { naturalWidth: 1024, naturalHeight: 1024 } }]
+    },
+    resultsBusy() { return false },
+    replyDone() { return { done: true } },
+  })
+  const previewCall = load(preview, { href: 'https://www.doubao.com/chat/preview', hostname: 'www.doubao.com' })
+  assert.strictEqual((await previewCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  setTimeout(function () { showOriginal = true }, 1200)
+  const previewStarted = Date.now()
+  const previewAck = await previewCall({ name: 'waitResult', timeoutMs: 5000 })
+  const previewElapsed = Date.now() - previewStarted
+  assert.strictEqual(previewAck.payload.ok, true, JSON.stringify(previewAck.payload))
+  assert.ok(/cgen_lwm3/.test(previewAck.payload.images[0].url), previewAck.payload.images[0].url)
+  assert.ok(previewElapsed >= 1100 && previewElapsed < 2800, '应等到原图出现后再确认，用时 ' + previewElapsed)
 
   const reordered = composerPage({
     resultImages() { return [{ url: 'https://p1.byteimg.com/out-b' }, { url: 'https://p1.byteimg.com/out-a' }] },

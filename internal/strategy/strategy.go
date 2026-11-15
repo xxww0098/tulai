@@ -323,13 +323,22 @@ const imagePixelStableFor = 400 * time.Millisecond
 
 const minSettledSide = 128
 
-// resultSettleFor 有解码尺寸时只再确认一拍；缺尺寸或仍是小占位时维持原来的 3 秒。
+// previewResultURL 是页面会先画出的缩略图地址。cgen 原图和 cthumb 缩略图都能超过 128 像素。
+func previewResultURL(raw string) bool {
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "cthumb") || strings.Contains(lower, "thumbnail") || strings.Contains(lower, "downsize") {
+		return true
+	}
+	return strings.Contains(lower, "x-oss-process=")
+}
+
+// resultSettleFor 原图已解码时只再确认一拍。缩略图地址、缺尺寸或小占位维持原来的 3 秒。
 func resultSettleFor(images []Result) time.Duration {
 	if len(images) == 0 {
 		return imageStableFor
 	}
 	for _, image := range images {
-		if image.Width < minSettledSide || image.Height < minSettledSide {
+		if image.Width < minSettledSide || image.Height < minSettledSide || previewResultURL(image.URL) {
 			return imageStableFor
 		}
 	}
@@ -373,7 +382,7 @@ func liveKey(images []Result) string {
 
 // WaitForResult 等这一轮回复里的实图停住。
 // 完成：标记之后的实图还在，生成指示没有了。地址和像素尺寸不变后再收。
-// 每张都已解码到至少 128 像素时只再确认一拍；还没有尺寸时维持约 3 秒，避免收下占位壳。
+// 每张都是已解码的原图时只再确认一拍。缩略图地址或还没有尺寸时维持约 3 秒，避免收下 cthumb 预览。
 // 重新生成/复制和声明张数在真实豆包页面上经常没有，不能拿它们当门槛。
 // 到点还有实图就交回去保存；一张都没有就明确失败。
 func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
