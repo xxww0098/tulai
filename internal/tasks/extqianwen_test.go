@@ -1207,6 +1207,49 @@ func freePort(t *testing.T) string {
 	return strconv.Itoa(port)
 }
 
+func TestDoubaoExtensionLogsLocalPhases(t *testing.T) {
+	st := openTaskStore(t)
+	port := freePort(t)
+	st.Set(extbridge.SettingBrowserBackend, "extension")
+	st.Set("extBridgePort", port)
+	st.Set("extBridgeToken", "dev-token")
+	dir := t.TempDir()
+	go serveFakeExt("127.0.0.1:"+port, "dev-token", extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdSetPrompt, extbridge.CmdCaptchaAssist, extbridge.CmdSend:
+			return ackOK(env, map[string]any{"ok": true, "captchaBlocked": false})
+		case extbridge.CmdWaitResult:
+			return ackOK(env, map[string]any{"ok": true, "images": []map[string]string{{"url": "https://cdn.example/cat.png"}}})
+		case extbridge.CmdDownload:
+			return chunkAck(env, resultPNG(t, 21), 0)
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+	var lines []string
+	logging.Log.SetSink(func(entry logging.Entry) {
+		lines = append(lines, entry.Text)
+	})
+	t.Cleanup(func() { logging.Log.SetSink(nil) })
+	e := NewEngine(st, nil, nil, dir)
+	defer e.CloseSessions()
+	e.opts = Options{WaitResult: true, WaitResultSeconds: 30, OutputPath: filepath.Join(dir, "out")}
+	task := &Task{Index: 4, Platform: "豆包", Prompt: "画一只猫"}
+	if err := e.attemptDoubaoExtension(context.Background(), task); err != nil || len(task.Results) != 1 {
+		t.Fatalf("err=%v results=%v", err, task.Results)
+	}
+	text := strings.Join(lines, "\n")
+	for _, want := range []string{"上传并发送（本段", "等待生成（本段", "下载结果（本段", "保存结果（本段"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("log missing %q\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "浏览器就绪（本段") {
+		t.Fatal("manual extension mode must not claim it started Camoufox")
+	}
+}
+
 func writeSolidPNG(t *testing.T, path string, w, h int, c color.NRGBA) {
 	t.Helper()
 	if err := os.WriteFile(path, solidPNG(t, w, h, c), 0o644); err != nil {

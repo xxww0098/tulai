@@ -552,7 +552,7 @@
   }
   // 完成：这一轮每个图格 data-finished=true，并且每格都有实图。
   // 没有任何 data-finished 时，文字 data-streaming=false 或重新生成/复制也算。
-  // 地址要再稳大约 3 秒才由调用方收下；这里只报告这一拍的判断。
+  // 调用方再看地址和 naturalWidth/naturalHeight：像素已够大就只再确认一拍，否则大约 3 秒。
   window.__tulaiLiveImages = function () {
     if (qwenPage()) return qwenLiveImages();
     var scoped = doubaoTurn && window.__tulaiWashPage;

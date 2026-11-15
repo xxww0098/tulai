@@ -42,7 +42,9 @@ type Result struct {
 	RawURL string `json:"rawUrl,omitempty"` // 豆包响应中的无水印原图地址
 	Src    string `json:"src"`              // net/dom/stream 来源
 	TS     int64  `json:"ts"`
-	Data   []byte `json:"-"` // Ego 官方下载入口返回的原始文件
+	Width  int    `json:"w,omitempty"` // 页面上已解码的像素宽
+	Height int    `json:"h,omitempty"` // 页面上已解码的像素高
+	Data   []byte `json:"-"`           // Ego 官方下载入口返回的原始文件
 	// WatermarkRemoved 为真表示扩展已下载无水印原图或完成局部修复。
 	WatermarkRemoved bool `json:"-"`
 }
@@ -316,6 +318,24 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 
 const imageStableFor = 3 * time.Second
 
+// 实图像素已经稳定时，不必再空等整段 3 秒。边长与生成图下限一致。
+const imagePixelStableFor = 400 * time.Millisecond
+
+const minSettledSide = 128
+
+// resultSettleFor 有解码尺寸时只再确认一拍；缺尺寸或仍是小占位时维持原来的 3 秒。
+func resultSettleFor(images []Result) time.Duration {
+	if len(images) == 0 {
+		return imageStableFor
+	}
+	for _, image := range images {
+		if image.Width < minSettledSide || image.Height < minSettledSide {
+			return imageStableFor
+		}
+	}
+	return imagePixelStableFor
+}
+
 type liveShot struct {
 	Busy    bool     `json:"busy"`
 	Done    bool     `json:"done"`
@@ -346,14 +366,14 @@ func detectLine(live liveShot, stable time.Duration) string {
 func liveKey(images []Result) string {
 	var b strings.Builder
 	for _, image := range images {
-		b.WriteString(image.URL)
-		b.WriteByte('\n')
+		fmt.Fprintf(&b, "%s@%dx%d\n", image.URL, image.Width, image.Height)
 	}
 	return b.String()
 }
 
 // WaitForResult 等这一轮回复里的实图停住。
-// 完成：标记之后的实图还在，生成指示没有了，同一组地址稳住约 3 秒。
+// 完成：标记之后的实图还在，生成指示没有了。地址和像素尺寸不变后再收。
+// 每张都已解码到至少 128 像素时只再确认一拍；还没有尺寸时维持约 3 秒，避免收下占位壳。
 // 重新生成/复制和声明张数在真实豆包页面上经常没有，不能拿它们当门槛。
 // 到点还有实图就交回去保存；一张都没有就明确失败。
 func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
@@ -424,7 +444,7 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 					since = time.Now()
 				}
 				stable = time.Since(since)
-				if stable >= imageStableFor {
+				if stable >= resultSettleFor(live.Images) {
 					return live.Images, nil
 				}
 			} else {

@@ -52,13 +52,20 @@ type QianwenJob struct {
 }
 
 // QianwenRun 是扩展跑完一轮后的结果。Submitted 为真表示发送已被页面确认。
+// Submit、Generate、Download 是这一轮对应阶段的本机耗时，供下次对照卡在哪一段。
 type QianwenRun struct {
 	Results       []strategy.Result
 	Submitted     bool
 	SubmittedAt   time.Time
 	Conversation  string
 	TabID         int
+	Submit        time.Duration
+	Generate      time.Duration
+	Download      time.Duration
 	sendAttempted bool
+	sawSubmit     bool
+	sawWait       bool
+	sawDownload   bool
 	sourceIndices []int
 }
 
@@ -658,8 +665,11 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 			return fmt.Errorf("已停止")
 		}
 	}
-	if e.useBoundExtension(t.Platform) {
+	browserAt := time.Now()
+	boundBrowser := e.useBoundExtension(t.Platform)
+	if boundBrowser {
 		if err := e.startBoundExtension(ctx, t); err != nil {
+			e.tracePhase(t, "browser", "启动浏览器", time.Since(browserAt), 0, err)
 			return err
 		}
 	}
@@ -669,12 +679,17 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 	}
 	sess, err := e.extensionSession(ctx, protocolPlatform, account)
 	if err != nil {
+		if boundBrowser {
+			e.tracePhase(t, "browser", "启动浏览器", time.Since(browserAt), 0, err)
+		}
 		return err
 	}
-	if e.useBoundExtension(t.Platform) {
+	if boundBrowser {
 		if err := waitBoundPage(ctx, sess, strconv.Itoa(t.Index), label); err != nil {
+			e.tracePhase(t, "browser", "启动浏览器", time.Since(browserAt), 0, err)
 			return err
 		}
+		e.tracePhase(t, "browser", "浏览器就绪", time.Since(browserAt), 0, nil)
 	}
 	boundWash := e.useBoundExtension(t.Platform) && t.Platform == "豆包" && e.opts.Wash && e.opts.WaitResult && len(t.Images) > 0 && strings.TrimSpace(t.Prompt) != ""
 	var wash extensionWashChat
@@ -732,6 +747,15 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		SkipSubmit:        t.submitted,
 		VerifyAttachments: boundWash,
 	}, label)
+	if out.sawSubmit {
+		e.tracePhase(t, "submit", "上传并发送", out.Submit, len(t.Images), err)
+	}
+	if out.sawWait {
+		e.tracePhase(t, "generate", "等待生成", out.Generate, len(out.Results), err)
+	}
+	if out.sawDownload {
+		e.tracePhase(t, "download", "下载结果", out.Download, len(out.Results), err)
+	}
 	if trackUse && out.sendAttempted {
 		t.noUse = false
 	}
@@ -742,7 +766,11 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		logging.Log.Info("#%d 已发送提示词（%.20s…）", t.Index, t.Prompt)
 	}
 	if boundWash {
+		saveAt := time.Now()
 		resultErr := e.saveExtensionWash(ctx, t, out.Results, out.sourceIndices, err)
+		if len(out.Results) > 0 || resultErr != nil {
+			e.tracePhase(t, "save", "保存结果", time.Since(saveAt), len(t.Results), resultErr)
+		}
 		if t.submitted {
 			e.finishExtensionWash(t, wash, out, resultErr == nil && ctx.Err() == nil)
 		} else {
@@ -753,12 +781,16 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 	var saved []string
 	var saveErr error
 	t.matchedSavedResult = false
+	saveAt := time.Now()
 	if len(out.Results) > 0 {
 		saved, saveErr = e.saveResults(ctx, t, strategy.Factory(t.Platform), nil, out.Results)
 		t.Results = append(t.Results, saved...)
 	}
 	if err == nil && saveErr == nil && e.opts.WaitResult && len(saved) == 0 && !t.matchedSavedResult {
 		saveErr = fmt.Errorf("未保存到有效结果图片")
+	}
+	if len(out.Results) > 0 {
+		e.tracePhase(t, "save", "保存结果", time.Since(saveAt), len(saved), saveErr)
 	}
 	resultErr := errors.Join(err, saveErr)
 	return resultErr
@@ -883,49 +915,58 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		return out, err
 	}
 	if !job.SkipSubmit {
-		// 豆包原生比例：设不上不算失败，回退到提示词里写比例（旧扩展没有这条命令也一样走兜底）。
-		if platform == "豆包" && job.Ratio != "" {
-			applied := false
-			body, err := extCall(ctx, sess, extbridge.CmdSetRatio, job.TaskID, "", map[string]any{"ratio": job.Ratio}, 25*time.Second, platform)
-			if err != nil {
-				logging.Log.Info("扩展任务 %s 原生比例未设置（%v），改用提示词比例", job.TaskID, err)
-			} else {
-				applied = body.Applied
-				if applied {
-					logging.Log.Info("扩展任务 %s 已设置豆包原生比例 %s", job.TaskID, job.Ratio)
-				} else if body.Message != "" {
-					logging.Log.Info("扩展任务 %s 原生比例未设置（%s），改用提示词比例", job.TaskID, body.Message)
+		out.sawSubmit = true
+		submitAt := time.Now()
+		err := func() error {
+			defer func() { out.Submit = time.Since(submitAt) }()
+			// 豆包原生比例：设不上不算失败，回退到提示词里写比例（旧扩展没有这条命令也一样走兜底）。
+			if platform == "豆包" && job.Ratio != "" {
+				applied := false
+				body, err := extCall(ctx, sess, extbridge.CmdSetRatio, job.TaskID, "", map[string]any{"ratio": job.Ratio}, 25*time.Second, platform)
+				if err != nil {
+					logging.Log.Info("扩展任务 %s 原生比例未设置（%v），改用提示词比例", job.TaskID, err)
 				} else {
-					logging.Log.Info("扩展任务 %s 原生比例未设置，改用提示词比例", job.TaskID)
+					applied = body.Applied
+					if applied {
+						logging.Log.Info("扩展任务 %s 已设置豆包原生比例 %s", job.TaskID, job.Ratio)
+					} else if body.Message != "" {
+						logging.Log.Info("扩展任务 %s 原生比例未设置（%s），改用提示词比例", job.TaskID, body.Message)
+					} else {
+						logging.Log.Info("扩展任务 %s 原生比例未设置，改用提示词比例", job.TaskID)
+					}
+				}
+				if !applied {
+					if w, h, err := ParseRatioLine(job.Ratio); err == nil {
+						job.Prompt = AppendRatioLine(job.Prompt, w, h)
+					}
 				}
 			}
-			if !applied {
-				if w, h, err := ParseRatioLine(job.Ratio); err == nil {
-					job.Prompt = AppendRatioLine(job.Prompt, w, h)
-				}
+			uploadStart := time.Now()
+			if err := extUpload(ctx, sess, job, platform); err != nil {
+				return err
 			}
-		}
-		uploadStart := time.Now()
-		if err := extUpload(ctx, sess, job, platform); err != nil {
+			if len(job.Images) > 0 {
+				logging.Log.Info("扩展任务 %s 已上传 %d 张源图（%.1f 秒）", job.TaskID, len(job.Images), time.Since(uploadStart).Seconds())
+			}
+			if _, err := extCall(ctx, sess, extbridge.CmdSetPrompt, job.TaskID, "", map[string]any{"prompt": job.Prompt}, 10*time.Second, platform); err != nil {
+				return err
+			}
+			// 键放在信封上：成功和 E_SEND_UNCERTAIN 会被桥缓存，同一次任务不会再把 send 发到扩展。
+			// 超时不进缓存。内容脚本还会按这个键拒绝第二次点击。
+			out.sendAttempted = true
+			if _, err := extCall(ctx, sess, extbridge.CmdSend, job.TaskID, job.IdempotencyPrefix+":send", map[string]any{
+				"prompt":    job.Prompt,
+				"timeoutMs": 15000,
+			}, 25*time.Second, platform); err != nil {
+				return err
+			}
+			out.Submitted = true
+			out.SubmittedAt = time.Now()
+			return nil
+		}()
+		if err != nil {
 			return out, err
 		}
-		if len(job.Images) > 0 {
-			logging.Log.Info("扩展任务 %s 已上传 %d 张源图（%.1f 秒）", job.TaskID, len(job.Images), time.Since(uploadStart).Seconds())
-		}
-		if _, err := extCall(ctx, sess, extbridge.CmdSetPrompt, job.TaskID, "", map[string]any{"prompt": job.Prompt}, 10*time.Second, platform); err != nil {
-			return out, err
-		}
-		// 键放在信封上：成功和 E_SEND_UNCERTAIN 会被桥缓存，同一次任务不会再把 send 发到扩展。
-		// 超时不进缓存。内容脚本还会按这个键拒绝第二次点击。
-		out.sendAttempted = true
-		if _, err := extCall(ctx, sess, extbridge.CmdSend, job.TaskID, job.IdempotencyPrefix+":send", map[string]any{
-			"prompt":    job.Prompt,
-			"timeoutMs": 15000,
-		}, 25*time.Second, platform); err != nil {
-			return out, err
-		}
-		out.Submitted = true
-		out.SubmittedAt = time.Now()
 	}
 	if job.Wait <= 0 {
 		return out, nil
@@ -941,13 +982,15 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		}
 		waitPayload["expectedAttachments"] = names
 	}
+	out.sawWait = true
 	waitStart := time.Now()
 	body, err := extCall(ctx, sess, extbridge.CmdWaitResult, job.TaskID, "", waitPayload, job.Wait+20*time.Second, platform)
+	out.Generate = time.Since(waitStart)
 	if err != nil {
 		return out, err
 	}
 	if platform == "豆包" && job.VerifyAttachments {
-		logging.Log.Info("扩展任务 %s 等待豆包生成及匹配用时 %.1f 秒", job.TaskID, time.Since(waitStart).Seconds())
+		logging.Log.Info("扩展任务 %s 等待豆包生成及匹配用时 %.1f 秒", job.TaskID, out.Generate.Seconds())
 	}
 	if len(body.Images) == 0 {
 		return out, fmt.Errorf("等待生成结果超时：未得到有效的新图片")
@@ -958,10 +1001,12 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 	if platform == "豆包" && job.VerifyAttachments && len(job.Images) > 1 {
 		workers = 3
 	}
+	out.sawDownload = true
 	downloadStart := time.Now()
 	out.Results, out.sourceIndices, err = downloadExtensionResults(ctx, sess, job.TaskID, platform, body.Images, workers)
+	out.Download = time.Since(downloadStart)
 	if platform == "豆包" && job.VerifyAttachments {
-		logging.Log.Info("扩展任务 %s 下载 %d/%d 张结果用时 %.1f 秒", job.TaskID, len(out.Results), len(body.Images), time.Since(downloadStart).Seconds())
+		logging.Log.Info("扩展任务 %s 下载 %d/%d 张结果用时 %.1f 秒", job.TaskID, len(out.Results), len(body.Images), out.Download.Seconds())
 	}
 	return out, err
 }

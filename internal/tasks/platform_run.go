@@ -734,6 +734,17 @@ func (e *Engine) accountPort(id int64) int {
 	return row.Port
 }
 
+// tracePhase 记下某一段的本机耗时。Elapsed 仍是从任务开始算的累计时间，句子里的「本段」才是这一段。
+func (e *Engine) tracePhase(t *Task, stage, label string, phase time.Duration, n int, err error) {
+	if t == nil {
+		return
+	}
+	if phase < 0 {
+		phase = 0
+	}
+	e.traceTask(t, stage, fmt.Sprintf("#%d %s（本段 %.1f 秒）", t.Index, label, phase.Seconds()), n, 0, err)
+}
+
 func (e *Engine) traceTask(t *Task, stage, msg string, n, nbytes int, err error) {
 	if e == nil || t == nil {
 		return

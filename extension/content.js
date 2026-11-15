@@ -581,6 +581,36 @@ async function resultAck(env, payload, images) {
   })
 }
 
+const MIN_RESULT_SIDE = 128
+const PIXEL_STABLE_MS = 400
+const URL_STABLE_MS = 3000
+
+// 用已解码像素判断这张是不是占位壳。CSS 宽高和 srcset 声明不算，自然尺寸才算。
+function resultHasPixels(item) {
+  const img = item && item.img
+  const w = Number(img && img.naturalWidth) || 0
+  const h = Number(img && img.naturalHeight) || 0
+  return w >= MIN_RESULT_SIDE && h >= MIN_RESULT_SIDE
+}
+
+function resultStableKey(images) {
+  return images.map(function (item) {
+    const img = item && item.img
+    const w = Number(img && img.naturalWidth) || 0
+    const h = Number(img && img.naturalHeight) || 0
+    return item.url + '@' + w + 'x' + h
+  }).join('\n')
+}
+
+// 批量还没齐时返回 0，调用方继续用更长的滚动窗口。
+// 每张都有实像素时只再确认一拍；否则维持 3 秒，避免地址还在从预览换成原图。
+function resultStableWait(images, expectedCount) {
+  const count = Number(expectedCount) || 0
+  if (count > 1 && images.length < count) return 0
+  if (images.length && images.every(resultHasPixels)) return PIXEL_STABLE_MS
+  return URL_STABLE_MS
+}
+
 async function waitResult(env, payload) {
   if (!pageMark) return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '还没有本轮发送标记，不能收集结果')
   const timeout = Number(payload.timeoutMs) || 120000
@@ -610,9 +640,10 @@ async function waitResult(env, payload) {
       const refused = moderationBlocked(env)
       if (refused) return refused
     }
-    const urls = images.map(function (item) { return item.url }).join('\n')
+    const urls = resultStableKey(images)
     const expectedCount = Array.isArray(payload.expectedAttachments) ? payload.expectedAttachments.length : 0
-    // 豆包：实图还在、生成指示没了，同一组地址再稳约 3 秒；多图批量未齐时先循环滚动唤醒虚拟列表并放宽等待窗口。
+    // 豆包：实图还在、生成指示没了。像素已经解码就只再确认一拍；没有尺寸时同一组地址再稳约 3 秒。
+    // 多图批量未齐时先循环滚动唤醒虚拟列表，并放宽等待窗口。
     if (typeof Page.replyDone === 'function') {
       const now = Date.now()
       if (expectedCount > 1 && images.length < expectedCount && !busy && typeof Page.newAssistants === 'function') {
@@ -634,10 +665,11 @@ async function waitResult(env, payload) {
           lastURLs = urls
           pageMark.stableAt = now
         }
-        const remain = typeof deadline === 'number' ? deadline - now - 1500 : 15000
-        const needStableMs = expectedCount > 1 && images.length < expectedCount
-          ? Math.min(15000, Math.max(3000, remain))
-          : 3000
+        let needStableMs = resultStableWait(images, expectedCount)
+        if (!needStableMs) {
+          const remain = typeof deadline === 'number' ? deadline - now - 1500 : 15000
+          needStableMs = Math.min(15000, Math.max(URL_STABLE_MS, remain))
+        }
         if (now - pageMark.stableAt >= needStableMs) {
           return resultAck(env, payload, images)
         }

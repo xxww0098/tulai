@@ -59,6 +59,11 @@ function load(page, where) {
     })
   }
   command.locateFileInput = function () { return vm.runInContext('locateFileInput()', context) }
+  command.stableWait = function (images, expectedCount) {
+    context.__images = images
+    context.__expected = expectedCount
+    return vm.runInContext('resultStableWait(__images, __expected)', context)
+  }
   return command
 }
 
@@ -209,6 +214,27 @@ async function main() {
   assert.deepStrictEqual(doubaoResult.waited.payload.images.map((item) => item.url), ['https://cdn.example/full.png'])
   assert.strictEqual(doubaoResult.waited.payload.images[0].rawUrl, 'https://p3.byteimg.com/raw.png?signature=123')
   assert.ok(doubaoResult.elapsed >= 350, '豆包仍要两次稳定取样，用时 ' + doubaoResult.elapsed)
+  const stableCall = load(composerPage())
+  const full = [{ url: 'https://cdn.example/full.png', img: { naturalWidth: 1024, naturalHeight: 1024 } }]
+  assert.strictEqual(stableCall.stableWait(full, 0), 400)
+  assert.strictEqual(stableCall.stableWait([{ url: 'https://cdn.example/full.png', img: { naturalWidth: 16, naturalHeight: 16 } }], 1), 3000)
+  assert.strictEqual(stableCall.stableWait([{ url: 'https://cdn.example/full.png' }], 1), 3000)
+  assert.strictEqual(stableCall.stableWait(full, 2), 0, '批量未齐时不能靠单张尺寸提前结束')
+
+  const sized = composerPage({
+    resultImages() {
+      return [{ url: 'https://cdn.example/full.png', img: { naturalWidth: 1024, naturalHeight: 1536 } }]
+    },
+    resultsBusy() { return false },
+    replyDone() { return { done: true } },
+  })
+  const sizedCall = load(sized, { href: 'https://www.doubao.com/chat/sized', hostname: 'www.doubao.com' })
+  assert.strictEqual((await sizedCall({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+  const sizedStarted = Date.now()
+  const sizedAck = await sizedCall({ name: 'waitResult', timeoutMs: 5000 })
+  const sizedElapsed = Date.now() - sizedStarted
+  assert.strictEqual(sizedAck.payload.ok, true, JSON.stringify(sizedAck.payload))
+  assert.ok(sizedElapsed >= 350 && sizedElapsed < 1500, '已解码的实图不应再固定等 3 秒，用时 ' + sizedElapsed)
 
   const reordered = composerPage({
     resultImages() { return [{ url: 'https://p1.byteimg.com/out-b' }, { url: 'https://p1.byteimg.com/out-a' }] },

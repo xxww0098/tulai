@@ -241,10 +241,14 @@ type App struct {
 	srcSel  int
 
 	// 去重页
-	dedup      dedupState
-	fileRename renameState
-	edit       imageEditState
-	uiUpdates  []func() // 无窗口时由 mu 保护，UI 帧统一应用后台结果。
+	dedup           dedupState
+	fileRename      renameState
+	edit            imageEditState
+	uiUpdates       []func() // 由 mu 保护。一帧里合并应用，避免每条状态都抢界面线程。
+	uiKick          bool
+	persistDeferral int
+	dirtyWorkspace  map[int]struct{}
+	workspaceWrites int // 测试用来确认同一帧只落库一次。
 
 	// 浏览器
 	browserRows      []store.Browser
@@ -971,31 +975,40 @@ func (a *App) syncUI(fn func()) {
 	a.window.Update(fn)
 }
 
-// postUI 把后台结果送回界面；没有窗口时由下一帧统一应用。
+// postUI 把后台结果送回界面。同一帧里排到一起，由 flushUIUpdates 一次应用。
 func (a *App) postUI(fn func()) {
 	if fn == nil || a.isQuitting() {
 		return
 	}
-	if a.window != nil {
-		if !a.window.IsDestroyed() {
-			a.window.Update(fn)
-		}
+	a.mu.Lock()
+	if a.quitting {
+		a.mu.Unlock()
 		return
 	}
-	a.mu.Lock()
-	if !a.quitting {
-		a.uiUpdates = append(a.uiUpdates, fn)
+	a.uiUpdates = append(a.uiUpdates, fn)
+	kick := a.window != nil && !a.window.IsDestroyed() && !a.uiKick
+	if kick {
+		a.uiKick = true
 	}
 	a.mu.Unlock()
+	if kick {
+		a.window.Update(func() { a.flushUIUpdates() })
+	}
 }
 
 func (a *App) flushUIUpdates() {
 	a.mu.Lock()
 	pending := a.uiUpdates
 	a.uiUpdates = nil
+	a.uiKick = false
 	a.mu.Unlock()
+	a.persistDeferral++
 	for _, fn := range pending {
 		fn()
+	}
+	a.persistDeferral--
+	if a.persistDeferral == 0 {
+		a.writeDirtyWorkspaces()
 	}
 }
 
