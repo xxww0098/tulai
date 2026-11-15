@@ -287,17 +287,17 @@ type App struct {
 	extTokenNote     string
 
 	// 队列与日志
-	queue          []tasks.Task
-	queueTbl       ui.ListState
-	logs           []logging.Entry
-	progress       float64
-	progText       string
-	running        bool
-	useRunView     bool
-	genSession     int64
-	washSession    int64
-	fissionSession int64
-	workspacePage  string // 上次停留的图片生成模式
+	queue           []tasks.Task
+	queueTbl        ui.ListState
+	logs            []logging.Entry
+	progress        float64
+	progText        string
+	running         bool
+	useRunView      bool
+	genSession      int64
+	washSession     int64
+	fissionSession  int64
+	workspacePage   string // 上次停留的图片生成模式
 	historyOpen     bool
 	resultsDoneOpen bool
 	genList         ui.ListState
@@ -879,7 +879,7 @@ func (a *App) view(c *ui.Context) {
 	a.look = applyWorkbenchTheme(c)
 	a.updateBanner(c)
 	if a.wizardOn {
-		ui.Column(c.Key("screen-wizard")).Fill().Transition(screenMotion()).Children(func() {
+		ui.Column(c.Key("screen-wizard")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
 			a.wizardView(c)
 		})
 		return
@@ -894,7 +894,8 @@ func (a *App) view(c *ui.Context) {
 			if pageKey == pageWash || pageKey == pageFission {
 				pageKey = pageHome
 			}
-			page := ui.Column(c.Key(fmt.Sprintf("page-%d", pageKey))).Grow(1).MinWidth(0).MinHeight(0).Transition(a.pageMotion())
+			page := ui.Column(c.Key(fmt.Sprintf("page-%d", pageKey))).Grow(1).MinWidth(0).MinHeight(0).
+				Background(a.look.paper).Transition(a.pageMotion())
 			if a.tab != pageRename && a.tab != pageImageEdit {
 				page.Padding(6, pagePadX, 6, pagePadX)
 			}

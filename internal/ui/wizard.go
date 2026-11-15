@@ -151,14 +151,16 @@ func (a *App) wizardView(c *ui.Context) {
 // wizardSidebar 左侧栏：品牌、竖排步骤、版本和检查更新。
 func (a *App) wizardSidebar(c *ui.Context) {
 	tok := a.look
+	logoFg, logoBg, logoBorder := badgeTone("accent", tok)
 	ui.Column(c.Key("wizard-side")).Width(wizardSideWidth).FillHeight().Shrink(0).Padding(20, 16, 14, 16).
-		Background(tok.card).BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
+		Background(tok.rail).BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Column(c.Key("wizard-logo")).Size(28, 28).Radius(8).Center().Shrink(0).Background(tok.accent.Alpha(0.12)).Children(func() {
-				ui.Icon(c, iconLogo).FontSize(16).TextColor(tok.accent)
+			ui.Column(c.Key("wizard-logo")).Size(28, 28).Radius(7).Center().Shrink(0).
+				Background(logoBg).Border(1, logoBorder).Children(func() {
+				ui.Icon(c, iconLogo).FontSize(15).TextColor(logoFg)
 			})
 			ui.Column(c).Children(func() {
-				ui.Text(c, "tulai").FontSize(16).Bold()
+				ui.Text(c, "tulai").FontSize(15.5).Bold().TextColor(tok.text)
 				ui.Text(c, "快速设置").FontSize(tok.caption).TextColor(tok.muted)
 			})
 		})
@@ -172,27 +174,30 @@ func (a *App) wizardSidebar(c *ui.Context) {
 				state = railCurrent
 			}
 			if i > 0 {
-				link := ui.Box(c.Key(fmt.Sprintf("rail-link-%d", i))).Width(2).Height(16).Margin(2, 0, 2, 9).Radius(1)
+				link := ui.Box(c.Key(fmt.Sprintf("rail-link-%d", i))).Width(2).Height(18).Margin(2, 0, 2, 10).Radius(1)
 				col := tok.border
 				if state != railUpcoming {
 					col = tok.accent
 				}
 				link.Background(link.AnimateColor("c", col, motionEaseFast))
 			}
-			ui.Row(c.Key(fmt.Sprintf("rail-%d", i))).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Row(c.Key(fmt.Sprintf("rail-%d", i))).Gap(9).AlignItems(ui.Center).Children(func() {
 				wizardBadge(c, i, state, tok)
 				label := ui.Text(c, step.Label()).FontSize(tok.body)
 				switch state {
 				case railCurrent:
-					label.Bold()
-				case railUpcoming:
+					label.FontWeight(600).TextColor(tok.text)
+				case railDone:
+					label.TextColor(tok.text)
+				default:
 					label.TextColor(tok.muted)
 				}
 			})
 		}
 		ui.Spacer(c)
-		ui.Column(c).FillWidth().Gap(6).Children(func() {
-			ui.Text(c, "当前版本 "+currentVersion()).FontSize(tok.caption).TextColor(tok.muted)
+		ui.Column(c).FillWidth().Gap(6).Padding(10, 0, 0, 0).
+			BorderWidth(1, 0, 0, 0).BorderColor(tok.border).Children(func() {
+			ui.Text(c, "当前版本 "+currentVersion()).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 			label := "检查更新"
 			if a.updateHidden && a.updateDownloading {
 				label = "显示更新进度"
@@ -209,17 +214,22 @@ const (
 )
 
 func wizardBadge(c *ui.Context, i, state int, tok tokens) {
-	b := ui.Column(c.Key(fmt.Sprintf("rail-badge-%d", i))).Size(20, 20).Radius(10).Center().Shrink(0)
+	b := ui.Column(c.Key(fmt.Sprintf("rail-badge-%d", i))).Size(22, 22).Radius(11).Center().Shrink(0)
 	switch state {
 	case railDone:
 		b.Background(b.AnimateColor("bg", tok.accent, motionEaseFast))
 		b.Children(func() { ui.Icon(c, iconCheck).FontSize(11).TextColor(tok.onAccent) })
 	case railCurrent:
-		b.Border(2, tok.accent).Background(tok.accent.Alpha(0.1))
-		b.Children(func() { ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).Bold().TextColor(tok.accent) })
+		fg, bg, _ := badgeTone("accent", tok)
+		b.Border(2, tok.accent).Background(bg).Shadow(0, 0, 0, 3, tok.accent.Alpha(0.18))
+		b.Children(func() {
+			ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).FontWeight(700).FontFeatures("tnum").TextColor(fg)
+		})
 	default:
-		b.Border(1, tok.border)
-		b.Children(func() { ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).TextColor(tok.muted) })
+		b.Background(tok.card).Border(1, tok.borderStrong)
+		b.Children(func() {
+			ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
+		})
 	}
 }
 
@@ -259,7 +269,7 @@ func wizardIntro(step wizard.Step, agyFlow bool) (lead, sub string) {
 }
 
 func wizardCard(e ui.Element, tok tokens) ui.Element {
-	e = e.Radius(tok.radiusL).Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow)
+	e = uiCardSurface(e, tok).Shadow(0, 1, 3, 0, tok.shadow)
 	if !tok.dark {
 		e.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.9))
 	}
@@ -267,14 +277,10 @@ func wizardCard(e ui.Element, tok tokens) ui.Element {
 }
 
 func wizardTile(c *ui.Context, key string, icon *ui.SVG, size float32, tok tokens) {
-	ui.Column(c.Key(key)).Size(size, size).Radius(size / 4).Center().Shrink(0).Background(tok.accent.Alpha(0.12)).Children(func() {
-		ui.Icon(c, icon).FontSize(size * 0.5).TextColor(tok.accent)
-	})
-}
-
-func wizardPill(c *ui.Context, key, text string, fg ui.Color) {
-	ui.Row(c.Key(key)).Padding(2, 8).Radius(999).Shrink(0).AlignItems(ui.Center).Background(fg.Alpha(0.14)).Children(func() {
-		ui.Text(c, text).FontSize(12).TextColor(fg).SingleLine()
+	fg, bg, border := badgeTone("accent", tok)
+	ui.Column(c.Key(key)).Size(size, size).Radius(size/4).Center().Shrink(0).
+		Background(bg).Border(1, border).Children(func() {
+		ui.Icon(c, icon).FontSize(size * 0.5).TextColor(fg)
 	})
 }
 
@@ -300,13 +306,13 @@ func (a *App) wizardBrowserStep(c *ui.Context) {
 		})
 		switch {
 		case plan.Blocked != "":
-			wizardPill(c, "browser-pill", "不可用", tok.warning)
+			uiBadge(c, "browser-pill", "不可用", "warning", tok)
 		case plan.NeedsDownload && a.camoufoxBusy:
-			wizardPill(c, "browser-pill", "下载中", tok.accent)
+			uiBadge(c, "browser-pill", "下载中", "accent", tok)
 		case plan.NeedsDownload:
-			wizardPill(c, "browser-pill", "待下载", tok.warning)
+			uiBadge(c, "browser-pill", "待下载", "warning", tok)
 		case plan.CanNext:
-			wizardPill(c, "browser-pill", "已就绪", tok.success)
+			uiBadge(c, "browser-pill", "已就绪", "success", tok)
 		}
 	})
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -341,26 +347,25 @@ func (a *App) wizardPlatformStep(c *ui.Context, width float32) {
 func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string, available float32) {
 	tok := a.look
 	on := a.wizardChoice == name
-	card := ui.RadioBase(c.Key("wizard-"+name), &a.wizardChoice, name).Grow(1).Basis((available - 10) / 2).MinWidth(180).MinHeight(124).
-		AlignItems(ui.Stretch).Radius(tok.radiusM).Cursor(ui.CursorPointer)
-	bg, border, width := tok.card, tok.border, float32(1)
+	card := uiCardSurface(ui.RadioBase(c.Key("wizard-"+name), &a.wizardChoice, name).
+		Grow(1).Basis((available-10)/2).MinWidth(180).MinHeight(124).
+		AlignItems(ui.Stretch).Cursor(ui.CursorPointer), tok)
 	switch {
 	case on:
-		bg, border, width = tok.accent.Alpha(0.07), tok.accent, 1.5
+		card.Background(tok.accent.Alpha(0.07)).Border(1.5, tok.accent).Shadow(0, 6, 18, 0, tok.lift)
 	case card.Hovered():
-		border = tok.accent.Alpha(0.5)
-	}
-	card.Background(bg).Border(width, border).Transition(motionColors())
-	if on {
-		card.Shadow(0, 6, 18, 0, tok.lift)
-	} else {
+		card.Border(1, tok.borderStrong).Shadow(0, 2, 6, 0, tok.shadow)
+	default:
 		card.Shadow(0, 1, 2, 0, tok.shadow)
 	}
+	card.Transition(motionColors())
 	hoverPressPose(card)
+	pickFg, _, _ := semanticToneColors(tok.dark, tok.accent, tok.accent, 0.12)
 	card.Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(8).Padding(12).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Column(c.Key("plat-tile")).Size(32, 32).Radius(8).Center().Shrink(0).Background(tok.sunken).Children(func() {
+				ui.Column(c.Key("plat-tile")).Size(32, 32).Radius(7).Center().Shrink(0).
+					Background(tok.sunken).Border(1, tok.border).Children(func() {
 					platformIcon(c, name, 20, tok)
 				})
 				ui.Text(c, name).FontSize(tok.title).Bold().SingleLine().MinWidth(0)
@@ -370,12 +375,12 @@ func (a *App) wizardPlatformCard(c *ui.Context, name, blurb string, available fl
 				mark := ui.Column(c.Key("pick-mark")).Size(15, 15).Radius(8).Center().Shrink(0).Transition(motionColors())
 				label, color := "点击选择", tok.muted
 				if on {
-					label, color = "已选择", tok.accent
+					label, color = "已选择", pickFg
 					mark.Background(tok.accent).Children(func() {
 						ui.Icon(c, iconCheck).FontSize(10).TextColor(tok.onAccent)
 					})
 				} else {
-					mark.Border(1.5, tok.muted.Alpha(0.55))
+					mark.Border(1.5, tok.borderStrong)
 				}
 				ui.Text(c.Key("pick"), label).FontSize(tok.caption).TextColor(color).
 					ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
@@ -408,14 +413,15 @@ func (a *App) wizardAccountStep(c *ui.Context) {
 	}
 	wizardCard(ui.Column(c.Key("login-card")).FillWidth(), tok).Children(func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 14).Children(func() {
-			ui.Column(c.Key("login-tile")).Size(32, 32).Radius(8).Center().Shrink(0).Background(tok.sunken).Children(func() {
+			ui.Column(c.Key("login-tile")).Size(32, 32).Radius(7).Center().Shrink(0).
+				Background(tok.sunken).Border(1, tok.border).Children(func() {
 				platformIcon(c, platform, 20, tok)
 			})
 			if line != "" {
 				ui.Text(c, line).FontSize(tok.title).Bold().SingleLine().Grow(1).MinWidth(0)
 			}
 		})
-		ui.Divider(c)
+		ui.Box(c).FillWidth().Height(1).Background(tok.border)
 		ui.Column(c).FillWidth().Padding(10, 14).Children(func() {
 			a.loginStatusBody(c, a.wizardAccount, true)
 		})
@@ -504,7 +510,7 @@ func (a *App) wizardDoneStep(c *ui.Context) {
 				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
 					wizardTile(c, "tip-tile", tip.icon, 28, tok)
 					ui.Spacer(c)
-					ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).TextColor(tok.muted)
+					ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 				})
 				ui.Text(c, tip.text).FontSize(tok.title).Bold()
 			})
@@ -517,6 +523,7 @@ func (a *App) wizardDoneStep(c *ui.Context) {
 				for i, acct := range accounts {
 					ui.Row(c.Key(fmt.Sprintf("acct-%d", i))).Gap(6).AlignItems(ui.Center).Padding(4, 10).Radius(999).
 						Background(tok.card).Border(1, tok.border).Children(func() {
+						ui.Box(c).Size(6, 6).Radius(3).Background(tok.success).Shrink(0)
 						platformIcon(c, acct.platform, 14, tok)
 						ui.Text(c, acct.platform+" · "+acct.name).FontSize(tok.body).SingleLine()
 					})
@@ -524,7 +531,8 @@ func (a *App) wizardDoneStep(c *ui.Context) {
 			})
 		})
 	}
-	ui.Row(c.Key("done-hint")).FillWidth().Gap(8).AlignItems(ui.Start).Padding(8, 12).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
+	ui.Row(c.Key("done-hint")).FillWidth().Gap(8).AlignItems(ui.Start).Padding(8, 12).
+		Radius(tok.radiusM).Background(tok.sunken).Border(1, tok.border).Children(func() {
 		ui.Icon(c, iconRefresh).FontSize(14).TextColor(tok.accent).Shrink(0).Margin(1, 0, 0, 0)
 		ui.Text(c, "再添加一个账号后，额度用尽、限流或验证码会自动换号。").FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0)
 	})

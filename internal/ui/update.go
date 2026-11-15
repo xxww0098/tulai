@@ -34,7 +34,7 @@ func (a *App) persistUpdatePrefs() {
 func (a *App) updateSettings(c *ui.Context) {
 	tok := a.look
 	ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, "当前版本 "+currentVersion()).FontSize(tok.body).Grow(1).MinWidth(0).SingleLine()
+		ui.Text(c, "当前版本 "+currentVersion()).FontSize(tok.body).FontFeatures("tnum").Grow(1).MinWidth(0).SingleLine()
 		uiBtn(ui.Button(c, "检查更新"), tok).Disabled(a.updateBusy).OnClick(func() { a.checkForUpdates() })
 	})
 	ui.Checkbox(c, &a.autoCheck, "自动检查更新").OnChange(func() { a.persistUpdatePrefs() })
@@ -59,11 +59,14 @@ func (a *App) updateBanner(c *ui.Context) {
 		bottom = 58
 	}
 	ui.Overlay(c, func() {
-		ui.Column(c.Key("update-banner")).Absolute().Right(12).Bottom(bottom).Width(min(276, max(0, w-24))).
-			Padding(8, 10).Gap(6).Radius(tok.radiusM).Background(tok.card).Border(1, tok.border).
-			Shadow(0, 4, 16, 0, tok.shadow).Role(ui.RoleStatus).Label("更新提示").Children(func() {
+		card := uiCardSurface(ui.Column(c.Key("update-banner")).Absolute().Right(12).Bottom(bottom).
+			Width(min(276, max(0, w-24))).Padding(10, 12).Gap(7), tok).
+			Shadow(0, 8, 24, 0, tok.lift).Role(ui.RoleStatus).Label("更新提示")
+		card.Children(func() {
 			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "发现新版本 "+a.updateNotice).FontSize(tok.body).Bold().Grow(1).MinWidth(0).SingleLine()
+				ui.Box(c).Size(6, 6).Radius(3).Background(tok.accent).Shrink(0)
+				ui.Text(c, "发现新版本 "+a.updateNotice).FontSize(tok.body).FontWeight(600).
+					FontFeatures("tnum").TextColor(tok.text).Grow(1).MinWidth(0).SingleLine()
 				label, accessible := "详情", "查看更新详情"
 				if a.updateDetailsOpen {
 					label, accessible = "收起", "收起更新详情"
@@ -78,22 +81,29 @@ func (a *App) updateBanner(c *ui.Context) {
 				}
 			})
 			if a.updateDeferred {
-				ui.Text(c, update.DeferMessage).FontSize(tok.caption).TextColor(tok.warning).SingleLine().Tooltip(update.DeferMessage)
+				warnFg, warnBg, warnBorder := badgeTone("warning", tok)
+				ui.Row(c).FillWidth().Padding(4, 7).Radius(tok.radiusS).Background(warnBg).Border(1, warnBorder).Children(func() {
+					ui.Text(c, update.DeferMessage).FontSize(tok.caption).TextColor(warnFg).SingleLine().Tooltip(update.DeferMessage)
+				})
 			}
 			if a.updateErr != "" {
-				ui.Text(c, a.updateErr).FontSize(tok.caption).TextColor(tok.danger).SingleLine().Tooltip(a.updateErr)
+				errFg, errBg, errBorder := badgeTone("danger", tok)
+				ui.Row(c).FillWidth().Padding(4, 7).Radius(tok.radiusS).Background(errBg).Border(1, errBorder).Children(func() {
+					ui.Text(c, a.updateErr).FontSize(tok.caption).TextColor(errFg).SingleLine().Tooltip(a.updateErr)
+				})
 			}
 			if a.updateDownloading {
 				installing := strings.Contains(a.updateProgressText, "正在安装")
 				ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, a.updateProgressText).FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0).SingleLine().Tooltip(a.updateProgressText)
 					if !installing && a.updateFraction > 0 {
-						ui.Text(c, fmt.Sprintf("%.0f%%", min(a.updateFraction, 1)*100)).FontSize(tok.caption).TextColor(tok.muted)
+						ui.Text(c, fmt.Sprintf("%.0f%%", min(a.updateFraction, 1)*100)).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 					}
 				})
 				motionProgress(c, "update-progress", a.updateFraction, installing || a.updateFraction <= 0)
 			}
 			if a.updateDetailsOpen {
+				ui.Box(c).FillWidth().Height(1).Background(tok.border)
 				verification := "安装包未签名，下载后会用 SHA256SUMS 校验。"
 				if a.updateSigned != nil {
 					verification = "更新包由 MyGo 验证开发者签名。"
@@ -101,11 +111,13 @@ func (a *App) updateBanner(c *ui.Context) {
 				ui.Text(c, verification).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(verification)
 				a.updateBannerActions(c)
 				if a.updateNotes != "" && a.updateNotesOpen {
-					ui.Scroll(c.Key("update-notes")).FillWidth().MaxHeight(min(100, max(40, h-bottom-150))).Label("更新说明").Children(func() {
-						ui.Column(c).FillWidth().Shrink(0).Children(func() {
-							for _, line := range splitLines(a.updateNotes) {
-								ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
-							}
+					ui.Column(c).FillWidth().Padding(6, 8).Radius(tok.radiusS).Background(tok.sunken).Border(1, tok.border).Children(func() {
+						ui.Scroll(c.Key("update-notes")).FillWidth().MaxHeight(min(100, max(40, h-bottom-150))).Label("更新说明").Children(func() {
+							ui.Column(c).FillWidth().Shrink(0).Children(func() {
+								for _, line := range splitLines(a.updateNotes) {
+									ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
+								}
+							})
 						})
 					})
 				}
@@ -116,6 +128,7 @@ func (a *App) updateBanner(c *ui.Context) {
 
 func (a *App) updateBannerActions(c *ui.Context) {
 	tok := a.look
+	accentFg, accentBg, accentBorder := badgeTone("accent", tok)
 	ui.Row(c).FillWidth().Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
 		if a.updateNotes != "" {
 			label := "查看更新说明"
@@ -126,7 +139,7 @@ func (a *App) updateBannerActions(c *ui.Context) {
 		}
 		if !a.updateDownloading {
 			uiMiniBtn(ui.Button(c, "跳过此版本"), tok).OnClick(func() { a.skipUpdate() })
-			uiMiniBtn(ui.Button(c, "立即更新"), tok).Background(tok.accent.Alpha(0.1)).TextColor(tok.accent).
+			uiMiniBtn(ui.Button(c, "立即更新"), tok).Background(accentBg).Border(1, accentBorder).TextColor(accentFg).
 				Disabled(a.updateBusy).OnClick(func() { a.applyUpdate() })
 		}
 	})

@@ -150,16 +150,18 @@ func (a *App) camoufoxCompactDetail() string {
 // camoufoxProgressBlock 是向导里的完整进度：状态和百分比、进度条、速度和剩余时间。
 func (a *App) camoufoxProgressBlock(c *ui.Context, key string) {
 	tok := a.look
-	ui.Column(c.Key(key + "-box")).FillWidth().Gap(5).Children(func() {
+	pctFg, _, _ := semanticToneColors(tok.dark, tok.accent, tok.accent, 0.12)
+	ui.Column(c.Key(key+"-box")).FillWidth().Padding(8, 10).Gap(6).
+		Radius(tok.radiusM).Background(tok.sunken).Border(1, tok.border).Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, a.camoufoxStatus).FontSize(tok.body).TextColor(tok.muted).Grow(1).MinWidth(0)
 			if label := a.camoufoxPercentLabel(); label != "" {
-				ui.Text(c, label).FontSize(tok.body).Bold().TextColor(tok.accent).Shrink(0)
+				ui.Text(c, label).FontSize(tok.body).Bold().FontFeatures("tnum").TextColor(pctFg).Shrink(0)
 			}
 		})
 		motionProgress(c, key, a.camoufoxFraction(), a.camoufoxPercent < 0)
 		if detail := a.camoufoxProgressDetail(); detail != "" {
-			ui.Text(c, detail).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+			ui.Text(c, detail).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
 		}
 	})
 }
@@ -169,6 +171,6 @@ func (a *App) camoufoxCompactProgress(c *ui.Context, key string) {
 	tok := a.look
 	motionProgress(c, key, a.camoufoxFraction(), a.camoufoxPercent < 0)
 	if detail := a.camoufoxCompactDetail(); detail != "" {
-		ui.Text(c, detail).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+		ui.Text(c, detail).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
 	}
 }
