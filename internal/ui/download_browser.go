@@ -21,34 +21,41 @@ func (a *App) downloadBrowserControls(c *ui.Context, tok tokens) {
 			} else if a.dlBrowser != nil && a.dlBrowser.Alive() {
 				label = "打开填写的网址"
 			}
-			ui.Button(c.Key("dl-open-browser"), label).Shrink(0).Disabled(a.dlBrowserBusy).OnClick(a.openDownloadBrowser)
-			ui.Text(c, "专用环境：可先登录，填写网址后打开并下载。").FontSize(12).TextColor(tok.muted).Grow(1).MinWidth(0)
+			uiBtn(ui.Button(c.Key("dl-open-browser"), label), tok).Shrink(0).Disabled(a.dlBrowserBusy).OnClick(a.openDownloadBrowser)
+			ui.Text(c, "专用环境：可先登录，填写网址后打开并下载。").FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0)
 		})
 		if a.dlBrowserErr != "" {
-			ui.Text(c, a.dlBrowserErr).FontSize(12).TextColor(tok.danger)
+			fg, bg, bdr := semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
+			ui.Row(c).FillWidth().Padding(4, 8).Radius(tok.radiusS).Background(bg).Border(1, bdr).Children(func() {
+				ui.Text(c, a.dlBrowserErr).FontSize(tok.caption).TextColor(fg)
+			})
 		}
 	})
 }
 
 func (a *App) downloadBrowserEnvironment(c *ui.Context) {
-	status := "未打开"
+	tok := a.uiTokens(c)
+	status, tone := "未打开", "neutral"
 	if a.dlBrowserBusy {
-		status = "正在打开"
+		status, tone = "正在打开", "warning"
 	} else if a.dlBrowser != nil && a.dlBrowser.Alive() {
-		status = "已打开"
+		status, tone = "已打开", "success"
 	}
-	ui.Row(c.Key("download-browser-environment")).FillWidth().Padding(8, 10).Gap(8).
-		AlignItems(ui.Center).Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(8).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-			ui.Text(c, "网页图片下载专用环境").FontSize(13).Bold()
-			ui.Text(c, "独立保存指纹和登录状态；下载浏览器暂不支持代理。").FontSize(12).
-				TextColor(c.Theme().TextMuted).SingleLine()
-		})
-		ui.Text(c, status).FontSize(12).TextColor(c.Theme().TextMuted).Shrink(0)
-		ui.Button(c.Key("download-browser-use"), "使用下载环境").FontSize(12).Shrink(0).OnClick(func() {
-			a.tab = pageDownload
-			a.dlComposerOn, a.dlBrowserMode, a.dlGuideOn = true, true, false
-			a.dlComposerErr, a.dlBrowserErr = "", ""
+	uiCard(c, "download-browser-environment", tok).Padding(8, 12).Gap(4).Children(func() {
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "网页图片下载专用环境").FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine()
+					uiBadge(c, "download-browser-badge", status, tone, tok)
+				})
+				ui.Text(c, "独立保存指纹和登录状态；下载浏览器暂不支持代理。").
+					FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip("独立保存指纹和登录状态；下载浏览器暂不支持代理。")
+			})
+			uiBtn(ui.Button(c.Key("download-browser-use"), "使用下载环境"), tok).Shrink(0).OnClick(func() {
+				a.tab = pageDownload
+				a.dlComposerOn, a.dlBrowserMode, a.dlGuideOn = true, true, false
+				a.dlComposerErr, a.dlBrowserErr = "", ""
+			})
 		})
 	})
 }
