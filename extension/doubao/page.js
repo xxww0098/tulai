@@ -32,10 +32,24 @@ globalThis.TULAIPage = (function () {
     })
   }
 
-  if (typeof globalThis.addEventListener === 'function') globalThis.addEventListener('message', function (event) {
-    if (event.source !== globalThis || !event.data || event.data.type !== 'TULAI_DOUBAO_RAW_IMAGES') return
-    acceptRawImages(event.data.pairs)
-  })
+  const RAW_EVENT = '__pb_raw_images__'
+
+  function handleRawImagesEvent(event) {
+    if (!event) return
+    let pairs = event.detail
+    if (typeof pairs === 'string') {
+      try {
+        pairs = JSON.parse(pairs)
+      } catch (e) {
+        return
+      }
+    }
+    acceptRawImages(pairs)
+  }
+
+  if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+    document.addEventListener(RAW_EVENT, handleRawImagesEvent)
+  }
 
   function hostOf(doc) {
     if (doc && doc.hostname) return String(doc.hostname)

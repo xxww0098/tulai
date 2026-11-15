@@ -209,13 +209,23 @@ func (a *App) laneHeader(c *ui.Context) {
 				a.store.SetInt("concurrency", a.taskConcurrency())
 			}
 		})
+		if len(board.Lanes) > 0 {
+			collapseLabel := "收起账号"
+			collapseIcon := iconChevronUp
+			if a.laneCollapsed {
+				collapseLabel = "展开账号"
+				collapseIcon = iconChevronDown
+			}
+			uiIconBtn(c, "lane-collapse", collapseLabel, collapseLabel, collapseIcon, 22, a.laneCollapsed, true, tok).
+				OnClick(func() { a.laneCollapsed = !a.laneCollapsed })
+		}
 		a.addAccountButton(c)
 	})
 }
 
 func (a *App) addAccountButton(c *ui.Context) {
-	ui.PrimaryButton(c, "+ 添加账号").Shrink(0).FontSize(a.look.caption).FontWeight(500).
-		Height(22).Padding(0, 8).Radius(a.look.radiusS).Disabled(a.running).OnClick(func() {
+	uiPrimaryBtn(c, "add-account", "+ 添加账号", a.running, a.look).
+		Height(24).Padding(0, 10).OnClick(func() {
 		a.addAccountHere()
 	})
 }
@@ -242,13 +252,12 @@ func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
 
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
 	tok := a.look
-	fg, bg, border := laneToneColors(tok, ln.State)
+	fg, bg, _ := laneToneColors(tok, ln.State)
 	text := laneLabel(ln.State)
 	if ln.State == tasks.LaneGap {
 		text = fmt.Sprintf("等待间隔 %d", gapSeconds(ln.NextReadyAt, c.Now()))
 	}
-	pill := ui.Row(c.Key("chip")).Height(18).Padding(0, 7).Radius(999).Shrink(0).AlignItems(ui.Center).
-		Border(1, border)
+	pill := ui.Row(c.Key("chip")).Height(18).Padding(0, 7).Radius(999).Shrink(0).AlignItems(ui.Center)
 	pill.Background(pill.AnimateColor("bg", bg, motionEaseFast))
 	pill.Children(func() {
 		ui.Text(c.Key("chip-label"), text).FontSize(tok.caption).FontWeight(500).TextColor(fg).
@@ -332,11 +341,11 @@ func gapRing(c *ui.Context, ln tasks.AccountLane, tok tokens) {
 
 // laneCaption 车道上正在出的那一行：有提示词就用提示词，否则用文件名。
 func laneCaption(prompt, image string) string {
-	if line := shortLine(prompt, 22); line != "" {
+	if line := shortLine(prompt, 96); line != "" {
 		return line
 	}
 	if image != "" {
-		if line := shortLine(filepath.Base(image), 22); line != "" {
+		if line := shortLine(filepath.Base(image), 96); line != "" {
 			return line
 		}
 	}

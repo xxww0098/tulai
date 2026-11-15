@@ -758,3 +758,74 @@ func TestLaneCountdownUpdatesWithoutContinuousFrames(t *testing.T) {
 		})
 	}
 }
+
+func TestAccountColumnStaysCompactOnWideScreens(t *testing.T) {
+	for _, platform := range []string{"豆包", "Antigravity"} {
+		t.Run(platform, func(t *testing.T) {
+			var span1280, span1600, task1280, task1600 float32
+			for _, tc := range []struct {
+				w, h int
+			}{{1280, 800}, {1600, 900}} {
+				b := loggedLane(1, platform+"主力", platform)
+				if platform == "Antigravity" {
+					home := t.TempDir()
+					writeAgyHome(t, home, "studio@example.com")
+					b.UserDataDir = home
+				}
+				a := &App{
+					platformAuto: true,
+					prompts:      "极简北欧陶瓷花瓶，柔和自然光",
+					browserRows:  []store.Browser{b},
+					queue: []tasks.Task{{
+						Index:     1,
+						Platform:  platform,
+						BrowserID: 1,
+						Status:    tasks.StatusRunning,
+						Prompt:    "极简北欧陶瓷花瓶，柔和自然光，棚拍质感细节",
+					}},
+				}
+				if platform == "Antigravity" {
+					a.stageTab = 2
+					a.stagePicked = true
+				}
+				tt := ui.NewTester(a.view, tc.w, tc.h)
+				tt.Advance(400 * time.Millisecond)
+
+				acctHdr := assertVisible(t, tt, "账号", float32(tc.w), float32(tc.h))
+				stateHdr := assertVisible(t, tt, "状态", float32(tc.w), float32(tc.h))
+				taskHdr := assertVisible(t, tt, "当前任务", float32(tc.w), float32(tc.h))
+				opsHdr := assertVisible(t, tt, "操作", float32(tc.w), float32(tc.h))
+
+				acctSpan := stateHdr.X - acctHdr.X
+				taskSpan := opsHdr.X - taskHdr.X
+				if acctSpan > 200 {
+					t.Fatalf("%s width=%d: 账号列过宽 (%v > 200)", platform, tc.w, acctSpan)
+				}
+				if taskSpan <= acctSpan {
+					t.Fatalf("%s width=%d: 当前任务列应宽于账号列 (task=%v acct=%v)", platform, tc.w, taskSpan, acctSpan)
+				}
+				if tc.w == 1280 {
+					span1280, task1280 = acctSpan, taskSpan
+				} else {
+					span1600, task1600 = acctSpan, taskSpan
+				}
+
+				if platform == "豆包" && tc.w == 1280 {
+					a.renameID, a.renameDraft = b.ID, b.Name
+					tt.Frame()
+					renameRect := assertVisible(t, tt, "重命名输入框", float32(tc.w), float32(tc.h))
+					stateRect := assertVisible(t, tt, "状态", float32(tc.w), float32(tc.h))
+					if renameRect.X+renameRect.W > stateRect.X {
+						t.Fatalf("重命名输入框溢出到状态列: rename=%+v state=%+v", renameRect, stateRect)
+					}
+				}
+			}
+			if span1600-span1280 > 2 || span1280-span1600 > 2 {
+				t.Fatalf("%s: 宽屏下账号列不应随窗口拉宽而膨胀: 1280=%v 1600=%v", platform, span1280, span1600)
+			}
+			if task1600-task1280 < 300 {
+				t.Fatalf("%s: 宽屏增加的宽度未分配给当前任务列: 1280=%v 1600=%v", platform, task1280, task1600)
+			}
+		})
+	}
+}

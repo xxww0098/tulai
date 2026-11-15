@@ -2,6 +2,8 @@ import {createHash, randomBytes} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+const STALE_LOCK_MS = 5 * 60 * 1000;
+
 // Compare page-visible properties, not incidental config fields.
 function fingerprintValues(config) {
   return [
@@ -12,41 +14,118 @@ function fingerprintValues(config) {
   ];
 }
 
+function viewportValues(config) {
+  const values = [
+    config['screen.width'],
+    config['screen.height'],
+    config['window.innerWidth'],
+    config['window.innerHeight'],
+    config['window.devicePixelRatio'],
+  ];
+  return values.every(value => value != null) ? values : null;
+}
+
+export function claimFingerprint(locks, key) {
+  const file = path.join(locks, createHash('sha256').update(key).digest('hex'));
+  for (let retried = false; ; ) {
+    let lock;
+    try {
+      lock = fs.openSync(file, 'wx', 0o600);
+      return () => {
+        try { fs.closeSync(lock); } finally { fs.rmSync(file, {force: true}); }
+      };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      if (retried) return null;
+      retried = true;
+      let stat;
+      try { stat = fs.statSync(file); }
+      catch (statError) {
+        if (statError.code === 'ENOENT') continue;
+        throw statError;
+      }
+      if (Date.now() - stat.mtimeMs <= STALE_LOCK_MS) return null;
+      try { fs.unlinkSync(file); }
+      catch (unlinkError) {
+        if (unlinkError.code !== 'ENOENT') throw unlinkError;
+      }
+    }
+  }
+}
+
+function collectIdentityFiles(profileDir, collisionRoots) {
+  const roots = [path.dirname(profileDir), ...(Array.isArray(collisionRoots) ? collisionRoots : [])]
+    .filter(root => typeof root === 'string' && root.trim())
+    .map(root => path.resolve(root));
+  const files = [];
+  const seenDirs = new Set();
+  const addDir = (dir, label) => {
+    const resolved = path.resolve(dir);
+    if (resolved === profileDir || seenDirs.has(resolved)) return;
+    seenDirs.add(resolved);
+    files.push({file: path.join(resolved, '.tulai-identity.json'), label});
+  };
+  for (const root of new Set(roots)) {
+    let entries;
+    try { entries = fs.readdirSync(root, {withFileTypes: true}); }
+    catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+      throw error;
+    }
+    // Support both single-profile roots (e.g. DownloadBrowser) and multi-account roots.
+    addDir(root, path.basename(root) || root);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      addDir(path.join(root, entry.name), entry.name);
+    }
+  }
+  return files;
+}
+
 // Reserve a generated identity before another environment can choose the same device.
-export async function createIdentity(profile, generate) {
-  const parent = path.dirname(profile);
-  const identityPath = path.join(profile, '.tulai-identity.json');
+export async function createIdentity(profile, generate, options = {}) {
+  const profileDir = path.resolve(profile);
+  const parent = path.dirname(profileDir);
+  const identityPath = path.join(profileDir, '.tulai-identity.json');
   const locks = path.join(parent, '.tulai-fingerprint-locks');
   fs.mkdirSync(locks, {recursive: true, mode: 0o700});
   for (let attempt = 0; attempt < 128; attempt++) {
     const result = await generate();
     const values = fingerprintValues(result.identity);
     if (values.some(value => value == null)) throw new Error('生成的浏览器指纹不完整，请重试');
-    const key = JSON.stringify(values);
-    const lockPath = path.join(locks, createHash('sha256').update(key).digest('hex'));
-    // shortcut: a force-killed launcher can leave one candidate locked; recover stale locks if failures recur.
-    let lock;
-    try { lock = fs.openSync(lockPath, 'wx', 0o600); }
-    catch (error) { if (error.code === 'EEXIST') continue; throw error; }
+    const deviceKey = JSON.stringify(values);
+    const releaseDevice = claimFingerprint(locks, deviceKey);
+    if (!releaseDevice) continue;
+    let releaseViewport = null;
     try {
+      const viewport = viewportValues(result.identity);
+      if (viewport) {
+        releaseViewport = claimFingerprint(locks, JSON.stringify(['viewport', ...viewport]));
+        if (!releaseViewport) continue;
+      }
       let duplicate = false;
-      for (const entry of fs.readdirSync(parent, {withFileTypes: true})) {
-        if (!entry.isDirectory() || entry.name === path.basename(profile)) continue;
+      for (const {file, label} of collectIdentityFiles(profileDir, options?.collisionRoots)) {
         let saved;
         try {
-          saved = JSON.parse(fs.readFileSync(path.join(parent, entry.name, '.tulai-identity.json'), 'utf8'));
+          saved = JSON.parse(fs.readFileSync(file, 'utf8'));
           prepareIdentity(saved, '0', false);
         } catch (error) {
           if (error.code === 'ENOENT') continue;
-          throw new Error(`读取已有环境指纹失败（${entry.name}）：${error.message}`);
+          throw new Error(`读取已有环境指纹失败（${label}）：${error.message}`);
         }
         // An absent legacy field cannot establish that two devices differ.
         if (fingerprintValues(saved).every((value, index) => value == null || value === values[index])) {
-          duplicate = true; break;
+          duplicate = true;
+          break;
+        }
+        const savedViewport = viewportValues(saved);
+        if (viewport && savedViewport && savedViewport.every((value, index) => value === viewport[index])) {
+          duplicate = true;
+          break;
         }
       }
       if (duplicate) continue;
-      const temporary = path.join(profile, `.tulai-identity-${process.pid}-${randomBytes(8).toString('hex')}.tmp`);
+      const temporary = path.join(profileDir, `.tulai-identity-${process.pid}-${randomBytes(8).toString('hex')}.tmp`);
       const file = fs.openSync(temporary, 'wx', 0o600);
       try {
         try { fs.writeFileSync(file, JSON.stringify(result.identity)); }
@@ -55,8 +134,7 @@ export async function createIdentity(profile, generate) {
       } finally { fs.rmSync(temporary, {force: true}); }
       return result;
     } finally {
-      fs.closeSync(lock);
-      fs.rmSync(lockPath, {force: true});
+      try { releaseViewport?.(); } finally { releaseDevice(); }
     }
   }
   throw new Error('无法生成与现有环境不同的浏览器指纹，请重试');
@@ -76,15 +154,11 @@ export async function preserveVoices(saved, config, generate) {
   return generate(refreshed);
 }
 
-export function prepareRendering(config, covered, host) {
-  if (!config || covered) return {config};
+// Enable canvas readback noise when the host has a GPU while preserving saved WebGL identity across restarts.
+export function prepareRendering(config, host) {
+  if (!config || host === undefined) return {config};
   if (!host) return {config, canvasNoise: false};
-  if (host[0] !== config['webGl:vendor'] || host[1] !== config['webGl:renderer']) return {config};
-  // Let Camoufox recognize the same host GPU and retain its first-launch rendering policy.
-  const copy = {...config};
-  delete copy['webGl:vendor'];
-  delete copy['webGl:renderer'];
-  return {config: copy};
+  return {config, canvasNoise: true};
 }
 
 // Persist device identity, but refresh browser version and proxy-derived location.

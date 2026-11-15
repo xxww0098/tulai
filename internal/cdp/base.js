@@ -82,19 +82,26 @@
   };
 
   // 标记第 n 个 file input 供 CDP 上传
-  window.tulaiMarkFileInput = function (n) {
+  window.tulaiMarkFileInput = function (n, attr) {
+    if (!attr || typeof attr !== 'string') return -1;
     var inputs = document.querySelectorAll('input[type=file]');
     var el = inputs[n];
     if (!el) return -1;
-    for (var i = 0; i < inputs.length; i++) inputs[i].removeAttribute('data-tulai-upload');
-    el.setAttribute('data-tulai-upload', '1');
+    for (var i = 0; i < inputs.length; i++) inputs[i].removeAttribute(attr);
+    el.setAttribute(attr, '1');
     return inputs.length;
   };
-  window.tulaiUnmarkFileInput = function () {
-    var el = document.querySelector('input[type=file][data-tulai-upload="1"]');
-    if (!el) return false;
-    el.removeAttribute('data-tulai-upload');
-    return true;
+  window.tulaiUnmarkFileInput = function (attr) {
+    if (!attr || typeof attr !== 'string') return false;
+    var inputs = document.querySelectorAll('input[type=file]');
+    var removed = false;
+    for (var i = 0; i < inputs.length; i++) {
+      if (inputs[i].hasAttribute(attr)) {
+        inputs[i].removeAttribute(attr);
+        removed = true;
+      }
+    }
+    return removed;
   };
 
   // 按文本找按钮并点击（发送按钮等）

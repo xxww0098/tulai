@@ -89,7 +89,8 @@ func (a *App) resultsPane(c *ui.Context) {
 	th := *c.Theme()
 	th.TooltipDelay = resultPreviewDelay
 
-	pane := uiCardSurface(ui.Themed(c.Key("results"), &th).Label("出图结果区").FillWidth().Padding(8, 10).Gap(6), tok)
+	pane := ui.Themed(c.Key("results"), &th).Label("出图结果区").FillWidth().Background(tok.card).
+		Padding(10, 14).Gap(6)
 	if homeSplit(w) {
 		pane.Grow(1).MinHeight(0)
 	}
@@ -102,7 +103,8 @@ func (a *App) resultsPane(c *ui.Context) {
 			a.resultsDonePopover(c, doneAnchor, split)
 		}
 
-		if tally.Running > 0 || tally.Done > 0 || tally.Failed > 0 || tally.Needs > 0 || tally.Review > 0 {
+		hasBar := tally.Running > 0 || tally.Done > 0 || tally.Failed > 0 || tally.Needs > 0 || tally.Review > 0
+		if hasBar {
 			a.resultsProgressBar(c, tally)
 		}
 
@@ -111,7 +113,9 @@ func (a *App) resultsPane(c *ui.Context) {
 			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(warnFg)
 		}
 
-		ui.Divider(c).Background(tok.border)
+		if !hasBar {
+			ui.Divider(c).Background(tok.border)
+		}
 
 		rows := make([]resultRow, 0, len(split.activeRows)+len(split.issueRows))
 		rows = append(rows, split.activeRows...)
@@ -184,32 +188,42 @@ func (a *App) resultsClock(c *ui.Context, items []tasks.Task) {
 
 func (a *App) resultsHead(c *ui.Context, items []tasks.Task, tally TaskTally, split resultSplit, doneAnchor *ui.Element, hasDoneAnchor *bool) {
 	tok := a.look
+	winW, _ := c.Size()
 	platform := a.stagePlatform()
 	failed := FailedTasks(items)
+	line := ""
+	if len(items) > 0 {
+		line = FormatProgressTally(
+			tally.Done, tally.Running, tally.Queued,
+			tally.Failed, tally.Needs, tally.Review, tally.Stopped,
+			a.runningOn(platform), a.liveParallel(),
+		)
+	}
+	singleRowTally := line != "" && (winW >= 1160 || (winW >= 1020 && len(failed) == 0))
 
-	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+			ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
 				if tally.Running > 0 {
 					waitingDot(c)
 				}
 				ui.Text(c, "出图进度").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
 				platformIcon(c, platform, 12, tok)
-				ui.Text(c, "当前服务商："+platform).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine()
+				ui.Text(c, "当前服务商："+platform).FontSize(tok.caption).TextColor(tok.muted).Shrink(0).SingleLine()
+				if singleRowTally {
+					ui.Text(c, "·").FontSize(tok.caption).TextColor(tok.subtle).Shrink(0)
+					ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").
+						Grow(1).MinWidth(0).SingleLine().Tooltip(line)
+				}
 			})
-			if len(items) > 0 {
-				line := FormatProgressTally(
-					tally.Done, tally.Running, tally.Queued,
-					tally.Failed, tally.Needs, tally.Review, tally.Stopped,
-					a.runningOn(platform), a.liveParallel(),
-				)
+			if line != "" && !singleRowTally {
 				ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").SingleLine()
 			}
 		})
 
-		ui.Row(c.Key("head-actions")).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
+		ui.Row(c.Key("head-actions")).Gap(4).AlignItems(ui.Center).Shrink(0).Children(func() {
 			if len(failed) > 0 {
-				uiIconTextBtn(c, "retry-failed", "全部重试失败项", "全部重试失败项", iconRotate, 24, false, tok).
+				uiIconTextBtn(c, "retry-failed", "全部重试失败项", "全部重试失败项", iconRotate, 22, false, tok).
 					Disabled(a.running).OnClick(func() { a.retryTasks(failed) })
 			}
 			if split.doneTasks > 0 || len(split.doneTiles) > 0 {
@@ -218,7 +232,7 @@ func (a *App) resultsHead(c *ui.Context, items []tasks.Task, tally TaskTally, sp
 					count = len(split.doneTiles)
 				}
 				label := fmt.Sprintf("已完成 %d", count)
-				btn := uiIconTextBtn(c, "done-toggle", label, "查看已完成结果", iconCheck, 24, a.resultsDoneOpen, tok).
+				btn := uiIconTextBtn(c, "done-toggle", label, "查看已完成结果", iconCheck, 22, a.resultsDoneOpen, tok).
 					OnClick(func() {
 						a.resultsDoneOpen = !a.resultsDoneOpen
 					})
@@ -226,7 +240,7 @@ func (a *App) resultsHead(c *ui.Context, items []tasks.Task, tally TaskTally, sp
 				*hasDoneAnchor = true
 			}
 			if len(items) > 0 || split.doneTasks > 0 || len(split.doneTiles) > 0 {
-				uiIconTextBtn(c, "open-out", "打开输出目录", "打开输出目录", iconFolderOpen, 24, false, tok).
+				uiIconTextBtn(c, "open-out", "打开输出目录", "打开输出目录", iconFolderOpen, 22, false, tok).
 					OnClick(func() { a.openOutputFolder() })
 			}
 		})
@@ -259,8 +273,8 @@ func (a *App) resultsEmpty(c *ui.Context) {
 	} else if a.fissioning() {
 		text = "4 张裂变结果会出现在这里"
 	}
-	ui.Row(c.Key("stage-empty")).Padding(8, 10).Radius(tok.radiusS).Background(tok.sunken).
-		Border(1, tok.border).Gap(8).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key("stage-empty")).Padding(10, 12).Radius(tok.radiusM).Background(tok.paper).
+		Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, iconImages).FontSize(15).TextColor(tok.muted)
 		ui.Text(c, text).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 	})
@@ -276,10 +290,10 @@ func (a *App) resultsDoneSummary(c *ui.Context, split resultSplit) {
 	if len(split.doneTiles) > count {
 		sub = fmt.Sprintf("共输出 %d 张结果图，已收纳到右上角「已完成」", len(split.doneTiles))
 	}
-	badgeFg, badgeBg, badgeBorder := semanticToneColors(tok.dark, tok.text, tok.success, 0.14)
+	badgeFg, badgeBg, _ := semanticToneColors(tok.dark, tok.text, tok.success, 0.14)
 	ui.Column(c.Key("done-summary")).Grow(1).FillWidth().Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 		ui.Column(c.Key("done-card")).
-			Background(tok.sunken).
+			Background(tok.paper).
 			Border(1, tok.border).
 			Radius(tok.radiusL).
 			Padding(16, 20).
@@ -289,7 +303,6 @@ func (a *App) resultsDoneSummary(c *ui.Context, split resultSplit) {
 				ui.Box(c.Key("badge")).
 					Size(32, 32).Radius(16).
 					Background(badgeBg).
-					Border(1, badgeBorder).
 					Justify(ui.Center).AlignItems(ui.Center).
 					Children(func() {
 						ui.Icon(c, iconCheck).FontSize(15).TextColor(badgeFg)
@@ -532,7 +545,7 @@ func resultLayout(windowW float32) (cols int, tile float32) {
 }
 
 func resultLayoutForStage(stageW float32) (cols int, tile float32) {
-	inner := max(resultTileMin, stageW-24)
+	inner := max(resultTileMin, stageW-16)
 	return resultGridLayout(inner, resultMaxCols)
 }
 
@@ -546,17 +559,17 @@ func (a *App) resultHeader(c *ui.Context, row resultRow) {
 	if row.key == "h:issues" {
 		accLabel = "分组待处理"
 	}
-	ui.Row(c.Key(row.key)).Label(accLabel).FillWidth().Padding(4, 8).Gap(8).
-		Radius(tok.radiusS).Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key(row.key)).Label(accLabel).FillWidth().Padding(6, 0, 3, 0).Gap(8).
+		BorderWidth(0, 0, 1, 0).BorderColor(tok.border.Alpha(0.6)).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, title).FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine().MinWidth(0).Grow(1)
 		if row.summary != "" {
-			uiBadge(c, "hdr-sum", row.summary, "neutral", tok)
+			ui.Text(c.Key("hdr-sum"), row.summary).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
 		}
 	})
 }
 
 func (a *App) resultStrip(c *ui.Context, row resultRow, tileW float32) {
-	ui.Row(c.Key(row.key)).Padding(0, 0, 8, 0).Gap(resultTileGap).AlignItems(ui.Start).Children(func() {
+	ui.Row(c.Key(row.key)).Padding(0, 0, 6, 0).Gap(resultTileGap).AlignItems(ui.Start).Children(func() {
 		for _, tile := range row.tiles {
 			a.resultRunningTile(c, tile, tileW)
 		}
@@ -657,7 +670,7 @@ func (a *App) resultIssueRow(c *ui.Context, row resultRow) {
 	ui.Row(c.Key(row.key)).FillWidth().Padding(0, 0, 6, 0).Children(func() {
 		ui.Row(c.Key("issue-box")).
 			FillWidth().
-			Background(tok.sunken).
+			Background(tok.paper).
 			Border(1, tok.border).
 			Radius(tok.radiusM).
 			Padding(8, 10).

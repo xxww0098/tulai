@@ -127,26 +127,19 @@ func (a *App) imageEditPage(c *ui.Context) {
 
 func (a *App) editHeader(c *ui.Context, be editPalette) {
 	st := &a.edit
-	row := ui.Row(c.Key("edit-header")).FillWidth().Padding(8, 12).Gap(10).
+	row := ui.Row(c.Key("edit-header")).FillWidth().Padding(7, 14).Gap(10).
 		AlignItems(ui.Center).Background(be.sheet)
 	row.Children(func() {
-		left := ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center)
+		left := ui.Row(c).Grow(1).MinWidth(0).Gap(6).Wrap().AlignItems(ui.Center)
 		left.Children(func() {
-			badge := ui.Box(c).Size(24, 24).Center().Radius(be.tok.radiusS).Background(be.transferSoft).Shrink(0)
-			badge.Children(func() { ui.Icon(c, iconCrop).FontSize(13).TextColor(be.transfer) })
-			ui.Text(c, "批处理").FontSize(be.tok.display).FontWeight(600).TextColor(be.ink).Shrink(0)
-			ui.Box(c).Size(1, 14).Background(be.rule).Shrink(0)
-			chips := ui.Row(c).Gap(5).Wrap().AlignItems(ui.Center).MinWidth(0)
-			chips.Children(func() {
-				list := a.editChips()
-				if len(list) == 0 {
-					uiBadge(c, "edit-no-ops", "未选功能", "neutral", be.tok)
-					return
-				}
-				for _, chip := range list {
-					a.editChip(c, be, chip)
-				}
-			})
+			list := a.editChips()
+			if len(list) == 0 {
+				ui.Text(c, "在左侧启用处理步骤后实时预览").FontSize(be.tok.caption).TextColor(be.muted).SingleLine()
+				return
+			}
+			for _, chip := range list {
+				a.editChip(c, be, chip)
+			}
 		})
 		actions := ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center)
 		actions.Children(func() {
@@ -177,7 +170,7 @@ func (a *App) editHeader(c *ui.Context, be editPalette) {
 
 func (a *App) editChip(c *ui.Context, be editPalette, chip editChip) {
 	row := ui.Row(c.Key("chip-"+chip.ID+chip.Label)).Height(22).Padding(0, 4, 0, 8).Gap(4).
-		Radius(be.tok.radiusS).Background(be.transferSoft).Border(1, be.transferBorder).
+		Radius(be.tok.radiusS).Background(be.transferSoft).
 		AlignItems(ui.Center).Shrink(0)
 	row.Children(func() {
 		ui.Text(c, chip.Label).FontSize(11).FontWeight(500).TextColor(be.transferStrong).SingleLine()
@@ -207,10 +200,11 @@ func (a *App) editDisableChip(id string) {
 
 func (a *App) editAside(c *ui.Context, be editPalette) {
 	st := &a.edit
-	aside := ui.Column(c.Key("edit-ops")).Width(256).FillHeight().MinHeight(0).
-		Padding(8).Gap(6).Background(be.subtle).BorderWidth(0, 1, 0, 0).BorderColor(be.rule)
+	aside := ui.Column(c.Key("edit-ops")).Width(260).FillHeight().MinHeight(0).
+		Padding(0).Gap(0).Background(be.sheet).BorderWidth(0, 1, 0, 0).BorderColor(be.rule)
 	aside.Children(func() {
-		head := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Padding(2, 4, 2, 4)
+		head := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Padding(8, 12).
+			BorderWidth(0, 0, 1, 0).BorderColor(be.rule)
 		head.Children(func() {
 			ui.Text(c, "处理流程").FontSize(be.tok.title).FontWeight(600).TextColor(be.ink).Grow(1)
 			onCount := 0
@@ -248,7 +242,7 @@ func (a *App) editAside(c *ui.Context, be editPalette) {
 
 		flow := ui.Scroll(c.Key("edit-flow")).Grow(1).MinHeight(0).TrackScroll(&st.flowScroll)
 		flow.Children(func() {
-			ui.Column(c).FillWidth().Gap(6).Children(func() {
+			ui.Column(c).FillWidth().Gap(0).Children(func() {
 				a.editRecipeCard(c, be)
 				a.editFeatureCard(c, be, "format", "格式转换", "JPEG / PNG / WebP / AVIF",
 					iconFileOutput, be.blue, be.blueSoft)
@@ -263,7 +257,7 @@ func (a *App) editAside(c *ui.Context, be editPalette) {
 	})
 }
 
-// editFeatureCard 是一张带开关的功能卡。统一 1px 描边与圆角，启用时强化边框与状态点。
+// editFeatureCard 是一段可折叠的功能区块，采用通栏 1px 底部分隔线，避免窄栏内卡片套卡片。
 func (a *App) editFeatureCard(c *ui.Context, be editPalette, id, title, hint string, icon *ui.SVG, tint, tintSoft ui.Color) {
 	st := &a.edit
 	on, open := false, st.expanded[id]
@@ -275,18 +269,13 @@ func (a *App) editFeatureCard(c *ui.Context, be editPalette, id, title, hint str
 	case "adjust":
 		on = st.enabled.Adjust
 	}
-	card := ui.Column(c.Key("edit-op-" + id)).FillWidth().Radius(be.tok.radiusM).
-		BorderWidth(1).BorderColor(be.rule).Background(be.sheet)
-	if on {
-		card.BorderColor(be.tok.borderStrong).Shadow(0, 1, 2, 0, be.shadow)
-	} else if open {
-		card.Shadow(0, 1, 2, 0, be.shadow)
-	}
+	card := ui.Column(c.Key("edit-op-"+id)).FillWidth().Radius(0).
+		BorderWidth(0, 0, 1, 0).BorderColor(be.rule).Background(be.sheet)
 	card.Children(func() {
 		a.editCardHead(c, be, id, title, editSummary(id, st.opts, hint), icon, tint, tintSoft, on, open)
 		if open {
-			body := ui.Column(c.Key("edit-body-"+id)).FillWidth().Padding(8, 10, 10, 10).Gap(6).
-				BorderWidth(1, 0, 0, 0).BorderColor(be.rule)
+			body := ui.Column(c.Key("edit-body-"+id)).FillWidth().Padding(8, 12, 10, 12).Gap(6).
+				Background(be.paper).BorderWidth(1, 0, 0, 0).BorderColor(be.rule)
 			body.Children(func() {
 				switch id {
 				case "format":
@@ -303,7 +292,7 @@ func (a *App) editFeatureCard(c *ui.Context, be editPalette, id, title, hint str
 
 // editCardHead 画卡头：展开按钮 + 开关。配方卡单独画。
 func (a *App) editCardHead(c *ui.Context, be editPalette, id, title, summary string, icon *ui.SVG, tint, tintSoft ui.Color, on, open bool) {
-	head := ui.Row(c).FillWidth().Gap(5).Padding(4, 8, 4, 4).AlignItems(ui.Center)
+	head := ui.Row(c).FillWidth().Gap(5).Padding(6, 12, 6, 8).AlignItems(ui.Center)
 	head.Children(func() {
 		toggle := ui.Row(c).Grow(1).MinWidth(0).Gap(7).Padding(3, 5).Radius(be.tok.radiusS).
 			AlignItems(ui.Center).Cursor(ui.CursorPointer)
@@ -349,17 +338,14 @@ func (a *App) editCardHead(c *ui.Context, be editPalette, id, title, summary str
 func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 	st := &a.edit
 	open := st.expanded["recipe"]
-	card := ui.Column(c.Key("edit-op-recipe")).FillWidth().Radius(be.tok.radiusM).
-		BorderWidth(1).BorderColor(be.rule).Background(be.sheet)
-	if open {
-		card.BorderColor(be.tok.borderStrong).Shadow(0, 1, 2, 0, be.shadow)
-	}
+	card := ui.Column(c.Key("edit-op-recipe")).FillWidth().Radius(0).
+		BorderWidth(0, 0, 1, 0).BorderColor(be.rule).Background(be.sheet)
 	card.Children(func() {
-		toggle := ui.Row(c).FillWidth().Gap(7).Padding(7, 8, 7, 9).Radius(be.tok.radiusM).AlignItems(ui.Center).
+		toggle := ui.Row(c).FillWidth().Gap(7).Padding(8, 12).Radius(0).AlignItems(ui.Center).
 			Cursor(ui.CursorPointer)
 		toggle.Draw(func(p *ui.Painter, r ui.Rect) {
 			if toggle.Hovered() {
-				p.Fill(r, be.quiet, be.tok.radiusM)
+				p.Fill(r, be.quiet, 0)
 			}
 		})
 		toggle.OnClick(func() { a.editToggleExpanded("recipe") })
@@ -381,8 +367,8 @@ func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 			}
 		})
 		if open {
-			body := ui.Column(c).FillWidth().Padding(6, 8, 8, 8).Gap(2).
-				BorderWidth(1, 0, 0, 0).BorderColor(be.rule)
+			body := ui.Column(c).FillWidth().Padding(6, 12, 8, 12).Gap(2).
+				Background(be.paper).BorderWidth(1, 0, 0, 0).BorderColor(be.rule)
 			body.Children(func() {
 				if len(st.recipes) == 0 {
 					ui.Text(c, "暂无配方——调好功能后点顶部「存为配方」").FontSize(10.5).
@@ -421,13 +407,10 @@ func (a *App) editRecipeCard(c *ui.Context, be editPalette) {
 func (a *App) editGrayCard(c *ui.Context, be editPalette) {
 	st := &a.edit
 	on := st.opts.Grayscale
-	card := ui.Column(c.Key("edit-op-gray")).FillWidth().Radius(be.tok.radiusM).
-		BorderWidth(1).BorderColor(be.rule).Background(be.sheet)
-	if on {
-		card.BorderColor(be.tok.borderStrong).Shadow(0, 1, 2, 0, be.shadow)
-	}
+	card := ui.Column(c.Key("edit-op-gray")).FillWidth().Radius(0).
+		BorderWidth(0, 0, 1, 0).BorderColor(be.rule).Background(be.sheet)
 	card.Children(func() {
-		head := ui.Row(c).FillWidth().Gap(5).Padding(4, 8, 4, 4).AlignItems(ui.Center)
+		head := ui.Row(c).FillWidth().Gap(5).Padding(6, 12, 6, 8).AlignItems(ui.Center)
 		head.Children(func() {
 			toggle := ui.Row(c).Grow(1).MinWidth(0).Gap(7).Padding(3, 5).Radius(be.tok.radiusS).
 				AlignItems(ui.Center).Cursor(ui.CursorPointer)
@@ -466,11 +449,10 @@ func (a *App) editGrayCard(c *ui.Context, be editPalette) {
 
 func (a *App) editOutputCard(c *ui.Context, be editPalette) {
 	st := &a.edit
-	card := ui.Column(c.Key("edit-op-output")).FillWidth().Radius(be.tok.radiusM).
-		BorderWidth(1).BorderColor(be.rule).Background(be.sheet).Shadow(0, 1, 2, 0, be.shadow)
+	card := ui.Column(c.Key("edit-op-output")).FillWidth().Radius(0).
+		BorderWidth(1, 0, 0, 0).BorderColor(be.rule).Background(be.paper)
 	card.Children(func() {
-		head := ui.Row(c).FillWidth().Gap(7).Padding(8, 10, 6, 9).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(be.rule)
+		head := ui.Row(c).FillWidth().Gap(7).Padding(8, 12, 6, 12).AlignItems(ui.Center)
 		head.Children(func() {
 			box := ui.Box(c).Size(22, 22).Center().Radius(be.tok.radiusS).Background(be.quiet).Shrink(0)
 			box.Children(func() { ui.Icon(c, iconFolderOutput).FontSize(12).TextColor(be.muted) })
@@ -484,7 +466,7 @@ func (a *App) editOutputCard(c *ui.Context, be editPalette) {
 				ui.Text(c, sub).FontSize(10.5).TextColor(be.muted).SingleLine()
 			})
 		})
-		body := ui.Column(c).FillWidth().Padding(8, 10, 10, 10).Gap(6)
+		body := ui.Column(c).FillWidth().Padding(0, 12, 10, 12).Gap(6)
 		body.Children(func() {
 			dir := ui.Row(c).FillWidth().Height(28).Padding(0, 8).Gap(7).Radius(be.tok.radiusS).
 				Border(1, be.rule).Background(be.quiet).AlignItems(ui.Center).Cursor(ui.CursorPointer)

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {execFile} from 'node:child_process';
+import {execFile, spawn} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -299,5 +299,279 @@ test('GPU probe never opens a visible window before the account browser', async 
       {env:{...process.env, TEST_PLATFORM:platform}});
     // darwin and windows force the probe headless; linux passes it through as-is.
     assert.deepEqual(JSON.parse(stdout), {executable:'probe-exe', headless});
+  }
+});
+
+function setupBridgeSandbox(t, {gpuResult = ['Apple', 'Apple M1'], gpuError = '', candidates = []}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-bridge-rpc-'));
+  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+  for (const file of ['bridge.mjs', 'identity.mjs', 'download-watch.mjs', 'windows-compat.mjs']) {
+    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
+  }
+  const traceFile = path.join(root, 'trace.json');
+  const pkg = path.join(root, 'node_modules', 'camoufox');
+  fs.mkdirSync(path.join(pkg, 'dist'), {recursive:true});
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({
+    type:'module',
+    exports:{'.':'./index.js', './dist/utils.js':'./dist/utils.js'},
+  }));
+  fs.writeFileSync(path.join(pkg, 'dist', 'utils.js'), `
+    export const STOCK_MEDIA_DEFAULTS = {colorScheme:null, reducedMotion:null, forcedColors:null, contrast:null};
+    export const utilsDeps = {
+      hostGpu: async () => {
+        if (process.env.TEST_GPU_ERROR) throw new Error(process.env.TEST_GPU_ERROR);
+        return JSON.parse(process.env.TEST_GPU_RESULT);
+      },
+    };
+  `);
+  fs.writeFileSync(path.join(pkg, 'index.js'), `
+    import {EventEmitter} from 'node:events';
+    import fs from 'node:fs';
+    const traceFile = process.env.TEST_TRACE_FILE;
+    const candidates = JSON.parse(process.env.TEST_CANDIDATES || '[]');
+    const trace = fs.existsSync(traceFile) ? JSON.parse(fs.readFileSync(traceFile, 'utf8')) : {launchCalls:[], newContextCalls:[], contexts:[], closedContexts:0};
+    const save = () => fs.writeFileSync(traceFile, JSON.stringify(trace));
+    let nextLaunch = 0;
+
+    function makePage(owner) {
+      const page = new EventEmitter();
+      page.closed = false;
+      page.url = () => 'about:blank';
+      page.isClosed = () => page.closed;
+      page.evaluate = async fn => {
+        owner.evaluated.push(String(fn));
+      };
+      page.goto = async url => { owner.visited.push(url); };
+      page.close = async () => {
+        if (page.closed) return;
+        page.closed = true;
+        const idx = owner.pagesList.indexOf(page);
+        if (idx >= 0) owner.pagesList.splice(idx, 1);
+        page.emit('close');
+      };
+      return page;
+    }
+
+    function makeContext(kind, options = {}) {
+      const ctx = new EventEmitter();
+      const record = {kind, options, initScripts:[], bindings:[], evaluated:[], visited:[], closed:false, defaultTimeout:null};
+      trace.contexts.push(record);
+      ctx.pagesList = [];
+      ctx.pages = () => ctx.pagesList;
+      ctx.setDefaultTimeout = ms => { record.defaultTimeout = ms; save(); };
+      ctx.addInitScript = async ({content}) => { record.initScripts.push(content); save(); };
+      ctx.exposeBinding = async name => { record.bindings.push(name); save(); };
+      ctx.newPage = async () => {
+        const page = makePage(record);
+        record.pagesList = ctx.pagesList;
+        ctx.pagesList.push(page);
+        save();
+        return page;
+      };
+      ctx.close = async () => {
+        if (record.closed) return;
+        record.closed = true;
+        trace.closedContexts++;
+        save();
+      };
+      return ctx;
+    }
+
+    export class CamoufoxFetcher {}
+    export const installedVerStr = () => '158.0.1-beta.41';
+    export const launchOptions = async opts => {
+      trace.launchCalls.push({
+        os:opts.os, headless:opts.headless, canvas_noise:opts.canvas_noise,
+        pin_cpu_cores:opts.pin_cpu_cores, i_know_what_im_doing:opts.i_know_what_im_doing,
+        config:opts.config ?? null,
+      });
+      const generated = candidates[Math.min(nextLaunch++, Math.max(0, candidates.length - 1))] || opts.config || {};
+      const merged = opts.config ? {...generated, ...opts.config} : generated;
+      save();
+      return {executablePath:'fake-exe', env:{CAMOU_CONFIG_1:JSON.stringify(merged)}};
+    };
+    export const Camoufox = async () => {
+      const rootCtx = makeContext('persistent');
+      const initial = await rootCtx.newPage();
+      rootCtx.browser = () => ({
+        newContext: async opts => {
+          trace.newContextCalls.push(opts);
+          save();
+          return makeContext('isolated', opts);
+        },
+      });
+      save();
+      void initial;
+      return rootCtx;
+    };
+  `);
+  const playwright = path.join(root, 'node_modules', 'playwright-core');
+  fs.mkdirSync(playwright, {recursive:true});
+  fs.writeFileSync(path.join(playwright, 'package.json'), JSON.stringify({type:'module', exports:'./index.js'}));
+  fs.writeFileSync(path.join(playwright, 'index.js'), 'export const request = {};');
+
+  const runRpc = requests => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(root, 'bridge.mjs')], {
+      env:{
+        ...process.env,
+        TEST_TRACE_FILE:traceFile,
+        TEST_GPU_RESULT:JSON.stringify(gpuResult),
+        TEST_GPU_ERROR:gpuError,
+        TEST_CANDIDATES:JSON.stringify(candidates),
+      },
+      stdio:['pipe', 'pipe', 'pipe'],
+    });
+    const responses = [];
+    let stdoutBuf = '';
+    let stderrBuf = '';
+    let index = 0;
+    const sendNext = () => {
+      if (index < requests.length) child.stdin.write(JSON.stringify(requests[index++]) + '\n');
+    };
+    child.stdout.on('data', chunk => {
+      stdoutBuf += chunk.toString();
+      const lines = stdoutBuf.split('\n');
+      stdoutBuf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const msg = JSON.parse(line);
+        responses.push(msg);
+        if (msg.id !== undefined) sendNext();
+      }
+    });
+    child.stderr.on('data', chunk => { stderrBuf += chunk.toString(); });
+    child.on('error', reject);
+    child.on('exit', code => {
+      if (code !== 0) return reject(new Error(`bridge exited ${code}: ${stderrBuf}`));
+      resolve({responses, stderr:stderrBuf, trace:JSON.parse(fs.readFileSync(traceFile, 'utf8'))});
+    });
+    sendNext();
+  });
+
+  return {root, runRpc};
+}
+
+const sampleDevice = {
+  'navigator.userAgent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Firefox/158.0',
+  'navigator.platform':'MacIntel',
+  'navigator.oscpu':'Intel Mac OS X 10.15',
+  'navigator.hardwareConcurrency':10,
+  'screen.width':1920,
+  'screen.height':1080,
+  'screen.availWidth':1920,
+  'screen.availHeight':1050,
+  'screen.colorDepth':24,
+  'window.innerWidth':1440,
+  'window.innerHeight':900,
+  'window.devicePixelRatio':2,
+  'webGl:vendor':'Apple',
+  'webGl:renderer':'Apple M1',
+  'webGl:parameters':{7937:'Apple M1'},
+};
+
+test('start activates canvas_noise, pin_cpu_cores, collisionRoots, and preserves WebGL while stripping legacy keys', async t => {
+  const firstCandidate = {...sampleDevice};
+  const uniqueCandidate = {...sampleDevice, 'navigator.hardwareConcurrency':12, 'window.innerWidth':1280};
+  const {root, runRpc} = setupBridgeSandbox(t, {
+    gpuResult:['Apple', 'Apple M1'],
+    candidates:[firstCandidate, uniqueCandidate],
+  });
+  const downloadBrowser = path.join(root, 'DownloadBrowser');
+  fs.mkdirSync(downloadBrowser, {recursive:true});
+  fs.writeFileSync(path.join(downloadBrowser, '.tulai-identity.json'), JSON.stringify(firstCandidate));
+  const profile = path.join(root, 'accounts', 'acc-1');
+
+  const firstRun = await runRpc([
+    {id:1, method:'start', params:{profile, executable:'fake-exe', headless:true, collisionRoots:[downloadBrowser]}},
+    {id:2, method:'Browser.close', params:{}},
+  ]);
+  assert.equal(firstRun.responses.find(r => r.id === 1)?.result?.targetId, '1');
+  assert.equal(firstRun.trace.launchCalls.length, 2);
+  for (const call of firstRun.trace.launchCalls) {
+    assert.equal(call.canvas_noise, true);
+    assert.equal(call.pin_cpu_cores, true);
+  }
+  const identityPath = path.join(profile, '.tulai-identity.json');
+  const savedAfterCreate = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
+  assert.equal(savedAfterCreate['navigator.hardwareConcurrency'], 12);
+
+  // Inject legacy 156/158 removed keys on disk before restart.
+  fs.writeFileSync(identityPath, JSON.stringify({
+    ...savedAfterCreate,
+    'canvas:seed':11, 'canvas:aaOffset':2, 'canvas:aaCapOffset':3, 'fonts:spacing_seed':4, 'audio:seed':5,
+  }));
+
+  const restartRun = await runRpc([
+    {id:1, method:'start', params:{profile, executable:'fake-exe', headless:true}},
+    {id:2, method:'Browser.close', params:{}},
+  ]);
+  assert.equal(restartRun.responses.find(r => r.id === 1)?.result?.targetId, '1');
+  const restartLaunch = restartRun.trace.launchCalls.at(-1);
+  assert.equal(restartLaunch.canvas_noise, true);
+  assert.equal(restartLaunch.pin_cpu_cores, true);
+  assert.equal(restartLaunch.config['webGl:vendor'], 'Apple');
+  assert.equal(restartLaunch.config['webGl:renderer'], 'Apple M1');
+  assert.deepEqual(restartLaunch.config['webGl:parameters'], {7937:'Apple M1'});
+  for (const legacyKey of ['canvas:seed', 'canvas:aaOffset', 'canvas:aaCapOffset', 'fonts:spacing_seed', 'audio:seed']) {
+    assert.equal(legacyKey in restartLaunch.config, false);
+  }
+});
+
+test('start disables canvas_noise for software rasterizer or null GPU and falls back when probe fails', async t => {
+  for (const [label, opts, expectedNoise] of [
+    ['null GPU', {gpuResult:null}, false],
+    ['llvmpipe software renderer', {gpuResult:['Mesa', 'llvmpipe (LLVM 15.0, 256 bits)']}, false],
+    ['probe error fallback', {gpuError:'probe failed'}, undefined],
+  ]) {
+    const {root, runRpc} = setupBridgeSandbox(t, {...opts, candidates:[sampleDevice]});
+    const profile = path.join(root, 'profile', label.replace(/\W+/g, '-'));
+    const {trace} = await runRpc([
+      {id:1, method:'start', params:{profile, executable:'fake-exe', headless:true}},
+      {id:2, method:'Browser.close', params:{}},
+    ]);
+    assert.equal(trace.launchCalls.at(-1).canvas_noise, expectedNoise, label);
+    assert.equal(trace.launchCalls.at(-1).pin_cpu_cores, true, label);
+  }
+});
+
+test('isolated contexts inherit media defaults, proxy, scopeBootstrap, bindings, and close cleanly with their page', async t => {
+  const {root, runRpc} = setupBridgeSandbox(t, {gpuResult:['Apple', 'Apple M1'], candidates:[sampleDevice]});
+  const profile = path.join(root, 'accounts', 'acc-isolated');
+  const {responses, trace} = await runRpc([
+    {id:1, method:'start', params:{profile, executable:'fake-exe', headless:true, proxy:'http://user:pass@127.0.0.1:8080'}},
+    {id:2, method:'Runtime.addBinding', target:'1', params:{name:'tulaiPipe'}},
+    {id:3, method:'Target.createTarget', params:{isolated:true, url:'https://example.test/first'}},
+    {id:4, method:'Target.createTarget', params:{isolated:true, proxy:'http://127.0.0.1:9090', url:'https://example.test/second'}},
+    {id:5, method:'Runtime.addBinding', target:'1', params:{name:'latePipe'}},
+    {id:6, method:'Page.close', target:'2', params:{}},
+    {id:7, method:'Target.closeTarget', params:{targetId:'3'}},
+    {id:8, method:'Browser.close', params:{}},
+  ]);
+  for (const reqId of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const res = responses.find(r => r.id === reqId);
+    assert.ok(res && !res.error, `request ${reqId} failed: ${res?.error}`);
+  }
+  assert.equal(trace.newContextCalls.length, 2);
+  assert.deepEqual(trace.newContextCalls[0], {
+    colorScheme:null, reducedMotion:null, forcedColors:null, contrast:null,
+    viewport:null, serviceWorkers:'block', ignoreHTTPSErrors:false,
+    proxy:{server:'http://127.0.0.1:8080', username:'user', password:'pass'},
+  });
+  assert.deepEqual(trace.newContextCalls[1], {
+    colorScheme:null, reducedMotion:null, forcedColors:null, contrast:null,
+    viewport:null, serviceWorkers:'block', ignoreHTTPSErrors:false,
+    proxy:{server:'http://127.0.0.1:9090'},
+  });
+
+  const persistentContext = trace.contexts.find(c => c.kind === 'persistent');
+  const isolatedContexts = trace.contexts.filter(c => c.kind === 'isolated');
+  assert.equal(isolatedContexts.length, 2);
+  for (const ctx of isolatedContexts) {
+    assert.equal(ctx.defaultTimeout, 25000);
+    assert.equal(ctx.closed, true);
+    assert.ok(ctx.initScripts[0]?.includes('__tulai|tulai'), 'missing scopeBootstrap init script');
+    assert.equal(ctx.initScripts[0], persistentContext.initScripts[0]);
+    assert.deepEqual(ctx.bindings, ['tulaiPipe', 'latePipe']);
+    assert.equal(ctx.evaluated.length, 2, 'latePipe must evaluate on active isolated pages');
   }
 });

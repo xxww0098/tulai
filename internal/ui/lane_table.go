@@ -12,25 +12,29 @@ import (
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
-// 账号表每列的宽度。账号和当前任务分剩下的宽度。
+// 账号表每列的宽度。宽屏固定紧凑账号列，把剩余空间留给当前任务。
 const (
-	laneColState = 74
-	laneColQuota = 132
-	laneColOps   = 96
-	laneRowH     = 34
+	laneColAccount     = 136
+	laneColAccountMail = 184
+	laneColState       = 84
+	laneColStateMail   = 68
+	laneColQuota       = 132
+	laneColOps         = 96
+	laneColOpsMail     = 72
+	laneRowH           = 34
 )
 
-func laneColumns(winW float32, mail bool) (state, quota, ops, accountGrow, taskGrow float32) {
+func laneColumns(winW float32, mail bool) (accountW, stateW, quotaW, opsW float32) {
 	if mail {
 		if winW < 1150 {
-			return 0, 126, 72, 1, 0
+			return 0, 0, 126, laneColOpsMail
 		}
-		return 64, laneColQuota, 72, 2, 1
+		return laneColAccountMail, laneColStateMail, laneColQuota, laneColOpsMail
 	}
 	if winW < 1150 {
-		return 0, 128, laneColOps, 1, 0
+		return 0, 0, 128, laneColOps
 	}
-	return laneColState, laneColQuota, laneColOps, 2, 1
+	return laneColAccount, laneColState, laneColQuota, laneColOps
 }
 
 // laneTable 一个账号一行：账号、状态、今日或额度、当前任务、操作。
@@ -39,17 +43,21 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	winW, winH := c.Size()
 	mail := a.stagePlatform() == "Antigravity"
 	compact := winW < 1150
-	stateW, quotaW, opsW, accountGrow, taskGrow := laneColumns(winW, mail)
+	accountW, stateW, quotaW, opsW := laneColumns(winW, mail)
 	reveal := motionReveal()
 	// 展开历史时立即让出位置，避免卡片挡住恢复按钮。
 	reveal.Position = false
 	reveal.Colors = true
-	uiCardSurface(ui.Column(c.Key("lane-table")).Label("账号表格").FillWidth().Gap(4).Padding(6, 9), tok).
-		Shadow(0, 1, 2, 0, tok.shadow).Transition(reveal).Children(func() {
+	ui.Column(c.Key("lane-table")).Label("账号表格").FillWidth().Background(tok.card).
+		BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Gap(4).Padding(8, 14).
+		Transition(reveal).Children(func() {
 		a.laneHeader(c)
 		if mail {
 			a.agyLoginPanel(c)
 			a.agyChooserPanel(c)
+		}
+		if a.laneCollapsed && len(board.Lanes) > 0 && (!mail || (a.agyChooser == nil && a.agyLogin == nil)) {
+			return
 		}
 		if len(board.Lanes) == 0 {
 			if !mail || (a.agyChooser == nil && a.agyLogin == nil) {
@@ -57,20 +65,21 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 				if mail {
 					hint = "添加账号后，在这里查看状态与 Gemini 用量。"
 				}
-				ui.Row(c).FillWidth().Padding(8, 10).Radius(tok.radiusS).Background(tok.sunken).
-					Border(1, tok.border).Children(func() {
+				ui.Row(c).FillWidth().Padding(8, 10).Radius(tok.radiusS).Background(tok.paper).Children(func() {
 					ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted)
 				})
 			}
 			return
 		}
-		ui.Row(c.Key("lane-head")).FillWidth().Gap(6).Padding(4, 6).AlignItems(ui.Center).
-			Background(tok.sunken).Radius(tok.radiusS).BorderWidth(1, 0, 1, 0).BorderColor(tok.border).Children(func() {
+		ui.Row(c.Key("lane-head")).FillWidth().Gap(6).Padding(3, 6).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 			head := func(label string) ui.Element {
 				return ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).SingleLine()
 			}
-			head("账号").Grow(accountGrow).Basis(0).MinWidth(0)
-			if !compact {
+			if compact {
+				head("账号").Grow(1).Basis(0).MinWidth(0)
+			} else {
+				head("账号").Width(accountW).Shrink(0)
 				head("状态").Width(stateW).Shrink(0)
 			}
 			quotaLabel := "今日"
@@ -79,7 +88,7 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 			}
 			head(quotaLabel).Width(quotaW).Shrink(0)
 			if !compact {
-				head("当前任务").Grow(taskGrow).Basis(0).MinWidth(0)
+				head("当前任务").Grow(1).Basis(0).MinWidth(0)
 			}
 			ui.Row(c).Width(opsW).Shrink(0).Justify(ui.End).Children(func() { head("操作") })
 		})
@@ -110,20 +119,24 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 	isAgy := ln.Platform == agy.Platform
 	compact := winW < 1150
 	row := ui.Row(c.Key(ln.ID)).FillWidth().Height(laneRowH).Gap(6).Padding(3, 6).AlignItems(ui.Center).
-		Radius(tok.radiusS).Label("车道"+ln.Name).Transition(laneEnter(i)).BorderWidth(0, 0, 1, 0).BorderColor(tok.border.Alpha(0.6))
+		Label("车道"+ln.Name).Transition(laneEnter(i)).BorderWidth(0, 0, 1, 0).BorderColor(tok.border.Alpha(0.55))
 	switch {
 	case row.Hovered():
-		row.Background(tok.sunken)
+		row.Background(tok.paper)
 	case ln.State == tasks.LaneRunning:
 		row.Background(tok.accent.Alpha(0.05))
-	case i%2 == 1:
-		row.Background(tok.rail)
 	}
-	stateW, quotaW, opsW, accountGrow, taskGrow := laneColumns(winW, isAgy)
+	accountW, stateW, quotaW, opsW := laneColumns(winW, isAgy)
 	row.Children(func() {
-		ui.Row(c).Grow(accountGrow).Basis(0).MinWidth(0).Gap(5).AlignItems(ui.Center).Children(func() {
+		acct := ui.Row(c).MinWidth(0).Gap(5).AlignItems(ui.Center)
+		if compact {
+			acct.Grow(1).Basis(0)
+		} else {
+			acct.Width(accountW).Shrink(0)
+		}
+		acct.Children(func() {
 			on := !ln.Disabled
-			if ui.Switch(c.Key("enabled"), &on).Size(26, 15).Radius(7.5).Label("启用账号 " + ln.Name).Tooltip("禁用后不再接新任务，当前任务会完成").Changed() {
+			if ui.Switch(c.Key("enabled"), &on).Size(26, 15).Radius(7.5).Shrink(0).Label("启用账号 " + ln.Name).Tooltip("禁用后不再接新任务，当前任务会完成").Changed() {
 				var err error
 				switch {
 				case a.engine != nil && a.store != nil:
@@ -203,7 +216,7 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 			})
 		}
 		if !compact {
-			ui.Row(c).Grow(taskGrow).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() { a.laneTask(c, ln, true) })
+			ui.Row(c).Grow(1).Basis(0).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() { a.laneTask(c, ln, true) })
 		}
 		ui.Row(c).Width(opsW).Shrink(0).Gap(6).Justify(ui.End).AlignItems(ui.Center).Children(func() {
 			a.laneBrowserButton(c, ln)
@@ -234,7 +247,10 @@ func (a *App) laneTask(c *ui.Context, ln tasks.AccountLane, showElapsed bool) {
 		switch {
 		case ln.Job != nil:
 			line := laneCaption(ln.Job.Prompt, ln.Job.Image)
-			tip := line
+			tip := oneLine(ln.Job.Prompt)
+			if tip == "" {
+				tip = line
+			}
 			if !showElapsed {
 				tip += " · " + elapsedLabel(c.Now().Sub(ln.Job.Started))
 			}
@@ -255,7 +271,7 @@ func (a *App) laneTask(c *ui.Context, ln tasks.AccountLane, showElapsed bool) {
 }
 
 func (a *App) laneRenameButton(c *ui.Context, ln tasks.AccountLane) {
-	uiIconBtn(c, "pen", "改名 "+ln.Name, "改名", iconPen, 22, false, false, a.look).
+	uiIconBtn(c, "pen", "改名 "+ln.Name, "改名", iconPen, 22, false, true, a.look).
 		Disabled(a.running).OnClick(func() {
 		a.renameID, a.renameDraft, a.renameFocus = ln.ID, ln.Name, true
 	})

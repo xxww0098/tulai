@@ -1,9 +1,9 @@
 {
   "manifest_version": 2,
-  "name": "tulai 下载助手",
+  "name": "Media Helper",
   "version": "0.1.0",
-  "description": "在专用浏览器中把当前图片页面交给 tulai 下载。",
-  "browser_specific_settings": { "gecko": { "id": "download@tulai.local" } },
+  "description": "Collect and save page media items.",
+  "browser_specific_settings": { "gecko": { "id": "{00000000-0000-4000-8000-000000000002}" } },
   "permissions": ["tabs", "http://127.0.0.1/*"],
   "background": { "scripts": ["settings.js", "background.js"] },
   "content_scripts": [{

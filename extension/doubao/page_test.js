@@ -187,10 +187,13 @@ function makeDoc(hostname) {
 }
 
 
-let rawMessage
-globalThis.addEventListener = (type, fn) => { if (type === 'message') rawMessage = fn }
+let rawEventListener
+globalThis.document = {
+  addEventListener(type, fn) { if (type === '__pb_raw_images__') rawEventListener = fn },
+}
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'protocol.js'), 'utf8'))
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'page.js'), 'utf8'))
+delete globalThis.document
 const Page = globalThis.TULAIPage
 const EMPTY_SVG = "<svg xmlns='http://www.w3.org/2000/svg' version='1.1' width='1536' height='1536'/>"
 const EMPTY_SVG_URL = 'data:image/svg+xml,' + EMPTY_SVG
@@ -535,17 +538,37 @@ function generatedCard(prompt) {
   const display = tag.match(/\bsrc="([^"]+)"/)[1].replace(/&amp;/g, '&')
   const { doc, marked, card } = generatedCard('原图')
   rasterImg(card, display, 1024)
-  const main = vm.createContext({ URL, location: { href: 'https://www.doubao.com/chat/', hostname: 'www.doubao.com', origin: 'https://www.doubao.com' } })
+  const main = vm.createContext({ URL, CustomEvent, location: { href: 'https://www.doubao.com/chat/', hostname: 'www.doubao.com', origin: 'https://www.doubao.com' } })
   main.window = main
-  main.postMessage = (data) => rawMessage({ source: globalThis, data })
+  main.document = {
+    dispatchEvent(ev) {
+      if (ev && ev.type === '__pb_raw_images__' && rawEventListener) rawEventListener(ev)
+      return true
+    },
+  }
+  const origInfo = vm.runInContext('({ name: JSON.parse.name, len: JSON.parse.length, str: JSON.parse.toString(), callStr: Function.prototype.toString.call(JSON.parse), toStrSelf: Function.prototype.toString.toString() })', main)
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'raw.js'), 'utf8'), main)
+  assert.strictEqual(main.__tulaiDoubaoRaw, undefined, '非作用域环境不得向页面 window 挂载 __tulaiDoubaoRaw')
+  const patchedInfo = vm.runInContext('({ name: JSON.parse.name, len: JSON.parse.length, str: JSON.parse.toString(), callStr: Function.prototype.toString.call(JSON.parse), toStrSelf: Function.prototype.toString.toString() })', main)
+  assert.deepStrictEqual(patchedInfo, origInfo, '包装后的 JSON.parse 与 Function.prototype.toString 必须保持原生特征')
   main.payload = JSON.stringify({ creations: [{ image: { image_preview: { url: display }, image_ori_raw: { url: raw } } }] })
   vm.runInContext('JSON.parse(payload)', main)
   assert.strictEqual(Page.resultImages(doc, marked)[0].rawUrl, raw, '扩展应按真实页面图片路径匹配响应原图')
-  rawMessage({ source: {}, data: { type: 'TULAI_DOUBAO_RAW_IMAGES', pairs: [{ source: display, raw: 'https://evil.example/wrong.png' }] } })
-  assert.strictEqual(Page.resultImages(doc, marked)[0].rawUrl, raw, '不得接受其他窗口消息')
+  rawEventListener({ detail: JSON.stringify([{ source: display, raw: 'https://evil.example/wrong.png' }]) })
+  assert.strictEqual(Page.resultImages(doc, marked)[0].rawUrl, raw, '不得接受非 byteimg 原图事件')
   Page.mark(doc, '下一轮')
   assert.strictEqual(Page.resultImages(doc, marked)[0].rawUrl, '', '新任务应清除旧原图')
+
+  const scoped = vm.createContext({ URL, CustomEvent, location: { href: 'https://127.0.0.1/', hostname: '127.0.0.1' } })
+  scoped.window = scoped
+  scoped.__tulaiAddResult = () => {}
+  scoped.__tulaiPageHost = 'www.doubao.com'
+  scoped.document = { dispatchEvent() { return true } }
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'raw.js'), 'utf8'), scoped)
+  assert.ok(scoped.__tulaiDoubaoRaw && typeof scoped.__tulaiDoubaoRaw.get === 'function', '作用域回调存在时应挂载 __tulaiDoubaoRaw')
+  scoped.payload = main.payload
+  vm.runInContext('JSON.parse(payload)', scoped)
+  assert.strictEqual(scoped.__tulaiDoubaoRaw.get(display), raw)
 }
 
 {

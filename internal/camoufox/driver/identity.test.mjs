@@ -5,16 +5,17 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {promisify} from 'node:util';
-import {createIdentity, prepareIdentity, prepareRendering, preserveVoices} from './identity.mjs';
+import {claimFingerprint, createIdentity, prepareIdentity, prepareRendering, preserveVoices} from './identity.mjs';
 
 const device={'navigator.userAgent':'Mozilla/5.0 (Macintosh; rv:150.0) Gecko/20100101 Firefox/150.0','navigator.platform':'MacIntel','navigator.oscpu':'Intel Mac OS X 10.15','navigator.hardwareConcurrency':8,'canvas:seed':42,'screen.width':1920,'screen.height':1080,'screen.availWidth':1920,'screen.availHeight':1004,'screen.colorDepth':24};
 
-test('reuse host rendering only when it is compatible with the saved GPU',()=>{
- const saved={...device,'webGl:vendor':'Apple','webGl:renderer':'Apple M1'};
- assert.deepEqual(prepareRendering(saved,true,['Apple','Apple M1']),{config:saved});
- assert.deepEqual(prepareRendering(saved,false,['Other','GPU']),{config:saved});
- assert.deepEqual(prepareRendering(saved,false,null),{config:saved,canvasNoise:false});
- assert.deepEqual(prepareRendering(saved,false,['Apple','Apple M1']),{config:device});
+test('enable canvas noise with host GPU while preserving saved WebGL identity',()=>{
+ const saved={...device,'webGl:vendor':'Apple','webGl:renderer':'Apple M1','webGl:parameters':{7937:'Apple M1'}};
+ assert.deepEqual(prepareRendering(saved,['Apple','Apple M1']),{config:saved,canvasNoise:true});
+ assert.deepEqual(prepareRendering(saved,['Other','GPU']),{config:saved,canvasNoise:true});
+ assert.deepEqual(prepareRendering(saved,null),{config:saved,canvasNoise:false});
+ assert.deepEqual(prepareRendering(saved,undefined),{config:saved});
+ assert.deepEqual(prepareRendering(undefined,['Apple','Apple M1']),{config:undefined});
  assert.equal(saved['webGl:renderer'],'Apple M1');
 });
 
@@ -148,4 +149,92 @@ test('a concurrent identity file is never overwritten',async t=>{
  await assert.rejects(createIdentity(profile,async()=>({identity:{...device,'screen.width':1600,'screen.availWidth':1600}})),{code:'EEXIST'});
  assert.deepEqual(JSON.parse(fs.readFileSync(file)),device);
  assert.deepEqual(fs.readdirSync(profile),['.tulai-identity.json']);
+});
+
+test('viewport tuple collisions reject distinct devices when both specify viewport fields',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'tulai-identity-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const first=path.join(root,'account-1'), second=path.join(root,'account-2'), third=path.join(root,'account-3');
+ fs.mkdirSync(first); fs.mkdirSync(second); fs.mkdirSync(third);
+ const vp={...device,'window.innerWidth':1440,'window.innerHeight':900,'window.devicePixelRatio':2};
+ await createIdentity(first,async()=>({identity:vp}));
+ let attempts=0;
+ await createIdentity(second,async()=>({identity:++attempts===1
+  ? {...vp,'navigator.hardwareConcurrency':16}
+  : {...vp,'navigator.hardwareConcurrency':16,'window.innerWidth':1280}}));
+ assert.equal(attempts,2);
+ // Missing optional viewport fields must not trigger viewport rejection when core fields differ.
+ await createIdentity(third,async()=>({identity:{...device,'navigator.hardwareConcurrency':12}}));
+ assert.equal(fs.existsSync(path.join(third,'.tulai-identity.json')),true);
+});
+
+test('viewport lock contention rolls back the device lock cleanly',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'tulai-identity-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const locks=path.join(root,'.tulai-fingerprint-locks');
+ fs.mkdirSync(locks,{recursive:true});
+ const first=path.join(root,'account-1'), second=path.join(root,'account-2');
+ fs.mkdirSync(first); fs.mkdirSync(second);
+ const contestedViewport=claimFingerprint(locks,JSON.stringify(['viewport',1920,1080,1440,900,2]));
+ assert.ok(contestedViewport);
+ const firstCandidate={...device,'navigator.hardwareConcurrency':16,'window.innerWidth':1440,'window.innerHeight':900,'window.devicePixelRatio':2};
+ let attempts=0;
+ await createIdentity(first,async()=>({identity:++attempts===1
+  ? firstCandidate
+  : {...firstCandidate,'navigator.hardwareConcurrency':20,'window.innerWidth':1280}}));
+ assert.equal(attempts,2);
+ contestedViewport();
+ // Attempt 1's device lock must have been released on viewport lock failure.
+ await createIdentity(second,async()=>({identity:firstCandidate}));
+ assert.equal(fs.existsSync(path.join(second,'.tulai-identity.json')),true);
+});
+
+test('collisionRoots scans child subdirs, direct single-profile roots, ignores ENOENT, and skips self',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'tulai-identity-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const profilesRoot=path.join(root,'accounts');
+ const otherRoot=path.join(root,'other-accounts');
+ const downloadRoot=path.join(root,'DownloadBrowser');
+ const missingRoot=path.join(root,'MissingBrowser');
+ const target=path.join(profilesRoot,'account-1');
+ const siblingInOther=path.join(otherRoot,'account-a');
+ fs.mkdirSync(target,{recursive:true});
+ fs.mkdirSync(siblingInOther,{recursive:true});
+ fs.mkdirSync(downloadRoot,{recursive:true});
+ const otherDevice={...device,'screen.width':1600,'screen.availWidth':1600};
+ const downloadDevice={...device,'navigator.hardwareConcurrency':16,'window.innerWidth':1366,'window.innerHeight':768,'window.devicePixelRatio':1};
+ fs.writeFileSync(path.join(siblingInOther,'.tulai-identity.json'),JSON.stringify(otherDevice));
+ fs.writeFileSync(path.join(downloadRoot,'.tulai-identity.json'),JSON.stringify(downloadDevice));
+ const candidates=[
+  otherDevice,
+  {...device,'navigator.hardwareConcurrency':32,'window.innerWidth':1366,'window.innerHeight':768,'window.devicePixelRatio':1},
+  {...device,'navigator.hardwareConcurrency':10,'window.innerWidth':1512,'window.innerHeight':982,'window.devicePixelRatio':2},
+ ];
+ let index=0;
+ const created=await createIdentity(target,async()=>({identity:candidates[index++]}),{
+  collisionRoots:[otherRoot,downloadRoot,missingRoot,target],
+ });
+ assert.equal(index,3);
+ assert.equal(created.identity['navigator.hardwareConcurrency'],10);
+});
+
+test('claimFingerprint rejects fresh locks and reclaims stale locks older than 5 minutes',t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'tulai-locks-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const locks=path.join(root,'.tulai-fingerprint-locks');
+ fs.mkdirSync(locks,{recursive:true});
+ const releaseFirst=claimFingerprint(locks,'fresh-key');
+ assert.ok(releaseFirst);
+ assert.equal(claimFingerprint(locks,'fresh-key'),null);
+ releaseFirst();
+
+ const staleRelease=claimFingerprint(locks,'stale-key');
+ assert.ok(staleRelease);
+ const [lockFile]=fs.readdirSync(locks);
+ const sixMinutesAgo=new Date(Date.now()-6*60*1000);
+ fs.utimesSync(path.join(locks,lockFile),sixMinutesAgo,sixMinutesAgo);
+ const reclaimed=claimFingerprint(locks,'stale-key');
+ assert.ok(reclaimed);
+ assert.equal(claimFingerprint(locks,'stale-key'),null);
+ reclaimed();
 });

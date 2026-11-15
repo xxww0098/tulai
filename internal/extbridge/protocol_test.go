@@ -202,10 +202,13 @@ func TestExtensionSkeletonMatchesProtocol(t *testing.T) {
 		t.Fatal("background tab patterns do not cover tongyi.com, qianwen.com, and doubao.com")
 	}
 	chooser := mustRead(t, filepath.Join(root, "extension", "qianwen", "chooser.js"))
-	for _, needle := range []string{"showPicker", "data-tulai-chooser", "tulai-qianwen-arm", "tulai-qianwen-disarm"} {
+	for _, needle := range []string{"showPicker", "__PB_PROBE__", "__PB_ARM__", "__PB_DISARM__", "__PB_OK__", "__PB_FAIL__", "WeakMap", "toString"} {
 		if !bytes.Contains(chooser, []byte(needle)) {
 			t.Errorf("qianwen chooser missing %s", needle)
 		}
+	}
+	if bytes.Contains(bytes.ToLower(chooser), []byte("tulai")) {
+		t.Error("qianwen chooser should not contain tulai")
 	}
 	doubaoPage := mustRead(t, filepath.Join(root, "extension", "doubao", "page.js"))
 	if bytes.Contains(doubaoPage, []byte("attachLocalImage")) || bytes.Contains(doubaoPage, []byte("createChooserBridge")) || bytes.Contains(doubaoPage, []byte("AI生图")) {

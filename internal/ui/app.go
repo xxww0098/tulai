@@ -272,6 +272,8 @@ type App struct {
 	browserDrawer    *browserDrawerState
 	browserViewingID int64 // 由 mu 保护，供登录探测协程检查。
 	browserSel       int
+	browserConfigID  int64
+	browserConfigOn  bool
 	newBrowserPlat   string
 	newBrowserName   string
 	platSynced       bool
@@ -300,6 +302,7 @@ type App struct {
 	workspacePage   string // 上次停留的图片生成模式
 	historyOpen     bool
 	resultsDoneOpen bool
+	laneCollapsed   bool
 	genList         ui.ListState
 	washList        ui.ListState
 	fissionList     ui.ListState
@@ -886,18 +889,22 @@ func (a *App) view(c *ui.Context) {
 	}
 	a.noteTab()
 	a.syncPage()
-	ui.Column(c.Key("screen-main")).Fill().Background(a.look.paper).Transition(screenMotion()).Children(func() {
-		a.topbar(c)
-		ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
-			a.navRail(c)
+	ui.Row(c.Key("screen-main")).Fill().Background(a.look.paper).AlignItems(ui.Stretch).Transition(screenMotion()).Children(func() {
+		a.navRail(c)
+		ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
+			a.topbar(c)
 			pageKey := a.tab
 			if pageKey == pageWash || pageKey == pageFission {
 				pageKey = pageHome
 			}
+			bg := a.look.card
+			if a.tab == pageSettings {
+				bg = a.look.paper
+			}
 			page := ui.Column(c.Key(fmt.Sprintf("page-%d", pageKey))).Grow(1).MinWidth(0).MinHeight(0).
-				Background(a.look.paper).Transition(a.pageMotion())
-			if a.tab != pageRename && a.tab != pageImageEdit {
-				page.Padding(6, pagePadX, 6, pagePadX)
+				Background(bg).Transition(a.pageMotion())
+			if pagePadX > 0 && a.tab != pageSettings && a.tab != pageRename && a.tab != pageImageEdit {
+				page.Padding(4, pagePadX, 4, pagePadX)
 			}
 			page.Children(func() {
 				switch a.tab {

@@ -72,6 +72,7 @@ func main() {
 	}
 	defer db.Close()
 	bm := browser.NewManager()
+	bm.SetStore(db)
 	defer bm.StopAll()
 	if err := db.PrepareCamoufoxProfiles(dataRoot); err != nil {
 		log.Fatalf("迁移 Camoufox 账号: %v", err)

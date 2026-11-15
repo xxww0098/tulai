@@ -199,7 +199,8 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`(() => { const h = document.createElement('div'); h.dataset.tulaiDownloadHelper = ''; h.dataset.tulaiTemuSnapshot = %q; document.documentElement.append(h); })()`, string(cache)), nil)); err != nil {
+	markers := session.downloadMarkers()
+	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`(() => { const h = document.createElement('div'); h.setAttribute(%q, ''); h.setAttribute(%q, %q); document.documentElement.append(h); })()`, markers.HostAttr, markers.SnapshotAttr, string(cache)), nil)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
@@ -208,13 +209,13 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 	}
 	prior.URL = "https://www.temu.com/search_result.html?search_key=other&filter=black"
 	cache, _ = json.Marshal(prior)
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector('[data-tulai-download-helper]').dataset.tulaiTemuSnapshot = %q`, string(cache)), nil)); err != nil {
+	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).setAttribute(%q, %q)`, "["+markers.HostAttr+"]", markers.SnapshotAttr, string(cache)), nil)); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := session.Capture(ctx); err == nil || len(got.Items) != 0 || !strings.Contains(err.Error(), "条件已改变") {
 		t.Fatalf("different cached search=%+v err=%v", got.Items, err)
 	}
-	if err := session.run(ctx, chromedp.Evaluate(`document.querySelector('[data-tulai-download-helper]').remove()`, nil)); err != nil {
+	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).remove()`, "["+markers.HostAttr+"]"), nil)); err != nil {
 		t.Fatal(err)
 	}
 	wrongStart := temuSearchTestURL(t, "https://www.temu.com/search_result.html?search_key=other&filter=black")

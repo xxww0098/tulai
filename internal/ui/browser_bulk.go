@@ -120,8 +120,8 @@ func (a *App) browserBatchToolbar(c *ui.Context) {
 	if chosen > 0 {
 		countTone = "accent"
 	}
-	ui.Row(c.Key("browser-bulk-bar")).FillWidth().Padding(4, 8).Gap(6).AlignItems(ui.Center).
-		Background(tok.sunken).Border(1, tok.border).Radius(tok.radiusM).Children(func() {
+	ui.Row(c.Key("browser-bulk-bar")).FillWidth().Padding(5, 14).Gap(6).AlignItems(ui.Center).
+		Background(tok.card).BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 		check := ui.Checkbox(c, &all, "全选").Disabled(len(a.browserRows) == 0)
 		if chosen > 0 && chosen < len(a.browserRows) {
 			check.Mixed()
@@ -144,11 +144,11 @@ func (a *App) browserBatchToolbar(c *ui.Context) {
 		uiBadge(c, "bulk-selected-count", fmt.Sprintf("已选 %d 个", chosen), countTone, tok)
 		ui.Box(c).Width(1).Height(14).Background(tok.border).Shrink(0)
 		busy := a.running || len(a.browserPending) > 0
-		uiIconBtn(c, "bulk-start", "批量启动", "批量启动已选环境", iconPlay, 24, false, false, tok).
+		uiIconBtn(c, "bulk-start", "批量启动", "批量启动已选环境", iconPlay, 24, false, true, tok).
 			Disabled(busy || len(a.browserBatchTargets(false)) == 0).OnClick(func() { a.runBrowserBatch(false) })
-		uiIconBtn(c, "bulk-stop", "批量停止", "批量停止已选环境", iconStop, 24, false, false, tok).
+		uiIconBtn(c, "bulk-stop", "批量停止", "批量停止已选环境", iconStop, 24, false, true, tok).
 			Disabled(busy || len(a.browserBatchTargets(true)) == 0).OnClick(func() { a.runBrowserBatch(true) })
-		uiIconBtn(c, "bulk-clear", "清空", "清空勾选", iconX, 24, false, false, tok).
+		uiIconBtn(c, "bulk-clear", "清空", "清空勾选", iconX, 24, false, true, tok).
 			Disabled(chosen == 0).OnClick(func() { a.browserChecked.Clear() })
 		if a.browserBatch != nil {
 			ink := tok.muted

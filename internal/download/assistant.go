@@ -26,6 +26,7 @@ var downloadRequestMarker = regexp.MustCompile(`^[0-9a-fA-F-]{36}$`)
 type downloadAssistant struct {
 	server  *http.Server
 	token   string
+	markers extbundle.DownloadAddonMarkers
 	handler DownloadRequest
 	mu      sync.RWMutex
 	session *RenderedSession
@@ -42,11 +43,12 @@ func startDownloadAssistant(profileDir string, handler DownloadRequest) (*downlo
 	}
 	assistant := &downloadAssistant{token: hex.EncodeToString(secret[:]), handler: handler}
 	endpoint := "http://" + listener.Addr().String() + "/download"
-	addon, err := extbundle.InstallDownloadAddon(profileDir, endpoint, assistant.token)
+	addon, markers, err := extbundle.InstallDownloadAddonWithMarkers(profileDir, endpoint, assistant.token)
 	if err != nil {
 		listener.Close()
 		return nil, "", err
 	}
+	assistant.markers = markers
 	assistant.server = &http.Server{Handler: http.HandlerFunc(assistant.serveHTTP), ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = assistant.server.Serve(listener) }()
 	return assistant, addon, nil

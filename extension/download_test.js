@@ -14,12 +14,22 @@ class Element {
     this.listeners = {}
     this.hidden = false
     this.disabled = false
-    this.classList = { toggle() {} }
+    this.classes = new Set()
+    this.classList = {
+      toggle: (name, on) => {
+        const next = on === undefined ? !this.classes.has(name) : !!on
+        if (next) this.classes.add(name)
+        else this.classes.delete(name)
+        return next
+      },
+      contains: name => this.classes.has(name),
+    }
   }
   append(...children) { this.children.push(...children) }
   attachShadow() { this.shadow = new Element('shadow'); return this.shadow }
   setAttribute(name, value) { this.attributes[name] = String(value) }
   getAttribute(name) { return this.attributes[name] || '' }
+  removeAttribute(name) { delete this.attributes[name] }
   toggleAttribute(name, on) { if (on) this.attributes[name] = ''; else delete this.attributes[name] }
   addEventListener(type, fn) { this.listeners[type] = fn }
   contains(target) { return this.children.includes(target) }
@@ -120,12 +130,15 @@ async function main() {
   initial.runTimer(1000)
   await tick()
   assert.strictEqual(initial.count.textContent, '已识别 2 件商品', '已移除的商品仍应计入')
+  assert.ok(initial.panel.classList.contains('temu'), 'Temu 搜索面板应使用 ShadowRoot 内 .panel.temu 类')
+  assert.strictEqual(Object.keys(initial.host.attributes).some(k => /tulai/i.test(k)), false, '宿主轻 DOM 属性不得含 tulai')
   initial.primary.click()
   await tick()
-  assert.ok(sent && sent.marker, '没有向 tulai 提交任务')
+  assert.ok(sent && sent.marker, '没有向下载服务提交任务')
   assert.strictEqual(initial.primary.textContent, '下载已加载')
   assert.strictEqual(initial.status.textContent, '已加入 tulai 下载列表')
-  assert.deepStrictEqual(JSON.parse(initial.host.dataset.tulaiTemuSnapshot).rows.map(item => item.id), [first.id, second.id])
+  assert.deepStrictEqual(JSON.parse(initial.host.getAttribute('data-pb-dl-snap')).rows.map(item => item.id), [first.id, second.id])
+  assert.strictEqual(initial.host.getAttribute('data-pb-dl-req'), '', '请求结束后应清除请求标记属性')
   initial.collapse.click()
   assert.ok(initial.panel.hidden && !initial.reopen.hidden)
   initial.reopen.click()
@@ -137,7 +150,7 @@ async function main() {
   assert.strictEqual(returned.count.textContent, '已识别 2 件商品', '登录返回后应恢复旧商品')
   returned.primary.click()
   await tick()
-  assert.deepStrictEqual(JSON.parse(returned.host.dataset.tulaiTemuSnapshot).rows.map(item => item.id).sort(), [first.id, second.id].sort())
+  assert.deepStrictEqual(JSON.parse(returned.host.getAttribute('data-pb-dl-snap')).rows.map(item => item.id).sort(), [first.id, second.id].sort())
 
   returned.location.href = 'https://www.temu.com/search_result.html?search_key=other'
   tabs.set(1, returned.location.href)
@@ -147,7 +160,7 @@ async function main() {
   assert.strictEqual(returned.count.textContent, '已识别 1 件商品')
   returned.primary.click()
   await tick()
-  assert.deepStrictEqual(JSON.parse(returned.host.dataset.tulaiTemuSnapshot).rows.map(item => item.id), [third.id], '新搜索不能继承旧商品')
+  assert.deepStrictEqual(JSON.parse(returned.host.getAttribute('data-pb-dl-snap')).rows.map(item => item.id), [third.id], '新搜索不能继承旧商品')
   returned.state.blocked = true
   returned.refresh()
   assert.ok(returned.primary.disabled && returned.auto.disabled, '验证页面不得继续下载或自动滚动')

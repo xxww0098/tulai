@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestAppIconAsset(t *testing.T) {
@@ -35,5 +37,18 @@ func TestReadAppIconOutsideProject(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatal("app icon differs from resources/icon.png")
+	}
+}
+
+func TestDoubaoPlatformIconAsset(t *testing.T) {
+	if len(doubaoPNG) == 0 {
+		t.Fatal("embedded doubaoPNG is empty")
+	}
+	if iconDoubao == nil {
+		t.Fatal("iconDoubao bitmap is nil")
+	}
+	bmp, err := ui.DecodeBitmap(doubaoPNG)
+	if err != nil || bmp == nil {
+		t.Fatalf("DecodeBitmap(doubaoPNG) failed: bmp=%v err=%v", bmp, err)
 	}
 }

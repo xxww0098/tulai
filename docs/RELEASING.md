@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.23
+# 发布 tulai 0.1.24
 
-当前桌面端版本是 **0.1.23**，标签 **`v0.1.23`**。页面桥扩展是 **0.3.18**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.24**，标签 **`v0.1.24`**。页面桥扩展是 **0.3.19**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.24
+
+更新工作台和工具页面布局，改进 Camoufox 指纹冲突检查、同平台账号共用出口提醒、页面桥及下载采集。页面桥扩展更新至 0.3.19。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.23
 
@@ -116,12 +120,12 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.23` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.23` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.23` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.18` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 桌面端 | `0.1.24` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.24` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.24` 之后，模块版本就是这个标签。 |
+| 页面桥扩展 | `0.3.19` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载；当前源码是 0.3.18（0.3.15 新增 setRatio 页面命令；0.3.16 放宽多图批次的收工窗口并扩大「图像生成」入口识别；0.3.17 支持部分返回的源图关联、网络流状态和更宽的额度提示；0.3.18 缩短已解码且稳定的结果的等待）。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载；当前源码是 0.3.19（0.3.15 新增 setRatio 页面命令；0.3.16 放宽多图批次的收工窗口并扩大「图像生成」入口识别；0.3.17 支持部分返回的源图关联、网络流状态和更宽的额度提示；0.3.18 缩短已解码且稳定的结果的等待；0.3.19 改进页面桥隔离、豆包原图捕获和千问文件选择）。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
 
 ## 流水线
 
@@ -202,7 +206,7 @@ MyGo 在安装时验证 Ed25519 签名；验证失败或缺少签名清单会报
 
 发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。旧更新器没有这份校验文件会拒绝安装；MyGo 更新验证清单里的开发者签名。
 
-版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.18.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.19.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
 
 以下是各平台旧更新器选择附件的规则；新发布仅包含 Windows 附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 

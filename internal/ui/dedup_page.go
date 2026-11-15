@@ -111,20 +111,20 @@ func (a *App) dedupOutDir() string {
 func (a *App) dedupPage(c *ui.Context) {
 	w, _ := c.Size()
 	tok := a.look
-	root := ui.Column(c.Key("dedup-page")).Grow(1).MinHeight(0).Gap(8)
+	root := ui.Column(c.Key("dedup-page")).Grow(1).MinHeight(0).Gap(0).Background(tok.card)
 	if paths := root.DroppedFiles(); len(paths) > 0 {
 		a.dedupIngest(paths)
 	}
 	root.Children(func() {
-		a.dedupHeaderBar(c, tok)
 		if w >= 760 {
-			sideW := float32(276)
+			sideW := float32(280)
 			if w < 940 {
-				sideW = 268
+				sideW = 264
 			}
-			ui.Row(c).Grow(1).MinHeight(0).Gap(8).AlignItems(ui.Stretch).Children(func() {
-				ui.Scroll(c.Key("dedup-side-scroll")).Width(sideW).Shrink(0).MinHeight(0).Children(func() {
-					ui.Column(c).FillWidth().Gap(8).Children(func() {
+			ui.Row(c).Grow(1).MinHeight(0).Gap(0).AlignItems(ui.Stretch).Children(func() {
+				ui.Scroll(c.Key("dedup-side-scroll")).Width(sideW).Shrink(0).MinHeight(0).
+					Background(tok.card).BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
+					ui.Column(c).FillWidth().Gap(0).Children(func() {
 						a.dedupPickCard(c, true)
 						a.dedupGoCard(c, true)
 					})
@@ -134,7 +134,7 @@ func (a *App) dedupPage(c *ui.Context) {
 			return
 		}
 		ui.Scroll(c.Key("dedup-narrow-scroll")).Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(8).Padding(0, 0, 8, 0).Children(func() {
+			ui.Column(c).FillWidth().Gap(0).Padding(0, 0, 12, 0).Children(func() {
 				a.dedupPickCard(c, false)
 				a.dedupGoCard(c, false)
 				a.dedupResultCard(c)
@@ -143,63 +143,52 @@ func (a *App) dedupPage(c *ui.Context) {
 	})
 }
 
-func (a *App) dedupHeaderBar(c *ui.Context, tok tokens) {
-	w, _ := c.Size()
+func (a *App) dedupHeaderActions(c *ui.Context, tok tokens, showText bool) {
 	busy := a.dedup.busy
-	rep := a.dedup.report
-	uiPageHeader(c, "dedup-bar-hd", iconDedup, "相似图去重", "保留组内最高分辨率原图，支持拖拽图片或文件夹", tok, func() {
-		if rep.Scanned > 0 {
-			uiBadge(c, "dedup-stat-scanned", fmt.Sprintf("已扫描 %d", rep.Scanned), "neutral", tok)
-			grpTone := "success"
-			if len(rep.Groups) > 0 {
-				grpTone = "warning"
-			}
-			uiBadge(c, "dedup-stat-groups", fmt.Sprintf("%d 组重复", len(rep.Groups)), grpTone, tok)
-			if rep.BytesSaved > 0 {
-				uiBadge(c, "dedup-stat-saved", "可省 "+humanSize(rep.BytesSaved), "accent", tok)
-			}
-		} else if n := len(a.dedup.items); n > 0 {
-			uiBadge(c, "dedup-stat-count", fmt.Sprintf("已选 %d 张", n), "accent", tok)
-		}
-		if w >= 900 {
-			uiIconTextBtn(c, "dedup-add-img", "添加图片", "添加图片", iconImagePlus, 24, false, tok).
-				Disabled(busy).OnClick(func() { a.dedupAdd() })
-			uiIconTextBtn(c, "dedup-add-dir", "选文件夹", "选文件夹", iconFolderOpen, 24, false, tok).
-				Disabled(busy).OnClick(func() { a.dedupAddFolder() })
-			if len(a.dedup.items) > 0 {
-				uiIconTextBtn(c, "dedup-clear", "清空", "清空待去重图片", iconTrash, 24, false, tok).
-					Disabled(busy).OnClick(func() { a.dedupClear() })
-			}
-			return
-		}
-		uiIconBtn(c, "dedup-add-img", "添加图片", "添加图片", iconImagePlus, 24, false, false, tok).
+	if showText {
+		uiIconTextBtn(c, "dedup-add-img", "添加图片", "添加图片", iconImagePlus, 24, false, tok).
 			Disabled(busy).OnClick(func() { a.dedupAdd() })
-		uiIconBtn(c, "dedup-add-dir", "选文件夹", "选文件夹", iconFolderOpen, 24, false, false, tok).
+		uiIconTextBtn(c, "dedup-add-dir", "选文件夹", "选文件夹", iconFolderOpen, 24, false, tok).
 			Disabled(busy).OnClick(func() { a.dedupAddFolder() })
 		if len(a.dedup.items) > 0 {
-			uiIconBtn(c, "dedup-clear", "清空", "清空待去重图片", iconTrash, 24, false, false, tok).
+			uiIconTextBtn(c, "dedup-clear", "清空", "清空待去重图片", iconTrash, 24, false, tok).
 				Disabled(busy).OnClick(func() { a.dedupClear() })
 		}
-	})
+		return
+	}
+	uiIconBtn(c, "dedup-add-img", "添加图片", "添加图片", iconImagePlus, 24, false, true, tok).
+		Disabled(busy).OnClick(func() { a.dedupAdd() })
+	uiIconBtn(c, "dedup-add-dir", "选文件夹", "选文件夹", iconFolderOpen, 24, false, true, tok).
+		Disabled(busy).OnClick(func() { a.dedupAddFolder() })
+	if len(a.dedup.items) > 0 {
+		uiIconBtn(c, "dedup-clear", "清空", "清空待去重图片", iconTrash, 24, false, true, tok).
+			Disabled(busy).OnClick(func() { a.dedupClear() })
+	}
 }
 
 // dedupPickCard 收图片：拖进来、点着选、或选整个文件夹。
 func (a *App) dedupPickCard(c *ui.Context, wide bool) {
 	tok := a.look
-	card := uiCard(c, "dedup-pick", tok).Padding(10, 12).Gap(8)
+	card := ui.Column(c.Key("dedup-pick")).FillWidth().Padding(12, 14).Gap(8).
+		Background(tok.card).BorderWidth(0, 0, 1, 0).BorderColor(tok.border)
 	if paths := card.DroppedFiles(); len(paths) > 0 {
 		a.dedupIngest(paths)
 	}
 	busy := a.dedup.busy
 	if card.FileDragOver() && !busy {
-		card.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
+		card.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.06))
 	}
 	card.Children(func() {
-		meta := "支持拖放与文件夹"
-		if n := len(a.dedup.items); n > 0 {
-			meta = fmt.Sprintf("共 %d 张", n)
-		}
-		uiSectionTitle(c, "图片", meta, tok)
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "图片").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
+			if n := len(a.dedup.items); n > 0 {
+				uiBadge(c, "dedup-stat-count", fmt.Sprintf("%d 张", n), "accent", tok)
+			} else {
+				ui.Text(c, "支持拖放").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
+			}
+			ui.Spacer(c)
+			a.dedupHeaderActions(c, tok, false)
+		})
 		if len(a.dedup.items) == 0 {
 			h := float32(76)
 			if wide {
@@ -219,13 +208,13 @@ func (a *App) dedupPickCard(c *ui.Context, wide bool) {
 // dedupDropZone 是虚线收图框，点一下和拖进来效果一样。
 func (a *App) dedupDropZone(c *ui.Context, busy bool, height float32) {
 	tok := a.look
-	zone := ui.Column(c.Key("dedup-drop")).FillWidth().Height(height).Radius(tok.radiusS).
-		Border(1, tok.borderStrong).BorderStyle(ui.BorderDashed).
-		Background(tok.sunken).Center().Gap(3)
+	zone := ui.Column(c.Key("dedup-drop")).FillWidth().Height(height).Radius(tok.radiusM).
+		Border(1, tok.border).BorderStyle(ui.BorderDashed).
+		Background(tok.paper).Center().Gap(3)
 	if !busy {
 		zone.Cursor(ui.CursorPointer)
 		if zone.Hovered() {
-			zone.Border(1, tok.accent).Background(tok.accent.Alpha(0.08))
+			zone.Border(1, tok.accent).Background(tok.accent.Alpha(0.06))
 		}
 		hoverPressPose(zone)
 		if zone.Clicked() {
@@ -281,29 +270,31 @@ func (a *App) dedupWorkbench(c *ui.Context) ui.Element {
 	tok := a.look
 	rep := a.dedup.report
 	if rep.Scanned > 0 {
-		panel := uiCard(c, "dedup-workbench", tok).MinHeight(0).Padding(10, 12).Gap(8)
+		panel := ui.Column(c.Key("dedup-workbench")).Grow(1).MinHeight(0).Background(tok.card).
+			Padding(14, 18).Gap(10)
 		panel.Children(func() {
 			a.dedupResultBody(c, true)
 		})
 		return panel
 	}
-	panel := uiCard(c, "dedup-workbench", tok).MinHeight(0).Padding(10, 12).Gap(8)
+	panel := ui.Column(c.Key("dedup-workbench")).Grow(1).MinHeight(0).Background(tok.card).
+		Padding(14, 18).Gap(10)
 	if paths := panel.DroppedFiles(); len(paths) > 0 {
 		a.dedupIngest(paths)
 	}
 	if panel.FileDragOver() && !a.dedup.busy {
-		panel.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
+		panel.Background(tok.accent.Alpha(0.05))
 	}
 	panel.Children(func() {
 		if len(a.dedup.items) == 0 {
-			_, wellBg, wellBorder := badgeTone("accent", tok)
-			empty := ui.Column(c).Grow(1).FillWidth().Center().Gap(6).Padding(20, 16)
+			_, wellBg, _ := badgeTone("accent", tok)
+			empty := ui.Column(c).Grow(1).FillWidth().Center().Gap(6).Padding(24, 16)
 			if !a.dedup.busy {
 				empty.Cursor(ui.CursorPointer).OnClick(func() { a.dedupAdd() })
 			}
 			empty.Children(func() {
-				well := ui.Column(c).Size(40, 40).Radius(tok.radiusL).Center().Margin(0, 0, 4, 0).
-					Background(wellBg).Border(1, wellBorder)
+				well := ui.Column(c).Size(42, 42).Radius(tok.radiusL).Center().Margin(0, 0, 4, 0).
+					Background(wellBg)
 				well.Children(func() { ui.Icon(c, iconDedup).FontSize(20).TextColor(tok.accent) })
 				ui.Text(c, "将待去重图片或文件夹拖入工作台").FontSize(tok.display).FontWeight(600).TextColor(tok.text)
 				ui.Text(c, "在左侧调整严松力度并点击「开始去重」，重复分组与对比结果将在此展示").
@@ -318,7 +309,7 @@ func (a *App) dedupWorkbench(c *ui.Context) ui.Element {
 			return
 		}
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "待去重图片").FontSize(tok.title).Bold().Shrink(0)
+			ui.Text(c, "待去重图片").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
 			uiBadge(c, "dedup-queue-badge", fmt.Sprintf("已载入 %d 张", len(a.dedup.items)), "accent", tok)
 			ui.Text(c, "点左侧「开始去重」扫描分组").FontSize(tok.caption).TextColor(tok.muted).
 				Grow(1).MinWidth(0).SingleLine()
@@ -330,12 +321,15 @@ func (a *App) dedupWorkbench(c *ui.Context) ui.Element {
 	return panel
 }
 
-// dedupGoCard 是力度、输出和开始。出力度的说明跟按钮在同一张卡上，看一眼就知道会怎么判。
+// dedupGoCard 是力度、输出和开始。
 func (a *App) dedupGoCard(c *ui.Context, wide bool) {
 	tok := a.look
 	th := c.Theme()
 	busy := a.dedup.busy
-	card := uiCard(c, "dedup-go-card", tok).Padding(10, 12).Gap(8)
+	card := ui.Column(c.Key("dedup-go-card")).FillWidth().Padding(12, 14).Gap(9).Background(tok.card)
+	if !wide {
+		card.BorderWidth(0, 0, 1, 0).BorderColor(tok.border)
+	}
 	card.Children(func() {
 		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "去重力度").FontSize(tok.body).FontWeight(600).TextColor(tok.text).Shrink(0)
@@ -346,8 +340,8 @@ func (a *App) dedupGoCard(c *ui.Context, wide bool) {
 			}
 		})
 		ui.Text(c, dedupLevelHint(a.dedup.level)).FontSize(tok.caption).TextColor(tok.muted)
-		ui.Row(c).FillWidth().Padding(5, 8).Gap(6).Radius(tok.radiusS).
-			Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).FillWidth().Padding(6, 8).Gap(6).Radius(tok.radiusS).
+			Background(tok.paper).AlignItems(ui.Center).Children(func() {
 			paintFolder(c, tok.muted)
 			ui.Text(c, "存到").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
 			out := a.dedupOutDir()
@@ -357,15 +351,14 @@ func (a *App) dedupGoCard(c *ui.Context, wide bool) {
 					a.openResultFolder(out)
 					a.dedup.folderErr = a.outputNote
 				})
-			uiMiniBtn(ui.Button(c, "改"), tok).Background(tok.card).TextColor(tok.text).
-				Border(1, tok.border).Disabled(busy).OnClick(func() { a.dedupPickOut() })
+			uiMiniBtn(ui.Button(c, "改"), tok).Disabled(busy).OnClick(func() { a.dedupPickOut() })
 		})
 		if a.dedup.folderErr != "" {
 			ui.Text(c, a.dedup.folderErr).FontSize(tok.caption).TextColor(tok.danger)
 		}
 		ui.Collapsible(c, "更多设置", &a.dedup.more, func() {
-			ui.Column(c).FillWidth().Padding(6, 8).Gap(4).Radius(tok.radiusS).
-				Background(tok.sunken).Border(1, tok.border).Children(func() {
+			ui.Column(c).FillWidth().Padding(8, 10).Gap(4).Radius(tok.radiusS).
+				Background(tok.paper).Children(func() {
 				ui.Checkbox(c, &a.dedup.flatColorOK, "纯色底也算重复").Disabled(busy)
 				flatHint := "纯白底和纯黑底的主图默认不互判重复。"
 				if a.dedup.flatColorOK {
@@ -391,7 +384,7 @@ func (a *App) dedupLevelTabs(c *ui.Context) {
 	labels := []string{"严格", "标准", "宽松"}
 	tabs := ui.TabsBase(c.Key("dedup-level"), &a.dedup.level, len(labels))
 	bar := tabs.List.Row().Width(180).Height(28).Padding(2).Radius(14).
-		Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Stretch).Disabled(a.dedup.busy)
+		Background(tok.sunken).AlignItems(ui.Stretch).Disabled(a.dedup.busy)
 	position := bar.AnimateTo("selected", float32(a.dedup.level), motionEaseOut)
 	selected := tok.card
 	if tok.dark {
@@ -439,7 +432,7 @@ func (a *App) dedupGoButton(c *ui.Context, th *ui.Theme, busy, fillWidth bool) {
 	bg, fg, border := tok.accent, tok.onAccent, tok.accent
 	switch {
 	case disabled:
-		bg, fg, border = tok.sunken, tok.muted, tok.border
+		bg, fg, border = tok.sunkenHi, tok.muted, tok.border
 	case b.Pressed():
 		bg = th.AccentPressed
 		border = bg
@@ -494,7 +487,7 @@ func (a *App) dedupResultCard(c *ui.Context) {
 	if a.dedup.report.Scanned == 0 {
 		return
 	}
-	card := uiCard(c, "dedup-result", a.look).Padding(10, 12).Gap(8)
+	card := ui.Column(c.Key("dedup-result")).FillWidth().Padding(12, 14).Gap(8).Background(a.look.card)
 	card.Children(func() {
 		a.dedupResultBody(c, false)
 	})
@@ -553,8 +546,8 @@ func (a *App) dedupResultBody(c *ui.Context, wide bool) {
 }
 
 func dedupStatChip(c *ui.Context, label, value string, tok tokens) {
-	ui.Row(c).Padding(3, 8).Gap(5).Radius(tok.radiusS).Background(tok.sunken).
-		Border(1, tok.border).AlignItems(ui.Center).Shrink(0).Children(func() {
+	ui.Row(c).Padding(4, 9).Gap(5).Radius(tok.radiusS).Background(tok.paper).
+		AlignItems(ui.Center).Shrink(0).Children(func() {
 		ui.Text(c, label).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 		ui.Text(c, value).FontSize(tok.caption).FontWeight(600).TextColor(tok.text).
 			FontFeatures("tnum").SingleLine()

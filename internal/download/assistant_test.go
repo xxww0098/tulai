@@ -139,7 +139,9 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 	}
 	readBounds := func() bounds {
 		var b bounds
-		if err := session.run(ctx, chromedp.Evaluate(`(() => { const h=document.querySelector('[data-tulai-download-helper]'); if (!h) return {}; const r=h.getBoundingClientRect(); return {ready:h.hasAttribute('data-tulai-temu'),x:r.x,y:r.y,w:r.width,h:r.height}; })()`, &b)); err != nil {
+		markers := session.downloadMarkers()
+		script := fmt.Sprintf(`(() => { const h=document.querySelector(%q); if (!h) return {}; const r=h.getBoundingClientRect(); return {ready:getComputedStyle(h).display!=='none'&&r.width>0&&r.height>0,x:r.x,y:r.y,w:r.width,h:r.height}; })()`, "["+markers.HostAttr+"]")
+		if err := session.run(ctx, chromedp.Evaluate(script, &b)); err != nil {
 			t.Fatal(err)
 		}
 		return b
@@ -282,18 +284,20 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		X, Y           float64
 		Position       string
 	}
-	readButton := func(tab context.Context) buttonState {
+	readButton := func(tab context.Context, s *RenderedSession) buttonState {
 		var state buttonState
-		err := runRendered(ctx, tab, chromedp.Evaluate(`(() => { const host=document.querySelector('[data-tulai-download-helper]'); if(!host)return {found:false}; const r=host.getBoundingClientRect(); return {found:true,visible:r.width>0&&r.height>0,position:getComputedStyle(host).position,x:r.x+r.width/2,y:r.y+r.height/2}; })()`, &state))
+		markers := s.downloadMarkers()
+		script := fmt.Sprintf(`(() => { const host=document.querySelector(%q); if(!host)return {found:false}; const r=host.getBoundingClientRect(); return {found:true,visible:r.width>0&&r.height>0,position:getComputedStyle(host).position,x:r.x+r.width/2,y:r.y+r.height/2}; })()`, "["+markers.HostAttr+"]")
+		err := runRendered(ctx, tab, chromedp.Evaluate(script, &state))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return state
 	}
-	waitButton := func(tab context.Context, visible bool) buttonState {
+	waitButtonFor := func(tab context.Context, s *RenderedSession, visible bool) buttonState {
 		deadline := time.Now().Add(20 * time.Second)
 		for time.Now().Before(deadline) {
-			state := readButton(tab)
+			state := readButton(tab, s)
 			if state.Found && state.Visible == visible {
 				return state
 			}
@@ -301,6 +305,9 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		}
 		t.Fatalf("下载按钮未进入预期状态 visible=%v", visible)
 		return buttonState{}
+	}
+	waitButton := func(tab context.Context, visible bool) buttonState {
+		return waitButtonFor(tab, session, visible)
 	}
 	click := func(tab context.Context, state buttonState) {
 		if state.Position != "fixed" {
@@ -384,7 +391,7 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		t.Fatalf("重新打开下载浏览器: %v", err)
 	}
 	defer reopened.Close()
-	click(reopened.tab, waitButton(reopened.tab, true))
+	click(reopened.tab, waitButtonFor(reopened.tab, reopened, true))
 	select {
 	case err := <-result:
 		if err != nil {
@@ -392,5 +399,24 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("重启后按钮没有发送请求")
+	}
+}
+
+func TestDownloadAssistantThreadsRandomizedMarkers(t *testing.T) {
+	a, _, err := startDownloadAssistant(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.close()
+	if !strings.HasPrefix(a.markers.HostAttr, "data-") || !strings.HasPrefix(a.markers.RequestAttr, "data-") || !strings.HasPrefix(a.markers.SnapshotAttr, "data-") {
+		t.Fatalf("expected randomized data-* markers, got %+v", a.markers)
+	}
+	s := &RenderedSession{assistant: a, markers: a.markers}
+	if got := s.downloadMarkers(); got != a.markers {
+		t.Fatalf("downloadMarkers = %+v, want %+v", got, a.markers)
+	}
+	var unset RenderedSession
+	if got := unset.downloadMarkers(); got.HostAttr == "" || got.RequestAttr == "" || got.SnapshotAttr == "" {
+		t.Fatalf("unset session missing safe fallback markers: %+v", got)
 	}
 }

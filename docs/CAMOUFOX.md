@@ -30,13 +30,14 @@ Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文�
 |---|---|
 | Juggler 与 CDP | 使用官方 Firefox/Juggler 管道，没有 Chromium CDP 监听端口；本地测试检查启动参数、`navigator.webdriver` 和常见控制台栈读取探针 |
 | 启动窗口 | 生图和洗图使用无头账号进程；用户手动启动账号时可显示窗口。macOS 的显卡探测使用同内核无头进程，集成测试对比有头与无头探测结果 |
-| Navigator、字体、WebGL、媒体、语音 | 使用 Camoufox 原生能力和官方指纹模型，保存每个账号生成的配置；新账号的屏幕和 Navigator 组合与同目录账号重复时重新抽取 |
-| 指纹连续性 | `.tulai-identity.json` 固定设备身份；文件损坏直接报错，不静默生成新身份；代理重启时语言未变则保留语音列表 |
+| Navigator、字体、WebGL、媒体、语音 | 使用 Camoufox 原生能力和官方指纹模型，保存每个账号生成的配置；固定 CPU 核心数（`pin_cpu_cores`），新账号跨 `BrowserData/Camoufox` 与 `DownloadBrowser`（`collisionRoots`）校验设备与视口组合，重复时重新抽取 |
+| 指纹连续性 | `.tulai-identity.json` 固定设备身份与 `webGl:vendor`/`webGl:renderer`；文件损坏直接报错，不静默生成新身份；代理重启时语言未变则保留语音列表；异常中断遗留的指纹锁超 5 分钟自动清理 |
 | 系统与浏览器身份 | 选择宿主系统的 Firefox 指纹；内核升级后更新 UA 中 Firefox 版本，保留其他设备参数 |
-| 代理隔离 | 账号独立代理优先于全局代理；修改前必须关闭账号 |
+| 代理隔离 | 账号独立代理优先于全局代理；修改前必须关闭账号；启动前通过 `SamePlatformSharedExit` / `NormalizeProxyKey` 检查同平台已启用账号是否共享同一出口或直连并记录脱敏告警（不阻断单出口用法） |
 | 地理一致性 | 配置代理时由官方 GeoIP 查询出口；启动前清除旧出口派生字段，再计算时区、语言、地理位置和 WebRTC 地址 |
-| 渲染连续性 | 重启时核对保存的 GPU 与当前设备；匹配时沿用首次启动的渲染方式，设备不匹配或探测失败时保留 Camoufox 的保护 |
-| Cookie 和存储 | 持久化 profile；账号进程彼此独立；采集中的匿名上下文不继承账号 Cookie |
+| 渲染连续性 | 默认启用 `canvas_noise` 随机画布读数保护；重启时核对保存的 GPU 与当前设备并延续保存的 WebGL/渲染策略 |
+| Cookie 和存储 | 持久化 profile；账号进程彼此独立；采集中的匿名上下文继承独立代理且不继承账号 Cookie，结束时清理关联事件与绑定 |
+| 扩展与页面隐身 | 每个账号生成独立确定性 Gecko UUID 与中性清单命名；移除 Firefox `content_scripts` 中的 `doubao/raw.js`；页面注入使用闭包/`WeakMap`、随机 `CustomEvent` 令牌与保留原生 `Function.prototype.toString` 的 `Proxy` 包装，不在 DOM/`window` 暴露 `tulai` 标识 |
 | 主页面、iframe、Worker | 本地集成测试比较 UA、platform、language、languages、hardwareConcurrency 和时区，并检查 UA、语言与请求头一致 |
 | 可信输入 | 使用 Firefox 原生输入、鼠标及文件选择器；富文本多行使用浏览器编辑命令，避免按回车意外发送 |
 | 资源请求 | 服务商页面及图片资源页使用 Firefox 自己的网络栈，保留 Cookie 和签名 URL；不把 HTTP 错误改成成功 |
@@ -44,17 +45,17 @@ Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文�
 | 安装和退出 | 校验 Node 下载及 npm 锁文件；官方源失败自动换 npmmirror 与 GitHub 加速镜像重试，内核下载始终校验固定 sha256；安装失败不发布半成品；正常关闭保存资料，超时仅终止本应用启动的进程 |
 | 取消任务 | 取消未完成的输入或脚本时关闭对应页面，终止延迟操作；采集请求随页面关闭或操作取消断开，保留账号进程和持久化资料 |
 
-屏幕和 Navigator 的可用组合有限。若连续 128 次抽取都重复，启动会报错，不会覆盖或更改已有账号的指纹。
+屏幕、视口与 Navigator 的可用组合有限。新账号生成身份时通过 `collisionRoots` 同时扫描 `BrowserData/Camoufox` 与 `DownloadBrowser` 目录并钉住 `pin_cpu_cores: true`，若连续 128 次抽取都与已有设备/视口组合重复，启动会报错，不会覆盖或更改已有账号的指纹；`.tulai-fingerprint-locks` 中超过 5 分钟的过期互斥锁会自动回收。
 
-启动器不会继承外部 `CAMOU_CONFIG_*`、`CAMOU_PREFS_*`、`FONTCONFIG_FILE`、`NAPI_RS_*` 或 `TULAI_CAMOUFOX_MIRROR`，避免其他程序的配置覆盖账号指纹、字体或原生模块，镜像重试也只由安装流程控制。无头启动会核对 GPU；有窗口启动在 macOS 和 Windows 核对（Windows 的有头 / 无头读数已在 AMD GPU 上验证一致），且核对始终以无头窗口进行——否则新账号首次生成指纹时会先闪出一个临时探测窗口，看起来像浏览器打开了两次。设备更换、未核对或 GPU 探测失败时，Canvas 仍由 Camoufox 的保护策略处理，输出可能发生变化。已保存账号若此前启用了随机 Canvas 保护，恢复与本机 GPU 匹配的渲染后，输出可能发生一次变化。
+启动器不会继承外部 `CAMOU_CONFIG_*`、`CAMOU_PREFS_*`、`FONTCONFIG_FILE`、`NAPI_RS_*` 或 `TULAI_CAMOUFOX_MIRROR`，避免其他程序的配置覆盖账号指纹、字体或原生模块，镜像重试也只由安装流程控制。无头启动会核对 GPU；有窗口启动在 macOS 和 Windows 核对（Windows 的有头 / 无头读数已在 AMD GPU 上验证一致），且核对始终以无头窗口进行——否则新账号首次生成指纹时会先闪出一个临时探测窗口，看起来像浏览器打开了两次。`canvas_noise` 默认开启以随机化 2D Canvas 像素读数，同时重启继续保留首次写入 `.tulai-identity.json` 的 `webGl:vendor` / `webGl:renderer` 及音频配置。设备更换、未核对或 GPU 探测失败时，Canvas 仍由 Camoufox 的保护策略处理，输出可能发生变化。
 
-当前没有自编译 Gecko、增加 C++ 补丁或修改 NSS。Canvas / Audio / RFP 的策略沿用所固定 Camoufox 版本的默认值，没有把参考清单中的旧噪声开关直接叠加进去。特别是当前上游已经调整了音频种子行为，不能把旧文档当成当前版本的可用配置。
+当前没有自编译 Gecko、增加 C++ 补丁或修改 NSS。Audio / RFP 的策略沿用所固定 Camoufox 版本的默认值，没有把参考清单中的旧噪声开关直接叠加进去。特别是当前上游已经调整了音频种子行为，不能把旧文档当成当前版本的可用配置。
 
-现有结果截获脚本需要访问站点主世界，已明确开启 Camoufox 的 `main_world_eval`。应用状态保存在每个文档的闭包中，页面桥使用随机事件名，不再把应用变量写到页面全局对象。图片、输入框和 Camoufox 文件输入不再使用固定的应用 DOM 标记。结果截获仍会包装 fetch / XHR，行为与事件仍可能被页面观察；不能保证通过任何网站的风控。
+现有结果截获脚本需要访问站点主世界，已明确开启 Camoufox 的 `main_world_eval`。每个账号安装的 Firefox 桥扩展具备独立的确定性 Gecko UUID 与中性扩展名称，下载辅助扩展同样使用随机身份且不附加硬编码 CDP 上传 DOM 属性；Firefox `content_scripts` 不再加载 `doubao/raw.js`。应用状态保存在每个文档的闭包和 `WeakMap` 中，页面桥使用随机 `CustomEvent` 令牌与保留原生 `Function.prototype.toString` 返回（`showPicker` / `click` / `toString` 保持 `[native code]`）的 `Proxy` 包装，不在页面 `window`、`documentElement` 属性、图片、输入框或文件输入槽留下 `tulai`、`__tulai` 或 `__pb_` 等标识。结果截获仍会包装 fetch / XHR，行为与事件仍可能被页面观察；不能保证通过任何网站的风控。
 
-账号页面及资源页保持 Firefox 网络栈；受限下载采集里的 Playwright 请求上下文和独立 Go HTTP 下载使用各自的 HTTP 客户端，不把它们声明为 Firefox NSS 请求。受限采集请求继承当前页面的 Cookie 和代理，响应由 Firefox 接收；拒绝重定向会使需要跳转的受限采集链接报错，页面和已取得的结果会保留。
+账号页面及资源页保持 Firefox 网络栈；受限下载采集里的 Playwright 匿名隔离上下文和独立 Go HTTP 下载继承当前页面 Cookie 与代理，并在结束时清理绑定与监听；不把独立 Go HTTP 下载声明为 Firefox NSS 请求。拒绝重定向会使需要跳转的受限采集链接报错，页面和已取得的结果会保留。
 
-代理地址（包括认证信息）保存在本机配置库。HTTP 代理可认证；Playwright 不支持 SOCKS5 认证。出口 GeoIP 失败会阻止该账号启动，不退回直连。自定义全局代理无效，或所配置的系统代理都无效时，Camoufox 安装和浏览器启动会报错；账号自己的有效代理优先。未设置代理时使用本机网络。实际代理出口、DNS / IPv6 / WebRTC 泄漏仍需在目标网络上验收，单元测试不等于网络泄漏测试。
+代理地址（包括认证信息）保存在本机配置库。HTTP 代理可认证；Playwright 不支持 SOCKS5 认证。出口 GeoIP 失败会阻止该账号启动，不退回直连。自定义全局代理无效，或所配置的系统代理都无效时，Camoufox 安装和浏览器启动会报错；账号自己的有效代理优先。未设置代理时使用本机网络。`Manager.start` 启动时通过 `SamePlatformSharedExit` 与 `NormalizeProxyKey`（对用户名密码做 SHA-256 脱敏摘要）检查同一平台（`豆包` / `千问` / `ChatGPT`）其他已启用账号是否解析到相同直连或代理出口并在日志告警，但不会阻断单出口用户启动。实际代理出口、DNS / IPv6 / WebRTC 泄漏仍需在目标网络上验收，单元测试不等于网络泄漏测试。
 
 ## 验证
 

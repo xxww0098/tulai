@@ -561,7 +561,7 @@ func TestBrowserSelectionAndBusyActions(t *testing.T) {
 	a.running = true
 	st.SetRunning(row.ID, true)
 	tt.Frame()
-	for _, label := range []string{"停止 工作账号", "删除当前"} {
+	for _, label := range []string{"停止 工作账号", "配置 工作账号", "删除当前"} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}

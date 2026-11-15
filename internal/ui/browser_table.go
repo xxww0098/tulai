@@ -33,19 +33,19 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 	tableTheme.Accent = tok.accent.Mix(tok.card, 0.90)
 	tableTheme.AccentText = tok.text
 	w, _ := c.Size()
-	columns := []ui.TableColumn{{ID: "name", Title: "环境名称", MinWidth: 190, Fixed: true}}
+	columns := []ui.TableColumn{{ID: "name", Title: "环境名称", Width: 190, Fixed: true}}
 	if w >= 900 {
 		columns = append([]ui.TableColumn{{ID: "id", Title: "编号", Width: 56, Fixed: true}}, columns...)
 	}
 	columns = append([]ui.TableColumn{{ID: "select", Title: "选择", Width: 50, Fixed: true}}, columns...)
 	columns = append(columns,
-		ui.TableColumn{ID: "platform", Title: "服务商", Width: 86, Fixed: true},
-		ui.TableColumn{ID: "status", Title: "环境状态", Width: 112, Fixed: true})
+		ui.TableColumn{ID: "platform", Title: "服务商", MinWidth: 86, Fixed: true},
+		ui.TableColumn{ID: "status", Title: "环境状态", MinWidth: 112, Fixed: true})
 	if w >= 1100 {
-		columns = append(columns, ui.TableColumn{ID: "proxy", Title: "代理", Width: 172, Fixed: true})
+		columns = append(columns, ui.TableColumn{ID: "proxy", Title: "代理", MinWidth: 172, Fixed: true})
 	}
 	if w >= 1000 {
-		columns = append(columns, ui.TableColumn{ID: "usage", Title: "今日用量", Width: 84, Fixed: true})
+		columns = append(columns, ui.TableColumn{ID: "usage", Title: "今日用量", MinWidth: 84, Fixed: true})
 	}
 	columns = append(columns, ui.TableColumn{ID: "actions", Title: "操作", Width: 84, Fixed: true})
 	a.browserList.Selected = &a.browserSel
@@ -135,7 +135,7 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 						}
 					}
 					disabled := a.running || len(a.browserPending) > 0 || active[b.ID] || b.ExtAccount != ""
-					uiIconBtn(c, "act", label+" "+b.Name, label, ico, 22, !b.IsRunning && !disabled && !activeAct, false, tok).
+					uiIconBtn(c, "act", label+" "+b.Name, label, ico, 22, !b.IsRunning && !disabled && !activeAct, true, tok).
 						Disabled(disabled).OnClick(func() {
 						a.selectBrowserID(b.ID)
 						if b.IsRunning {
@@ -144,11 +144,18 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 							a.launchBrowser()
 						}
 					})
-					uiIconBtn(c, "cfg", "配置 "+b.Name, "配置代理与参数", iconSliders, 22, false, false, tok).
-						OnClick(func() { a.selectBrowserID(b.ID) })
+					settingsOpen := a.browserConfigOn && a.browserConfigID == b.ID
+					cfg := uiIconBtn(c, "cfg", "配置 "+b.Name, "环境详情与设置", iconSliders, 22, settingsOpen, true, tok).
+						OnClick(func() {
+							a.selectBrowserID(b.ID)
+							a.browserConfigID, a.browserConfigOn = b.ID, !settingsOpen
+						})
+					if a.browserConfigOn && a.browserConfigID == b.ID {
+						ui.Popover(c, cfg, &a.browserConfigOn, func() { a.browserSettings(c, b) }).Label("环境详情")
+					}
 				})
 			}
-		}).Grow(1).MinHeight(120).FillWidth().Background(tok.card).Border(1, tok.border).Radius(tok.radiusM).Label("浏览器环境列表")
+		}).Grow(1).MinHeight(120).FillWidth().Background(tok.card).Label("浏览器环境列表")
 	})
 }
 

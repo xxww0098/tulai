@@ -4,6 +4,8 @@ package cdp
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -666,18 +668,32 @@ func pauseHuman(ctx context.Context, base, span time.Duration) error {
 }
 
 // SetUploadFilesNth 给第 n 个 input[type=file] 设置文件，由浏览器发送输入事件。
+func randomUploadAttr() (string, error) {
+	var buf [8]byte
+	if _, err := crand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return "data-" + hex.EncodeToString(buf[:]), nil
+}
+
 func (s *Session) SetUploadFilesNth(n int, files []string) error {
 	if s.ego == nil {
 		ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 		defer cancel()
 		return s.client.proc.Call(ctx, s.target, "upload", map[string]any{"index": n, "files": files}, nil)
 	}
-	if _, err := s.Evaluate(fmt.Sprintf(`tulaiMarkFileInput(%d)`, n)); err != nil {
+	attr, err := randomUploadAttr()
+	if err != nil {
 		return err
 	}
+	if _, err := s.Evaluate(fmt.Sprintf(`tulaiMarkFileInput(%d, %q)`, n, attr)); err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = s.Evaluate(fmt.Sprintf(`tulaiUnmarkFileInput(%q)`, attr))
+	}()
 	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	defer cancel()
-	var err error
 	paths := make([]string, len(files))
 	for i, file := range files {
 		paths[i], err = filepath.Abs(file)
@@ -685,11 +701,7 @@ func (s *Session) SetUploadFilesNth(n int, files []string) error {
 			return err
 		}
 	}
-	err = s.ego.request(ctx, "upload", map[string]any{"selector": `input[type=file][data-tulai-upload="1"]`, "files": paths}, nil)
-	if err == nil {
-		_, _ = s.Evaluate(`tulaiUnmarkFileInput()`)
-	}
-	return err
+	return s.ego.request(ctx, "upload", map[string]any{"selector": fmt.Sprintf(`input[type=file][%s="1"]`, attr), "files": paths}, nil)
 }
 
 // CaptureScreenshotRect 截取页面坐标区域（CSS 像素），返回 PNG 字节。

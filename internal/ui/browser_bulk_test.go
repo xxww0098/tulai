@@ -32,6 +32,7 @@ func TestBrowserTableMultiSelection(t *testing.T) {
 	if a.browserChecked.Len() != 2 || a.browserSel != 2 {
 		t.Fatal("configuration changed the batch selection")
 	}
+	tt.Key(0, ui.KeyEscape)
 	if dir := os.Getenv("TULAI_SHOTS"); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -164,11 +165,18 @@ func TestBrowserBatchPendingAndTaskGuards(t *testing.T) {
 		t.Fatal("refresh deleted an environment while it was starting")
 	}
 	tt.Frame()
-	for _, label := range []string{"批量启动", "批量停止", "启动 " + a.browserRows[2].Name, "删除当前"} {
+	for _, label := range []string{"批量启动", "批量停止", "启动 " + a.browserRows[2].Name} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if err := tt.Click("配置 " + a.browserRows[0].Name); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("删除当前"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyEscape)
 	a.runBrowserBatch(false)
 	if launched != 0 || len(a.browserPending) != 1 || a.canStart() {
 		t.Fatal("pending browser operation allowed conflicting work")

@@ -10,9 +10,19 @@ func mustIcon(body string) *ui.SVG {
 
 var (
 	iconLogo = mustIcon(`
-		<rect x="8.5" y="3.5" width="12" height="10" rx="2"/>
-		<rect x="3.5" y="9.5" width="12" height="11" rx="2"/>
-		<circle cx="7.2" cy="13.2" r="1.15"/>`)
+		<path d="M9.5 6V5a2 2 0 0 1 2-2H19a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-1"/>
+		<rect x="3" y="8" width="13" height="13" rx="3"/>
+		<path d="M9.5 11.2Q10.3 13.7 12.8 14.5Q10.3 15.3 9.5 17.8Q8.7 15.3 6.2 14.5Q8.7 13.7 9.5 11.2Z"/>`)
+
+	iconBrandMark = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+		<rect x="1" y="1" width="22" height="22" rx="5.5" fill="#172554"/>
+		<rect x="1.75" y="1.75" width="20.5" height="20.5" rx="4.9" fill="#091024"/>
+		<rect x="9.6" y="4.2" width="9.8" height="9.8" rx="2.6" fill="#1D4ED8"/>
+		<rect x="7.4" y="6.2" width="10.4" height="10.4" rx="2.7" fill="#3B82F6"/>
+		<rect x="4.8" y="8.8" width="11.2" height="11.2" rx="2.8" fill="#F8FAFF"/>
+		<path d="M10.4 10.6Q11.24 13.56 14.2 14.4Q11.24 15.24 10.4 18.2Q9.56 15.24 6.6 14.4Q9.56 13.56 10.4 10.6Z" fill="#2563EB"/>
+		<circle cx="13.8" cy="11.0" r="1.05" fill="#10B981"/>
+	</svg>`))
 	iconImages = mustIcon(`
 		<path d="m22 11-1.296-1.296a2.4 2.4 0 0 0-3.408 0L11 16"/>
 		<path d="M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2"/>
@@ -149,31 +159,31 @@ var (
 		<path d="M14 2v6h6"/>
 		<circle cx="9" cy="12" r="1.3"/>
 		<path d="m20 17-3.5-3.5L9 21"/>`)
-	iconChevronLeft  = mustIcon(`<path d="m15 18-6-6 6-6"/>`)
-	iconChevronUp    = mustIcon(`<path d="m18 15-6-6-6 6"/>`)
-	iconStop         = mustIcon(`<rect x="6" y="6" width="12" height="12" rx="2"/>`)
-	iconChevronsLR   = mustIcon(`
+	iconChevronLeft = mustIcon(`<path d="m15 18-6-6 6-6"/>`)
+	iconChevronUp   = mustIcon(`<path d="m18 15-6-6-6 6"/>`)
+	iconStop        = mustIcon(`<rect x="6" y="6" width="12" height="12" rx="2"/>`)
+	iconChevronsLR  = mustIcon(`
 		<path d="m9 7-5 5 5 5M15 7l5 5-5 5"/>`)
-	iconPanelLeft    = mustIcon(`
+	iconPanelLeft = mustIcon(`
 		<rect width="18" height="18" x="3" y="3" rx="2"/>
 		<path d="M9 3v18"/>`)
-	iconEye          = mustIcon(`
+	iconEye = mustIcon(`
 		<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
 		<circle cx="12" cy="12" r="3"/>`)
-	iconInfo         = mustIcon(`
+	iconInfo = mustIcon(`
 		<circle cx="12" cy="12" r="10"/>
 		<path d="M12 16v-4M12 8h.01"/>`)
-	iconKey          = mustIcon(`
+	iconKey = mustIcon(`
 		<circle cx="7.5" cy="15.5" r="5.5"/>
 		<path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>`)
 	iconExternalLink = mustIcon(`
 		<path d="M15 3h6v6M10 14 21 3"/>
 		<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>`)
-	iconFilter       = mustIcon(`<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>`)
-	iconZoomIn       = mustIcon(`
+	iconFilter = mustIcon(`<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>`)
+	iconZoomIn = mustIcon(`
 		<circle cx="11" cy="11" r="8"/>
 		<path d="m21 21-4.3-4.3M11 8v6M8 11h6"/>`)
-	iconZoomOut      = mustIcon(`
+	iconZoomOut = mustIcon(`
 		<circle cx="11" cy="11" r="8"/>
 		<path d="m21 21-4.3-4.3M8 11h6"/>`)
 )

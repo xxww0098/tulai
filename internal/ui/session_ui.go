@@ -85,20 +85,20 @@ func (a *App) workspaceHasContent(page int) bool {
 
 func (a *App) historyControl(c *ui.Context) {
 	open := a.historyOpen
-	uiIconBtn(c, "history", "历史", "历史任务", iconClock, 24, open, false, a.look).
+	uiIconBtn(c, "history", "历史", "历史任务", iconClock, 24, open, true, a.look).
 		OnClick(func() { a.historyOpen = !open })
 }
 
-// historyPanel 在工作区标题和平台页签之间展开。列表占右栏自己的高度，把页签和账号表往下推，不盖住账号行、添加账号或运行日志。
+// historyPanel 在账号列表上方展开，列表占右栏自己的高度，不盖住下方工作区。
 func (a *App) historyPanel(c *ui.Context) {
 	if a == nil || !a.historyOpen {
 		return
 	}
 	tok := a.look
-	uiCardSurface(ui.Column(c.Key("history-panel")).Label("历史任务").FillWidth().Shrink(0).Gap(5).Padding(8, 10), tok).
-		Shadow(0, 2, 6, 0, tok.shadow).Children(func() {
+	ui.Column(c.Key("history-panel")).Label("历史任务").FillWidth().Shrink(0).
+		Background(tok.paper).BorderWidth(0, 0, 1, 0).BorderColor(tok.border).
+		Gap(6).Padding(8, 14).Children(func() {
 		uiSectionTitle(c, "历史任务", "", tok)
-		ui.Divider(c).Background(tok.border)
 		a.historyBody(c)
 	})
 }

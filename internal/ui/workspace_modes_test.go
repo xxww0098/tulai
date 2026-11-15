@@ -120,9 +120,25 @@ func TestWorkspaceModeTabsKeyboardAndLayout(t *testing.T) {
 			tt := ui.NewTester(a.view, width, 900)
 			gen := assertVisible(t, tt, "自由生图", float32(width), 900)
 			wash := assertVisible(t, tt, "批量洗图", float32(width), 900)
+			fission := assertVisible(t, tt, "裂变图片", float32(width), 900)
 			history := assertVisible(t, tt, "历史", float32(width), 900)
-			if gen.X+gen.W > wash.X || wash.X+wash.W > history.X {
-				t.Fatalf("模式和历史按钮重叠: gen=%+v wash=%+v history=%+v", gen, wash, history)
+			newTask := assertVisible(t, tt, "新建任务", float32(width), 900)
+			for name, r := range map[string]ui.Rect{
+				"自由生图": gen, "批量洗图": wash, "裂变图片": fission, "历史": history, "新建任务": newTask,
+			} {
+				if r.Y < topbarH {
+					t.Fatalf("%s 应位于全局顶栏下方的主窗口内 (topbarH=%v): %+v", name, topbarH, r)
+				}
+			}
+			if gen.X+gen.W > wash.X || wash.X+wash.W > fission.X || fission.X+fission.W > history.X || history.X+history.W > newTask.X {
+				t.Fatalf("模式与操作按钮重叠: gen=%+v wash=%+v fission=%+v history=%+v new=%+v", gen, wash, fission, history, newTask)
+			}
+			if width >= 1280 {
+				provider := assertVisible(t, tt, "ChatGPT", float32(width), 900)
+				logBtn := assertVisible(t, tt, "运行日志", float32(width), 900)
+				if provider.Y+provider.H > topbarH+2 || logBtn.Y+logBtn.H > topbarH+2 || provider.X+provider.W > logBtn.X {
+					t.Fatalf("服务商切换栏或运行日志未留在顶栏内: provider=%+v log=%+v", provider, logBtn)
+				}
 			}
 			if err := tt.Click("自由生图"); err != nil {
 				t.Fatal(err)

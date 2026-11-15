@@ -151,14 +151,10 @@ func (a *App) wizardView(c *ui.Context) {
 // wizardSidebar 左侧栏：品牌、竖排步骤、版本和检查更新。
 func (a *App) wizardSidebar(c *ui.Context) {
 	tok := a.look
-	logoFg, logoBg, logoBorder := badgeTone("accent", tok)
 	ui.Column(c.Key("wizard-side")).Width(wizardSideWidth).FillHeight().Shrink(0).Padding(20, 16, 14, 16).
-		Background(tok.rail).BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
+		Background(tok.paper).BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Column(c.Key("wizard-logo")).Size(28, 28).Radius(7).Center().Shrink(0).
-				Background(logoBg).Border(1, logoBorder).Children(func() {
-				ui.Icon(c, iconLogo).FontSize(15).TextColor(logoFg)
-			})
+			ui.Image(c.Key("wizard-logo"), iconBrandMark).Size(28, 28).Fit(ui.Contain).Shrink(0)
 			ui.Column(c).Children(func() {
 				ui.Text(c, "tulai").FontSize(15.5).Bold().TextColor(tok.text)
 				ui.Text(c, "快速设置").FontSize(tok.caption).TextColor(tok.muted)
@@ -202,7 +198,8 @@ func (a *App) wizardSidebar(c *ui.Context) {
 			if a.updateHidden && a.updateDownloading {
 				label = "显示更新进度"
 			}
-			uiBtn(ui.Button(c, label), tok).FillWidth().Disabled(a.updateBusy && !(a.updateHidden && a.updateDownloading)).OnClick(func() { a.checkForUpdates() })
+			uiMiniBtn(ui.Button(c, label), tok).Height(26).FillWidth().Padding(0, 10).
+				Disabled(a.updateBusy && !(a.updateHidden && a.updateDownloading)).OnClick(func() { a.checkForUpdates() })
 		})
 	})
 }
@@ -220,13 +217,12 @@ func wizardBadge(c *ui.Context, i, state int, tok tokens) {
 		b.Background(b.AnimateColor("bg", tok.accent, motionEaseFast))
 		b.Children(func() { ui.Icon(c, iconCheck).FontSize(11).TextColor(tok.onAccent) })
 	case railCurrent:
-		fg, bg, _ := badgeTone("accent", tok)
-		b.Border(2, tok.accent).Background(bg).Shadow(0, 0, 0, 3, tok.accent.Alpha(0.18))
+		b.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.12))
 		b.Children(func() {
-			ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).FontWeight(700).FontFeatures("tnum").TextColor(fg)
+			ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).FontWeight(700).FontFeatures("tnum").TextColor(tok.accent)
 		})
 	default:
-		b.Background(tok.card).Border(1, tok.borderStrong)
+		b.Background(tok.card).Border(1, tok.border)
 		b.Children(func() {
 			ui.Text(c, fmt.Sprint(i+1)).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 		})

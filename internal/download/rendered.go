@@ -23,6 +23,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
 
+	"github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/camoufox"
 )
@@ -40,6 +41,7 @@ type RenderedSession struct {
 	getter         *HTTPGetter
 	start          *url.URL
 	assistant      *downloadAssistant
+	markers        extbundle.DownloadAddonMarkers
 
 	mu        sync.RWMutex
 	pageURL   *url.URL
@@ -132,10 +134,14 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	transport := getter.client.Transport.(*http.Transport)
 	transport.DialContext = safeDownloadDial
 	transport.DisableKeepAlives = true
+	var markers extbundle.DownloadAddonMarkers
+	if assistant != nil {
+		markers = assistant.markers
+	}
 	s := &RenderedSession{
 		process: process, life: life, tab: tab, target: process.Page,
 		closeTab: closeTab, closeAllocator: closeAlloc, releaseProfile: release,
-		getter: getter, start: start, assistant: assistant,
+		getter: getter, start: start, assistant: assistant, markers: markers,
 		documents: map[string]renderedDocument{}, done: make(chan struct{}),
 	}
 	if assistant != nil {
@@ -232,6 +238,21 @@ func (s *RenderedSession) OpenTarget(ctx context.Context, rawURL string) error {
 	return nil
 }
 
+func (s *RenderedSession) downloadMarkers() extbundle.DownloadAddonMarkers {
+	if s != nil {
+		if s.markers.HostAttr != "" && s.markers.RequestAttr != "" && s.markers.SnapshotAttr != "" {
+			return s.markers
+		}
+		if s.assistant != nil {
+			m := s.assistant.markers
+			if m.HostAttr != "" && m.RequestAttr != "" && m.SnapshotAttr != "" {
+				return m
+			}
+		}
+	}
+	return extbundle.DefaultDownloadAddonMarkers()
+}
+
 // BindCurrent selects the tab whose download button was clicked without reloading it.
 func (s *RenderedSession) BindCurrent(ctx context.Context, rawURL, marker string) error {
 	start, err := crawlInputURL(rawURL)
@@ -253,6 +274,8 @@ func (s *RenderedSession) BindCurrent(ctx context.Context, rawURL, marker string
 	}
 	var selected string
 	var selectedTab context.Context
+	markers := s.downloadMarkers()
+	selector := fmt.Sprintf("[%s][%s]", markers.HostAttr, markers.RequestAttr)
 	for _, target := range targets.Infos {
 		if target.Type != "page" || target.URL != rawURL {
 			continue
@@ -262,7 +285,7 @@ func (s *RenderedSession) BindCurrent(ctx context.Context, rawURL, marker string
 			URL   string
 			Match bool
 		}
-		script := fmt.Sprintf(`({url:location.href,match:Array.from(document.querySelectorAll('[data-tulai-download-helper][data-tulai-download-request]')).some(el=>el.getAttribute('data-tulai-download-request')===%q)})`, marker)
+		script := fmt.Sprintf(`({url:location.href,match:Array.from(document.querySelectorAll(%q)).some(el=>el.getAttribute(%q)===%q)})`, selector, markers.RequestAttr, marker)
 		err := runRendered(ctx, tab, chromedp.Evaluate(script, &state))
 		if err == nil && state.URL == rawURL && state.Match {
 			if selected != "" {

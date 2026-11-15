@@ -36,53 +36,56 @@ func (a *App) settingsPage(c *ui.Context) {
 		a.persistProxy()
 	}
 	tok := a.uiTokens(c)
-	ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).Children(func() {
-		// Scroll 是盒子，Justify 不生效；用撑满的行把限宽的内容列居中。
-		ui.Row(c).FillWidth().Justify(ui.Center).Children(func() {
-			ui.Column(c).FillWidth().MaxWidth(920).Gap(8).Padding(2, 0, 12, 0).Children(func() {
-				uiPageHeader(c, "settings-page-header", iconSettings, "全局设置", "管理工作区默认参数、并发限流、策略规则与更新检查。", tok, nil)
-				labels := []string{"输出", "下载", "账号与并发", "Antigravity", "生成规则", "验证码 / 高级", "更新"}
-				tabs := ui.TabsBase(c.Key("settings-tabs"), &a.settingsTab, len(labels))
-				tabs.List.Row().FillWidth().Wrap().Gap(2).Padding(3).Radius(tok.radiusM).
-					Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
-					for i, label := range labels {
-						active := i == a.settingsTab
-						tab := tabs.Tab(i).Height(24).Padding(0, 9).Radius(tok.radiusS).Center().Label(label).Cursor(ui.CursorPointer)
+	ui.Column(c).Grow(1).MinHeight(0).FillWidth().Gap(0).Background(tok.paper).Children(func() {
+		labels := []string{"输出", "下载", "账号与并发", "Antigravity", "生成规则", "验证码 / 高级", "更新"}
+		tabs := ui.TabsBase(c.Key("settings-tabs"), &a.settingsTab, len(labels))
+		ui.Row(c).FillWidth().Padding(6, 20).Background(tok.card).BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
+			tabs.List.Row().FillWidth().Wrap().Gap(4).AlignItems(ui.Center).Children(func() {
+				for i, label := range labels {
+					active := i == a.settingsTab
+					tab := tabs.Tab(i).Height(26).Padding(0, 10).Radius(tok.radiusS).Center().Label(label).Cursor(ui.CursorPointer)
+					if active {
+						fg, bg, _ := badgeTone("accent", tok)
+						tab.Background(bg).TextColor(fg)
+					} else if tab.Hovered() {
+						tab.Background(tok.sunken).TextColor(tok.text)
+					} else {
+						tab.TextColor(tok.muted)
+					}
+					tab.Children(func() {
+						t := ui.Text(c, label).FontSize(tok.body).SingleLine()
 						if active {
-							tab.Background(tok.card).Border(1, tok.border).TextColor(tok.text)
-						} else if tab.Hovered() {
-							tab.Background(tok.sunkenHi).TextColor(tok.text)
-						} else {
-							tab.TextColor(tok.muted)
+							t.FontWeight(600)
 						}
-						tab.Children(func() {
-							t := ui.Text(c, label).FontSize(tok.caption).SingleLine()
-							if active {
-								t.FontWeight(600)
-							}
+					})
+				}
+			})
+		})
+		ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).FillWidth().Children(func() {
+			// Scroll 是盒子，Justify 不生效；用撑满的行把限宽的内容列居中。
+			ui.Row(c).FillWidth().Padding(18, 24).Justify(ui.Center).Children(func() {
+				ui.Column(c).FillWidth().MaxWidth(920).Gap(12).Children(func() {
+					switch a.settingsTab {
+					case settingsOutput:
+						a.outputSettings(c)
+					case settingsDownload:
+						a.downloadSettings(c)
+					case settingsAccount:
+						a.accountSettings(c)
+					case settingsAgy:
+						a.settingsCard(c, "Antigravity", "agy 路径、账号目录、模型和单任务超时。一次只跑一个账号。", func() { a.agySettings(c) })
+					case settingsRules:
+						a.ruleSettings(c)
+					case settingsAdvanced:
+						settingsColumns(c, func() {
+							a.settingsCard(c, "验证码 / 高级", "遇到验证时怎么处理。", func() { a.captchaFields(c) })
+						}, func() {
+							a.settingsCard(c, "网络", "Camoufox 安装使用此代理；账号可在浏览器页设置独立代理。", func() { a.proxyFields(c) })
 						})
+					case settingsUpdate:
+						a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
 					}
 				})
-				switch a.settingsTab {
-				case settingsOutput:
-					a.outputSettings(c)
-				case settingsDownload:
-					a.downloadSettings(c)
-				case settingsAccount:
-					a.accountSettings(c)
-				case settingsAgy:
-					a.settingsCard(c, "Antigravity", "agy 路径、账号目录、模型和单任务超时。一次只跑一个账号。", func() { a.agySettings(c) })
-				case settingsRules:
-					a.ruleSettings(c)
-				case settingsAdvanced:
-					settingsColumns(c, func() {
-						a.settingsCard(c, "验证码 / 高级", "遇到验证时怎么处理。", func() { a.captchaFields(c) })
-					}, func() {
-						a.settingsCard(c, "网络", "Camoufox 安装使用此代理；账号可在浏览器页设置独立代理。", func() { a.proxyFields(c) })
-					})
-				case settingsUpdate:
-					a.settingsCard(c, "更新", "检查新版本，连不上 GitHub 时走镜像。", func() { a.updateSettings(c) })
-				}
 			})
 		})
 	})
@@ -105,7 +108,7 @@ func settingsColumns(c *ui.Context, left, right func()) {
 
 func (a *App) settingsCard(c *ui.Context, title, blurb string, body func()) {
 	tok := a.uiTokens(c)
-	uiCard(c, "settings-card-"+title, tok).Padding(10, 12).Gap(6).Children(func() {
+	uiCard(c, "settings-card-"+title, tok).Grow(1).Padding(14, 16).Gap(8).Children(func() {
 		uiSectionTitle(c, title, "", tok)
 		if blurb != "" {
 			ui.Text(c, blurb).FontSize(tok.caption).TextColor(tok.muted)

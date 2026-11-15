@@ -52,6 +52,11 @@ func TestBrowserTableRowActionsTargetTheClickedEnvironment(t *testing.T) {
 	var launched int64
 	a.loginLaunch = func(b store.Browser) error { launched = b.ID; return nil }
 	tt := ui.NewTester(a.view, 1280, 840)
+	if err := tt.Click("重命名 品牌素材制作团队的备用账号 · Brand Studio"); err != nil {
+		t.Fatal(err)
+	}
+	assertVisible(t, tt, "重命名输入框", 1280, 840)
+	tt.Key(0, ui.KeyEscape)
 	if err := tt.Click("启动 品牌素材制作团队的备用账号 · Brand Studio"); err != nil {
 		t.Fatal(err)
 	}
@@ -114,22 +119,92 @@ func TestBrowserTableRowActionsTargetTheClickedEnvironment(t *testing.T) {
 	}
 }
 
+func TestBrowserEnvironmentSettingsPopup(t *testing.T) {
+	a := browserTableTestApp(t, 3)
+	a.dataRoot = t.TempDir()
+	tt := ui.NewTester(a.view, 1280, 840)
+	if tt.HasText("当前账号代理") || tt.HasText("删除当前") {
+		t.Fatal("environment settings should not occupy the table by default")
+	}
+	if err := tt.Click("配置 主力工作号"); err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{"环境配置 · 主力工作号", "当前账号代理", "保存账号代理", "恢复当前", "删除当前", "关闭环境配置"} {
+		assertVisible(t, tt, label, 1280, 840)
+	}
+	tt.Key(0, ui.KeyEscape)
+	if tt.HasText("当前账号代理") {
+		t.Fatal("escape did not close environment settings")
+	}
+	if err := tt.Click("配置 商品素材 02"); err != nil {
+		t.Fatal(err)
+	}
+	assertVisible(t, tt, "先停止此账号窗口，再修改代理。", 1280, 840)
+	if save, ok := tt.AccessByRole(ui.RoleButton, "保存账号代理"); !ok || !save.Disabled {
+		t.Fatal("a running environment allowed its proxy to be changed")
+	}
+	if err := tt.Click("关闭环境配置"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("配置 品牌素材制作团队的备用账号 · Brand Studio"); err != nil {
+		t.Fatal(err)
+	}
+	assertVisible(t, tt, "环境配置 · 品牌素材制作团队的备用账号 · Brand Studio", 1280, 840)
+	a.browserSel = 0
+	tt.Frame()
+	if err := tt.Click("删除当前"); err != nil {
+		t.Fatal(err)
+	}
+	rows := a.store.Browsers()
+	if len(rows) != 2 || rows[0].Name != "主力工作号" || rows[1].Name != "商品素材 02" || tt.HasText("当前账号代理") {
+		t.Fatalf("settings deleted the wrong environment or stayed open: %+v", rows)
+	}
+}
+
 func TestBrowserTableLayoutAndThemes(t *testing.T) {
-	for _, width := range []float32{1280, 1000, 760} {
+	for _, width := range []float32{1600, 1280, 1000, 760} {
 		t.Run(fmt.Sprintf("width=%g", width), func(t *testing.T) {
 			a := browserTableTestApp(t, 12)
 			tt := ui.NewTester(a.view, int(width), 720)
 			for _, dark := range []bool{false, true} {
 				tt.SetDark(dark)
 				tt.Advance(400 * time.Millisecond)
-				for _, label := range []string{"全选", "批量启动", "批量停止", "清空", "选择环境 主力工作号", "环境名称", "服务商", "环境状态", "操作", "启动 主力工作号", "停止 商品素材 02", "当前账号代理", "保存账号代理", "删除当前"} {
+				for _, label := range []string{"全选", "批量启动", "批量停止", "清空", "选择环境 主力工作号", "环境名称", "服务商", "环境状态", "操作", "启动 主力工作号", "停止 商品素材 02"} {
 					assertVisible(t, tt, label, width, 720)
+				}
+				nameHeader := assertVisible(t, tt, "环境名称", width, 720)
+				platformHeader := assertVisible(t, tt, "服务商", width, 720)
+				if gap := platformHeader.X - nameHeader.X; gap > 220 {
+					t.Fatalf("environment name column is too wide: %g", gap)
+				}
+				statusHeader := assertVisible(t, tt, "环境状态", width, 720)
+				if gap := statusHeader.X - platformHeader.X; gap <= 86 {
+					t.Fatalf("remaining width was not shared with the provider column: %g", gap)
+				}
+				table := assertVisible(t, tt, "浏览器环境列表", width, 720)
+				actions := assertVisible(t, tt, "操作", width, 720)
+				if gap := table.X + table.W - actions.X - actions.W; gap > 84 {
+					t.Fatalf("table columns leave unused space at the right: %g", gap)
 				}
 				name := assertVisible(t, tt, "主力工作号", width, 720)
 				start := assertVisible(t, tt, "启动 主力工作号", width, 720)
 				if start.X <= name.X || start.Y > name.Y+40 || start.Y < name.Y-16 {
 					t.Fatalf("launch left its environment row: name=%+v start=%+v", name, start)
 				}
+				if err := tt.Click("配置 主力工作号"); err != nil {
+					t.Fatal(err)
+				}
+				for _, label := range []string{"当前账号代理", "保存账号代理", "删除当前"} {
+					assertVisible(t, tt, label, width, 720)
+				}
+				tt.Key(0, ui.KeyEscape)
+				if err := tt.Click("配置 商品素材 12"); err != nil {
+					t.Fatal(err)
+				}
+				for _, label := range []string{"环境配置 · 商品素材 12", "当前账号代理", "保存账号代理", "删除当前"} {
+					assertVisible(t, tt, label, width, 720)
+				}
+				tt.Key(0, ui.KeyEscape)
 				if dir := os.Getenv("TULAI_SHOTS"); dir != "" {
 					if err := os.MkdirAll(dir, 0o755); err != nil {
 						t.Fatal(err)
@@ -212,11 +287,15 @@ func TestBrowserTableEmptyAndScaledStates(t *testing.T) {
 					}
 				}
 			} else {
-				for _, label := range []string{"全选", "批量启动", "批量停止", "清空", "删除当前"} {
+				for _, label := range []string{"全选", "批量启动", "批量停止", "清空"} {
 					assertVisible(t, tt, label, 1000, 720)
 				}
 				assertVisible(t, tt, "启动 主力工作号", 1000, 720)
+				if err := tt.Click("配置 主力工作号"); err != nil {
+					t.Fatal(err)
+				}
 				assertVisible(t, tt, "保存账号代理", 1000, 720)
+				assertVisible(t, tt, "删除当前", 1000, 720)
 			}
 			if dir := os.Getenv("TULAI_SHOTS"); dir != "" {
 				if err := os.MkdirAll(dir, 0o755); err != nil {

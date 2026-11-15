@@ -12,45 +12,101 @@ import (
 	"github.com/xxww0098/tulai/internal/prompts"
 )
 
-// workColumns 左边是这一页的输入与开始卡片，右边是账号队列和出图结果；运行日志已移至顶部弹出。
+const workbenchBarH float32 = 34
+
+// workbenchBar 在主窗口顶部承载工作台模式切换与任务记录操作，不占用全局顶栏。
+func (a *App) workbenchBar(c *ui.Context) {
+	tok := a.look
+	ui.Row(c.Key("workbench-bar")).FillWidth().Height(workbenchBarH).Shrink(0).Padding(0, 12).Gap(8).
+		AlignItems(ui.Center).Background(tok.paper).
+		BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
+		ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
+			a.workspaceModeTabs(c)
+		})
+		ui.Row(c.Key("workbench-actions")).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
+			a.historyControl(c)
+			uiIconBtn(c, "new-task", "新建任务", "新建任务", iconFilePlus, 26, false, true, tok).
+				Disabled(a.running).OnClick(func() { a.newWorkspace() })
+		})
+	})
+}
+
+func (a *App) workspaceModeTabs(c *ui.Context) {
+	tok := a.look
+	labels := []string{"自由生图", "批量洗图", "裂变图片"}
+	icons := []*ui.SVG{iconSparkles, iconRefresh, iconLayers}
+	tabs := ui.TabsBase(c.Key("workspace-modes"), &a.tab, len(labels))
+	tabs.List.Row().Height(26).Padding(2).Gap(2).Radius(tok.radiusS).Background(tok.sunken).
+		Shrink(0).AlignItems(ui.Stretch).Children(func() {
+		for i, label := range labels {
+			active := i == a.tab
+			tab := tabs.Tab(i).Padding(0, 9).Gap(4).Radius(tok.radiusS - 1).Center().Label(label).Cursor(ui.CursorPointer)
+			icoColor := tok.muted
+			if active {
+				tab.Background(tok.card).Border(1, tok.border).TextColor(tok.text)
+				icoColor = tok.accent
+				if !tok.dark {
+					tab.Shadow(0, 1, 2, 0, tok.shadow)
+				}
+			} else if tab.Hovered() {
+				tab.Background(tok.sunkenHi).TextColor(tok.text)
+				icoColor = tok.text
+			} else {
+				tab.TextColor(tok.muted)
+			}
+			tab.Children(func() {
+				ui.Icon(c, icons[i]).FontSize(12).TextColor(icoColor).Shrink(0)
+				t := ui.Text(c, label).FontSize(tok.caption).SingleLine()
+				if active {
+					t.FontWeight(600)
+				}
+			})
+		}
+	})
+}
+
+// workColumns 顶部是工作台模式与服务商栏，左边是这一页的输入与开始操作，右边是账号队列和出图结果；运行日志已移至顶部弹出。
 func (a *App) workColumns(c *ui.Context, input func(), mergeRun bool) {
 	w, _ := c.Size()
-	if homeSplit(w) {
-		ui.Column(c).Grow(1).MinHeight(0).Gap(6).Children(func() {
+	ui.Column(c.Key("workbench-main")).Grow(1).MinWidth(0).MinHeight(0).Gap(0).Background(a.look.card).Children(func() {
+		a.workbenchBar(c)
+		if homeSplit(w) {
 			a.loginBanner(c)
 			ui.Row(c).Grow(1).MinHeight(0).Gap(homeGap).AlignItems(ui.Stretch).Children(func() {
 				a.workSide(c, input, mergeRun)
 				a.homeStage(c)
 			})
-		})
-	} else {
-		ui.Scroll(c.Key("work-narrow")).Grow(1).MinHeight(0).Children(func() {
-			ui.Column(c).FillWidth().Gap(6).Padding(2, 0, 4, 0).Children(func() {
-				a.loginBanner(c)
-				a.platformPicker(c)
-				input()
-				if !mergeRun {
-					a.runCard(c, false)
-				}
-				a.platformStage(c)
+		} else {
+			ui.Scroll(c.Key("work-narrow")).Grow(1).MinHeight(0).Background(a.look.card).Children(func() {
+				ui.Column(c).FillWidth().Gap(0).Children(func() {
+					a.loginBanner(c)
+					a.platformPicker(c)
+					input()
+					if !mergeRun {
+						a.runCard(c, false)
+					}
+					a.platformStage(c)
+				})
 			})
-		})
-	}
+		}
+	})
 	a.previewModal(c)
 	a.galleryModal(c)
 	a.promptPartsModal(c)
 }
 
-// workSide 输入在上并撑满可用高度，开始卡片固定贴底。
+// workSide 输入在上并撑满可用高度，开始操作固定贴底。
 func (a *App) workSide(c *ui.Context, input func(), mergeRun bool) {
-	gap := float32(6)
-	if mergeRun {
-		gap = 0
-	}
+	tok := a.look
 	winW, winH := c.Size()
-	ui.Column(c.Key("work-side")).Width(composerWidth(winW)).Shrink(0).FillHeight().MinHeight(0).Gap(gap).Children(func() {
+	side := ui.Column(c.Key("work-side")).Width(composerWidth(winW)).Shrink(0).FillHeight().MinHeight(0).Gap(0).
+		Background(tok.card)
+	if homeSplit(winW) {
+		side.BorderWidth(0, 1, 0, 0).BorderColor(tok.border)
+	}
+	side.Children(func() {
 		// 滚动容器会以无限高度测量子元素，无法分配剩余空间；极矮窗口仍保留滚动。
-		flexible := mergeRun && winH >= 560
+		flexible := winH >= 560
 		var viewport ui.Element
 		if flexible {
 			viewport = ui.Column(c.Key("work-side-input"))
@@ -58,7 +114,7 @@ func (a *App) workSide(c *ui.Context, input func(), mergeRun bool) {
 			viewport = ui.Scroll(c.Key("work-side-input")).TrackScroll(&a.workInputScroll)
 		}
 		viewport.FillWidth().Grow(1).MinHeight(0).Children(func() {
-			content := ui.Column(c).FillWidth().Gap(6)
+			content := ui.Column(c).FillWidth().Gap(0)
 			if flexible {
 				content.Grow(1).MinHeight(0)
 			}
@@ -89,12 +145,21 @@ func (a *App) washInput(c *ui.Context) {
 // promptFocus 是生图的主输入：直接写、粘贴，或从 txt 载入。
 func (a *App) promptFocus(c *ui.Context) {
 	tok := a.look
-	_, winH := c.Size()
+	winW, winH := c.Size()
 	inputHeight := float32(148)
-	if winH < 720 {
+	minInputHeight := inputHeight
+	if winH >= 560 && winH < 720 {
 		inputHeight = 116
+		minInputHeight = 116
 	}
-	card := a.stepCard(c, "prompt-focus", stepCurrent)
+	if winH >= 560 && winH < 640 {
+		minInputHeight = 48
+	}
+	card := a.stepCard(c, "prompt-focus", stepCurrent).
+		BorderWidth(0, 0, 1, 0).BorderColor(tok.border)
+	if homeSplit(winW) && winH >= 560 {
+		card.Grow(1)
+	}
 	if paths := card.DroppedFiles(); len(paths) > 0 {
 		a.ingestPromptFiles(paths)
 	}
@@ -105,7 +170,7 @@ func (a *App) promptFocus(c *ui.Context) {
 		}
 		hint := "每行一条；导入段落会合并"
 		if a.promptPick != "" {
-			hint = "当前模板整段发送"
+			hint = "模板「" + a.promptChoice + "」整段一起发送"
 		}
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "提示词").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
@@ -117,11 +182,10 @@ func (a *App) promptFocus(c *ui.Context) {
 				uiBadge(c, "prompt-count", fmt.Sprintf("%d 条", n), "neutral", tok)
 			}
 		})
-		ui.TextArea(c, &a.prompts).Height(inputHeight).FillWidth().Label("提示词内容").
-			Placeholder("输入提示词，每行一条；也可拖入 txt").Disabled(a.running)
-		if a.promptPick != "" {
-			line := "模板「" + a.promptChoice + "」整段一起发送"
-			ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line)
+		input := uiPromptArea(ui.TextArea(c, &a.prompts).Height(inputHeight).MinHeight(minInputHeight).FillWidth().Label("提示词内容").
+			Placeholder("输入提示词，每行一条；也可拖入 txt").Disabled(a.running), tok)
+		if homeSplit(winW) && winH >= 560 {
+			input.Grow(1)
 		}
 		if a.promptNote != "" {
 			ui.Text(c, a.promptNote).FontSize(tok.caption).TextColor(tok.muted)
@@ -130,7 +194,7 @@ func (a *App) promptFocus(c *ui.Context) {
 			a.workspacePromptSelect(c)
 			ui.Spacer(c)
 			if a.promptPick != "" {
-				uiIconBtn(c, "prompt-by-line", "按行发送", "切回按行发送", iconListOrdered, 22, false, false, tok).
+				uiIconBtn(c, "prompt-by-line", "按行发送", "切回按行发送", iconListOrdered, 22, false, true, tok).
 					Disabled(a.running).OnClick(func() { a.useLinePrompts() })
 			}
 			a.promptPartsButton(c)
@@ -154,6 +218,9 @@ func (a *App) imageCard(c *ui.Context, key, title string, primary bool) {
 		state = stepCurrent
 	}
 	card := a.stepCard(c, key, state).Label(title + "输入区")
+	if primary {
+		card.BorderWidth(0, 0, 1, 0).BorderColor(tok.border)
+	}
 	if paths := card.DroppedFiles(); len(paths) > 0 {
 		a.ingestSources(paths)
 	}
@@ -190,23 +257,23 @@ func (a *App) imageCard(c *ui.Context, key, title string, primary bool) {
 
 func (a *App) compactDrop(c *ui.Context, primary bool) {
 	tok := a.look
-	h := float32(44)
+	h := float32(30)
 	hint := ""
 	if primary {
-		h = 68
+		h = 48
 		hint = "支持多张或整文件夹"
 		if a.fissioning() {
 			hint = "选 1 张母图生成 4 张不同角度"
 		}
 	}
 	zone := ui.Column(c.Key("drop-zone")).Label("拖入或点击添加图片").FillWidth().Height(h).Radius(tok.radiusM).
-		Border(1, tok.borderStrong).BorderStyle(ui.BorderDashed).
-		Background(tok.sunken).Center().Gap(2).Cursor(ui.CursorPointer)
+		Border(1, tok.border).BorderStyle(ui.BorderDashed).
+		Background(tok.paper).Center().Gap(1).Cursor(ui.CursorPointer)
 	if !primary {
 		zone.Tooltip("可选，不放图也可纯提示词生成")
 	}
 	if zone.Hovered() && !a.running {
-		zone.Border(1, tok.accent).Background(tok.accent.Alpha(0.08))
+		zone.Border(1, tok.accent).Background(tok.accent.Alpha(0.06))
 	}
 	hoverPressPose(zone)
 	if zone.Clicked() && !a.running {
@@ -218,7 +285,7 @@ func (a *App) compactDrop(c *ui.Context, primary bool) {
 			if zone.Hovered() && !a.running {
 				ink = tok.accent
 			}
-			ui.Icon(c, iconImagePlus).FontSize(13).TextColor(ink)
+			ui.Icon(c, iconImagePlus).FontSize(12).TextColor(ink)
 			ui.Text(c, "拖入或点击添加图片").FontSize(tok.body).FontWeight(500).TextColor(tok.text)
 		})
 		if hint != "" {
@@ -228,7 +295,7 @@ func (a *App) compactDrop(c *ui.Context, primary bool) {
 }
 
 func (a *App) thumbStrip(c *ui.Context) {
-	ui.ScrollHorizontal(c).FillWidth().Height(34).Children(func() {
+	ui.ScrollHorizontal(c).FillWidth().Height(30).Children(func() {
 		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 			for i := range a.sources {
 				a.miniThumb(c, i)
@@ -240,7 +307,7 @@ func (a *App) thumbStrip(c *ui.Context) {
 func (a *App) imageActions(c *ui.Context, title string, _ bool) {
 	tok := a.look
 	action := func(label string, icon *ui.SVG, click func()) {
-		uiIconBtn(c, "image-action-"+label, label, label, icon, 22, false, false, tok).
+		uiIconBtn(c, "image-action-"+label, label, label, icon, 22, false, true, tok).
 			Disabled(a.running).OnClick(click)
 	}
 	if len(a.sources) > 0 {
@@ -263,23 +330,19 @@ func (a *App) quietButton(c *ui.Context, label string) ui.Element {
 func (a *App) runCard(c *ui.Context, merged bool) {
 	tok := a.look
 	plan := a.workbenchPlan()
-	card := a.stepCard(c, "step-run", stepPending).Gap(4)
+	card := ui.Column(c.Key("step-run")).FillWidth().Background(tok.paper).
+		BorderWidth(1, 0, 0, 0).BorderColor(tok.border).Padding(10, 12).Gap(5)
 	if merged {
-		card.Label("洗图操作区").NoShadow().Radius(0, 0, tok.radiusM, tok.radiusM).
-			BorderWidth(0, 1, 1, 1).Padding(0, 10, 8, 10)
+		card.Label("洗图操作区")
 	}
 	card.Children(func() {
-		if merged {
-			ui.Divider(c).Background(tok.border).Margin(0, 0, 3, 0)
-		}
 		target := "本次发送至：" + a.stagePlatform()
 		if a.running {
 			target = "当前查看：" + a.stagePlatform()
 		}
-		targetInk, _, _ := semanticToneColors(tok.dark, tok.text, tok.accent, 0.12)
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
 			platformIcon(c, a.stagePlatform(), 12, tok)
-			ui.Text(c, target).FontSize(tok.caption).FontWeight(600).TextColor(targetInk).Grow(1).MinWidth(0).
+			ui.Text(c, target).FontSize(tok.caption).FontWeight(500).TextColor(tok.muted).Grow(1).MinWidth(0).
 				SingleLine().FontFeatures("tnum").Tooltip(target)
 			if a.stagePlatform() == "豆包" {
 				a.outputSizeSelect(c)
@@ -292,19 +355,11 @@ func (a *App) runCard(c *ui.Context, merged bool) {
 			a.washStyleSelect(c)
 		}
 		board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
-		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(3).Clip().Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Clip().Children(func() {
 				summary := a.stepLead(board)
 				ui.Text(c, summary).FontSize(tok.body).FontWeight(500).TextColor(tok.text).
 					MinWidth(0).SingleLine().FontFeatures("tnum").Tooltip(summary)
-				if a.running {
-					tally := TallyTasks(tasksForPlatform(a.queueItems(), a.stagePlatform()))
-					total := tally.Done + tally.Running + tally.Queued + tally.Failed + tally.Needs + tally.Review + tally.Stopped
-					if total > 0 {
-						finished := tally.Done + tally.Failed + tally.Stopped
-						ui.Progress(c, float64(finished)/float64(total)).FillWidth().Height(3)
-					}
-				}
 				if note := a.runNote(); note != "" {
 					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).
 						MinWidth(0).SingleLine().FontFeatures("tnum").Tooltip(note)

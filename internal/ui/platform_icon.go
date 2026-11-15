@@ -6,10 +6,10 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// 平台标都用 @lobehub/icons-static-svg 的彩色版（unpkg.com/@lobehub/icons-static-svg/icons/<id>-color.svg）。
+// 豆包使用官方头像 PNG；千问 / Antigravity / ChatGPT 使用 @lobehub/icons-static-svg 的矢量图标。
 //
-//go:embed assets/platforms/doubao.svg
-var doubaoSVG []byte
+//go:embed assets/platforms/doubao.png
+var doubaoPNG []byte
 
 //go:embed assets/platforms/qwen.svg
 var qwenSVG []byte
@@ -21,11 +21,19 @@ var antigravitySVG []byte
 var openaiSVG []byte
 
 var (
-	iconDoubao      = ui.MustParseSVG(doubaoSVG)
+	iconDoubao      = mustBitmap(doubaoPNG)
 	iconQianwen     = ui.MustParseSVG(qwenSVG)
 	iconAntigravity = ui.MustParseSVG(antigravitySVG)
 	iconChatGPT     = ui.MustParseSVG(openaiSVG)
 )
+
+func mustBitmap(data []byte) *ui.Bitmap {
+	bmp, err := ui.DecodeBitmap(data)
+	if err != nil {
+		panic(err)
+	}
+	return bmp
+}
 
 // platformIcon 在 16–20 左右画平台标。不认识的平台用中性圆。
 func platformIcon(c *ui.Context, platform string, size float32, tok tokens) {
@@ -34,7 +42,7 @@ func platformIcon(c *ui.Context, platform string, size float32, tok tokens) {
 	}
 	switch platform {
 	case "豆包":
-		ui.Image(c.Key("plat-doubao"), iconDoubao).Size(size, size).Fit(ui.Contain).Shrink(0)
+		ui.Image(c.Key("plat-doubao"), iconDoubao).Size(size, size).Radius(size / 2).Fit(ui.Contain).Shrink(0)
 	case "千问":
 		ui.Image(c.Key("plat-qianwen"), iconQianwen).Size(size, size).Fit(ui.Contain).Shrink(0)
 	case "Antigravity":

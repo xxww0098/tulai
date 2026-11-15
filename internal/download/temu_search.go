@@ -204,10 +204,12 @@ func temuSearchCapture(ctx context.Context, s *RenderedSession, start, page *url
 		Value    string `json:"value"`
 		TooLarge bool   `json:"tooLarge"`
 	}
-	if err := s.run(ctx, chromedp.Evaluate(`(() => {
-  const value = document.querySelector('[data-tulai-download-helper]')?.getAttribute('data-tulai-temu-snapshot') || '';
+	markers := s.downloadMarkers()
+	snapshotScript := fmt.Sprintf(`(() => {
+  const value = document.querySelector(%q)?.getAttribute(%q) || '';
   return {value: value.length <= 8 * 1024 * 1024 ? value : '', tooLarge: value.length > 8 * 1024 * 1024};
-})()`, &cached)); err != nil {
+})()`, fmt.Sprintf("[%s]", markers.HostAttr), markers.SnapshotAttr)
+	if err := s.run(ctx, chromedp.Evaluate(snapshotScript, &cached)); err != nil {
 		return result, err
 	}
 	if cached.TooLarge {

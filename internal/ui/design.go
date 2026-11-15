@@ -5,8 +5,7 @@ import "github.com/egoist/mygo/ui"
 // interfaceZoom 缩小界面控件，为工作区和图片留出更多窗口空间。
 const interfaceZoom float32 = 1.0
 
-// tokens 是出图页的层次：纸色底、侧栏、抬起的卡片、沉下去的槽，加上圆角、字号和状态色。
-// 窗口控件仍走 Theme，这里多出来的是卡片、徽标和缩略图要用、Theme 里没有的几档。
+// tokens 是全站设计系统的色彩、字号与圆角令牌：包含深墨色导航壳层与纯白分屏画布。
 type tokens struct {
 	dark                          bool
 	paper, rail, card, sunken     ui.Color
@@ -15,6 +14,9 @@ type tokens struct {
 	text, muted, subtle           ui.Color
 	accent, onAccent              ui.Color
 	success, warning, danger      ui.Color
+	railBg, railHover, railActive ui.Color
+	railBorder, railText          ui.Color
+	railMuted, railAccent         ui.Color
 	shadow, lift                  ui.Color
 	radiusS, radiusM, radiusL     float32
 	display, title, body, caption float32
@@ -24,13 +26,13 @@ func workbenchTokens(dark bool) tokens {
 	if dark {
 		return tokens{
 			dark:         true,
-			paper:        ui.Hex("#0B0E14"),
-			rail:         ui.Hex("#0F131B"),
-			card:         ui.Hex("#141923"),
-			sunken:       ui.Hex("#1B2230"),
-			sunkenHi:     ui.Hex("#242D3F"),
-			border:       ui.Hex("#252F42"),
-			borderStrong: ui.Hex("#34425A"),
+			paper:        ui.Hex("#0D1118"),
+			rail:         ui.Hex("#10151F"),
+			card:         ui.Hex("#131924"),
+			sunken:       ui.Hex("#1A2232"),
+			sunkenHi:     ui.Hex("#232D42"),
+			border:       ui.Hex("#222B3C"),
+			borderStrong: ui.Hex("#334155"),
 			text:         ui.Hex("#F1F5F9"),
 			muted:        ui.Hex("#94A3B8"),
 			subtle:       ui.Hex("#64748B"),
@@ -39,32 +41,46 @@ func workbenchTokens(dark bool) tokens {
 			success:      ui.Hex("#34D399"),
 			warning:      ui.Hex("#FBBF24"),
 			danger:       ui.Hex("#F87171"),
+			railBg:       ui.Hex("#090C12"),
+			railHover:    ui.Hex("#131926"),
+			railActive:   ui.Hex("#1C2538"),
+			railBorder:   ui.Hex("#1A2232"),
+			railText:     ui.Hex("#F8FAFC"),
+			railMuted:    ui.Hex("#8B9BB4"),
+			railAccent:   ui.Hex("#60A5FA"),
 			shadow:       ui.RGBA(0, 0, 0, 0.36),
 			lift:         ui.RGBA(0, 0, 0, 0.46),
-			radiusS:      4, radiusM: 6, radiusL: 8,
-			display: 13.5, title: 11.5, body: 11, caption: 10,
+			radiusS:      5, radiusM: 6, radiusL: 8,
+			display: 15, title: 13, body: 12, caption: 11,
 		}
 	}
 	return tokens{
-		paper:        ui.Hex("#F6F8FA"),
-		rail:         ui.Hex("#F9FAFC"),
+		paper:        ui.Hex("#F8FAFC"),
+		rail:         ui.Hex("#F8FAFC"),
 		card:         ui.Hex("#FFFFFF"),
-		sunken:       ui.Hex("#F0F3F7"),
-		sunkenHi:     ui.Hex("#E6EBF2"),
-		border:       ui.Hex("#E1E6EF"),
-		borderStrong: ui.Hex("#CBD4E1"),
+		sunken:       ui.Hex("#F1F5F9"),
+		sunkenHi:     ui.Hex("#E2E8F0"),
+		border:       ui.Hex("#E5E9F0"),
+		borderStrong: ui.Hex("#CBD5E1"),
 		text:         ui.Hex("#0F172A"),
-		muted:        ui.Hex("#5B677A"),
-		subtle:       ui.Hex("#8A96A8"),
+		muted:        ui.Hex("#526075"),
+		subtle:       ui.Hex("#8492A6"),
 		accent:       ui.Hex("#2563EB"),
 		onAccent:     ui.Hex("#FFFFFF"),
 		success:      ui.Hex("#15803D"),
 		warning:      ui.Hex("#B45309"),
 		danger:       ui.Hex("#DC2626"),
-		shadow:       ui.RGBA(15, 23, 42, 0.06),
-		lift:         ui.RGBA(15, 23, 42, 0.08),
-		radiusS:      4, radiusM: 6, radiusL: 8,
-		display: 13.5, title: 11.5, body: 11, caption: 10,
+		railBg:       ui.Hex("#111622"),
+		railHover:    ui.Hex("#1B2333"),
+		railActive:   ui.Hex("#253047"),
+		railBorder:   ui.Hex("#222B3C"),
+		railText:     ui.Hex("#F8FAFC"),
+		railMuted:    ui.Hex("#94A3B8"),
+		railAccent:   ui.Hex("#60A5FA"),
+		shadow:       ui.RGBA(15, 23, 42, 0.05),
+		lift:         ui.RGBA(15, 23, 42, 0.10),
+		radiusS:      5, radiusM: 6, radiusL: 8,
+		display: 15, title: 13, body: 12, caption: 11,
 	}
 }
 
@@ -108,7 +124,7 @@ func applyWorkbenchTheme(c *ui.Context) tokens {
 	th.Spacing = 2
 	th.FontSize = tok.body
 	th.ScrollbarWidth = 4
-	th.Font = "Inter, WenQuanYi Micro Hei"
+	th.Font = ""
 	c.SetTheme(&th)
 	return tok
 }
@@ -130,25 +146,32 @@ func semanticToneColors(dark bool, text, base ui.Color, wash float32) (fg, bg, b
 }
 
 func badgeTone(tone string, tok tokens) (fg, bg, border ui.Color) {
+	wash := float32(0.11)
+	if tok.dark {
+		wash = 0.16
+	}
 	switch tone {
 	case "accent":
-		return semanticToneColors(tok.dark, tok.text, tok.accent, 0.12)
+		return semanticToneColors(tok.dark, tok.text, tok.accent, wash)
 	case "success":
-		return semanticToneColors(tok.dark, tok.text, tok.success, 0.12)
+		return semanticToneColors(tok.dark, tok.text, tok.success, wash)
 	case "warning":
-		return semanticToneColors(tok.dark, tok.text, tok.warning, 0.12)
+		return semanticToneColors(tok.dark, tok.text, tok.warning, wash)
 	case "danger":
-		return semanticToneColors(tok.dark, tok.text, tok.danger, 0.12)
+		return semanticToneColors(tok.dark, tok.text, tok.danger, wash)
 	default:
+		if tok.dark {
+			return semanticToneColors(tok.dark, tok.text, tok.muted, 0.14)
+		}
 		return semanticToneColors(tok.dark, tok.text, tok.muted, 0.10)
 	}
 }
 
 func interactiveTone(active, hovered bool, idleFg ui.Color, tok tokens) (fg, bg, border ui.Color) {
 	if active {
-		fg, bg, border = semanticToneColors(tok.dark, tok.text, tok.accent, 0.14)
+		fg, bg, border = semanticToneColors(tok.dark, tok.text, tok.accent, 0.13)
 		if hovered {
-			return fg, tok.accent.Alpha(0.20), fg.Alpha(0.42)
+			return fg, tok.accent.Alpha(0.20), fg.Alpha(0.36)
 		}
 		return fg, bg, border
 	}
@@ -158,36 +181,67 @@ func interactiveTone(active, hovered bool, idleFg ui.Color, tok tokens) (fg, bg,
 	return idleFg, tok.sunken, tok.border
 }
 
-// uiCardSurface 给任意元素统一卡片底色、1px 细边框与中圆角。
+// uiCardSurface 给独立卡片或浮层统一底色、1px 细边框与中圆角。
 func uiCardSurface(el ui.Element, tok tokens) ui.Element {
 	return el.Background(tok.card).Border(1, tok.border).Radius(tok.radiusM)
 }
 
 // uiCard 创建统一的小圆角浅边框工作区卡片，减少留白以便内容占主导。
 func uiCard(c *ui.Context, key string, tok tokens) ui.Element {
-	return uiCardSurface(ui.Column(keyedContext(c, key)).FillWidth().Padding(7, 9).Gap(5), tok)
+	return uiCardSurface(ui.Column(keyedContext(c, key)).FillWidth().Padding(8, 10).Gap(6), tok)
 }
 
-// uiBadge 渲染紧凑的语义状态胶囊，保证浅/深色 >=4.5:1 对比度与等宽数字。
+// uiPromptArea 把多行提示词编辑区设为纯净编辑画布底色，摆脱灰色沉槽感。
+func uiPromptArea(area ui.Element, tok tokens) ui.Element {
+	return area.Background(tok.card).Border(1, tok.border).Radius(tok.radiusM).Padding(8, 10)
+}
+
+// uiBadge 渲染无外描边的轻量语义状态胶囊，保证浅/深色 >=4.5:1 对比度与等宽数字。
 func uiBadge(c *ui.Context, key, label, tone string, tok tokens) ui.Element {
-	fg, bg, border := badgeTone(tone, tok)
-	pill := ui.Row(keyedContext(c, key)).Height(18).Padding(0, 6).Radius(999).
-		Shrink(0).AlignItems(ui.Center).Background(bg).Border(1, border)
+	fg, bg, _ := badgeTone(tone, tok)
+	pill := ui.Row(keyedContext(c, key)).Height(19).Padding(0, 7).Radius(999).
+		Shrink(0).AlignItems(ui.Center).Background(bg)
 	pill.Children(func() {
-		ui.Text(c, label).FontSize(tok.caption).FontWeight(500).TextColor(fg).
+		ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(fg).
 			SingleLine().FontFeatures("tnum")
 	})
 	return pill
 }
 
+// uiPrimaryBtn 渲染主按钮：可用时高亮实色填充，禁用时呈现克制清晰的中性灰而非发虚半透明蓝。
+func uiPrimaryBtn(c *ui.Context, key, label string, disabled bool, tok tokens) ui.Element {
+	th := c.Theme()
+	b := ui.Button(keyedContext(c, key), label).Height(24).Padding(0, 10).
+		Radius(tok.radiusS).Center().Shrink(0).Disabled(disabled).FontSize(tok.body)
+	bg, fg, border := tok.accent, tok.onAccent, tok.accent
+	switch {
+	case disabled:
+		bg, fg, border = tok.sunken, tok.muted, tok.border
+	case b.Pressed():
+		bg = th.AccentPressed
+		border = bg
+	case b.Hovered():
+		bg = th.AccentHover
+		border = bg
+	}
+	b.Background(bg).TextColor(fg).Border(1, border)
+	if !disabled {
+		b.FontWeight(600).Cursor(ui.CursorPointer)
+		hoverPressPose(b)
+	} else {
+		b.FontWeight(500)
+	}
+	return b
+}
+
 // uiPageHeader 渲染管理/工具页的标准顶部标题行。
 func uiPageHeader(c *ui.Context, key string, icon *ui.SVG, title, subtitle string, tok tokens, right func()) {
-	ui.Row(keyedContext(c, key)).FillWidth().Gap(8).Padding(0, 0, 6, 0).
+	ui.Row(keyedContext(c, key)).FillWidth().Gap(8).Padding(0, 0, 8, 0).
 		AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 		ui.Row(c).Grow(1).MinWidth(0).Gap(7).AlignItems(ui.Center).Children(func() {
 			if icon != nil {
 				ui.Row(c).Size(24, 24).Radius(tok.radiusS).Center().Shrink(0).
-					Background(tok.sunken).Border(1, tok.border).Children(func() {
+					Background(tok.sunken).Children(func() {
 					ui.Icon(c, icon).FontSize(13).TextColor(tok.accent)
 				})
 			}
@@ -221,7 +275,7 @@ func uiBtn(b ui.Element, tok tokens) ui.Element {
 	if b.Hovered() {
 		b.BorderColor(tok.borderStrong)
 	}
-	return b.FontSize(tok.body).Height(24).Padding(0, 8).Radius(tok.radiusS).Shrink(0)
+	return b.FontSize(tok.body).Height(24).Padding(0, 10).Radius(tok.radiusS).Shrink(0)
 }
 
 // uiMiniBtn 用于表格行内或卡片标题旁的轻量操作按钮，悬停时强化细边框。
@@ -229,7 +283,7 @@ func uiMiniBtn(b ui.Element, tok tokens) ui.Element {
 	if b.Hovered() {
 		b.BorderColor(tok.borderStrong)
 	}
-	return b.FontSize(tok.caption).Height(20).Padding(0, 6).Radius(tok.radiusS).Shrink(0)
+	return b.FontSize(tok.caption).Height(22).Padding(0, 7).Radius(tok.radiusS).Shrink(0)
 }
 
 // uiIconBtn 构建紧凑的图标按钮，保留 Label 与 Tooltip 以兼顾无障碍与鼠标提示。
@@ -243,7 +297,7 @@ func uiIconBtn(c *ui.Context, key, label, tip string, ico *ui.SVG, size float32,
 	var fg, bg, border ui.Color
 	if ghost && !active {
 		if hovered {
-			btn.Background(tok.sunken).Border(1, tok.border)
+			btn.Background(tok.sunken)
 			fg = tok.text
 		} else {
 			btn.Background(ui.Transparent)
@@ -255,8 +309,8 @@ func uiIconBtn(c *ui.Context, key, label, tip string, ico *ui.SVG, size float32,
 	}
 	hoverPressPose(btn)
 	icoSize := size * 0.56
-	if icoSize < 11 {
-		icoSize = 11
+	if icoSize < 12 {
+		icoSize = 12
 	}
 	btn.Children(func() {
 		ui.Icon(c, ico).FontSize(icoSize).TextColor(fg)
@@ -266,7 +320,7 @@ func uiIconBtn(c *ui.Context, key, label, tip string, ico *ui.SVG, size float32,
 
 // uiIconTextBtn 构建带小图标与极简短字的紧凑 SaaS 按钮（适用于主要 CTA 或需消歧义的动作）。
 func uiIconTextBtn(c *ui.Context, key, label, tip string, ico *ui.SVG, h float32, active bool, tok tokens) ui.Element {
-	btn := ui.ButtonBase(c.Key(key)).Height(h).Padding(0, 7).Radius(tok.radiusS).Center().Shrink(0).
+	btn := ui.ButtonBase(c.Key(key)).Height(h).Padding(0, 8).Radius(tok.radiusS).Center().Shrink(0).
 		Cursor(ui.CursorPointer).Label(label)
 	if tip != "" {
 		btn.Tooltip(tip)
@@ -290,12 +344,17 @@ func uiIconTextBtn(c *ui.Context, key, label, tip string, ico *ui.SVG, h float32
 	return btn
 }
 
-// uiPill 构建紧凑的单选筛选或开关胶囊按钮。
+// uiPill 构建紧凑的单选筛选或开关胶囊按钮，去掉冗余外描边保持清爽。
 func uiPill(c *ui.Context, key, label string, active bool, tok tokens) ui.Element {
-	btn := ui.ButtonBase(c.Key(key)).Height(20).Padding(0, 8).Radius(999).Center().Shrink(0).
+	btn := ui.ButtonBase(c.Key(key)).Height(22).Padding(0, 9).Radius(999).Center().Shrink(0).
 		Cursor(ui.CursorPointer).Label(label)
-	fg, bg, border := interactiveTone(active, btn.Hovered(), tok.muted, tok)
-	btn.Background(bg).Border(1, border)
+	fg, bg := tok.muted, ui.Transparent
+	if active {
+		fg, bg, _ = badgeTone("accent", tok)
+	} else if btn.Hovered() {
+		fg, bg = tok.text, tok.sunken
+	}
+	btn.Background(bg)
 	hoverPressPose(btn)
 	btn.Children(func() {
 		t := ui.Text(c, label).FontSize(tok.caption).SingleLine().TextColor(fg)

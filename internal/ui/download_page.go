@@ -26,14 +26,13 @@ const (
 	dlColGap    float32 = 12
 )
 
-// downloadPage 是整页：SaaS 页头、分段状态筛选与工具条、任务列表卡片或空态，弹窗盖在上面。
+// downloadPage 是整页：单行工具栏、通知横幅与任务表/空态。
 func (a *App) downloadPage(c *ui.Context) {
-	ui.Column(c.Key("download-page")).Fill().MinHeight(0).Gap(6).Children(func() {
-		a.downloadHeader(c)
+	ui.Column(c.Key("download-page")).Fill().MinHeight(0).Gap(0).Background(a.look.card).Children(func() {
+		a.downloadSubToolbar(c)
 		if a.dlImportNotice != "" {
 			a.downloadImportNoticeBar(c)
 		}
-		a.downloadSubToolbar(c)
 		a.downloadBatchBar(c)
 		a.downloadBody(c)
 	})
@@ -44,31 +43,13 @@ func (a *App) downloadPage(c *ui.Context) {
 func (a *App) downloadImportNoticeBar(c *ui.Context) {
 	tok := a.look
 	fg, bg, border := badgeTone("success", tok)
-	ui.Row(c.Key("dl-import-notice")).FillWidth().Padding(5, 10).Gap(8).Radius(tok.radiusM).
-		Background(bg).Border(1, border).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key("dl-import-notice")).FillWidth().Padding(6, 14).Gap(8).
+		Background(bg).BorderWidth(0, 0, 1, 0).BorderColor(border).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, iconCheck).FontSize(13).TextColor(fg)
 		ui.Text(c, a.dlImportNotice).FontSize(tok.body).TextColor(fg).FontFeatures("tnum").
 			Grow(1).MinWidth(0).SingleLine().Tooltip(a.dlImportNotice)
 		uiIconBtn(c, "dl-import-notice-close", "关闭导入提示", "关闭导入提示", iconX, 20, false, true, tok).
 			OnClick(func() { a.dlImportNotice = "" })
-	})
-}
-
-func (a *App) downloadHeader(c *ui.Context) {
-	tok := a.look
-	activeCount := 0
-	for _, t := range a.dlTasks {
-		if t.Phase == dlActive {
-			activeCount++
-		}
-	}
-	sub := "支持网页解析、直链队列与表格批量导入"
-	if len(a.dlTasks) > 0 {
-		sub = fmt.Sprintf("%d 个进行中 · 队列共 %d 个任务", activeCount, len(a.dlTasks))
-	}
-	uiPageHeader(c, "dl-header", iconDownload, "下载任务", sub, tok, func() {
-		a.downloadSearchFab(c, tok)
-		a.downloadNewFab(c, tok)
 	})
 }
 
@@ -89,17 +70,17 @@ func (a *App) downloadFilterTabs(c *ui.Context, tok tokens) {
 	if tok.dark {
 		activeBg = tok.sunkenHi
 	}
-	ui.Row(c.Key("dl-tabs")).Height(28).Padding(2).Gap(2).Radius(tok.radiusM).
-		Background(tok.sunken).Border(1, tok.border).Shrink(0).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key("dl-tabs")).Height(26).Padding(2).Gap(2).Radius(tok.radiusS).
+		Background(tok.sunken).Shrink(0).AlignItems(ui.Center).Children(func() {
 		for i, label := range dlFilterLabels {
 			index := i
 			active := a.dlFilter == index
 			tab := ui.ButtonBase(c.Key(fmt.Sprintf("dl-tab-%d", index))).Height(22).Padding(0, 8).
-				Radius(tok.radiusS).Center().Shrink(0).Label(label).Cursor(ui.CursorPointer)
+				Radius(tok.radiusS - 1).Center().Shrink(0).Label(label).Cursor(ui.CursorPointer)
 			fg := tok.muted
 			switch {
 			case active:
-				tab.Background(activeBg).Border(1, tok.borderStrong)
+				tab.Background(activeBg).Border(1, tok.border)
 				fg = tok.text
 			case tab.Hovered():
 				tab.Background(tok.sunkenHi.Alpha(0.55))
@@ -141,7 +122,7 @@ func (a *App) downloadSearchFab(c *ui.Context, tok tokens) {
 	if hasQuery {
 		tip = "搜索：" + a.dlSearch
 	}
-	b := uiIconBtn(c, "dl-search-fab", "搜索任务", tip, iconSearch, 28, a.dlSearchOn || hasQuery, false, tok).
+	b := uiIconBtn(c, "dl-search-fab", "搜索任务", tip, iconSearch, 26, a.dlSearchOn || hasQuery, true, tok).
 		OnClick(func() { a.dlSearchOn = !a.dlSearchOn })
 	if a.dlSearchOn {
 		ui.Popover(c, b, &a.dlSearchOn, func() {
@@ -150,7 +131,7 @@ func (a *App) downloadSearchFab(c *ui.Context, tok tokens) {
 				Radius(tok.radiusM).Shadow(0, 8, 24, 0, tok.lift).Children(func() {
 				ui.TextInput(c.Key("dl-search-input"), &a.dlSearch).Grow(1).MinWidth(0).
 					Label("搜索任务").Placeholder("搜索站点、文件名、链接或错误信息")
-				uiIconBtn(c, "dl-search-close", "清除并关闭搜索", "清除并关闭搜索", iconX, 24, false, false, tok).
+				uiIconBtn(c, "dl-search-close", "清除并关闭搜索", "清除并关闭搜索", iconX, 24, false, true, tok).
 					OnClick(func() {
 						if a.dlSearch != "" {
 							a.dlSearch = ""
@@ -164,7 +145,7 @@ func (a *App) downloadSearchFab(c *ui.Context, tok tokens) {
 }
 
 func (a *App) downloadNewFab(c *ui.Context, tok tokens) {
-	b := ui.ButtonBase(c.Key("dl-new-fab")).Height(28).Padding(0, 10).Radius(tok.radiusS).
+	b := ui.ButtonBase(c.Key("dl-new-fab")).Height(26).Padding(0, 10).Radius(tok.radiusS).
 		Center().Shrink(0).Label("新建任务").Cursor(ui.CursorPointer)
 	bg := tok.accent
 	if b.Pressed() {
@@ -172,7 +153,7 @@ func (a *App) downloadNewFab(c *ui.Context, tok tokens) {
 	} else if b.Hovered() {
 		bg = c.Theme().AccentHover
 	}
-	b.Background(bg).TextColor(tok.onAccent).Border(1, bg)
+	b.Background(bg).TextColor(tok.onAccent)
 	hoverPressPose(b)
 	b.OnClick(func() {
 		a.dlComposerErr = ""
@@ -180,8 +161,8 @@ func (a *App) downloadNewFab(c *ui.Context, tok tokens) {
 	})
 	b.Children(func() {
 		ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, iconPlus).FontSize(13).TextColor(tok.onAccent)
-			ui.Text(c, "新建任务").FontSize(tok.body).FontWeight(600).TextColor(tok.onAccent).SingleLine()
+			ui.Icon(c, iconPlus).FontSize(12).TextColor(tok.onAccent)
+			ui.Text(c, "新建任务").FontSize(tok.caption).FontWeight(600).TextColor(tok.onAccent).SingleLine()
 		})
 	})
 	dlTip(c, b, "新建下载任务")
@@ -198,26 +179,36 @@ func (a *App) downloadSubToolbar(c *ui.Context) {
 	if len(a.dlTasks) > len(tasks) {
 		count += fmt.Sprintf(" · 共 %d", len(a.dlTasks))
 	}
-	if w > 0 && w < 860 {
-		ui.Column(c.Key("dl-sub")).FillWidth().Gap(6).Children(func() {
+	bar := ui.Column(c.Key("dl-sub")).FillWidth().Background(tok.card).
+		BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Padding(8, 14).Gap(6)
+	if w > 0 && w < 960 {
+		bar.Children(func() {
 			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 				a.downloadFilterTabs(c, tok)
 				ui.Spacer(c)
+				a.downloadSearchFab(c, tok)
+				a.downloadNewFab(c, tok)
+			})
+			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c.Key("dl-count"), count).FontSize(tok.caption).TextColor(tok.muted).
 					FontFeatures("tnum").SingleLine().Shrink(0)
-			})
-			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+				ui.Spacer(c)
 				a.downloadSubActions(c, tok, tasks)
 			})
 		})
 		return
 	}
-	ui.Row(c.Key("dl-sub")).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-		a.downloadFilterTabs(c, tok)
-		ui.Spacer(c)
-		ui.Text(c.Key("dl-count"), count).FontSize(tok.caption).TextColor(tok.muted).
-			FontFeatures("tnum").SingleLine().Shrink(0)
-		a.downloadSubActions(c, tok, tasks)
+	bar.Children(func() {
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			a.downloadFilterTabs(c, tok)
+			ui.Text(c.Key("dl-count"), count).FontSize(tok.caption).TextColor(tok.muted).
+				FontFeatures("tnum").SingleLine().Shrink(0)
+			ui.Spacer(c)
+			a.downloadSubActions(c, tok, tasks)
+			ui.Box(c).Width(1).Height(14).Margin(0, 2).Background(tok.border).Shrink(0)
+			a.downloadSearchFab(c, tok)
+			a.downloadNewFab(c, tok)
+		})
 	})
 }
 
@@ -258,19 +249,22 @@ func (a *App) downloadSubActions(c *ui.Context, tok tokens, tasks []*downloadTas
 	})
 }
 
-// dlPill 是工具条上的紧凑 SaaS 胶囊按钮，统一用 design.go 语义与边框层级。
+// dlPill 是工具条上的轻量化胶囊动作按钮。
 func (a *App) dlPill(c *ui.Context, tok tokens, key, label string, icon *ui.SVG, active, disabled bool, click func()) {
 	b := ui.ButtonBase(c.Key(key)).Height(24).Radius(tok.radiusS).Padding(0, 8).Gap(4).
 		AlignItems(ui.Center).Shrink(0).Label(label).Tooltip(label).Disabled(disabled)
-	var fg, bg, border ui.Color
+	var fg, bg ui.Color
 	if disabled {
-		fg, bg, border = tok.muted.Alpha(0.5), tok.sunken, tok.border
+		fg, bg = tok.muted.Alpha(0.45), ui.Transparent
 	} else {
-		fg, bg, border = interactiveTone(active, b.Hovered(), tok.muted, tok)
+		fg, bg, _ = interactiveTone(active, b.Hovered(), tok.muted, tok)
+		if !active && !b.Hovered() {
+			bg = ui.Transparent
+		}
 		b.Cursor(ui.CursorPointer).OnClick(click)
 		hoverPressPose(b)
 	}
-	b.Background(bg).Border(1, border).TextColor(fg)
+	b.Background(bg).TextColor(fg)
 	b.Children(func() {
 		ui.Icon(c, icon).FontSize(12).TextColor(fg)
 		t := ui.Text(c, label).FontSize(tok.caption).SingleLine().TextColor(fg)
@@ -318,8 +312,8 @@ func (a *App) downloadBatchBar(c *ui.Context) {
 	}
 	a.dlAllChecked = all
 	fg, bg, border := semanticToneColors(tok.dark, tok.text, tok.accent, 0.08)
-	ui.Row(c.Key("dl-batch")).FillWidth().Padding(5, 10).Gap(6).Radius(tok.radiusM).
-		AlignItems(ui.Center).Background(bg).Border(1, border).Children(func() {
+	ui.Row(c.Key("dl-batch")).FillWidth().Padding(6, 14).Gap(6).
+		AlignItems(ui.Center).Background(bg).BorderWidth(0, 0, 1, 0).BorderColor(border).Children(func() {
 		downloadCheck(c.Key("dl-batch-all"), tok, &a.dlAllChecked, "全选当前列表").
 			OnChange(func() { a.setDownloadChecked(a.dlAllChecked) })
 		ui.Text(c, fmt.Sprintf("已选 %d", len(checked))).FontSize(tok.caption).FontWeight(600).
@@ -372,7 +366,7 @@ func (a *App) downloadBody(c *ui.Context) {
 		return
 	}
 	tok := a.look
-	uiCardSurface(ui.Column(c.Key("dl-body")).Grow(1).MinHeight(0).Clip(), tok).Children(func() {
+	ui.Column(c.Key("dl-body")).Grow(1).MinHeight(0).Background(tok.card).Clip().Children(func() {
 		a.downloadColumns(c)
 		ui.Scroll(c.Key("dl-list")).Grow(1).MinHeight(0).Children(func() {
 			ui.Column(c).FillWidth().Children(func() {
@@ -400,7 +394,7 @@ func (a *App) downloadColumns(c *ui.Context) {
 			Width(width).TextAlign(ui.End).SingleLine()
 	}
 	ui.Row(c.Key("dl-columns")).FillWidth().Padding(6, dlRowPadX, 6, dlRowPadX).Gap(dlColGap).
-		AlignItems(ui.Center).Background(tok.sunken).
+		AlignItems(ui.Center).Background(tok.paper).
 		BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
 		ui.Box(c).Width(24).Shrink(0)
 		ui.Text(c, "名称").FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).Grow(1).MinWidth(0)
@@ -536,9 +530,9 @@ func (a *App) downloadBadge(c *ui.Context, tok tokens, t *downloadTask) {
 	case dlCanceled:
 		tone, icon = "neutral", iconBan
 	}
-	fg, bg, border := badgeTone(tone, tok)
+	fg, bg, _ := badgeTone(tone, tok)
 	ui.Row(c).Height(18).Radius(999).Padding(0, 6).Gap(3).Shrink(0).
-		AlignItems(ui.Center).Background(bg).Border(1, border).Children(func() {
+		AlignItems(ui.Center).Background(bg).Children(func() {
 		ui.Icon(c, icon).FontSize(11).TextColor(fg)
 		ui.Text(c, label).FontSize(tok.caption).FontWeight(500).TextColor(fg).SingleLine()
 	})
@@ -619,7 +613,7 @@ func (a *App) dlIconButton(c *ui.Context, tok tokens, key, label string, icon *u
 	dlTip(c, b, label)
 }
 
-// downloadEmpty 是空态：克制统一的 SaaS 容器、明确指引和主按钮。
+// downloadEmpty 是无任务时的纯粹白画布空态。
 func (a *App) downloadEmpty(c *ui.Context) {
 	tok := a.look
 	searching := strings.TrimSpace(a.dlSearch) != ""
@@ -627,11 +621,11 @@ func (a *App) downloadEmpty(c *ui.Context) {
 	if searching {
 		title, subtitle = "没有匹配的任务", "试试其他关键词，或清除搜索"
 	}
-	fg, bg, border := badgeTone("accent", tok)
-	uiCardSurface(ui.Column(c.Key("dl-empty")).Grow(1).FillWidth().MinHeight(220).Center().
-		Padding(28, 20, 28, 20).Gap(6), tok).Children(func() {
-		well := ui.Column(c).Size(40, 40).Radius(tok.radiusL).Center().Margin(0, 0, 4, 0).
-			Background(bg).Border(1, border)
+	fg, bg, _ := badgeTone("accent", tok)
+	ui.Column(c.Key("dl-empty")).Grow(1).FillWidth().MinHeight(220).Center().
+		Background(tok.card).Padding(28, 20, 28, 20).Gap(6).Children(func() {
+		well := ui.Column(c).Size(42, 42).Radius(tok.radiusL).Center().Margin(0, 0, 4, 0).
+			Background(bg)
 		well.Children(func() { ui.Icon(c, iconDownload).FontSize(20).TextColor(fg) })
 		ui.Text(c, title).FontSize(tok.display).FontWeight(600).TextColor(tok.text).TextAlign(ui.Center)
 		ui.Text(c, subtitle).FontSize(tok.body).TextColor(tok.muted).MaxWidth(300).

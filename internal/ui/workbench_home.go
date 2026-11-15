@@ -19,12 +19,12 @@ import (
 )
 
 const (
-	composerW     float32 = 248
-	composerWideW float32 = 272
+	composerW       float32 = 264
+	composerWideW   float32 = 296
 	composerWideMin float32 = 1200
-	homeSplitMin  float32 = 810
-	pagePadX      float32 = 8
-	homeGap       float32 = 6
+	homeSplitMin    float32 = 810
+	pagePadX        float32 = 0
+	homeGap         float32 = 0
 )
 
 func composerWidth(w float32) float32 {
@@ -34,9 +34,9 @@ func composerWidth(w float32) float32 {
 	return composerW
 }
 
-// columnHeight 扣掉全局顶栏和页面上下边距，让左右两栏自然贴合视口高度。
+// columnHeight 扣掉全局顶栏，让左右两栏贴合视口全高。
 func columnHeight(winH float32) float32 {
-	h := winH - topbarH - 12
+	h := winH - topbarH
 	if h < 200 {
 		return 200
 	}
@@ -104,7 +104,7 @@ func (a *App) homePage(c *ui.Context) {
 
 // homeStage 上面是账号列表，出图结果撑满剩下的高度。
 func (a *App) homeStage(c *ui.Context) {
-	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).MinHeight(0).Gap(6).Children(func() {
+	ui.Column(c.Key("home-stage")).Grow(1).MinWidth(0).MinHeight(0).Gap(0).Background(a.look.card).Children(func() {
 		a.platformStage(c)
 	})
 }
@@ -147,8 +147,8 @@ func (a *App) platformTabs(c *ui.Context) {
 		}
 	}
 	tok := a.look
-	ui.Row(c.Key("platform-tabs")).Label("服务商选择").Padding(2).Gap(2).Radius(tok.radiusM).
-		Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key("platform-tabs")).Label("服务商选择").Padding(2).Gap(2).Radius(tok.radiusS).
+		Background(tok.sunken).AlignItems(ui.Center).Children(func() {
 		a.stageButton(c, 0, "豆包", doubaoN)
 		a.stageButton(c, 1, "千问", qianwenN)
 		a.stageButton(c, 2, agy.Platform, agyN)
@@ -163,22 +163,24 @@ func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
 	}
 	tok := a.look
 	on := a.stageTab == index
-	b := ui.ButtonBase(c.Key("stage-"+label)).Height(20).Padding(0, 6).Gap(4).Radius(tok.radiusS).
+	b := ui.ButtonBase(c.Key("stage-"+label)).Height(22).Padding(0, 7).Gap(4).Radius(tok.radiusS - 1).
 		AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).Label(text).Tooltip("切换到 " + label)
 	fg, bg, border := tok.muted, ui.Transparent, ui.Transparent
 	if on {
 		fg = tok.text
 		bg = tok.card
-		border = tok.borderStrong
+		border = tok.border
 		if !tok.dark {
 			fg = tok.accent.Mix(tok.text, 0.25)
 		}
 	} else if b.Hovered() {
 		fg = tok.text
 		bg = tok.sunkenHi
-		border = tok.border
 	}
-	b.Background(bg).TextColor(fg).Border(1, border)
+	b.Background(bg).TextColor(fg)
+	if border.A > 0 {
+		b.Border(1, border)
+	}
 	if on && !tok.dark {
 		b.Shadow(0, 1, 2, 0, tok.shadow)
 	}
@@ -245,19 +247,12 @@ func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 	if a.tab == pageHome || a.tab == pageWash || a.tab == pageFission {
 		reveal.Enter.Opacity = 0.9
 	}
-	card := uiCardSurface(ui.Column(c.Key(key)).FillWidth().Padding(8, 10).Gap(5), tok).
-		Shadow(0, 1, 2, 0, tok.shadow).Transition(reveal)
-	if !tok.dark {
-		card.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.9))
-	}
-	if state == stepCurrent {
-		card.Border(1, tok.accent.Alpha(0.55)).Shadow(0, 3, 10, 0, tok.lift)
-	}
-	return card
+	return ui.Column(c.Key(key)).FillWidth().Padding(10, 12).Gap(6).
+		Background(tok.card).Transition(reveal)
 }
 
 const (
-	washThumbSize    float32 = 50
+	washThumbSize    float32 = 44
 	washThumbGap     float32 = 4
 	washThumbCols            = 4
 	washThumbMaxRows         = 2
@@ -353,7 +348,7 @@ func (a *App) thumbRemove(c *ui.Context, host ui.Element, index int) {
 func (a *App) miniThumb(c *ui.Context, i int) {
 	si := a.sources[i]
 	tok := a.look
-	frame := ui.Box(c.Key(si.Path)).Size(30, 30).Radius(tok.radiusS).Background(tok.sunken).
+	frame := ui.Box(c.Key(si.Path)).Size(28, 28).Radius(tok.radiusS).Background(tok.sunken).
 		Label(filepath.Base(si.Path)).Transition(motionItem())
 	if frame.Hovered() {
 		frame.Border(1, tok.borderStrong)
@@ -362,7 +357,7 @@ func (a *App) miniThumb(c *ui.Context, i int) {
 	}
 	frame.Children(func() {
 		if bmp := a.cachedThumb(si.Path); bmp != nil {
-			ui.Image(c, bmp).Size(30, 30).Fit(ui.Cover).Radius(tok.radiusS)
+			ui.Image(c, bmp).Size(28, 28).Fit(ui.Cover).Radius(tok.radiusS)
 		}
 		a.thumbRemove(c, frame, i)
 	})
@@ -417,13 +412,13 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	if running {
 		label = "停止"
 	}
-	b := ui.ButtonBase(c.Key("run-go")).Label(label).Height(26).Padding(0, 12).Gap(6).Radius(th.Radius).Shrink(0).
+	b := ui.ButtonBase(c.Key("run-go")).Label(label).Height(28).Padding(0, 14).Gap(6).Radius(tok.radiusS).Shrink(0).
 		AlignItems(ui.Center).AlignSelf(ui.Center).Cursor(ui.CursorPointer)
 	bg, fg := th.Accent, th.AccentText
 	border := ui.Color{}
 	switch {
 	case disabled:
-		bg, fg, border = th.Surface, th.TextMuted, tok.border
+		bg, fg, border = tok.sunkenHi, tok.muted, tok.border
 	case running:
 		bg, fg, border = th.Surface, th.Text, tok.borderStrong
 	}
@@ -578,8 +573,8 @@ func (a *App) loginBanner(c *ui.Context) {
 	}
 	tok := a.look
 	fg, bg, border := semanticToneColors(tok.dark, tok.text, tok.warning, 0.10)
-	ui.Row(c.Key("login-banner")).FillWidth().Gap(8).AlignItems(ui.Center).Padding(7, 10).
-		Background(bg).Border(1, border).Radius(tok.radiusM).Transition(motionBanner()).Children(func() {
+	ui.Row(c.Key("login-banner")).FillWidth().Gap(8).AlignItems(ui.Center).Padding(7, 14).
+		Background(bg).BorderWidth(0, 0, 1, 0).BorderColor(border).Transition(motionBanner()).Children(func() {
 		ui.Icon(c, iconAlert).FontSize(13).TextColor(fg).Shrink(0)
 		ui.Text(c, text).FontSize(tok.body).TextColor(fg).Grow(1).MinWidth(0).SingleLine().Tooltip(text)
 		uiMiniBtn(ui.Button(c, "去处理"), tok).OnClick(func() { a.openAttention(id) })

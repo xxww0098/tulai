@@ -20,25 +20,36 @@ func (a *App) fissionPage(c *ui.Context) {
 
 func (a *App) fissionPromptCard(c *ui.Context) {
 	tok := a.look
-	_, h := c.Size()
+	winW, h := c.Size()
 	height := float32(90)
-	if h < 720 {
+	if h >= 560 && h < 720 {
 		height = 68
 	}
+	minH := height
+	if h >= 560 && h < 640 {
+		minH = 36
+	}
 	hint := "近景、远景、俯视、侧视各生成一张；完成后检查两两 pHash 相似度，不合格可重新生成。相似度仅衡量画面结构，主体来源及语义差异仍需人工确认。"
-	a.stepCard(c, "fission-prompt", stepDone).Children(func() {
+	card := a.stepCard(c, "fission-prompt", stepDone)
+	if homeSplit(winW) && h >= 560 {
+		card.Grow(1)
+	}
+	card.Children(func() {
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "裂变指令").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
+			uiBadge(c, "fission-angles", "4 视角", "neutral", tok)
 			ui.Box(c).Shrink(0).Tooltip(hint).Children(func() {
 				ui.Icon(c, iconInfo).FontSize(12).TextColor(tok.muted)
 			})
 			ui.Spacer(c)
-			uiIconBtn(c, "fission-reset", "恢复默认", "恢复默认指令", iconRotateCcw, 22, false, false, tok).
+			uiIconBtn(c, "fission-reset", "恢复默认", "恢复默认指令", iconRotateCcw, 22, false, true, tok).
 				Disabled(a.running || a.prompts == DefaultFissionPrompt).OnClick(func() { a.prompts = DefaultFissionPrompt })
 		})
-		ui.TextArea(c, &a.prompts).Height(height).MinHeight(height).FillWidth().Label("裂变指令").
-			Placeholder(DefaultFissionPrompt).Disabled(a.running)
-		ui.Text(c, "4 视角生图 · 自动 pHash 校验").FontSize(tok.caption).TextColor(tok.muted).SingleLine().FontFeatures("tnum").Tooltip(hint)
+		input := uiPromptArea(ui.TextArea(c, &a.prompts).Height(height).MinHeight(minH).FillWidth().Label("裂变指令").
+			Placeholder(DefaultFissionPrompt).Disabled(a.running), tok)
+		if homeSplit(winW) && h >= 560 {
+			input.Grow(1)
+		}
 	})
 }
 

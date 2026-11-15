@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,10 +37,21 @@ type Manager struct {
 	addons    map[int64]string
 	focusApp  func()
 	configDir string
+	store     *store.Store
 	headless  bool
 }
 
 func NewManager() *Manager { return &Manager{procs: map[int64]*camoufox.Process{}} }
+
+// SetStore attaches the account store used for same-platform shared-exit warnings.
+func (m *Manager) SetStore(st *store.Store) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.store = st
+	m.mu.Unlock()
+}
 
 func (m *Manager) Start(b store.Browser, dataRoot, backend, startURL string, background bool) (string, error) {
 	return m.start(context.Background(), b, dataRoot, startURL, background, false, "")
@@ -80,6 +92,7 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	running := m.procs[b.ID]
 	quiet := m.quiet[b.ID]
 	loadedAddon := m.addons[b.ID]
+	st := m.store
 	m.mu.Unlock()
 	if running.Alive() && (!task || quiet && loadedAddon == addon) {
 		if task {
@@ -95,20 +108,23 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	if configDir == "" {
 		configDir = ConfigDir()
 	}
-	var proxy string
+	var proxy, globalProxy string
 	if b.Proxy != "" {
 		var ok bool
 		proxy, ok = NormalizeProxy(b.Proxy)
 		if !ok {
 			return "", errors.New("账号代理地址无效")
 		}
+		globalProxy = CurrentProxyServer()
 	} else {
 		var err error
 		proxy, err = ResolveCurrentProxy()
 		if err != nil {
 			return "", err
 		}
+		globalProxy = proxy
 	}
+	warnSharedExit(st, b, proxy, globalProxy)
 	if running.Alive() {
 		running.Close()
 		m.mu.Lock()
@@ -122,7 +138,14 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	if addon != "" {
 		addons = []string{addon}
 	}
-	proc, err := camoufox.Start(ctx, configDir, camoufox.Options{Profile: dir, Proxy: proxy, Headless: headless, Addons: addons}, nil)
+	roots := collisionRoots(dataRoot, dir, configDir, st)
+	proc, err := camoufox.Start(ctx, configDir, camoufox.Options{
+		Profile:        dir,
+		Proxy:          proxy,
+		Headless:       headless,
+		Addons:         addons,
+		CollisionRoots: roots,
+	}, nil)
 	if err != nil {
 		return "", err
 	}
@@ -260,4 +283,56 @@ func accountProfilePath(dataRoot, backend string, b store.Browser) string {
 		return ""
 	}
 	return ProfileDir(dataRoot, backend, fmt.Sprintf("account-%d", b.ID))
+}
+
+func warnSharedExit(st *store.Store, target store.Browser, effectiveProxy, globalProxy string) {
+	if st == nil {
+		return
+	}
+	shared := SamePlatformSharedExit(st.Browsers(), target, globalProxy)
+	if len(shared) == 0 {
+		return
+	}
+	exitLabel := NormalizeProxyKey(effectiveProxy)
+	if exitLabel == "" {
+		exitLabel = "direct"
+	}
+	logging.Log.Warning("账号[%s] 与同平台账号 %s 共用同一出口(%s)，可能触发平台关联风控", target.Name, strings.Join(shared, "、"), exitLabel)
+	log.Printf("warning: account %q shares exit (%s) with same-platform accounts: %s", target.Name, exitLabel, strings.Join(shared, ", "))
+}
+
+func collisionRoots(dataRoot, profileDir, configDir string, st *store.Store) []string {
+	var candidates []string
+	if profileDir = strings.TrimSpace(profileDir); profileDir != "" {
+		candidates = append(candidates, filepath.Dir(profileDir))
+	}
+	if dataRoot = strings.TrimSpace(dataRoot); dataRoot != "" {
+		candidates = append(candidates, filepath.Join(dataRoot, KindCamoufox))
+		cleanData := filepath.Clean(dataRoot)
+		if filepath.Base(cleanData) == "BrowserData" {
+			candidates = append(candidates, filepath.Join(filepath.Dir(cleanData), "DownloadBrowser"))
+		}
+	}
+	if configDir = strings.TrimSpace(configDir); configDir != "" {
+		candidates = append(candidates, filepath.Join(configDir, "DownloadBrowser"))
+	}
+	if st != nil {
+		if dbFile := strings.TrimSpace(st.File()); dbFile != "" && filepath.Base(filepath.Dir(dbFile)) == "database" {
+			candidates = append(candidates, filepath.Join(filepath.Dir(filepath.Dir(dbFile)), "DownloadBrowser"))
+		}
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	out := make([]string, 0, len(candidates))
+	for _, raw := range candidates {
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			abs = filepath.Clean(raw)
+		}
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+		seen[abs] = struct{}{}
+		out = append(out, abs)
+	}
+	return out
 }

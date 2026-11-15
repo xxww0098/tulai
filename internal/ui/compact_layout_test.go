@@ -84,3 +84,51 @@ func TestCompactWorkspaceHeaderFitsAtSplitThreshold(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkbenchDistillsSpaceForPromptsAndResults(t *testing.T) {
+	a := &App{
+		tab: pageHome, statePage: pageHome, platformAuto: true,
+		prompts: "第一行提示词",
+		browserRows: []store.Browser{
+			loggedLane(1, "豆包主力", "豆包"),
+			loggedLane(2, "豆包备用", "豆包"),
+			loggedLane(3, "豆包三号", "豆包"),
+		},
+	}
+	tt := ui.NewTester(a.view, 1280, 800)
+	tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
+	tt.Advance(200 * time.Millisecond)
+
+	promptField, ok := tt.AccessByRole(ui.RoleTextField, "提示词内容")
+	if !ok || !promptField.Multiline || promptField.Bounds.H < 320 {
+		t.Fatalf("生图提示词输入框没有撑满左栏剩余高度: %+v, ok=%v", promptField, ok)
+	}
+
+	resultsBefore := assertVisible(t, tt, "出图结果区", 1280, 800)
+	assertVisible(t, tt, "账号列表", 1280, 800)
+	if err := tt.Click("收起账号"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(150 * time.Millisecond)
+	if _, visible := tt.Find("账号列表"); visible {
+		t.Fatal("收起账号后不应继续显示账号列表")
+	}
+	resultsAfter := assertVisible(t, tt, "出图结果区", 1280, 800)
+	if resultsAfter.H-resultsBefore.H < 90 {
+		t.Fatalf("收起账号后结果区高度没有显著增加: before=%+v after=%+v", resultsBefore, resultsAfter)
+	}
+	if err := tt.Click("展开账号"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(150 * time.Millisecond)
+	assertVisible(t, tt, "账号列表", 1280, 800)
+
+	if err := tt.Click("裂变图片"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(150 * time.Millisecond)
+	fissionField, ok := tt.AccessByRole(ui.RoleTextField, "裂变指令")
+	if !ok || !fissionField.Multiline || fissionField.Bounds.H < 240 {
+		t.Fatalf("裂变指令输入框没有撑满左栏剩余高度: %+v, ok=%v", fissionField, ok)
+	}
+}

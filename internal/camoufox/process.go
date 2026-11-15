@@ -27,11 +27,12 @@ func stripANSI(s string) string {
 }
 
 type Options struct {
-	Profile    string   `json:"profile"`
-	Proxy      string   `json:"proxy,omitempty"`
-	Headless   bool     `json:"headless"`
-	Executable string   `json:"executable,omitempty"`
-	Addons     []string `json:"addons,omitempty"`
+	Profile        string   `json:"profile"`
+	Proxy          string   `json:"proxy,omitempty"`
+	Headless       bool     `json:"headless"`
+	Executable     string   `json:"executable,omitempty"`
+	Addons         []string `json:"addons,omitempty"`
+	CollisionRoots []string `json:"collisionRoots,omitempty"`
 	// Local integration fixtures use a proxy with no public exit and a self-signed certificate.
 	GeoIP             *bool `json:"geoip,omitempty"`
 	IgnoreHTTPSErrors bool  `json:"ignoreHTTPSErrors,omitempty"`
@@ -91,6 +92,11 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 		return nil, err
 	}
 	options.Profile = profile
+	roots, err := absUniquePaths(options.CollisionRoots)
+	if err != nil {
+		return nil, err
+	}
+	options.CollisionRoots = roots
 	options.Executable = runtime.Executable
 	cmd := exec.Command(runtime.Node, filepath.Join(runtime.Dir, "bridge.mjs"))
 	cmd.Dir = runtime.Dir
@@ -279,4 +285,30 @@ func runtimeEnv(proxy, dir string) []string {
 	}
 	return append(env, "NODE_USE_ENV_PROXY=1", "NO_COLOR=1", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1",
 		"TULAI_CAMOUFOX_CACHE="+filepath.Join(filepath.Dir(dir), "cache", runtime.GOOS+"-"+runtime.GOARCH))
+}
+
+// absUniquePaths resolves roots against the host process cwd before bridge.mjs
+// runs with cmd.Dir set to the Camoufox runtime directory.
+func absUniquePaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+		seen[abs] = struct{}{}
+		out = append(out, abs)
+	}
+	return out, nil
 }

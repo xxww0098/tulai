@@ -326,11 +326,13 @@ func (a *App) washPromptCard(c *ui.Context) {
 	tok := a.look
 	winW, winH := c.Size()
 	promptHeight := float32(90)
-	if winH < 720 {
+	if winH < 560 {
+		promptHeight = 116
+	} else if winH < 720 {
 		promptHeight = 68
 	}
 	minPromptHeight := promptHeight
-	if winH < 640 {
+	if winH >= 560 && winH < 640 {
 		// 紧凑窗口里登录提示和输出选项会占去空间；允许输入框缩小，避免盖住选择器。
 		minPromptHeight = 32
 	}
@@ -344,8 +346,7 @@ func (a *App) washPromptCard(c *ui.Context) {
 	case batch:
 		hint = "每批最多 10 张 · 按源文件名保存"
 	}
-	card := a.stepCard(c, "wash-prompt", stepDone).Label("洗图指令区").NoShadow().
-		Radius(tok.radiusM, tok.radiusM, 0, 0).BorderWidth(1, 1, 0, 1)
+	card := a.stepCard(c, "wash-prompt", stepDone).Label("洗图指令区")
 	if homeSplit(winW) {
 		card.Grow(1)
 	}
@@ -355,7 +356,7 @@ func (a *App) washPromptCard(c *ui.Context) {
 			ui.Spacer(c)
 			a.washReset(c)
 		})
-		input := ui.TextArea(c, &a.prompts).Height(promptHeight).MinHeight(minPromptHeight).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
+		input := uiPromptArea(ui.TextArea(c, &a.prompts).Height(promptHeight).MinHeight(minPromptHeight).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running), tok)
 		if homeSplit(winW) {
 			input.Grow(1)
 		}
@@ -371,7 +372,7 @@ func (a *App) washPromptCard(c *ui.Context) {
 // washReset 是标题行右侧的次要图标按钮，保留 Label 与 Tooltip。
 func (a *App) washReset(c *ui.Context) {
 	tok := a.look
-	uiIconBtn(c, "wash-reset", "恢复默认", "恢复默认指令", iconRotateCcw, 22, false, false, tok).
+	uiIconBtn(c, "wash-reset", "恢复默认", "恢复默认指令", iconRotateCcw, 22, false, true, tok).
 		Disabled(a.running || a.washPrompt() == DefaultWashPrompt).OnClick(func() {
 		a.prompts = DefaultWashPrompt
 	})

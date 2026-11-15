@@ -756,40 +756,20 @@ function installChooserMocks() {
       })
     }
   }
-  const elements = {}
   const listeners = {}
-  const attrs = {}
   global.document = {
-    documentElement: {
-      setAttribute(name, value) { attrs[name] = String(value) },
-      getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null },
-      appendChild(el) {
-        if (el && el.id) elements[el.id] = el
-        return el
-      },
-    },
-    getElementById(id) { return elements[id] || null },
-    createElement() {
-      return {
-        id: '',
-        textContent: '',
-        setAttribute() {},
-        remove() {
-          if (this.id && elements[this.id] === this) delete elements[this.id]
-        },
-      }
-    },
+    documentElement: {},
     addEventListener(type, fn) {
       ;(listeners[type] || (listeners[type] = [])).push(fn)
     },
     dispatchEvent(ev) {
       ;(listeners[ev.type] || []).forEach((fn) => fn(ev))
-      return true
+      return !ev.defaultPrevented
     },
   }
   global.HTMLElement = class HTMLElement {}
   global.HTMLElement.nativeClicks = 0
-  global.HTMLElement.prototype.click = function () { global.HTMLElement.nativeClicks++ }
+  global.HTMLElement.prototype.click = function click() { global.HTMLElement.nativeClicks++ }
   global.HTMLInputElement = class HTMLInputElement extends global.HTMLElement {
     constructor() {
       super()
@@ -809,13 +789,13 @@ function installChooserMocks() {
     dispatchEvent(ev) {
       const list = this._listeners[ev.type] || []
       for (const fn of list) fn(ev)
-      return true
+      return !ev.defaultPrevented
     }
     remove() {}
   }
   global.HTMLInputElement.prototype.tagName = 'INPUT'
   global.HTMLInputElement.nativePickers = 0
-  global.HTMLInputElement.prototype.showPicker = function () { global.HTMLInputElement.nativePickers++ }
+  global.HTMLInputElement.prototype.showPicker = function showPicker() { global.HTMLInputElement.nativePickers++ }
 }
 
 function sleep(ms) {
@@ -823,13 +803,38 @@ function sleep(ms) {
 }
 
 async function chooserFlow() {
+  assert.strictEqual(Page.createChooserBridge({ dispatchEvent: () => true }), null)
   installChooserMocks()
-  vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'chooser.js'), 'utf8'))
-  assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser'), 'qianwen')
+  const origShowPicker = {
+    name: HTMLInputElement.prototype.showPicker.name,
+    len: HTMLInputElement.prototype.showPicker.length,
+    str: HTMLInputElement.prototype.showPicker.toString(),
+    callStr: Function.prototype.toString.call(HTMLInputElement.prototype.showPicker),
+  }
+  const origClick = {
+    name: HTMLElement.prototype.click.name,
+    len: HTMLElement.prototype.click.length,
+    str: HTMLElement.prototype.click.toString(),
+    callStr: Function.prototype.toString.call(HTMLElement.prototype.click),
+  }
+  const origToStringSelf = Function.prototype.toString.toString()
 
-  document.documentElement.setAttribute('data-tulai-chooser', '')
-  assert.strictEqual(Page.createChooserBridge(document), null)
-  document.documentElement.setAttribute('data-tulai-chooser', 'qianwen')
+  vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'chooser.js'), 'utf8'))
+  assert.strictEqual(globalThis.__tulaiQianwenChooser, undefined, '主世界不得暴露 __tulaiQianwenChooser')
+  assert.ok(Page.createChooserBridge(document) !== null, '同步 probe 应确认主世界桥已安装')
+  assert.deepStrictEqual({
+    name: HTMLInputElement.prototype.showPicker.name,
+    len: HTMLInputElement.prototype.showPicker.length,
+    str: HTMLInputElement.prototype.showPicker.toString(),
+    callStr: Function.prototype.toString.call(HTMLInputElement.prototype.showPicker),
+  }, origShowPicker)
+  assert.deepStrictEqual({
+    name: HTMLElement.prototype.click.name,
+    len: HTMLElement.prototype.click.length,
+    str: HTMLElement.prototype.click.toString(),
+    callStr: Function.prototype.toString.call(HTMLElement.prototype.click),
+  }, origClick)
+  assert.strictEqual(Function.prototype.toString.toString(), origToStringSelf)
 
   const bytes = Uint8Array.from([137, 80, 78, 71, 0, 255])
   const file = new File([bytes], 'src.png', { type: 'image/png' })
@@ -917,8 +922,7 @@ async function chooserFlow() {
     assert.strictEqual(item.picked[0].type, 'image/png')
     const got = new Uint8Array(await item.picked[0].arrayBuffer())
     assert.deepStrictEqual(Array.from(got), Array.from(bytes))
-    assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser-armed'), '0')
-    assert.strictEqual(document.getElementById('tulai-qianwen-file-slot'), null)
+    assert.strictEqual(document.dispatchEvent(new CustomEvent('__PB_OK__', { cancelable: true })), true, '结果被消费后不应再有残留状态')
   }
 
   {
@@ -930,7 +934,7 @@ async function chooserFlow() {
     pdf.accept = '.pdf,.doc,application/pdf'
     pdf.showPicker()
     assert.strictEqual(HTMLInputElement.nativePickers, before + 1, '文档选择框仍走系统文件框')
-    assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser-result') || '', '')
+    assert.strictEqual(bridge.result(), '')
     const img = new HTMLInputElement()
     img.type = 'file'
     img.accept = 'image/png'
@@ -939,7 +943,8 @@ async function chooserFlow() {
     img.showPicker()
     assert.strictEqual(got, 1)
     assert.strictEqual(HTMLInputElement.nativePickers, before + 1)
-    assert.strictEqual(document.documentElement.getAttribute('data-tulai-chooser-result'), 'ok')
+    assert.strictEqual(bridge.result(), 'ok')
+    assert.strictEqual(document.dispatchEvent(new CustomEvent('__PB_OK__', { cancelable: true })), true, '消费 ok 后应清空闭包结果')
     bridge.disarm()
   }
 

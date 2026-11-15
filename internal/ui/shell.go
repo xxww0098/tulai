@@ -14,8 +14,8 @@ import (
 
 const (
 	topbarH           float32 = 34
-	sidebarExpandedW  float32 = 134
-	sidebarCollapsedW float32 = 42
+	sidebarExpandedW  float32 = 116
+	sidebarCollapsedW float32 = 44
 	sidebarFoldW      float32 = 840
 )
 
@@ -65,6 +65,9 @@ func (a *App) isWorkbenchTab() bool {
 }
 
 func activeNavItem(tab int) navItem {
+	if tab == pageWash || tab == pageFission {
+		tab = pageHome
+	}
 	for _, it := range saasNavItems {
 		if it.page == tab {
 			return it
@@ -73,34 +76,24 @@ func activeNavItem(tab int) navItem {
 	return saasNavItems[0]
 }
 
-// topbar 渲染 SaaS 平台全局顶栏：左侧为侧栏伸缩与当前上下文，右侧为多账号池健康状态、快捷任务操作与全局运行日志弹出开关。
+// topbar 渲染 SaaS 平台全局顶栏：工作台页左侧直接展示服务商切换，其余页展示当前页面标识，右侧为多账号池健康状态与全局运行日志弹出开关。
 func (a *App) topbar(c *ui.Context) {
 	tok := a.look
 	winW, _ := c.Size()
-	collapsed := a.isSidebarCollapsed(winW)
-	toggleLabel := "收起侧栏"
-	if collapsed {
-		toggleLabel = "展开侧栏"
-	}
 
-	ui.Row(c.Key("topbar")).FillWidth().Height(topbarH).Shrink(0).Padding(0, 10).Gap(8).
+	ui.Row(c.Key("topbar")).FillWidth().Height(topbarH).Shrink(0).Padding(0, 12).Gap(8).
 		AlignItems(ui.Center).Background(tok.card).
 		BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
-		ui.Row(c).Grow(1).MinWidth(0).Gap(6).AlignItems(ui.Center).Children(func() {
-			uiIconBtn(c, "nav-toggle", toggleLabel, toggleLabel, iconPanelLeft, 24, !collapsed, true, tok).
-				OnClick(func() { a.toggleSidebar(winW) })
-
+		ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Children(func() {
 			if a.isWorkbenchTab() {
-				a.workspaceModeTabs(c)
 				if homeSplit(winW) {
-					ui.Box(c).Width(1).Height(14).Margin(0, 2).Background(tok.border).Shrink(0)
 					a.platformTabs(c)
 				}
 			} else {
 				it := activeNavItem(a.tab)
-				ui.Row(c.Key("topbar-page")).Shrink(0).Gap(5).AlignItems(ui.Center).Children(func() {
+				ui.Row(c.Key("topbar-page")).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Icon(c, it.icon).FontSize(13).TextColor(tok.accent)
-					ui.Text(c, it.label).FontSize(tok.body).FontWeight(600).SingleLine()
+					ui.Text(c, it.label).FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine()
 				})
 				if it.sub != "" && winW >= 920 {
 					ui.Text(c, it.sub).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0)
@@ -109,19 +102,13 @@ func (a *App) topbar(c *ui.Context) {
 		})
 
 		ui.Row(c.Key("topbar-right")).Shrink(0).Gap(4).AlignItems(ui.Center).Children(func() {
-			if a.isWorkbenchTab() {
-				a.historyControl(c)
-				uiIconBtn(c, "new-task", "新建任务", "新建任务", iconFilePlus, 24, false, false, tok).
-					Disabled(a.running).OnClick(func() { a.newWorkspace() })
-				ui.Box(c).Width(1).Height(14).Margin(0, 2).Background(tok.border).Shrink(0)
-			}
 			if winW >= 920 {
 				a.topbarPoolControl(c)
 			}
-			if a.running {
-				runFg, runBg, runBorder := badgeTone("accent", tok)
-				ui.Row(c.Key("topbar-running")).Height(20).Padding(0, 7).Radius(999).Shrink(0).Gap(4).
-					AlignItems(ui.Center).Background(runBg).Border(1, runBorder).Children(func() {
+			if a.running && !a.isWorkbenchTab() {
+				runFg, runBg, _ := badgeTone("accent", tok)
+				ui.Row(c.Key("topbar-running")).Height(20).Padding(0, 8).Radius(999).Shrink(0).Gap(5).
+					AlignItems(ui.Center).Background(runBg).Children(func() {
 					ui.Box(c).Size(6, 6).Radius(3).Background(runFg)
 					ui.Text(c, "运行中").FontSize(tok.caption).FontWeight(600).TextColor(runFg).SingleLine()
 				})
@@ -160,15 +147,18 @@ func (a *App) topbarPoolControl(c *ui.Context) {
 	default:
 		tone, dot = "success", tok.success
 	}
-	fg, bg, border := badgeTone(tone, tok)
+	fg, bg, _ := badgeTone(tone, tok)
+	if tone == "neutral" && a.tab != pageBrowser {
+		fg, bg = tok.muted, tok.sunken
+	}
 	if a.tab == pageBrowser {
-		fg, bg, border = badgeTone("accent", tok)
+		fg, bg, _ = badgeTone("accent", tok)
 	}
 	summary := fmt.Sprintf("%d/%d 账号", ready, total)
 	tip := fmt.Sprintf("多账号调度池：%d/%d 可用（点击查看详情）", ready, total)
-	b := ui.ButtonBase(c.Key("topbar-pool")).Height(24).Padding(0, 7).Radius(tok.radiusS).
+	b := ui.ButtonBase(c.Key("topbar-pool")).Height(24).Padding(0, 8).Radius(tok.radiusS).
 		Center().Shrink(0).Cursor(ui.CursorPointer).
-		Background(bg).Border(1, border).
+		Background(bg).
 		Label(fmt.Sprintf("账号池 %d/%d", ready, total)).Tooltip(tip)
 	hoverPressPose(b)
 	b.OnClick(func() { a.tab = pageBrowser })
@@ -178,31 +168,6 @@ func (a *App) topbarPoolControl(c *ui.Context) {
 			ui.Text(c, summary).FontSize(tok.caption).FontWeight(600).FontFeatures("tnum").
 				TextColor(fg).SingleLine()
 		})
-	})
-}
-
-func (a *App) workspaceModeTabs(c *ui.Context) {
-	tok := a.look
-	labels := []string{"自由生图", "批量洗图", "裂变图片"}
-	tabs := ui.TabsBase(c.Key("workspace-modes"), &a.tab, len(labels))
-	tabs.List.Row().Height(24).Padding(2).Radius(tok.radiusS).Background(tok.sunken).
-		Border(1, tok.border).Shrink(0).AlignItems(ui.Stretch).Children(func() {
-		for i, label := range labels {
-			tab := tabs.Tab(i).Padding(0, 8).Radius(tok.radiusS - 1).Center().Label(label).Cursor(ui.CursorPointer)
-			if i == a.tab {
-				tab.Background(tok.card).Border(1, tok.borderStrong).TextColor(tok.text)
-			} else if tab.Hovered() {
-				tab.TextColor(tok.text)
-			} else {
-				tab.TextColor(tok.muted)
-			}
-			tab.Children(func() {
-				t := ui.Text(c, label).FontSize(tok.caption).SingleLine()
-				if i == a.tab {
-					t.FontWeight(600)
-				}
-			})
-		}
 	})
 }
 
@@ -224,25 +189,26 @@ func (a *App) topbarLogControl(c *ui.Context) {
 		}
 	}
 
-	b := ui.ButtonBase(c.Key("topbar-log")).Height(24).Padding(0, 7).Radius(tok.radiusS).
+	b := ui.ButtonBase(c.Key("topbar-log")).Height(24).Padding(0, 8).Radius(tok.radiusS).
 		Center().Shrink(0).Cursor(ui.CursorPointer).Label("运行日志").Tooltip("运行日志")
-	fg, bg, border := interactiveTone(a.logOpen, b.Hovered(), tok.text, tok)
+	fg, bg, _ := interactiveTone(a.logOpen, b.Hovered(), tok.muted, tok)
 	if !a.logOpen {
-		bg = tok.sunken
+		bg = ui.Transparent
 		if b.Hovered() {
-			bg = tok.sunkenHi
+			bg = tok.sunken
+			fg = tok.text
 		}
 	}
-	b.Background(bg).Border(1, border)
+	b.Background(bg)
 	hoverPressPose(b)
 	b.OnClick(func() { a.logOpen = !a.logOpen })
 	b.Children(func() {
-		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, iconTerminal).FontSize(12).TextColor(fg)
 			ui.Text(c, "日志").FontSize(tok.caption).TextColor(fg).SingleLine()
 			if len(notes) > 0 {
-				ui.Row(c).Height(15).Padding(0, 4).Radius(999).Center().
-					Background(tok.card).Border(1, tok.border).Children(func() {
+				ui.Row(c).Height(15).Padding(0, 5).Radius(999).Center().
+					Background(tok.sunkenHi).Children(func() {
 					if hasDot {
 						ui.Box(c).Size(5, 5).Radius(2.5).Background(dotColor).Margin(0, 3, 0, 0)
 					}
@@ -258,49 +224,60 @@ func (a *App) navRail(c *ui.Context) {
 	tok := a.look
 	winW, _ := c.Size()
 	collapsed := a.isSidebarCollapsed(winW)
-	w := sidebarExpandedW
-	align := ui.Stretch
-	padH := float32(6)
+	w, align, padH := sidebarExpandedW, ui.Stretch, float32(7)
+	toggleLabel := "收起侧栏"
 	if collapsed {
 		w = sidebarCollapsedW
 		align = ui.Center
 		padH = 0
+		toggleLabel = "展开侧栏"
 	}
-	ui.Column(c.Key("nav-rail")).Label("nav-rail").Width(w).FillHeight().Padding(8, padH, 8, padH).Gap(3).
-		AlignItems(align).Background(tok.rail).
-		BorderWidth(0, 1, 0, 0).BorderColor(tok.border).Children(func() {
-		if !collapsed {
-			a.railBrandHeader(c)
-		}
-		a.pageTabs(c, collapsed)
-		ui.Spacer(c)
-		if collapsed {
-			ui.Box(c).Width(16).Height(1).Margin(4, 0).Background(tok.border)
+	railToggle := func(size float32) {
+		btn := ui.ButtonBase(c.Key("nav-toggle")).Size(size, size).Radius(tok.radiusS).Center().Shrink(0).
+			Cursor(ui.CursorPointer).Label(toggleLabel).Tooltip(toggleLabel).
+			OnClick(func() { a.toggleSidebar(winW) })
+		icoColor := tok.railMuted
+		if btn.Hovered() {
+			btn.Background(tok.railHover)
+			icoColor = tok.railText
 		} else {
-			ui.Box(c).FillWidth().Height(1).Margin(4, 2).Background(tok.border)
+			btn.Background(ui.Transparent)
 		}
-		a.railButton(c, "nav-wizard", "设置向导", iconCompass, collapsed, a.running, false, func() { a.openWizard() })
-		updateLabel := "检查更新"
-		if a.updateHidden && a.updateDownloading {
-			updateLabel = "显示更新进度"
-		}
-		a.railButton(c, "nav-update", updateLabel, iconRefresh, collapsed, a.updateBusy && !(a.updateHidden && a.updateDownloading), a.updateNotice != "", func() { a.checkForUpdates() })
-	})
-}
-
-func (a *App) railBrandHeader(c *ui.Context) {
-	tok := a.look
-	fg, bg, border := badgeTone("accent", tok)
-	ui.Row(c.Key("nav-brand")).FillWidth().Height(26).Padding(0, 6).Margin(0, 0, 4, 0).
-		Radius(tok.radiusS).Gap(6).AlignItems(ui.Center).
-		Background(tok.card).Border(1, tok.border).Children(func() {
-		ui.Column(c).Size(17, 17).Radius(4).Center().Shrink(0).Background(bg).Border(1, border).Children(func() {
-			ui.Icon(c, iconLogo).FontSize(10).TextColor(fg)
+		hoverPressPose(btn)
+		btn.Children(func() {
+			ui.Icon(c, iconPanelLeft).FontSize(13).TextColor(icoColor)
 		})
-		ui.Text(c, "tulai").FontSize(tok.body).FontWeight(700).TextColor(tok.text).SingleLine().Grow(1).MinWidth(0)
-		ui.Row(c).Height(15).Padding(0, 4).Radius(3).Center().Shrink(0).
-			Background(tok.sunken).Border(1, tok.border).Children(func() {
-			ui.Text(c, "本地").FontSize(9).FontWeight(600).TextColor(tok.muted).SingleLine()
+	}
+	ui.Column(c.Key("nav-rail")).Label("nav-rail").Width(w).FillHeight().Padding(0).Gap(0).
+		Background(tok.railBg).BorderWidth(0, 1, 0, 0).BorderColor(tok.railBorder).Children(func() {
+		head := ui.Row(c.Key("nav-head")).FillWidth().Height(topbarH).Shrink(0).
+			BorderWidth(0, 0, 1, 0).BorderColor(tok.railBorder).AlignItems(ui.Center)
+		if collapsed {
+			head.Justify(ui.Center).Children(func() {
+				railToggle(28)
+			})
+		} else {
+			head.Padding(0, 8, 0, 10).Gap(6).Children(func() {
+				ui.Image(c.Key("nav-brand"), iconBrandMark).Size(18, 18).Fit(ui.Contain).Shrink(0)
+				ui.Text(c, "tulai").FontSize(tok.title).Bold().TextColor(tok.railText).Grow(1).MinWidth(0).SingleLine()
+				railToggle(24)
+			})
+		}
+		ui.Column(c).Grow(1).FillWidth().MinHeight(0).Padding(8, padH, 8, padH).Gap(3).
+			AlignItems(align).Children(func() {
+			a.pageTabs(c, collapsed)
+			ui.Spacer(c)
+			if collapsed {
+				ui.Box(c).Width(16).Height(1).Margin(4, 0).Background(tok.railBorder)
+			} else {
+				ui.Box(c).FillWidth().Height(1).Margin(4, 2).Background(tok.railBorder)
+			}
+			a.railButton(c, "nav-wizard", "设置向导", iconCompass, collapsed, a.running, false, func() { a.openWizard() })
+			updateLabel := "检查更新"
+			if a.updateHidden && a.updateDownloading {
+				updateLabel = "显示更新进度"
+			}
+			a.railButton(c, "nav-update", updateLabel, iconRefresh, collapsed, a.updateBusy && !(a.updateHidden && a.updateDownloading), a.updateNotice != "", func() { a.checkForUpdates() })
 		})
 	})
 }
@@ -329,30 +306,21 @@ func (a *App) pageTabs(c *ui.Context, collapsed bool) {
 		}
 	}).Children(func() {
 		for i, it := range saasNavItems {
-			newGroup := i == 0 || it.group != saasNavItems[i-1].group
+			newGroup := i > 0 && it.group != saasNavItems[i-1].group
 			if newGroup {
 				if collapsed {
-					if i > 0 {
-						ui.Box(c).Width(16).Height(1).Margin(3, 0).Background(tok.border)
-					}
+					ui.Box(c).Width(16).Height(1).Margin(4, 0).Background(tok.railBorder)
 				} else {
-					topPad := float32(6)
-					if i == 0 {
-						topPad = 2
-					}
-					ui.Row(c.Key("nav-group-"+it.group)).FillWidth().Height(16).Margin(topPad, 0, 1, 0).
-						Padding(0, 6).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, it.group).FontSize(9.5).FontWeight(600).TextColor(tok.subtle).SingleLine()
-					})
+					ui.Box(c).FillWidth().Height(1).Margin(4, 4).Background(tok.railBorder)
 				}
 			}
 			var tab ui.Element
 			if collapsed {
-				tab = tabs.Tab(i).Size(28, 28).Radius(6).Center().Label(it.label).Cursor(ui.CursorPointer)
+				tab = tabs.Tab(i).Size(30, 30).Radius(tok.radiusS).Center().Label(it.label).Cursor(ui.CursorPointer)
 				a.paintNavItem(c, tab, it.icon, "", i == selected, false, true)
 				railTip(c, tab, it.label)
 			} else {
-				tab = tabs.Tab(i).FillWidth().Height(26).Padding(0, 8).Radius(6).AlignItems(ui.Center).
+				tab = tabs.Tab(i).FillWidth().Height(28).Padding(0, 8).Radius(tok.radiusS).AlignItems(ui.Center).
 					Label(it.label).Cursor(ui.CursorPointer)
 				a.paintNavItem(c, tab, it.icon, it.label, i == selected, false, false)
 			}
@@ -361,11 +329,12 @@ func (a *App) pageTabs(c *ui.Context, collapsed bool) {
 }
 
 func (a *App) railButton(c *ui.Context, key, label string, icon *ui.SVG, collapsed, disabled, dot bool, click func()) {
+	tok := a.look
 	var b ui.Element
 	if collapsed {
-		b = ui.ButtonBase(c.Key(key)).Size(28, 28).Radius(6).Center().Label(label).Disabled(disabled)
+		b = ui.ButtonBase(c.Key(key)).Size(30, 30).Radius(tok.radiusS).Center().Label(label).Disabled(disabled)
 	} else {
-		b = ui.ButtonBase(c.Key(key)).FillWidth().Height(26).Padding(0, 8).Radius(6).AlignItems(ui.Center).Label(label).Disabled(disabled)
+		b = ui.ButtonBase(c.Key(key)).FillWidth().Height(27).Padding(0, 8).Radius(tok.radiusS).AlignItems(ui.Center).Label(label).Disabled(disabled)
 	}
 	if !disabled {
 		b.Cursor(ui.CursorPointer).OnClick(click)
@@ -378,44 +347,34 @@ func (a *App) railButton(c *ui.Context, key, label string, icon *ui.SVG, collaps
 
 func (a *App) paintNavItem(c *ui.Context, b ui.Element, icon *ui.SVG, label string, on, dot, collapsed bool) {
 	tok := a.look
-	fgAccent, _, _ := semanticToneColors(tok.dark, tok.accent, tok.accent, 0.12)
-	bg, fg := tok.rail, tok.muted
+	bg, fg := ui.Transparent, tok.railMuted
+	iconColor := tok.railMuted
 	switch {
 	case on:
-		bg, fg = tok.accent.Alpha(0.12), fgAccent
+		bg, fg = tok.railActive, tok.railText
+		iconColor = tok.railAccent
 	case !b.IsDisabled() && b.Pressed():
-		bg, fg = tok.sunken, tok.text
+		bg, fg = tok.railHover, tok.railText
+		iconColor = tok.railText
 	case !b.IsDisabled() && b.Hovered():
-		bg, fg = tok.sunkenHi, tok.text
+		bg, fg = tok.railHover, tok.railText
+		iconColor = tok.railText
 	}
 	b.Background(b.AnimateColor("bg", bg, motionEaseFast))
 	b.TextColor(b.AnimateColor("ink", fg, motionEaseFast))
-	if on {
-		b.Border(1, tok.border)
-	} else if !b.IsDisabled() && b.Hovered() {
-		b.Border(1, tok.border.Alpha(0.75))
-	}
 	if !b.IsDisabled() {
 		hoverPressPose(b)
 	}
 	b.Children(func() {
-		if on {
-			barTop, barH := float32(5), float32(16)
-			if collapsed {
-				barTop, barH = 7, 14
-			}
-			ui.Box(c.Key("nav-active-bar")).Width(2.5).Height(barH).Radius(1.5).
-				Background(tok.accent).Absolute().Left(1).Top(barTop)
-		}
 		if collapsed {
-			ui.Icon(c, icon).FontSize(14)
+			ui.Icon(c, icon).FontSize(14).TextColor(iconColor)
 			if dot {
-				ui.Box(c.Key("dot")).Size(5, 5).Radius(2.5).Background(tok.danger).Absolute().Top(4).Right(4)
+				ui.Box(c.Key("dot")).Size(5, 5).Radius(2.5).Background(tok.danger).Absolute().Top(5).Right(5)
 			}
 			return
 		}
-		ui.Row(c).FillWidth().Gap(7).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, icon).FontSize(13).Shrink(0)
+		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icon).FontSize(13).TextColor(iconColor).Shrink(0)
 			t := ui.Text(c, label).FontSize(tok.body).SingleLine().Grow(1).MinWidth(0)
 			if on {
 				t.FontWeight(600)

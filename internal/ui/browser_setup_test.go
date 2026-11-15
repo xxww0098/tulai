@@ -81,12 +81,13 @@ func TestMissingBrowserKeepsSavedAccountManagement(t *testing.T) {
 	a.camoufoxReady = false
 	a.camoufoxStatus = "安装后即可添加服务商账号"
 	tt := ui.NewTester(a.view, 1280, 900)
-	for _, label := range []string{"安装 Camoufox", "主力工作号", "配置 主力工作号", "删除当前"} {
+	for _, label := range []string{"安装 Camoufox", "主力工作号", "配置 主力工作号"} {
 		assertVisible(t, tt, label, 1280, 900)
 	}
 	if err := tt.Click("配置 主力工作号"); err != nil {
 		t.Fatal(err)
 	}
+	assertVisible(t, tt, "删除当前", 1280, 900)
 	if selected, ok := a.selectedBrowser(); !ok || selected.Name != "主力工作号" {
 		t.Fatalf("saved account is no longer selectable: %+v", selected)
 	}

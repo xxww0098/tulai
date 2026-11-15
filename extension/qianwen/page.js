@@ -613,70 +613,80 @@ globalThis.TULAIPage = (function () {
     return !!(input.files && input.files.length)
   }
 
-  // 与 qianwen/chooser.js 约定的事件名。源图只在派发 arm 的同步调用里留在 DOM 上。
-  const CHOOSER_SLOT = 'tulai-qianwen-file-slot'
+  // 与 qianwen/chooser.js 约定的事件名；Firefox 页面桥安装时会按次替换为随机事件名。
+  const CHOOSER_PROBE = '__PB_PROBE__'
+  const CHOOSER_ARM = '__PB_ARM__'
+  const CHOOSER_DISARM = '__PB_DISARM__'
+  const CHOOSER_OK = '__PB_OK__'
+  const CHOOSER_FAIL = '__PB_FAIL__'
+
+  function dispatchChooserEvent(doc, type, detail) {
+    if (!doc || typeof doc.dispatchEvent !== 'function') return false
+    let ev
+    try {
+      const init = { cancelable: true }
+      if (detail !== undefined) init.detail = detail
+      if (typeof CustomEvent === 'function') {
+        ev = new CustomEvent(type, init)
+      } else {
+        ev = {
+          type,
+          detail,
+          cancelable: true,
+          defaultPrevented: false,
+          preventDefault: function () { this.defaultPrevented = true },
+        }
+      }
+      return doc.dispatchEvent(ev) === false || Boolean(ev && ev.defaultPrevented)
+    } catch (e) {
+      return false
+    }
+  }
+
+  function waitChooserInterceptorResult(doc) {
+    if (dispatchChooserEvent(doc, CHOOSER_OK)) return 'ok'
+    if (dispatchChooserEvent(doc, CHOOSER_FAIL)) return 'fail'
+    return ''
+  }
 
   function createChooserBridge(doc) {
-    const root = doc && doc.documentElement
-    if (!root || typeof root.getAttribute !== 'function' || root.getAttribute('data-tulai-chooser') !== 'qianwen') return null
+    if (!dispatchChooserEvent(doc, CHOOSER_PROBE)) return null
+    let latched = ''
     return {
-      arm: function (file) { return armChooserSlot(doc, root, file) },
-      result: function () { return root.getAttribute('data-tulai-chooser-result') || '' },
+      arm: function (file) {
+        latched = ''
+        return armChooserSlot(doc, file)
+      },
+      result: function () {
+        if (latched) return latched
+        latched = waitChooserInterceptorResult(doc)
+        return latched
+      },
       disarm: function () {
-        try { doc.dispatchEvent(new Event('tulai-qianwen-disarm')) } catch (e) {}
-        const slot = doc.getElementById && doc.getElementById(CHOOSER_SLOT)
-        if (slot && typeof slot.remove === 'function') {
-          try { slot.remove() } catch (err) {}
-        }
+        latched = ''
+        dispatchChooserEvent(doc, CHOOSER_DISARM)
       },
     }
   }
 
-  function ensureChooserSlot(doc) {
-    if (!doc || typeof doc.createElement !== 'function') return null
-    const existing = doc.getElementById && doc.getElementById(CHOOSER_SLOT)
-    if (existing) return existing
-    const slot = doc.createElement('pre')
-    slot.id = CHOOSER_SLOT
-    slot.textContent = ''
-    if (typeof slot.setAttribute === 'function') {
-      slot.setAttribute('hidden', '')
-      slot.setAttribute('aria-hidden', 'true')
-    }
-    const parent = doc.documentElement || doc.body
-    if (!parent || typeof parent.appendChild !== 'function') return null
-    parent.appendChild(slot)
-    return slot
-  }
-
-  async function armChooserSlot(doc, root, file) {
-    root.setAttribute('data-tulai-chooser-result', '')
-    root.setAttribute('data-tulai-chooser-armed', '0')
+  async function armChooserSlot(doc, file) {
     let bytes
     try {
       bytes = new Uint8Array(await file.arrayBuffer())
     } catch (e) {
       return false
     }
-    const slot = ensureChooserSlot(doc)
-    if (!slot) return false
+    let payload
     try {
-      slot.textContent = JSON.stringify({
+      payload = JSON.stringify({
         name: (file && file.name) || 'image',
         mime: (file && file.type) || 'application/octet-stream',
         b64: bytesToBase64(bytes),
       })
-      doc.dispatchEvent(new Event('tulai-qianwen-arm'))
     } catch (e) {
-      slot.textContent = ''
       return false
     }
-    const armed = root.getAttribute('data-tulai-chooser-armed') === '1'
-    slot.textContent = ''
-    if (typeof slot.remove === 'function') {
-      try { slot.remove() } catch (e) {}
-    }
-    return armed
+    return dispatchChooserEvent(doc, CHOOSER_ARM, payload)
   }
 
   function nestedFileInput(doc) {

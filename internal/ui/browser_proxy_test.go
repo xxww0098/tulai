@@ -25,6 +25,9 @@ func TestAccountProxyValidationAndIsolation(t *testing.T) {
 	}
 	a := &App{store: st, tab: pageBrowser, browserSel: 0, browserBackend: browser.KindCamoufox}
 	tt := ui.NewTester(a.view, 1280, 900)
+	if err := tt.Click("配置 工作号"); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct{ input, note, saved string }{
 		{"not a proxy", "代理地址无效，请填写协议、主机和端口", ""},
 		{"socks5://user:pass@127.0.0.1:1080", "SOCKS5 认证不受支持，请改用 HTTP 代理", ""},
@@ -49,13 +52,17 @@ func TestAccountProxyValidationAndIsolation(t *testing.T) {
 		tt.Advance(450 * time.Millisecond)
 		saveFrame(t, dir, "camoufox-accounts-dark", tt)
 	}
-	a.browserSel = 1
-	tt.Frame()
+	tt.Key(0, ui.KeyEscape)
+	if err := tt.Click("配置 备用号"); err != nil {
+		t.Fatal(err)
+	}
 	if a.accountProxy != "" || a.accountProxyNote != "" {
 		t.Fatal("switching accounts retained another account's proxy")
 	}
-	a.browserSel = 0
-	tt.Frame()
+	tt.Key(0, ui.KeyEscape)
+	if err := tt.Click("配置 工作号"); err != nil {
+		t.Fatal(err)
+	}
 	if a.accountProxy != "http://127.0.0.1:7890" {
 		t.Fatal("saved proxy was not restored")
 	}

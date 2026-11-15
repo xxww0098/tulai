@@ -21,6 +21,24 @@ try {
 }
 const { Camoufox, launchOptions, installedVerStr } = launcher;
 const { utilsDeps } = utils;
+const STOCK_MEDIA_DEFAULTS = utils.STOCK_MEDIA_DEFAULTS ?? {
+  colorScheme: null, reducedMotion: null, forcedColors: null, contrast: null,
+};
+const LEGACY_CONFIG_KEYS = ['canvas:seed', 'canvas:aaOffset', 'canvas:aaCapOffset', 'fonts:spacing_seed', 'audio:seed'];
+const SOFTWARE_RENDERERS = ['llvmpipe', 'Microsoft Basic Render Driver', 'SwiftShader', 'Generic Renderer'];
+function isHardwareGpu(gpu) {
+  if (!gpu) return false;
+  const text = Array.isArray(gpu) ? `${gpu[0] ?? ''} ${gpu[1] ?? ''}` : String(gpu?.renderer ?? gpu ?? '');
+  if (!text.trim()) return false;
+  const lower = text.toLowerCase();
+  return !SOFTWARE_RENDERERS.some(name => lower.includes(name.toLowerCase()));
+}
+function stripLegacyConfigKeys(config) {
+  if (!config || typeof config !== 'object') return config;
+  const cleaned = { ...config };
+  for (const key of LEGACY_CONFIG_KEYS) delete cleaned[key];
+  return cleaned;
+}
 
 // stdout is a private pipe to tulai. Launcher diagnostics must not enter the RPC stream.
 const send = process.stdout.write.bind(process.stdout);
@@ -248,6 +266,7 @@ if (process.argv[2] === 'install') {
 let context;
 let contextOptions = {};
 let requestOptions = {};
+let launchProxy;
 let closing = false;
 let nextPage = 0;
 let nextFrame = 0;
@@ -260,6 +279,7 @@ const responseBodies = new Map();
 const routes = new Map();
 const requestIDs = new WeakMap();
 const privateContexts = new Map();
+const privateClosing = new Map();
 const activeRequests = new Map();
 let nextRequest = 0;
 
@@ -315,7 +335,12 @@ function pageID(page) {
     for (const [client,target] of activeRequests) if (target === id) { activeRequests.delete(client); client.dispose().catch(() => {}); }
     const privateContext = privateContexts.get(id);
     privateContexts.delete(id);
-    if (privateContext) privateContext.close().catch(() => {});
+    if (privateContext) {
+      const done = privateContext.close().catch(() => {}).finally(() => {
+        if (privateClosing.get(id) === done) privateClosing.delete(id);
+      });
+      privateClosing.set(id, done);
+    }
     emit({ event: 'closed', target: id });
   });
   page.on('console', msg => emit({ event: 'console', target: id, data: msg.text().slice(0, 4000) }));
@@ -376,20 +401,22 @@ async function start(params) {
   try { saved = JSON.parse(fs.readFileSync(identityPath, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw new Error(`账号指纹文件无法读取：${error.message}`); }
   const config = prepareIdentity(saved, installedVerStr(path.dirname(params.executable)).split('.')[0], Boolean(params.proxy));
-  let rendering = [true, null];
-  if (config?.['webGl:vendor'] && config['webGl:renderer'] && (params.headless || process.platform === 'darwin')) {
+  let host;
+  if (params.headless || process.platform === 'darwin' || process.platform === 'win32') {
     try {
-      rendering = await utils.planRendering(utils.getTargetOs(config), undefined, false, false,
-        () => cachedHostGpu(params.executable));
+      const gpu = await cachedHostGpu(params.executable);
+      host = isHardwareGpu(gpu) ? gpu : null;
     } catch (error) {
       process.stderr.write(`无法确认 Canvas 渲染设备，保留 Camoufox 默认保护：${error.message}\n`);
     }
   }
   const generate = async (identityConfig = config) => {
-    const prepared = prepareRendering(identityConfig, ...rendering);
+    const prepared = prepareRendering(identityConfig, host);
+    const canvasNoise = prepared.canvasNoise ?? (host === undefined ? undefined : Boolean(host));
     const options = await launchOptions({
       os: hostOS, headless: Boolean(params.headless), main_world_eval: true,
-      config: prepared.config, canvas_noise: prepared.canvasNoise, i_know_what_im_doing: Boolean(saved),
+      config: stripLegacyConfigKeys(prepared.config), canvas_noise: canvasNoise, pin_cpu_cores: true,
+      i_know_what_im_doing: Boolean(saved),
       addons: params.addons || undefined,
       proxy: proxyOptions(params.proxy),
       geoip: params.proxy ? params.geoip !== false : undefined,
@@ -405,11 +432,21 @@ async function start(params) {
         .map(key => options.env[key]).join('');
     return {options, identity: JSON.parse(identityJSON)};
   };
-  const {options, identity} = saved ? await preserveVoices(saved, config, generate) : await createIdentity(params.profile, generate);
+  const {options, identity} = saved
+    ? await preserveVoices(saved, config, generate)
+    : await createIdentity(params.profile, generate, { collisionRoots: params.collisionRoots });
   options.user_data_dir = params.profile;
   options.acceptDownloads = true;
-  contextOptions = {viewport:null,serviceWorkers:'block',ignoreHTTPSErrors:Boolean(params.ignoreHTTPSErrors)};
-  requestOptions = {proxy:proxyOptions(params.proxy),ignoreHTTPSErrors:contextOptions.ignoreHTTPSErrors};
+  launchProxy = params.proxy;
+  const startProxy = proxyOptions(params.proxy);
+  contextOptions = {
+    ...STOCK_MEDIA_DEFAULTS,
+    viewport: null,
+    serviceWorkers: 'block',
+    ignoreHTTPSErrors: Boolean(params.ignoreHTTPSErrors),
+    ...(startProxy ? { proxy: startProxy } : {}),
+  };
+  requestOptions = {proxy:startProxy,ignoreHTTPSErrors:contextOptions.ignoreHTTPSErrors};
   options.ignoreHTTPSErrors = contextOptions.ignoreHTTPSErrors;
   context = await Camoufox({ persistent_context: true, from_options: options });
   await context.addInitScript({content: mainWorld(scopeBootstrap)});
@@ -430,7 +467,40 @@ async function start(params) {
 async function close() {
   if (closing) return;
   closing = true;
+  for (const privateContext of new Set(privateContexts.values())) {
+    await privateContext.close().catch(() => {});
+  }
+  privateContexts.clear();
   await context?.close();
+}
+
+async function installBinding(targetContext, bindingName, applyExisting = true) {
+  await targetContext.exposeBinding(bindingName, ({ page: source }, data) => {
+    emit({ event: 'binding', target: pageID(source), data });
+  });
+  // Camoufox exposes Playwright bindings in its isolated world.
+  const name = JSON.stringify(bindingName);
+  const forward = `window.addEventListener(${JSON.stringify(pipeEvent)}, event => globalThis[${name}](event.detail))`;
+  const invoke = `window[${name}] = data => window.dispatchEvent(new CustomEvent(${JSON.stringify(pipeEvent)}, {detail: data}))`;
+  await targetContext.addInitScript({ content: forward });
+  await targetContext.addInitScript({ content: mainWorld(scopedInit(invoke)) });
+  if (!applyExisting) return;
+  for (const current of targetContext.pages()) {
+    await current.evaluate(forward);
+    await current.evaluate(mainWorld(scoped(invoke)));
+  }
+}
+
+async function closeTargetPage(id, targetPage) {
+  const key = String(id);
+  await targetPage.close();
+  const pending = privateClosing.get(key);
+  if (pending) { await pending; return; }
+  const privateContext = privateContexts.get(key);
+  if (privateContext) {
+    privateContexts.delete(key);
+    await privateContext.close().catch(() => {});
+  }
 }
 
 function mainWorld(expression) { return `mw:${expression}`; }
@@ -496,13 +566,39 @@ async function dispatch(method, params, target, signal) {
       return { targetInfos: [...pages].filter(([, page]) => !page.isClosed()).map(([id, page]) => ({ targetId: id, type: 'page', url: page.url() })) };
     case 'Target.attachToTarget': pageFor(params.targetId); return { sessionId: params.targetId };
     case 'Target.createTarget': {
-      const parent = params.isolated ? await context.browser().newContext(contextOptions) : context;
-      const page = await parent.newPage();
-      if (params.isolated) privateContexts.set(pageID(page),parent);
-      if (params.url && params.url !== 'about:blank') await page.goto(params.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      return { targetId: pageID(page) };
+      let isolatedContext;
+      let page;
+      if (params.isolated) {
+        const isolatedProxy = proxyOptions(params.proxy || launchProxy);
+        const isolatedOptions = { ...STOCK_MEDIA_DEFAULTS, ...contextOptions };
+        if (isolatedProxy) isolatedOptions.proxy = isolatedProxy;
+        else delete isolatedOptions.proxy;
+        isolatedContext = await context.browser().newContext(isolatedOptions);
+        try {
+          isolatedContext.setDefaultTimeout?.(25000);
+          await isolatedContext.addInitScript({ content: mainWorld(scopeBootstrap) });
+          for (const name of bindings) await installBinding(isolatedContext, name, false);
+          page = await isolatedContext.newPage();
+        } catch (error) {
+          await isolatedContext.close().catch(() => {});
+          throw error;
+        }
+      } else {
+        page = await context.newPage();
+      }
+      const id = pageID(page);
+      if (isolatedContext) privateContexts.set(id, isolatedContext);
+      try {
+        if (params.url && params.url !== 'about:blank') {
+          await page.goto(params.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        }
+      } catch (error) {
+        await closeTargetPage(id, page).catch(() => {});
+        throw error;
+      }
+      return { targetId: id };
     }
-    case 'Target.closeTarget': await pageFor(params.targetId).close(); return { success: true };
+    case 'Target.closeTarget': await closeTargetPage(params.targetId, pageFor(params.targetId)); return { success: true };
     case 'Target.activateTarget': await pageFor(params.targetId).bringToFront(); return {};
     case 'Network.getCookies': return { cookies: (await pageFor(target).context().cookies(params.urls)).map(cookie => ({...cookie,session:cookie.expires<0,partitionKey:cookie.partitionKey?{topLevelSite:cookie.partitionKey}:undefined})) };
   }
@@ -564,18 +660,9 @@ async function dispatch(method, params, target, signal) {
     }
     case 'Runtime.addBinding':
       if (!bindings.has(params.name)) {
-        await context.exposeBinding(params.name, ({ page: source }, data) => {
-          emit({ event: 'binding', target: pageID(source), data });
-        });
-        // Camoufox exposes Playwright bindings in its isolated world.
-        const name = JSON.stringify(params.name);
-        const forward = `window.addEventListener(${JSON.stringify(pipeEvent)}, event => globalThis[${name}](event.detail))`;
-        const invoke = `window[${name}] = data => window.dispatchEvent(new CustomEvent(${JSON.stringify(pipeEvent)}, {detail: data}))`;
-        await context.addInitScript({content: forward});
-        await context.addInitScript({content: mainWorld(scopedInit(invoke))});
-        for (const current of context.pages()) {
-          await current.evaluate(forward);
-          await current.evaluate(mainWorld(scoped(invoke)));
+        await installBinding(context, params.name);
+        for (const privateContext of new Set(privateContexts.values())) {
+          await installBinding(privateContext, params.name);
         }
         bindings.add(params.name);
       }
@@ -584,7 +671,7 @@ async function dispatch(method, params, target, signal) {
       await page.addInitScript({ content: mainWorld(scopedInit(params.source)) }); return { identifier: 'tulai' };
     case 'Page.navigate': await page.goto(params.url, { waitUntil: params.wait === 'commit' ? 'commit' : 'domcontentloaded', timeout: 60000 }); return {};
     case 'Page.reload': await page.reload({ waitUntil: 'domcontentloaded' }); return {};
-    case 'Page.close': await page.close(); return {};
+    case 'Page.close': await closeTargetPage(target, page); return {};
     case 'Page.bringToFront': await page.bringToFront(); return {};
     case 'Page.getFrameTree': return { frameTree: frameTree(page.mainFrame()) };
     case 'Page.createIsolatedWorld': return { executionContextId: Number(params.frameId) };

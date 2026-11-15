@@ -1,12 +1,15 @@
 (() => {
+  const HOST_ATTR = 'data-pb-dl-host'
+  const REQUEST_ATTR = 'data-pb-dl-req'
+  const SNAPSHOT_ATTR = 'data-pb-dl-snap'
   const host = document.createElement('div')
-  host.dataset.tulaiDownloadHelper = ''
+  host.setAttribute(HOST_ATTR, '')
   host.style.cssText = 'display:none;position:fixed;right:20px;bottom:20px;z-index:2147483647'
   const shadow = host.attachShadow({ mode: 'closed' })
   const style = document.createElement('style')
   style.textContent = `
     :host { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
-    :host([data-tulai-temu]) { right: 80px !important; }
+    .panel.temu { margin-right: 60px; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     .panel { width: 246px; max-width: calc(100vw - 32px); padding: 12px; color: #1a2638;
@@ -31,16 +34,16 @@
     .status[data-error] { color: #b42330; }
     .compact .status { max-width: 240px; padding: 7px 10px; background: #fff; border: 1px solid #d8e0ee; border-radius: 8px; }
     .status:empty { display: none; }
-    @media (max-width: 600px) { :host([data-tulai-temu]) { right: 12px !important; } }
+    @media (max-width: 600px) { .panel.temu { margin-right: 0; } }
   `
   const panel = document.createElement('section')
   panel.className = 'panel compact'
-  panel.setAttribute('aria-label', 'tulai 下载助手')
+  panel.setAttribute('aria-label', '媒体下载助手')
   const header = document.createElement('div')
   header.className = 'header'
   const title = document.createElement('span')
   title.className = 'title'
-  title.textContent = 'tulai 下载助手'
+  title.textContent = '媒体下载助手'
   const collapse = document.createElement('button')
   collapse.type = 'button'
   collapse.className = 'collapse'
@@ -66,7 +69,7 @@
   const reopen = document.createElement('button')
   reopen.type = 'button'
   reopen.className = 'reopen'
-  reopen.textContent = 'tulai 下载'
+  reopen.textContent = '打开下载'
   reopen.setAttribute('aria-label', '展开下载助手')
   reopen.hidden = true
   shadow.append(style, panel, reopen)
@@ -105,9 +108,9 @@
     const isSearch = !!searchKey
     panel.classList.toggle('compact', !isSearch)
     header.hidden = count.hidden = auto.hidden = !isSearch
-    host.toggleAttribute('data-tulai-temu', isSearch)
+    panel.classList.toggle('temu', isSearch)
     count.textContent = `已识别 ${rows.size} 件商品`
-    primary.textContent = sending ? '正在发送…' : running ? '停止并下载' : isSearch ? '下载已加载' : '下载到 tulai'
+    primary.textContent = sending ? '正在发送…' : running ? '停止并下载' : isSearch ? '下载已加载' : '下载当前页'
     auto.textContent = starting ? '正在准备…' : running ? '暂停加载' : '自动加载'
     auto.setAttribute('aria-pressed', String(running))
     primary.disabled = sending || starting || (isSearch && (blocked || rows.size === 0))
@@ -148,7 +151,7 @@
       rows = new Map()
       cacheReady = false
       truncated = blocked = false
-      delete host.dataset.tulaiTemuSnapshot
+      host.removeAttribute(SNAPSHOT_ATTR)
       loadingCache = key ? browser.runtime.sendMessage({ type: 'TEMU_CACHE_LOAD', key, url: location.href }).then(saved => {
         if (searchKey !== key || temuSearchKey() !== key || !saved || !saved.ok || !Array.isArray(saved.rows)) return
         cacheReady = true
@@ -261,18 +264,18 @@
         if (blocked || rows.size === 0) { message('请等待商品加载或完成网页验证', true); return }
         const value = JSON.stringify({ url: location.href, rows: [...rows.values()], truncated })
         if (new TextEncoder().encode(value).length > 8 * 1024 * 1024) { message('商品信息过多，请缩小搜索范围后下载', true); return }
-        host.dataset.tulaiTemuSnapshot = value
+        host.setAttribute(SNAPSHOT_ATTR, value)
       }
       const hex = Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('')
       const marker = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-      host.dataset.tulaiDownloadRequest = marker
+      host.setAttribute(REQUEST_ATTR, marker)
       const result = await browser.runtime.sendMessage({ type: 'DOWNLOAD_PAGE', marker })
       message(result && result.message || '无法发送，请重试', !result || !result.ok, !!(result && result.ok))
     } catch (_) {
-      message('无法连接 tulai，请确认应用正在运行', true)
+      message('无法连接下载服务，请确认应用正在运行', true)
     } finally {
       sending = false
-      delete host.dataset.tulaiDownloadRequest
+      host.removeAttribute(REQUEST_ATTR)
       controls()
     }
   }
