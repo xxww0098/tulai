@@ -176,18 +176,28 @@ func (a *App) logRows(c *ui.Context) {
 		return
 	}
 	scroll.Children(func() {
-		start, end := logging.VisibleSpan(len(rows), logRowH, scroll.Bounds().H, a.logScroll.Y)
-		if start > 0 {
-			ui.Box(c.Key("log-pad-top")).Height(float32(start) * logRowH)
+		win := logging.VisibleWindow(a.logRowHeights(rows), scroll.Bounds().H, a.logScroll.Y)
+		if win.Top > 0.5 {
+			ui.Box(c.Key("log-pad-top")).Height(win.Top)
 		}
-		for i := start; i < end; i++ {
+		for i := win.Start; i < win.End; i++ {
 			a.logRow(c, rows[i])
 		}
-		tail := len(rows) - end
-		if tail > 0 {
-			ui.Box(c.Key("log-pad-bottom")).Height(float32(tail) * logRowH)
+		if win.Bottom > 0.5 {
+			ui.Box(c.Key("log-pad-bottom")).Height(win.Bottom)
 		}
 	})
+}
+
+func (a *App) logRowHeights(rows []logging.Entry) []float32 {
+	heights := make([]float32, len(rows))
+	for i, row := range rows {
+		heights[i] = logRowH
+		if a.logExpanded[row.Seq] && row.Detail != "" {
+			heights[i] += logDetailH
+		}
+	}
+	return heights
 }
 
 func (a *App) visibleLogs() []logging.Entry {

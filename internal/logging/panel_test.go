@@ -16,6 +16,13 @@ func TestRedactHidesCredentials(t *testing.T) {
 	if !strings.Contains(got, "[omitted]") || !strings.Contains(got, "ok") {
 		t.Fatalf("redact changed the surrounding text: %s", got)
 	}
+	header := Redact("Cookie: session=secretone; auth=secrettwo")
+	if strings.Contains(header, "secretone") || strings.Contains(header, "secrettwo") {
+		t.Fatalf("cookie header left a later pair: %s", header)
+	}
+	if header != "Cookie: [omitted]" {
+		t.Fatalf("cookie header = %s", header)
+	}
 }
 
 func TestPanelFilterCountsAndCopy(t *testing.T) {
@@ -48,12 +55,21 @@ func TestPanelFilterCountsAndCopy(t *testing.T) {
 }
 
 func TestVisibleSpanAndFrameKick(t *testing.T) {
-	start, end := VisibleSpan(100, 22, 80, 44)
-	if start != 2 || end != 2+int(80/22)+3 {
-		t.Fatalf("span %d %d", start, end)
+	heights := make([]float32, 100)
+	for i := range heights {
+		heights[i] = 22
 	}
-	if s, e := VisibleSpan(0, 22, 80, 0); s != 0 || e != 0 {
-		t.Fatalf("empty span %d %d", s, e)
+	win := VisibleWindow(heights, 80, 44)
+	if win.Start != 2 || win.Top != 44 {
+		t.Fatalf("uniform window %+v", win)
+	}
+	if empty := VisibleWindow(nil, 80, 0); empty.Start != 0 || empty.End != 0 {
+		t.Fatalf("empty window %+v", empty)
+	}
+	mixed := []float32{40, 22, 22}
+	scrolled := VisibleWindow(mixed, 22, 40)
+	if scrolled.Start != 1 || scrolled.Top != 40 {
+		t.Fatalf("expanded first row must push the next row to 40px, got %+v", scrolled)
 	}
 	var kick FrameKick
 	n := 0

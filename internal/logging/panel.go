@@ -58,14 +58,17 @@ func entryDetail(line Line) string {
 
 var (
 	bearerSecret = regexp.MustCompile(`(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}`)
+	cookieHeader = regexp.MustCompile(`(?i)\bCookie\s*:\s*[^\r\n]+`)
 	namedSecret  = regexp.MustCompile(`(?i)(["']?\b(?:token|password|secret|authorization|api[_-]?key|access[_-]?key|cookie)\b["']?\s*[:=]\s*["']?)[^\s"',;}]{4,}`)
 )
 
 // Redact 抹掉复制、导出和面板上能直接读到的凭据。磁盘日志保持原样。
+// Cookie 头整段换掉，避免分号后面的下一枚 cookie 留下来。
 func Redact(text string) string {
 	if text == "" {
 		return ""
 	}
+	text = cookieHeader.ReplaceAllString(text, "Cookie: [omitted]")
 	text = bearerSecret.ReplaceAllString(text, "$1 [omitted]")
 	return namedSecret.ReplaceAllString(text, "$1[omitted]")
 }
@@ -184,15 +187,30 @@ func ExportText(entries []Entry) string {
 	return b.String()
 }
 
-// VisibleSpan 是虚拟列表要实例化的半开区间。scroll 和 view 是像素。
-func VisibleSpan(n int, row, view, scroll float32) (start, end int) {
-	if n <= 0 || row <= 0 {
-		return 0, 0
+// Window 是虚拟列表这一帧要实例化的半开区间，以及上下占位高度。
+// 占位按每行真实高度累加，展开详情不会把后面的行挤错位。
+type Window struct {
+	Start, End  int
+	Top, Bottom float32
+}
+
+// VisibleWindow 用每行自己的高度计算可见区间。scroll 和 view 是像素。
+func VisibleWindow(heights []float32, view, scroll float32) Window {
+	n := len(heights)
+	if n == 0 {
+		return Window{}
 	}
-	if view < row {
-		view = row * 8
+	var total float32
+	for _, h := range heights {
+		if h < 1 {
+			h = 1
+		}
+		total += h
 	}
-	maxScroll := float32(n)*row - view
+	if view < 1 {
+		view = 160
+	}
+	maxScroll := total - view
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -202,19 +220,46 @@ func VisibleSpan(n int, row, view, scroll float32) (start, end int) {
 	if scroll < 0 {
 		scroll = 0
 	}
-	start = int(scroll / row)
+	var acc float32
+	start := 0
+	for i, h := range heights {
+		if h < 1 {
+			h = 1
+		}
+		if acc+h > scroll {
+			start = i
+			break
+		}
+		acc += h
+		start = i + 1
+	}
 	if start > n {
 		start = n
 	}
-	count := int(view/row) + 3
-	if count < 1 {
-		count = 1
+	top := acc
+	end := start
+	shown := float32(0)
+	overscan := float32(0)
+	for end < n && shown < view+overscan {
+		h := heights[end]
+		if h < 1 {
+			h = 1
+		}
+		shown += h
+		end++
+		if overscan == 0 && shown >= view {
+			overscan = h
+		}
 	}
-	end = start + count
-	if end > n {
-		end = n
+	var bottom float32
+	for i := end; i < n; i++ {
+		h := heights[i]
+		if h < 1 {
+			h = 1
+		}
+		bottom += h
 	}
-	return start, end
+	return Window{Start: start, End: end, Top: top, Bottom: bottom}
 }
 
 // FrameKick 把同一阵日志收成一次界面唤醒。Done 之后下一条才能再醒。
