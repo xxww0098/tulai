@@ -113,14 +113,20 @@ func (a *App) pruneBrowserSelection() {
 }
 
 func (a *App) browserBatchToolbar(c *ui.Context) {
+	tok := a.uiTokens(c)
 	chosen := a.browserChecked.Len()
 	all := chosen > 0 && chosen == len(a.browserRows)
-	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+	countTone := "neutral"
+	if chosen > 0 {
+		countTone = "accent"
+	}
+	ui.Row(c.Key("browser-bulk-bar")).FillWidth().Padding(4, 8).Gap(6).AlignItems(ui.Center).
+		Background(tok.sunken).Border(1, tok.border).Radius(tok.radiusM).Children(func() {
 		check := ui.Checkbox(c, &all, "全选").Disabled(len(a.browserRows) == 0)
 		if chosen > 0 && chosen < len(a.browserRows) {
 			check.Mixed()
 			size := c.Theme().Space(4)
-			fill, mark := c.Theme().Accent, c.Theme().AccentText
+			fill, mark := tok.accent, tok.onAccent
 			check.DrawOver(func(p *ui.Painter, r ui.Rect) {
 				y := r.Y + (r.H-size)/2
 				p.Fill(ui.Rect{X: r.X, Y: y, W: size, H: size}, fill, 4)
@@ -135,20 +141,21 @@ func (a *App) browserBatchToolbar(c *ui.Context) {
 				}
 			}
 		}
-		ui.Text(c, fmt.Sprintf("已选 %d 个", a.browserChecked.Len())).FontSize(a.look.caption).TextColor(c.Theme().TextMuted).Width(60)
+		uiBadge(c, "bulk-selected-count", fmt.Sprintf("已选 %d 个", chosen), countTone, tok)
+		ui.Box(c).Width(1).Height(14).Background(tok.border).Shrink(0)
 		busy := a.running || len(a.browserPending) > 0
-		uiIconBtn(c, "bulk-start", "批量启动", "批量启动已选环境", iconPlay, 22, false, false, a.look).
+		uiIconBtn(c, "bulk-start", "批量启动", "批量启动已选环境", iconPlay, 24, false, false, tok).
 			Disabled(busy || len(a.browserBatchTargets(false)) == 0).OnClick(func() { a.runBrowserBatch(false) })
-		uiIconBtn(c, "bulk-stop", "批量停止", "批量停止已选环境", iconStop, 22, false, false, a.look).
+		uiIconBtn(c, "bulk-stop", "批量停止", "批量停止已选环境", iconStop, 24, false, false, tok).
 			Disabled(busy || len(a.browserBatchTargets(true)) == 0).OnClick(func() { a.runBrowserBatch(true) })
-		uiIconBtn(c, "bulk-clear", "清空", "清空勾选", iconX, 22, false, false, a.look).
-			Disabled(a.browserChecked.Len() == 0).OnClick(func() { a.browserChecked.Clear() })
+		uiIconBtn(c, "bulk-clear", "清空", "清空勾选", iconX, 24, false, false, tok).
+			Disabled(chosen == 0).OnClick(func() { a.browserChecked.Clear() })
 		if a.browserBatch != nil {
-			ink := c.Theme().TextMuted
+			ink := tok.muted
 			if a.browserBatch.failed > 0 {
-				ink = c.Theme().Danger
+				ink, _, _ = semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
 			}
-			ui.Text(c, a.browserBatch.text()).FontSize(a.look.caption).TextColor(ink).Grow(1).MinWidth(0).SingleLine().Tooltip(a.browserBatch.text())
+			ui.Text(c, a.browserBatch.text()).FontSize(tok.caption).FontFeatures("tnum").TextColor(ink).Grow(1).MinWidth(0).SingleLine().Tooltip(a.browserBatch.text())
 		}
 	})
 }

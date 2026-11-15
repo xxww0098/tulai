@@ -8,34 +8,46 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func browserStatusTone(state string) string {
+	switch state {
+	case "运行中":
+		return "success"
+	case "使用中", "启动中", "停止中":
+		return "accent"
+	case "就绪", "未启动":
+		return "neutral"
+	case "冷却中", "需要人工验证":
+		return "warning"
+	case "未登录", "已用尽", "已禁用":
+		return "danger"
+	default:
+		return "warning"
+	}
+}
+
 func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 	refreshAtMidnight(c)
+	tok := a.uiTokens(c)
 	palette := c.Theme()
 	tableTheme := *palette
-	tableTheme.Accent = palette.Accent.Mix(palette.Background, 0.90)
-	tableTheme.AccentText = palette.Text
-	actionInk := palette.Accent
-	if !palette.Dark {
-		tableTheme.Success = palette.Success.Mix(palette.Text, 0.35)
-		tableTheme.Warning = palette.Warning.Mix(palette.Text, 0.35)
-		actionInk = palette.Accent.Mix(palette.Text, 0.35)
-	}
+	tableTheme.Accent = tok.accent.Mix(tok.card, 0.90)
+	tableTheme.AccentText = tok.text
 	w, _ := c.Size()
-	columns := []ui.TableColumn{{ID: "name", Title: "环境名称", MinWidth: 200, Fixed: true}}
+	columns := []ui.TableColumn{{ID: "name", Title: "环境名称", MinWidth: 190, Fixed: true}}
 	if w >= 900 {
-		columns = append([]ui.TableColumn{{ID: "id", Title: "编号", Width: 64, Fixed: true}}, columns...)
+		columns = append([]ui.TableColumn{{ID: "id", Title: "编号", Width: 56, Fixed: true}}, columns...)
 	}
-	columns = append([]ui.TableColumn{{ID: "select", Title: "选择", Width: 56, Fixed: true}}, columns...)
+	columns = append([]ui.TableColumn{{ID: "select", Title: "选择", Width: 50, Fixed: true}}, columns...)
 	columns = append(columns,
-		ui.TableColumn{ID: "platform", Title: "服务商", Width: 88, Fixed: true},
-		ui.TableColumn{ID: "status", Title: "环境状态", Width: 108, Fixed: true})
+		ui.TableColumn{ID: "platform", Title: "服务商", Width: 86, Fixed: true},
+		ui.TableColumn{ID: "status", Title: "环境状态", Width: 112, Fixed: true})
 	if w >= 1100 {
-		columns = append(columns, ui.TableColumn{ID: "proxy", Title: "代理", Width: 180, Fixed: true})
+		columns = append(columns, ui.TableColumn{ID: "proxy", Title: "代理", Width: 172, Fixed: true})
 	}
 	if w >= 1000 {
-		columns = append(columns, ui.TableColumn{ID: "usage", Title: "今日用量", Width: 88, Fixed: true})
+		columns = append(columns, ui.TableColumn{ID: "usage", Title: "今日用量", Width: 84, Fixed: true})
 	}
-	columns = append(columns, ui.TableColumn{ID: "actions", Title: "操作", Width: 76, Fixed: true})
+	columns = append(columns, ui.TableColumn{ID: "actions", Title: "操作", Width: 84, Fixed: true})
 	a.browserList.Selected = &a.browserSel
 	a.browserList.Selection = &a.browserChecked
 	a.browserList.Key = func(i int) any { return a.browserRows[i].ID }
@@ -57,39 +69,29 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 					}
 				})
 			case "id":
-				ui.Text(c, fmt.Sprintf("%03d", b.ID)).FontSize(12).FontFeatures("tnum").TextColor(c.Theme().TextMuted).SingleLine()
+				ui.Text(c, fmt.Sprintf("%03d", b.ID)).FontSize(tok.body).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
 			case "name":
 				a.accountRow(c, b)
 			case "platform":
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					platformIcon(c, b.Platform, 16, a.look)
-					ui.Text(c, b.Platform).FontSize(12).SingleLine()
+					platformIcon(c, b.Platform, 16, tok)
+					ui.Text(c, b.Platform).FontSize(tok.body).TextColor(tok.text).SingleLine()
 				})
 			case "status":
 				state := accountHealthLabel(b, active[b.ID], accountSignedIn(b, a.loginShot(b.ID)), c.Now())
-				ink := tableTheme.Warning
-				switch state {
-				case "就绪":
-					ink = palette.TextMuted
-					if b.ExtAccount == "" {
-						state = "未启动"
-					}
-				case "运行中":
-					ink = tableTheme.Success
-				case "使用中":
-					ink = actionInk
+				if state == "就绪" && b.ExtAccount == "" {
+					state = "未启动"
 				}
 				if op, pending := a.browserPending[b.ID]; pending {
 					state = "启动中"
 					if op.stopping {
 						state = "停止中"
 					}
-					ink = palette.TextMuted
 				}
 				ui.Column(c).Gap(3).Children(func() {
-					ui.Text(c, state).FontSize(12).TextColor(ink).SingleLine()
+					uiBadge(c, fmt.Sprintf("browser-state-%d", b.ID), state, browserStatusTone(state), tok)
 					if b.LastError != "" && !b.Usable(c.Now()) && !staleLoginCopy(b, accountSignedIn(b, a.loginShot(b.ID))) {
-						ui.Text(c, b.LastError).FontSize(12).TextColor(palette.TextMuted).SingleLine().Tooltip(b.LastError)
+						ui.Text(c, b.LastError).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(b.LastError)
 					}
 				})
 			case "proxy":
@@ -97,17 +99,24 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 				if b.ExtAccount != "" {
 					host, protocol = "由扩展管理", "外部浏览器环境"
 				}
-				ui.Column(c).Gap(3).Children(func() {
-					ui.Text(c, host).FontSize(12).SingleLine().Tooltip(host)
-					ui.Text(c, protocol).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+				ui.Column(c).Gap(2).Children(func() {
+					ui.Text(c, host).FontSize(tok.body).TextColor(tok.text).SingleLine().Tooltip(host)
+					ui.Text(c, protocol).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 				})
 			case "usage":
 				used, capN := b.UsedToday(c.Now()), a.shownDailyCapFor(b.Platform)
 				label := fmt.Sprintf("%d / 不限", used)
+				ink := tok.text
+				if used == 0 {
+					ink = tok.muted
+				}
 				if capN > 0 {
 					label = fmt.Sprintf("%d / %d", used, capN)
+					if used >= capN {
+						ink, _, _ = semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
+					}
 				}
-				ui.Text(c, label).FontSize(12).FontFeatures("tnum").SingleLine()
+				ui.Text(c, label).FontSize(tok.body).FontFeatures("tnum").TextColor(ink).SingleLine()
 			case "actions":
 				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 					label := "启动"
@@ -126,7 +135,7 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 						}
 					}
 					disabled := a.running || len(a.browserPending) > 0 || active[b.ID] || b.ExtAccount != ""
-					uiIconBtn(c, "act", label+" "+b.Name, label, ico, 22, !b.IsRunning && !disabled && activeAct == false, false, a.look).
+					uiIconBtn(c, "act", label+" "+b.Name, label, ico, 22, !b.IsRunning && !disabled && !activeAct, false, tok).
 						Disabled(disabled).OnClick(func() {
 						a.selectBrowserID(b.ID)
 						if b.IsRunning {
@@ -135,11 +144,11 @@ func (a *App) browserEnvironmentTable(c *ui.Context, active map[int64]bool) {
 							a.launchBrowser()
 						}
 					})
-					uiIconBtn(c, "cfg", "配置 "+b.Name, "配置代理与参数", iconSliders, 22, false, false, a.look).
+					uiIconBtn(c, "cfg", "配置 "+b.Name, "配置代理与参数", iconSliders, 22, false, false, tok).
 						OnClick(func() { a.selectBrowserID(b.ID) })
 				})
 			}
-		}).Grow(1).MinHeight(120).FillWidth().Background(c.Theme().Background).Border(1, c.Theme().Border).Radius(8).Label("浏览器环境列表")
+		}).Grow(1).MinHeight(120).FillWidth().Background(tok.card).Border(1, tok.border).Radius(tok.radiusM).Label("浏览器环境列表")
 	})
 }
 
