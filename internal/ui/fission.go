@@ -28,7 +28,7 @@ func (a *App) fissionPromptCard(c *ui.Context) {
 	hint := "近景、远景、俯视、侧视各生成一张；完成后检查两两 pHash 相似度，不合格可重新生成。相似度仅衡量画面结构，主体来源及语义差异仍需人工确认。"
 	a.stepCard(c, "fission-prompt", stepDone).Children(func() {
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "裂变指令").FontSize(tok.title).Bold().Shrink(0)
+			ui.Text(c, "裂变指令").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
 			ui.Box(c).Shrink(0).Tooltip(hint).Children(func() {
 				ui.Icon(c, iconInfo).FontSize(12).TextColor(tok.muted)
 			})
@@ -38,7 +38,7 @@ func (a *App) fissionPromptCard(c *ui.Context) {
 		})
 		ui.TextArea(c, &a.prompts).Height(height).MinHeight(height).FillWidth().Label("裂变指令").
 			Placeholder(DefaultFissionPrompt).Disabled(a.running)
-		ui.Text(c, "4 视角生图 · 自动 pHash 校验").FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(hint)
+		ui.Text(c, "4 视角生图 · 自动 pHash 校验").FontSize(tok.caption).TextColor(tok.muted).SingleLine().FontFeatures("tnum").Tooltip(hint)
 	})
 }
 

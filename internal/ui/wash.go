@@ -351,7 +351,7 @@ func (a *App) washPromptCard(c *ui.Context) {
 	}
 	card.Children(func() {
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "洗图指令").FontSize(tok.title).Bold().Shrink(0)
+			ui.Text(c, "洗图指令").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
 			ui.Spacer(c)
 			a.washReset(c)
 		})
@@ -359,7 +359,7 @@ func (a *App) washPromptCard(c *ui.Context) {
 		if homeSplit(winW) {
 			input.Grow(1)
 		}
-		ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(hint)
+		ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().FontFeatures("tnum").Tooltip(hint)
 		ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
 			a.washPromptSelect(c)
 			ui.Spacer(c)

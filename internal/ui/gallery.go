@@ -279,27 +279,26 @@ func (a *App) galleryModal(c *ui.Context) {
 	washed, _ := a.washCounts()
 
 	ui.Modal(c, &a.galleryOn, func() {
-		panel := ui.Column(c.Key("image-gallery-modal")).Width(panelW).Gap(12).Padding(14).
-			Background(tok.card).Border(1, tok.border).Radius(tok.radiusL).
-			Shadow(0, 18, 48, 0, tok.lift).Role(ui.RoleDialog).
+		panel := uiCardSurface(ui.Column(c.Key("image-gallery-modal")).Width(panelW).Gap(10).Padding(14), tok).
+			Radius(tok.radiusL).Shadow(0, 14, 36, 0, tok.lift).Role(ui.RoleDialog).
 			Label(a.galleryTitle + "图库")
 		if paths := panel.DroppedFiles(); len(paths) > 0 {
 			a.ingestSources(paths)
 		}
 		if panel.FileDragOver() && !a.running {
-			panel.Border(2, tok.accent).Background(tok.accent.Alpha(0.08))
+			panel.Border(1, tok.accent).Background(tok.accent.Alpha(0.06))
 		}
 		panel.Children(func() {
 			ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-					ui.Text(c, a.galleryTitle+"图库").FontSize(tok.title).Bold().SingleLine()
+				ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+					ui.Text(c, a.galleryTitle+"图库").FontSize(tok.title).Bold().TextColor(tok.text).SingleLine()
 					ui.Text(c, fmt.Sprintf("共 %d 张 · 按住左键拖动可选择 · 勾选后可批量删除", total)).
-						FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+						FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").SingleLine()
 				})
-				ui.Button(c, "关闭").FontSize(tok.caption).Padding(3, 9).Radius(tok.radiusS).
-					OnClick(func() { a.galleryOn = false })
+				uiBtn(ui.Button(c, "关闭"), tok).OnClick(func() { a.galleryOn = false })
 			})
-			ui.Row(c).FillWidth().Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
+			ui.Row(c).FillWidth().Gap(6).Wrap().AlignItems(ui.Center).Padding(5, 8).
+				Radius(tok.radiusS).Background(tok.sunken).Border(1, tok.border).Children(func() {
 				a.quietButton(c, "添加图片").OnClick(func() { a.addImages() })
 				if a.washing() {
 					a.quietButton(c, "选文件夹").OnClick(func() { a.addFolder() })
@@ -333,15 +332,16 @@ func (a *App) galleryModal(c *ui.Context) {
 					a.galleryDragOverlay(c)
 				})
 			})
+			ui.Divider(c).Background(tok.border)
 			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 				checked := all
 				allBox := ui.Checkbox(c.Key("gallery-all"), &checked, "全选").Label("全选")
 				allBox.OnChange(func() { a.setAllGallerySelection(checked) })
 				ui.Text(c, fmt.Sprintf("已选 %d 张", selected)).FontSize(tok.caption).
 					TextColor(tok.muted).FontFeatures("tnum").Grow(1)
-				remove := ui.Button(c, fmt.Sprintf("删除已选 %d 张", selected)).
-					FontSize(tok.caption).Padding(3, 9).Radius(tok.radiusS).
-					Background(tok.danger.Alpha(0.12)).TextColor(tok.danger).
+				dangerFg, dangerBg, dangerBorder := semanticToneColors(tok.dark, tok.text, tok.danger, 0.12)
+				remove := uiBtn(ui.Button(c, fmt.Sprintf("删除已选 %d 张", selected)), tok).
+					Background(dangerBg).TextColor(dangerFg).Border(1, dangerBorder).
 					Disabled(a.running || selected == 0)
 				remove.OnClick(func() { a.deleteSelectedGallerySources() })
 			})
@@ -363,17 +363,19 @@ func (a *App) galleryDragOverlay(c *ui.Context) {
 func (a *App) galleryEmpty(c *ui.Context, height float32) {
 	tok := a.look
 	zone := ui.Column(c.Key("gallery-empty")).FillWidth().Height(min(height, float32(260))).
-		Radius(tok.radiusM).Border(1.5, tok.accent.Alpha(0.45)).BorderStyle(ui.BorderDashed).
+		Radius(tok.radiusM).Border(1, tok.borderStrong).BorderStyle(ui.BorderDashed).
 		Background(tok.sunken).Center().Gap(8).Cursor(ui.CursorPointer)
+	ink := tok.muted
 	if zone.Hovered() && !a.running {
-		zone.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
+		zone.Border(1, tok.accent).Background(tok.accent.Alpha(0.08))
+		ink = tok.accent
 	}
 	if zone.Clicked() && !a.running {
 		a.addImages()
 	}
 	zone.Children(func() {
-		ui.Icon(c, iconImages).FontSize(30).TextColor(tok.accent)
-		ui.Text(c, "拖入图片或文件夹").FontSize(tok.body).Bold()
+		ui.Icon(c, iconImages).FontSize(28).TextColor(ink)
+		ui.Text(c, "拖入图片或文件夹").FontSize(tok.body).FontWeight(600).TextColor(tok.text)
 		ui.Text(c, "图库会保持打开，方便连续添加和整理").FontSize(tok.caption).TextColor(tok.muted)
 	})
 }
@@ -384,44 +386,47 @@ func (a *App) galleryTile(c *ui.Context, index int, source sourceImage, cols int
 	tileRect := galleryTileRect(index, cols, tileW)
 	selected := a.gallerySelected[source.Path]
 	borderColor := tok.border
-	borderWidth := float32(1)
+	bgColor := tok.card
 	if selected {
 		borderColor = tok.accent
-		borderWidth = 2
+		bgColor = tok.accent.Alpha(0.06)
 	}
-	ui.Column(c.Key("gallery-"+source.Path)).Width(tileW).Height(galleryTileHeight(tileW)).Shrink(0).Gap(5).
-		Padding(1).Radius(tok.radiusM).Border(borderWidth, borderColor).Background(tok.card).
-		Children(func() {
-			host := ui.Box(c.Key("image")).Size(tileW, tileW).Radius(tok.radiusS).
-				Background(tok.sunken).Clip()
-			host.Children(func() {
-				if bmp := a.cachedThumb(source.Path); bmp != nil {
-					ui.Image(c, bmp).Size(tileW, tileW).Fit(ui.Cover).Radius(tok.radiusS)
-				}
-				ui.Box(c.Key("drag-select")).Size(tileW, tileW).Absolute().Top(0).Left(0).
-					Label("拖动选择 " + name).Cursor(ui.CursorPointer).HandleInput(func(ev ui.InputEvent) bool {
-					return a.galleryDragInput(ev, cols, tileW, tileRect.X, tileRect.Y)
-				})
-				checked := selected
-				pick := ui.Checkbox(c.Key("pick"), &checked, "").
-					Label(fmt.Sprintf("选择 %02d %s", index+1, name)).
-					Size(24, 24).Absolute().Top(7).Left(7)
-				pick.OnChange(func() { a.toggleGallerySelection(source.Path, checked) })
-				remove := ui.ButtonBase(c.Key("remove")).Size(45, 24).Radius(6).Center().
-					Label("移除 " + name).Tooltip("从图库移除").
-					Background(ui.RGBA(16, 24, 38, 0.82)).TextColor(ui.RGBA(255, 255, 255, 0.96)).
-					Absolute().Top(7).Right(7).Disabled(a.running)
-				remove.OnClick(func() { a.removeGallerySource(source.Path) })
-				remove.Children(func() {
-					ui.Text(c, "移除").FontSize(11).TextColor(ui.RGBA(255, 255, 255, 0.96))
-				})
+	card := ui.Column(c.Key("gallery-"+source.Path)).Width(tileW).Height(galleryTileHeight(tileW)).Shrink(0).Gap(5).
+		Padding(1).Radius(tok.radiusM).Border(1, borderColor).Background(bgColor)
+	if !selected && card.Hovered() {
+		card.Border(1, tok.borderStrong)
+	}
+	card.Children(func() {
+		host := ui.Box(c.Key("image")).Size(tileW, tileW).Radius(tok.radiusS).
+			Background(tok.sunken).Clip()
+		host.Children(func() {
+			if bmp := a.cachedThumb(source.Path); bmp != nil {
+				ui.Image(c, bmp).Size(tileW, tileW).Fit(ui.Cover).Radius(tok.radiusS)
+			}
+			ui.Box(c.Key("drag-select")).Size(tileW, tileW).Absolute().Top(0).Left(0).
+				Label("拖动选择 " + name).Cursor(ui.CursorPointer).HandleInput(func(ev ui.InputEvent) bool {
+				return a.galleryDragInput(ev, cols, tileW, tileRect.X, tileRect.Y)
 			})
-			ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Padding(0, 1).Children(func() {
-				ui.Text(c, fmt.Sprintf("%02d", index+1)).Width(24).Shrink(0).
-					FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum")
-				ui.Text(c, name).FontSize(tok.caption).Grow(1).MinWidth(0).SingleLine().Tooltip(source.Path)
+			checked := selected
+			pick := ui.Checkbox(c.Key("pick"), &checked, "").
+				Label(fmt.Sprintf("选择 %02d %s", index+1, name)).
+				Size(24, 24).Absolute().Top(7).Left(7)
+			pick.OnChange(func() { a.toggleGallerySelection(source.Path, checked) })
+			remove := ui.ButtonBase(c.Key("remove")).Size(45, 24).Radius(tok.radiusS).Center().
+				Label("移除 " + name).Tooltip("从图库移除").
+				Background(ui.RGBA(15, 23, 42, 0.82)).TextColor(ui.Hex("#FFFFFF")).
+				Absolute().Top(7).Right(7).Disabled(a.running)
+			remove.OnClick(func() { a.removeGallerySource(source.Path) })
+			remove.Children(func() {
+				ui.Text(c, "移除").FontSize(tok.body).TextColor(ui.Hex("#FFFFFF"))
 			})
 		})
+		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Padding(0, 1).Children(func() {
+			ui.Text(c, fmt.Sprintf("%02d", index+1)).Width(24).Shrink(0).
+				FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum")
+			ui.Text(c, name).FontSize(tok.caption).TextColor(tok.text).Grow(1).MinWidth(0).SingleLine().Tooltip(source.Path)
+		})
+	})
 }
 
 func galleryPanelWidth(winW float32) float32 {

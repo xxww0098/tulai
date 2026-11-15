@@ -77,14 +77,15 @@ func (a *App) washStyleSelect(c *ui.Context) {
 	if a.washStyle == "" {
 		a.washStyle = washStyleOriginal
 	}
+	tok := a.look
 	tip := "仅影响新任务；保持原风格不会额外添加要求，选择其他风格后将优先于洗图指令和组合参数中的风格。组合参数中可自定义风格。"
-	ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "风格").FontSize(a.look.caption).TextColor(a.look.muted).Shrink(0)
+	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "风格").FontSize(tok.caption).FontWeight(500).TextColor(tok.muted).Shrink(0)
 		motionSelect(c.Key("wash-style"), &a.washStyle, washStyleLabels()).
 			Grow(1).MinWidth(0).Label("洗图风格").Disabled(a.running).Tooltip(tip).
 			OnChange(func() { a.saveWashStyle() })
 		ui.Box(c).Shrink(0).Tooltip(tip).Children(func() {
-			ui.Icon(c, iconInfo).FontSize(12).TextColor(a.look.muted)
+			ui.Icon(c, iconInfo).FontSize(12).TextColor(tok.muted)
 		})
 	})
 }

@@ -47,8 +47,8 @@ func (a *App) workSide(c *ui.Context, input func(), mergeRun bool) {
 	if mergeRun {
 		gap = 0
 	}
-	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).FillHeight().MinHeight(0).Gap(gap).Children(func() {
-		_, winH := c.Size()
+	winW, winH := c.Size()
+	ui.Column(c.Key("work-side")).Width(composerWidth(winW)).Shrink(0).FillHeight().MinHeight(0).Gap(gap).Children(func() {
 		// 滚动容器会以无限高度测量子元素，无法分配剩余空间；极矮窗口仍保留滚动。
 		flexible := mergeRun && winH >= 560
 		var viewport ui.Element
@@ -108,16 +108,13 @@ func (a *App) promptFocus(c *ui.Context) {
 			hint = "当前模板整段发送"
 		}
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "提示词").FontSize(tok.title).Bold().Shrink(0)
+			ui.Text(c, "提示词").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
 			ui.Box(c).Shrink(0).Tooltip(hint).Children(func() {
 				ui.Icon(c, iconInfo).FontSize(12).TextColor(tok.muted)
 			})
 			ui.Spacer(c)
 			if n > 0 {
-				ui.Row(c).Height(16).Padding(0, 5).Radius(999).Center().Background(tok.sunken).Shrink(0).Children(func() {
-					ui.Text(c, fmt.Sprintf("%d 条", n)).FontSize(tok.caption).TextColor(tok.muted).
-						SingleLine().FontFeatures("tnum")
-				})
+				uiBadge(c, "prompt-count", fmt.Sprintf("%d 条", n), "neutral", tok)
 			}
 		})
 		ui.TextArea(c, &a.prompts).Height(inputHeight).FillWidth().Label("提示词内容").
@@ -165,12 +162,9 @@ func (a *App) imageCard(c *ui.Context, key, title string, primary bool) {
 	}
 	card.Children(func() {
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, title).FontSize(tok.title).Bold().Shrink(0)
+			ui.Text(c, title).FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
 			if n := len(a.sources); n > 0 {
-				ui.Row(c).Height(16).Padding(0, 5).Radius(999).Center().Background(tok.sunken).Shrink(0).Children(func() {
-					ui.Text(c, fmt.Sprintf("%d 张", n)).FontSize(tok.caption).TextColor(tok.muted).
-						SingleLine().FontFeatures("tnum")
-				})
+				uiBadge(c, "source-count", fmt.Sprintf("%d 张", n), "neutral", tok)
 			} else if !primary {
 				ui.Text(c, "可选").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
 			}
@@ -206,13 +200,13 @@ func (a *App) compactDrop(c *ui.Context, primary bool) {
 		}
 	}
 	zone := ui.Column(c.Key("drop-zone")).Label("拖入或点击添加图片").FillWidth().Height(h).Radius(tok.radiusM).
-		Border(1.5, tok.accent.Alpha(0.42)).BorderStyle(ui.BorderDashed).
+		Border(1, tok.borderStrong).BorderStyle(ui.BorderDashed).
 		Background(tok.sunken).Center().Gap(2).Cursor(ui.CursorPointer)
 	if !primary {
 		zone.Tooltip("可选，不放图也可纯提示词生成")
 	}
 	if zone.Hovered() && !a.running {
-		zone.Border(1.5, tok.accent).Background(tok.accent.Alpha(0.08))
+		zone.Border(1, tok.accent).Background(tok.accent.Alpha(0.08))
 	}
 	hoverPressPose(zone)
 	if zone.Clicked() && !a.running {
@@ -220,8 +214,12 @@ func (a *App) compactDrop(c *ui.Context, primary bool) {
 	}
 	zone.Children(func() {
 		ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, iconImagePlus).FontSize(13).TextColor(tok.accent)
-			ui.Text(c, "拖入或点击添加图片").FontSize(tok.body).FontWeight(500)
+			ink := tok.muted
+			if zone.Hovered() && !a.running {
+				ink = tok.accent
+			}
+			ui.Icon(c, iconImagePlus).FontSize(13).TextColor(ink)
+			ui.Text(c, "拖入或点击添加图片").FontSize(tok.body).FontWeight(500).TextColor(tok.text)
 		})
 		if hint != "" {
 			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted)
@@ -259,8 +257,7 @@ func (a *App) imageActions(c *ui.Context, title string, _ bool) {
 
 // quietButton 是输入区右侧的小按钮，不跟「开始」抢一整行。
 func (a *App) quietButton(c *ui.Context, label string) ui.Element {
-	return ui.Button(c, label).FontSize(a.look.caption).Padding(2, 6).Radius(a.look.radiusS).
-		Shrink(0).Disabled(a.running)
+	return uiMiniBtn(ui.Button(c, label), a.look).Disabled(a.running)
 }
 
 func (a *App) runCard(c *ui.Context, merged bool) {
@@ -279,8 +276,11 @@ func (a *App) runCard(c *ui.Context, merged bool) {
 		if a.running {
 			target = "当前查看：" + a.stagePlatform()
 		}
-		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, target).FontSize(tok.caption).Bold().TextColor(tok.accent).Grow(1).MinWidth(0).SingleLine().Tooltip(target)
+		targetInk, _, _ := semanticToneColors(tok.dark, tok.text, tok.accent, 0.12)
+		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
+			platformIcon(c, a.stagePlatform(), 12, tok)
+			ui.Text(c, target).FontSize(tok.caption).FontWeight(600).TextColor(targetInk).Grow(1).MinWidth(0).
+				SingleLine().FontFeatures("tnum").Tooltip(target)
 			if a.stagePlatform() == "豆包" {
 				a.outputSizeSelect(c)
 			}
@@ -292,12 +292,22 @@ func (a *App) runCard(c *ui.Context, merged bool) {
 			a.washStyleSelect(c)
 		}
 		board := filterBoard(a.accountBoard(c.Now()), a.stagePlatform())
-		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Clip().Children(func() {
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(3).Clip().Children(func() {
 				summary := a.stepLead(board)
-				ui.Text(c, summary).FontSize(tok.body).MinWidth(0).SingleLine().Tooltip(summary)
+				ui.Text(c, summary).FontSize(tok.body).FontWeight(500).TextColor(tok.text).
+					MinWidth(0).SingleLine().FontFeatures("tnum").Tooltip(summary)
+				if a.running {
+					tally := TallyTasks(tasksForPlatform(a.queueItems(), a.stagePlatform()))
+					total := tally.Done + tally.Running + tally.Queued + tally.Failed + tally.Needs + tally.Review + tally.Stopped
+					if total > 0 {
+						finished := tally.Done + tally.Failed + tally.Stopped
+						ui.Progress(c, float64(finished)/float64(total)).FillWidth().Height(3)
+					}
+				}
 				if note := a.runNote(); note != "" {
-					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine().Tooltip(note)
+					ui.Text(c.Key("prog"), note).FontSize(tok.caption).TextColor(tok.muted).
+						MinWidth(0).SingleLine().FontFeatures("tnum").Tooltip(note)
 				}
 				a.outputHint(c, tok)
 			})
@@ -312,13 +322,17 @@ func (a *App) outputHint(c *ui.Context, tok tokens) {
 	line := "保存到 " + path
 	open := func() { a.settingsTab, a.tab = settingsOutput, pageSettings }
 	row := ui.Row(c).Gap(4).AlignItems(ui.Center).MinWidth(0).Cursor(ui.CursorPointer)
+	ink := tok.muted
+	if row.Hovered() {
+		ink = tok.accent
+	}
 	if row.Clicked() {
 		open()
 	}
 	row.Children(func() {
-		paintFolder(c, tok.accent)
-		text := ui.Text(c, line).FontSize(tok.caption).TextColor(tok.accent).MinWidth(0).SingleLine().
-			Cursor(ui.CursorPointer).Tooltip("在设置中修改")
+		ui.Icon(c, iconFolder).FontSize(11).TextColor(ink).Shrink(0)
+		text := ui.Text(c, line).FontSize(tok.caption).TextColor(ink).MinWidth(0).SingleLine().
+			Cursor(ui.CursorPointer).Tooltip("在设置中修改：" + path)
 		if text.Clicked() {
 			open()
 		}

@@ -19,11 +19,20 @@ import (
 )
 
 const (
-	composerW    float32 = 248
-	homeSplitMin float32 = 810
-	pagePadX     float32 = 8
-	homeGap      float32 = 6
+	composerW     float32 = 248
+	composerWideW float32 = 272
+	composerWideMin float32 = 1200
+	homeSplitMin  float32 = 810
+	pagePadX      float32 = 8
+	homeGap       float32 = 6
 )
+
+func composerWidth(w float32) float32 {
+	if w >= composerWideMin {
+		return composerWideW
+	}
+	return composerW
+}
 
 // columnHeight 扣掉全局顶栏和页面上下边距，让左右两栏自然贴合视口高度。
 func columnHeight(winH float32) float32 {
@@ -60,7 +69,7 @@ func (a *App) homeStageW(w float32) float32 {
 	if !homeSplit(w) {
 		return a.pageInner(w)
 	}
-	stage := a.pageInner(w) - composerW - homeGap
+	stage := a.pageInner(w) - composerWidth(w) - homeGap
 	if stage < 220 {
 		return 220
 	}
@@ -71,7 +80,7 @@ func homeStageWDefault(w float32) float32 {
 	if !homeSplit(w) {
 		return pageInnerDefault(w)
 	}
-	stage := pageInnerDefault(w) - composerW - homeGap
+	stage := pageInnerDefault(w) - composerWidth(w) - homeGap
 	if stage < 220 {
 		return 220
 	}
@@ -137,7 +146,9 @@ func (a *App) platformTabs(c *ui.Context) {
 			a.stageTab = 3
 		}
 	}
-	ui.Row(c.Key("platform-tabs")).Label("服务商选择").Gap(4).AlignItems(ui.Center).Children(func() {
+	tok := a.look
+	ui.Row(c.Key("platform-tabs")).Label("服务商选择").Padding(2).Gap(2).Radius(tok.radiusM).
+		Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
 		a.stageButton(c, 0, "豆包", doubaoN)
 		a.stageButton(c, 1, "千问", qianwenN)
 		a.stageButton(c, 2, agy.Platform, agyN)
@@ -151,16 +162,25 @@ func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
 		text = fmt.Sprintf("%s %d", label, n)
 	}
 	tok := a.look
-	bg, fg, border := tok.sunken, tok.muted, tok.border
 	on := a.stageTab == index
+	b := ui.ButtonBase(c.Key("stage-"+label)).Height(20).Padding(0, 6).Gap(4).Radius(tok.radiusS).
+		AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).Label(text).Tooltip("切换到 " + label)
+	fg, bg, border := tok.muted, ui.Transparent, ui.Transparent
 	if on {
-		bg, fg, border = tok.accent.Alpha(0.14), tok.accent, tok.accent.Alpha(0.35)
+		fg = tok.text
+		bg = tok.card
+		border = tok.borderStrong
+		if !tok.dark {
+			fg = tok.accent.Mix(tok.text, 0.25)
+		}
+	} else if b.Hovered() {
+		fg = tok.text
+		bg = tok.sunkenHi
+		border = tok.border
 	}
-	b := ui.ButtonBase(c.Key("stage-"+label)).Height(22).Padding(0, 7).Gap(4).Radius(tok.radiusS).
-		AlignItems(ui.Center).Cursor(ui.CursorPointer).Shrink(0).
-		Background(bg).TextColor(fg).Border(1, border).Label(text).Tooltip("切换到 " + label)
-	if !on && b.Hovered() {
-		b.Background(tok.sunkenHi).TextColor(tok.text)
+	b.Background(bg).TextColor(fg).Border(1, border)
+	if on && !tok.dark {
+		b.Shadow(0, 1, 2, 0, tok.shadow)
 	}
 	b.OnClick(func() {
 		a.stageTab = index
@@ -168,8 +188,8 @@ func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
 		a.resultsDoneOpen = false
 	})
 	b.Children(func() {
-		platformIcon(c, label, 12, a.look)
-		t := ui.Text(c, text).FontSize(a.look.caption).SingleLine()
+		platformIcon(c, label, 12, tok)
+		t := ui.Text(c, text).FontSize(tok.caption).SingleLine().FontFeatures("tnum")
 		if on {
 			t.FontWeight(600)
 		}
@@ -225,14 +245,13 @@ func (a *App) stepCard(c *ui.Context, key string, state int) ui.Element {
 	if a.tab == pageHome || a.tab == pageWash || a.tab == pageFission {
 		reveal.Enter.Opacity = 0.9
 	}
-	card := ui.Column(c.Key(key)).FillWidth().Padding(8, 10).Gap(5).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).
-		Transition(reveal)
+	card := uiCardSurface(ui.Column(c.Key(key)).FillWidth().Padding(8, 10).Gap(5), tok).
+		Shadow(0, 1, 2, 0, tok.shadow).Transition(reveal)
 	if !tok.dark {
 		card.InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.9))
 	}
 	if state == stepCurrent {
-		card.Border(1.5, tok.accent).Shadow(0, 8, 24, 0, tok.lift)
+		card.Border(1, tok.accent.Alpha(0.55)).Shadow(0, 3, 10, 0, tok.lift)
 	}
 	return card
 }
@@ -281,26 +300,36 @@ func (a *App) washSourceGrid(c *ui.Context) {
 
 func (a *App) washThumb(c *ui.Context, i int) {
 	si := a.sources[i]
+	tok := a.look
 	name := filepath.Base(si.Path)
-	frame := ui.Box(c.Key(si.Path)).Size(washThumbSize, washThumbSize).Radius(a.look.radiusS).
-		Background(a.look.sunken).Label(name).Tooltip(si.Path)
+	frame := ui.Box(c.Key(si.Path)).Size(washThumbSize, washThumbSize).Radius(tok.radiusS).
+		Background(tok.sunken).Label(name).Tooltip(si.Path)
+	border := tok.border
+	if si.Washing {
+		border = tok.accent
+	} else if frame.Hovered() {
+		border = tok.borderStrong
+	} else if si.Washed {
+		border = tok.success.Alpha(0.5)
+	}
+	frame.Border(1, border)
 	frame.Children(func() {
 		if bmp := a.cachedThumb(si.Path); bmp != nil {
-			ui.Image(c, bmp).Size(washThumbSize, washThumbSize).Fit(ui.Cover).Radius(a.look.radiusS)
+			ui.Image(c, bmp).Size(washThumbSize, washThumbSize).Fit(ui.Cover).Radius(tok.radiusS)
 		}
-		label, bg, fg := "未洗", ui.RGBA(20, 28, 42, 0.78), ui.Hex("#FFFFFF")
+		label, bg, fg := "未洗", ui.RGBA(15, 23, 42, 0.82), ui.Hex("#FFFFFF")
 		if si.Washed {
-			label, bg = "已洗", a.look.success
+			label, bg, fg = "已洗", tok.success, tok.onAccent
 		} else if si.Washing {
-			label, bg = "洗图中", a.look.accent
+			label, bg, fg = "洗图中", tok.accent, tok.onAccent
 		}
-		badge := ui.Row(c).Label(label).Absolute().Left(4).Bottom(4).Padding(1, 4).Radius(4).
+		badge := ui.Row(c).Label(label).Absolute().Left(4).Bottom(4).Padding(1, 4).Radius(tok.radiusS).
 			Background(bg)
 		if si.WashOutput != "" {
 			badge.Tooltip("已保存：" + si.WashOutput)
 		}
 		badge.Children(func() {
-			ui.Text(c, label).FontSize(10).TextColor(fg).SingleLine()
+			ui.Text(c, label).FontSize(tok.caption).FontWeight(500).TextColor(fg).SingleLine()
 		})
 		a.thumbRemove(c, frame, i)
 	})
@@ -308,8 +337,8 @@ func (a *App) washThumb(c *ui.Context, i int) {
 
 func (a *App) thumbRemove(c *ui.Context, host ui.Element, index int) {
 	btn := ui.ButtonBase(c.Key("rm")).Label("移除").Tooltip("移除").
-		Size(22, 22).Radius(11).Absolute().Top(6).Right(6).Center().
-		Background(ui.RGBA(20, 28, 42, 0.78)).Disabled(a.running)
+		Size(20, 20).Radius(10).Absolute().Top(4).Right(4).Center().
+		Background(ui.RGBA(15, 23, 42, 0.82)).Disabled(a.running)
 	op := float32(0)
 	if host.Hovered() || btn.Hovered() || btn.Focused() {
 		op = 1
@@ -317,17 +346,23 @@ func (a *App) thumbRemove(c *ui.Context, host ui.Element, index int) {
 	btn.Opacity(btn.AnimateTo("rm", op, motionEaseFast))
 	btn.OnClick(func() { a.removeSourceAt(index) })
 	btn.Children(func() {
-		ui.Text(c, "×").FontSize(13).TextColor(ui.Hex("#ffffff"))
+		ui.Text(c, "×").FontSize(12).TextColor(ui.Hex("#ffffff"))
 	})
 }
 
 func (a *App) miniThumb(c *ui.Context, i int) {
 	si := a.sources[i]
-	frame := ui.Box(c.Key(si.Path)).Size(30, 30).Radius(5).Background(a.look.sunken).
+	tok := a.look
+	frame := ui.Box(c.Key(si.Path)).Size(30, 30).Radius(tok.radiusS).Background(tok.sunken).
 		Label(filepath.Base(si.Path)).Transition(motionItem())
+	if frame.Hovered() {
+		frame.Border(1, tok.borderStrong)
+	} else {
+		frame.Border(1, tok.border)
+	}
 	frame.Children(func() {
 		if bmp := a.cachedThumb(si.Path); bmp != nil {
-			ui.Image(c, bmp).Size(30, 30).Fit(ui.Cover).Radius(5)
+			ui.Image(c, bmp).Size(30, 30).Fit(ui.Cover).Radius(tok.radiusS)
 		}
 		a.thumbRemove(c, frame, i)
 	})
@@ -382,15 +417,15 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	if running {
 		label = "停止"
 	}
-	b := ui.ButtonBase(c.Key("run-go")).Label(label).Padding(6, 12).Gap(6).Radius(th.Radius).Shrink(0).
-		AlignItems(ui.Center).AlignSelf(ui.Center)
+	b := ui.ButtonBase(c.Key("run-go")).Label(label).Height(26).Padding(0, 12).Gap(6).Radius(th.Radius).Shrink(0).
+		AlignItems(ui.Center).AlignSelf(ui.Center).Cursor(ui.CursorPointer)
 	bg, fg := th.Accent, th.AccentText
 	border := ui.Color{}
 	switch {
 	case disabled:
-		bg, fg, border = th.Surface, th.TextMuted, th.Border
+		bg, fg, border = th.Surface, th.TextMuted, tok.border
 	case running:
-		bg, fg, border = th.Surface, th.Text, th.Border
+		bg, fg, border = th.Surface, th.Text, tok.borderStrong
 	}
 	if !disabled {
 		switch {
@@ -402,7 +437,7 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 			}
 		case b.Hovered():
 			if running {
-				bg = th.SurfaceHover
+				bg, border = th.SurfaceHover, tok.borderStrong
 			} else {
 				bg = th.AccentHover
 			}
@@ -423,8 +458,11 @@ func (a *App) runButton(c *ui.Context, plan WorkbenchPlan) {
 	}
 	b.Children(func() {
 		runGlyph(c, running, fg)
-		ui.Text(c.Key("run-label"), label).FontSize(tok.body).
+		lbl := ui.Text(c.Key("run-label"), label).FontSize(tok.body).
 			ContentTransition(ui.ContentTransition{Animation: &motionEaseFast})
+		if !disabled {
+			lbl.FontWeight(600)
+		}
 	})
 }
 
@@ -538,10 +576,13 @@ func (a *App) loginBanner(c *ui.Context) {
 	if !ok || text == "" {
 		return
 	}
-	ui.Row(c.Key("login-banner")).FillWidth().Gap(10).AlignItems(ui.Center).Padding(10, 12).
-		Background(a.look.card).Border(1, a.look.warning).Radius(a.look.radiusM).Transition(motionBanner()).Children(func() {
-		ui.Text(c, text).FontSize(a.look.body).TextColor(a.look.warning).Grow(1).MinWidth(0).SingleLine().Tooltip(text)
-		ui.Button(c, "去处理").OnClick(func() { a.openAttention(id) })
+	tok := a.look
+	fg, bg, border := semanticToneColors(tok.dark, tok.text, tok.warning, 0.10)
+	ui.Row(c.Key("login-banner")).FillWidth().Gap(8).AlignItems(ui.Center).Padding(7, 10).
+		Background(bg).Border(1, border).Radius(tok.radiusM).Transition(motionBanner()).Children(func() {
+		ui.Icon(c, iconAlert).FontSize(13).TextColor(fg).Shrink(0)
+		ui.Text(c, text).FontSize(tok.body).TextColor(fg).Grow(1).MinWidth(0).SingleLine().Tooltip(text)
+		uiMiniBtn(ui.Button(c, "去处理"), tok).OnClick(func() { a.openAttention(id) })
 	})
 }
 
@@ -724,17 +765,22 @@ func (a *App) previewModal(c *ui.Context) {
 	}
 	tok := a.look
 	ui.Modal(c, &a.previewOn, func() {
-		ui.Column(c).MaxWidth(760 / interfaceZoom).Gap(12).Children(func() {
-			ui.Text(c, filepath.Base(a.previewPath)).FontSize(tok.title).Bold()
-			if a.previewBmp != nil {
-				ui.Image(c, a.previewBmp).MaxWidth(720 / interfaceZoom).MaxHeight(480 / interfaceZoom).Fit(ui.Contain).Radius(tok.radiusM)
-			} else {
-				ui.Spinner(c).Size(28, 28)
-			}
-			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).MaxWidth(760 / interfaceZoom).Gap(10).Children(func() {
+			uiSectionTitle(c, filepath.Base(a.previewPath), "", tok)
+			ui.Row(c).FillWidth().Center().Padding(8).Radius(tok.radiusM).Background(tok.sunken).
+				Border(1, tok.border).Children(func() {
+				if a.previewBmp != nil {
+					ui.Image(c, a.previewBmp).MaxWidth(720 / interfaceZoom).MaxHeight(480 / interfaceZoom).Fit(ui.Contain).Radius(tok.radiusS)
+				} else {
+					ui.Spinner(c).Size(28, 28)
+				}
+			})
+			ui.Divider(c).Background(tok.border)
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 				path := a.previewPath
-				ui.Button(c, "打开文件").OnClick(func() { a.openResult(path) })
-				ui.Button(c, "关闭").OnClick(func() { a.previewOn = false })
+				ui.Spacer(c)
+				uiBtn(ui.Button(c, "打开文件"), tok).OnClick(func() { a.openResult(path) })
+				uiBtn(ui.Button(c, "关闭"), tok).OnClick(func() { a.previewOn = false })
 			})
 		})
 	})

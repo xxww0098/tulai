@@ -198,9 +198,9 @@ func (a *App) laneHeader(c *ui.Context) {
 	row.Children(func() {
 		platform := a.stagePlatform()
 		platformIcon(c, platform, 14, tok)
-		ui.Text(c, platform+" 账号").FontSize(tok.body).FontWeight(600).SingleLine().Shrink(0)
+		ui.Text(c, platform+" 账号").FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine().Shrink(0)
 		ui.Text(c.Key("lane-header"), line).FontSize(tok.caption).TextColor(tok.muted).Grow(1).MinWidth(0).
-			SingleLine().Tooltip(line).ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
+			SingleLine().FontFeatures("tnum").Tooltip(line).ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseOut})
 		ui.Text(c, "并发").FontSize(tok.caption).TextColor(tok.muted).Shrink(0)
 		ui.Switch(c.Key("concurrency"), &a.concurrencyAuto).Size(24, 14).Radius(7).
 			Label("启用并发").Tooltip("此设置对所有服务商生效。" + ConcurrencyCaption(a.concurrencyAuto, a.parallelSlots())).
@@ -214,7 +214,8 @@ func (a *App) laneHeader(c *ui.Context) {
 }
 
 func (a *App) addAccountButton(c *ui.Context) {
-	ui.PrimaryButton(c, "+ 添加账号").Shrink(0).FontSize(a.look.caption).Height(22).Padding(0, 8).Radius(a.look.radiusS).Disabled(a.running).OnClick(func() {
+	ui.PrimaryButton(c, "+ 添加账号").Shrink(0).FontSize(a.look.caption).FontWeight(500).
+		Height(22).Padding(0, 8).Radius(a.look.radiusS).Disabled(a.running).OnClick(func() {
 		a.addAccountHere()
 	})
 }
@@ -236,20 +237,22 @@ func (a *App) laneAction(c *ui.Context, ln tasks.AccountLane) {
 		label = "登录"
 	}
 	id := ln.ID
-	ui.Button(c.Key("act"), label).Label(label+" "+ln.Name).FontSize(a.look.caption).Height(20).Padding(0, 6).Radius(a.look.radiusS).Shrink(0).OnClick(func() { a.openLane(id) })
+	uiMiniBtn(ui.Button(c.Key("act"), label), a.look).Label(label + " " + ln.Name).OnClick(func() { a.openLane(id) })
 }
 
 func (a *App) laneChip(c *ui.Context, ln tasks.AccountLane) {
 	tok := a.look
-	fg, bg := laneInk(tok, ln.State)
+	fg, bg, border := laneToneColors(tok, ln.State)
 	text := laneLabel(ln.State)
 	if ln.State == tasks.LaneGap {
 		text = fmt.Sprintf("等待间隔 %d", gapSeconds(ln.NextReadyAt, c.Now()))
 	}
-	pill := ui.Row(c.Key("chip")).Padding(1, 7).Radius(999).Shrink(0).AlignItems(ui.Center)
+	pill := ui.Row(c.Key("chip")).Height(18).Padding(0, 7).Radius(999).Shrink(0).AlignItems(ui.Center).
+		Border(1, border)
 	pill.Background(pill.AnimateColor("bg", bg, motionEaseFast))
 	pill.Children(func() {
-		ui.Text(c.Key("chip-label"), text).FontSize(tok.caption).TextColor(fg).SingleLine().
+		ui.Text(c.Key("chip-label"), text).FontSize(tok.caption).FontWeight(500).TextColor(fg).
+			SingleLine().FontFeatures("tnum").
 			ContentTransition(ui.ContentTransition{Numeric: true, Animation: &motionEaseFast})
 	})
 }
@@ -269,25 +272,22 @@ func laneLabel(state tasks.LaneState) string {
 	}
 }
 
-func laneInk(tok tokens, state tasks.LaneState) (fg, bg ui.Color) {
-	var base ui.Color
-	var wash float32
+func laneToneColors(tok tokens, state tasks.LaneState) (fg, bg, border ui.Color) {
 	switch state {
 	case tasks.LaneRunning:
-		base, wash = tok.accent, 0.14
+		return semanticToneColors(tok.dark, tok.text, tok.accent, 0.14)
 	case tasks.LaneGap, tasks.LaneCooling, tasks.LaneCaptcha:
-		base, wash = tok.warning, 0.16
+		return semanticToneColors(tok.dark, tok.text, tok.warning, 0.14)
 	case tasks.LaneFull, tasks.LaneLogin, tasks.LaneQuota:
-		base, wash = tok.danger, 0.14
+		return semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
 	default:
-		return tok.muted, tok.text.Alpha(0.08)
+		return semanticToneColors(tok.dark, tok.text, tok.muted, 0.10)
 	}
-	fg = base
-	// 浅色里状态色直接写在浅底上，12px 不到 4.5:1。往正文色收一点，色相还在。
-	if !tok.dark {
-		fg = base.Mix(tok.text, 0.35)
-	}
-	return fg, base.Alpha(wash)
+}
+
+func laneInk(tok tokens, state tasks.LaneState) (fg, bg ui.Color) {
+	fg, bg, _ = laneToneColors(tok, state)
+	return fg, bg
 }
 
 func gapSeconds(until, now time.Time) int {
@@ -301,7 +301,8 @@ func gapSeconds(until, now time.Time) int {
 func gapRing(c *ui.Context, ln tasks.AccountLane, tok tokens) {
 	until, span := ln.NextReadyAt, ln.Gap
 	reduce := c.Preferences().ReduceMotion
-	box := ui.Box(c.Key("ring")).Size(18, 18).Shrink(0)
+	box := ui.Box(c.Key("ring")).Size(18, 18).Shrink(0).
+		Tooltip(fmt.Sprintf("发送间隔倒计时 %d 秒", gapSeconds(until, c.Now())))
 	box.Draw(func(p *ui.Painter, r ui.Rect) {
 		left := until.Sub(p.Now())
 		if left < 0 {
@@ -322,7 +323,7 @@ func gapRing(c *ui.Context, ln tasks.AccountLane, tok tokens) {
 		}
 		cx, cy := r.X+r.W/2, r.Y+r.H/2
 		rad := r.W/2 - 1.5
-		p.StrokePath((&ui.Path{}).Circle(cx, cy, rad), 2, tok.border)
+		p.StrokePath((&ui.Path{}).Circle(cx, cy, rad), 2, tok.borderStrong)
 		if frac > 0.02 {
 			p.StrokePath((&ui.Path{}).Circle(cx, cy, rad).Trim(0, frac), 2, tok.warning)
 		}
