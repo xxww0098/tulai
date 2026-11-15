@@ -96,6 +96,11 @@ func TestWashPromptFitsWithBannerAndOutputOptions(t *testing.T) {
 	tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
 	assertVisible(t, tt, "需要登录", 1024, 560)
 	assertVisible(t, tt, "开始洗图", 1024, 560)
+	choice := assertVisible(t, tt, "选择洗图提示词", 1024, 560)
+	run := assertVisible(t, tt, "洗图操作区", 1024, 560)
+	if choice.Y+choice.H > run.Y {
+		t.Fatalf("提示词选择器与操作区重叠: choice=%+v run=%+v", choice, run)
+	}
 	if err := tt.Click("选择洗图提示词"); err != nil {
 		t.Fatalf("提示词选择器被遮挡: %v", err)
 	}
