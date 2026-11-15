@@ -202,6 +202,17 @@ type App struct {
 	batchMode        int // batchText 文生图 / batchImage 图生图
 	platformAuto     bool
 	logScroll        ui.ScrollState
+	logPaused        bool
+	logPlaced        bool
+	logPick          int
+	logQuery         string
+	logSource        string
+	logX             float32
+	logY             float32
+	logW             float32
+	logH             float32
+	logExpanded      map[int]bool
+	logKick          logging.FrameKick
 	workInputScroll  ui.ScrollState
 	stageTab         int
 	stagePicked      bool
@@ -458,17 +469,16 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 			Content: ui.View(a.view),
 		})
 		// 窗口初始化后再发布后台回调，避免读到尚未赋值的 window。
-		logging.Log.SetSink(func(e logging.Entry) {
+		logging.Log.SetSink(func(logging.Entry) {
 			if a.isQuitting() || a.window == nil || a.window.IsDestroyed() {
 				return
 			}
-			a.window.Update(func() {
-				a.mu.Lock()
-				a.logs = append(a.logs, e)
-				if len(a.logs) > 500 {
-					a.logs = a.logs[len(a.logs)-400:]
+			a.logKick.Kick(func() {
+				if a.window == nil || a.window.IsDestroyed() {
+					a.logKick.Done()
+					return
 				}
-				a.mu.Unlock()
+				a.window.Update(func() { a.logKick.Done() })
 			})
 		})
 		a.startAgyUsage()
@@ -914,6 +924,7 @@ func (a *App) view(c *ui.Context) {
 			})
 		})
 	})
+	a.logFloat(c)
 	a.browserDrawerView(c)
 }
 
