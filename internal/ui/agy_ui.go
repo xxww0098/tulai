@@ -97,8 +97,10 @@ func (a *App) persistAgySettings() {
 }
 
 func (a *App) agySettings(c *ui.Context) {
+	tok := a.uiTokens(c)
 	ui.Form(c, func() {
-		ui.Text(c, "Antigravity 任务优先使用 Gemini 剩余额度最多的账号，5小时或7天任一窗口用尽时自动切号。").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "Antigravity 任务优先使用 Gemini 剩余额度最多的账号，5小时或7天任一窗口用尽时自动切号。").
+			FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 		ui.Field(c, "agy 路径", func() {
 			ui.TextInput(c, &a.agyBin).Placeholder(agy.DefaultBin()).Disabled(a.running)
 		})
@@ -206,12 +208,13 @@ func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
 		return
 	}
 	s := a.agyChooser
-	tok := a.look
+	tok := a.uiTokens(c)
 	a.agyBox(c, "agy-add", "agy-add-chooser", roomy).Children(func() {
 		a.agyMethodRow(c, "Google 登录（OAuth）", "在这个窗口里粘贴授权码，不会写入日志", "登录", "agy-oauth-go", s.busy, a.startAgyOAuth)
+		ui.Box(c).FillWidth().Height(1).Background(tok.border)
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Children(func() {
-				ui.Text(c, "导入本地 Antigravity CLI 账号").FontSize(tok.body).Bold().SingleLine().MinWidth(0)
+				ui.Text(c, "导入本地 Antigravity CLI 账号").FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine().MinWidth(0)
 				hint := s.hint
 				if hint == "" {
 					hint = agy.MsgNotFound
@@ -219,9 +222,9 @@ func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
 				a.agyChooserHint(c, hint)
 			})
 			ui.Row(c).Shrink(0).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Button(c, "选择文件夹…").Label("agy-pick-folder").Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).
+				uiBtn(ui.Button(c, "选择文件夹…"), tok).Label("agy-pick-folder").
 					Disabled(s.busy || a.running).OnClick(func() { a.pickAgyFolder() })
-				ui.Button(c, "导入").Label("agy-import-go").Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).
+				uiBtn(ui.Button(c, "导入"), tok).Label("agy-import-go").
 					Disabled(s.busy || a.running || !s.canImport).OnClick(func() { a.startAgyImport() })
 			})
 		})
@@ -229,14 +232,16 @@ func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
 			ui.Text(c, agy.MsgVerifying).FontSize(tok.caption).TextColor(tok.muted)
 		}
 		if s.status != "" && !s.busy {
-			ui.Text(c, s.status).FontSize(tok.caption).TextColor(tok.success)
+			okFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.success, 0.14)
+			ui.Text(c, s.status).FontSize(tok.caption).TextColor(okFg)
 		}
 		if s.err != "" {
-			ui.Text(c, s.err).FontSize(tok.caption).TextColor(tok.danger)
+			errFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
+			ui.Text(c, s.err).FontSize(tok.caption).TextColor(errFg)
 		}
 		if s.retry && !s.busy {
 			ui.Row(c).Children(func() {
-				ui.Button(c, "重试").Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).Disabled(a.running).OnClick(func() { a.startAgyImport() })
+				uiBtn(ui.Button(c, "重试"), tok).Disabled(a.running).OnClick(func() { a.startAgyImport() })
 			})
 		}
 	})
@@ -244,7 +249,7 @@ func (a *App) agyChooserCard(c *ui.Context, roomy bool) {
 
 // agyBox 在账号表格内平铺表单，向导里使用独立卡片。
 func (a *App) agyBox(c *ui.Context, key, label string, roomy bool) ui.Element {
-	tok := a.look
+	tok := a.uiTokens(c)
 	box := ui.Column(c.Key(key)).FillWidth()
 	if label != "" {
 		box = box.Label(label)
@@ -252,12 +257,12 @@ func (a *App) agyBox(c *ui.Context, key, label string, roomy bool) ui.Element {
 	if roomy {
 		return wizardCard(box.Gap(8).Padding(12, 14), tok)
 	}
-	return box.Gap(8).Padding(8, 0).BorderWidth(1, 0, 0, 0).BorderColor(tok.border)
+	return box.Gap(8).Padding(8, 10).Radius(tok.radiusM).Background(tok.sunken).Border(1, tok.border)
 }
 
 // agyChooserHint 把「已检查 <路径>」单独放在一行。路径不换行，放不下就在行尾省略。
 func (a *App) agyChooserHint(c *ui.Context, hint string) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	lead, checked := splitCheckedHint(hint)
 	if lead == "" && checked == "" {
 		lead = agy.MsgNotFound
@@ -287,13 +292,13 @@ func splitCheckedHint(hint string) (lead, checked string) {
 }
 
 func (a *App) agyMethodRow(c *ui.Context, title, hint, button, label string, busy bool, click func()) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(2).Children(func() {
-			ui.Text(c, title).FontSize(tok.body).Bold().SingleLine().MinWidth(0)
+			ui.Text(c, title).FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine().MinWidth(0)
 			ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().MinWidth(0).Tooltip(hint)
 		})
-		ui.Button(c, button).Label(label).Shrink(0).FontSize(tok.body).Height(26).Padding(0, 10).AlignSelf(ui.Center).
+		uiBtn(ui.Button(c, button), tok).Label(label).
 			Disabled(busy || a.running).OnClick(click)
 	})
 }
@@ -311,9 +316,12 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 		return
 	}
 	s := a.agyLogin
-	tok := a.look
+	tok := a.uiTokens(c)
 	a.agyBox(c, "agy-login", "", roomy).Children(func() {
-		ui.Text(c, "登录 Antigravity").FontSize(tok.body).Bold()
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "登录 Antigravity").FontSize(tok.body).FontWeight(600).TextColor(tok.text)
+			uiBadge(c, "agy-oauth-badge", "OAuth 授权", "accent", tok)
+		})
 		ui.Text(c, "在账号的 Camoufox 窗口中授权，再把授权码粘贴到下面。").FontSize(tok.caption).TextColor(tok.muted)
 		ui.Field(c, "授权链接", func() {
 			url := s.url
@@ -325,10 +333,10 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 				a.openAgyAuthURL()
 			}
 			ui.Row(c).Gap(6).Children(func() {
-				ui.Button(c, "打开浏览器").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(s.url == "" || s.opening).OnClick(func() {
+				uiBtn(ui.Button(c, "打开浏览器"), tok).Disabled(s.url == "" || s.opening).OnClick(func() {
 					a.openAgyAuthURL()
 				})
-				ui.Button(c, "复制链接").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(s.url == "").OnClick(func() {
+				uiBtn(ui.Button(c, "复制链接"), tok).Disabled(s.url == "").OnClick(func() {
 					if s.url == "" {
 						return
 					}
@@ -338,21 +346,23 @@ func (a *App) agyLoginCard(c *ui.Context, roomy bool) {
 			})
 		})
 		if s.copied {
-			ui.Text(c, "已复制链接").FontSize(tok.caption).TextColor(tok.muted)
+			okFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.success, 0.14)
+			ui.Text(c, "已复制链接").FontSize(tok.caption).TextColor(okFg)
 		}
 		ui.Field(c, "授权码", func() {
-			ui.TextInput(c.Key("agy-code"), &s.code).Disabled(s.busy)
+			ui.TextInput(c.Key("agy-code"), &s.code).Height(24).Disabled(s.busy)
 		})
 		ui.Row(c).Gap(6).Children(func() {
-			ui.Button(c, "提交").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(s.busy || strings.TrimSpace(s.code) == "").OnClick(func() {
+			uiBtn(ui.PrimaryButton(c, "提交"), tok).Disabled(s.busy || strings.TrimSpace(s.code) == "").OnClick(func() {
 				a.submitAgyCode()
 			})
 			if s.retry {
-				ui.Button(c, "重试").FontSize(tok.body).Height(26).Padding(0, 10).Disabled(a.running).OnClick(func() { a.retryAgyLogin() })
+				uiBtn(ui.Button(c, "重试"), tok).Disabled(a.running).OnClick(func() { a.retryAgyLogin() })
 			}
 		})
 		if s.err != "" {
-			ui.Text(c, s.err).FontSize(tok.caption).TextColor(tok.danger)
+			errFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
+			ui.Text(c, s.err).FontSize(tok.caption).TextColor(errFg)
 		}
 	})
 }

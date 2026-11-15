@@ -35,11 +35,34 @@ func (a *App) settingsPage(c *ui.Context) {
 		a.proxySaved = a.proxyURL
 		a.persistProxy()
 	}
+	tok := a.uiTokens(c)
 	ui.Scroll(c.Key("settings-page")).Grow(1).MinHeight(0).Children(func() {
 		// Scroll 是盒子，Justify 不生效；用撑满的行把限宽的内容列居中。
 		ui.Row(c).FillWidth().Justify(ui.Center).Children(func() {
-			ui.Column(c).FillWidth().MaxWidth(920).Gap(6).Padding(2, 0, 10, 0).Children(func() {
-				ui.Tabs(c.Key("settings-tabs"), &a.settingsTab, "输出", "下载", "账号与并发", "Antigravity", "生成规则", "验证码 / 高级", "更新").FillWidth().Wrap()
+			ui.Column(c).FillWidth().MaxWidth(920).Gap(8).Padding(2, 0, 12, 0).Children(func() {
+				uiPageHeader(c, "settings-page-header", iconSettings, "全局设置", "管理工作区默认参数、并发限流、策略规则与更新检查。", tok, nil)
+				labels := []string{"输出", "下载", "账号与并发", "Antigravity", "生成规则", "验证码 / 高级", "更新"}
+				tabs := ui.TabsBase(c.Key("settings-tabs"), &a.settingsTab, len(labels))
+				tabs.List.Row().FillWidth().Wrap().Gap(2).Padding(3).Radius(tok.radiusM).
+					Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
+					for i, label := range labels {
+						active := i == a.settingsTab
+						tab := tabs.Tab(i).Height(24).Padding(0, 9).Radius(tok.radiusS).Center().Label(label).Cursor(ui.CursorPointer)
+						if active {
+							tab.Background(tok.card).Border(1, tok.border).TextColor(tok.text)
+						} else if tab.Hovered() {
+							tab.Background(tok.sunkenHi).TextColor(tok.text)
+						} else {
+							tab.TextColor(tok.muted)
+						}
+						tab.Children(func() {
+							t := ui.Text(c, label).FontSize(tok.caption).SingleLine()
+							if active {
+								t.FontWeight(600)
+							}
+						})
+					}
+				})
 				switch a.settingsTab {
 				case settingsOutput:
 					a.outputSettings(c)
@@ -81,10 +104,9 @@ func settingsColumns(c *ui.Context, left, right func()) {
 }
 
 func (a *App) settingsCard(c *ui.Context, title, blurb string, body func()) {
-	tok := a.look
-	ui.Column(c).FillWidth().Gap(5).Padding(8, 10).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border).Children(func() {
-		ui.Text(c, title).FontSize(tok.title).Bold()
+	tok := a.uiTokens(c)
+	uiCard(c, "settings-card-"+title, tok).Padding(10, 12).Gap(6).Children(func() {
+		uiSectionTitle(c, title, "", tok)
 		if blurb != "" {
 			ui.Text(c, blurb).FontSize(tok.caption).TextColor(tok.muted)
 		}
@@ -141,7 +163,7 @@ func captchaLabels() []string {
 }
 
 func (a *App) proxyFields(c *ui.Context) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		a.proxyModeButton(c, "跟随系统", false)
 		a.proxyModeButton(c, "自定义代理", true)
@@ -150,24 +172,21 @@ func (a *App) proxyFields(c *ui.Context) {
 		ui.Text(c, "未填写时使用 HTTPS_PROXY、ALL_PROXY 或 HTTP_PROXY。").FontSize(tok.caption).TextColor(tok.muted)
 		return
 	}
-	ui.TextInput(c, &a.proxyURL).FillWidth().MaxWidth(280).Placeholder("http://127.0.0.1:7890")
+	ui.TextInput(c, &a.proxyURL).Height(24).FillWidth().MaxWidth(280).Placeholder("http://127.0.0.1:7890")
 	raw := strings.TrimSpace(a.proxyURL)
 	if raw != "" {
 		if _, ok := browser.NormalizeProxy(raw); !ok {
-			ui.Text(c, "格式应为 http://主机:端口 或 socks5://主机:端口").FontSize(tok.caption).TextColor(tok.warning)
+			warnFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.warning, 0.14)
+			ui.Text(c, "格式应为 http://主机:端口 或 socks5://主机:端口").FontSize(tok.caption).TextColor(warnFg)
 		}
 	} else {
-		ui.Text(c, "例如 socks5://127.0.0.1:1080。改完后重新打开浏览器。").FontSize(tok.caption).TextColor(tok.muted)
+		ui.Text(c, "例如 socks5://127.0.0.1:1080。改完后重新打开浏览器。").FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 	}
 }
 
 func (a *App) proxyModeButton(c *ui.Context, label string, custom bool) {
-	on := a.proxyCustom == custom
-	b := uiBtn(ui.Button(c, label), a.look)
-	if on {
-		b.Border(1, c.Theme().Accent).TextColor(c.Theme().Accent)
-	}
-	b.OnClick(func() {
+	tok := a.uiTokens(c)
+	uiPill(c, "proxy-mode-"+label, label, a.proxyCustom == custom, tok).OnClick(func() {
 		if a.proxyCustom == custom {
 			return
 		}
@@ -178,7 +197,7 @@ func (a *App) proxyModeButton(c *ui.Context, label string, custom bool) {
 }
 
 func (a *App) captchaFields(c *ui.Context) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	if label := captchaLabel(a.captchaBackend); a.captchaChoice != label {
 		a.captchaChoice = label
 	}
@@ -212,13 +231,13 @@ func (a *App) captchaFields(c *ui.Context) {
 }
 
 func (a *App) outputSettings(c *ui.Context) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	settingsColumns(c, func() {
 		a.settingsCard(c, "输出", "生图和洗图按日期放进各自的文件夹。", func() {
 			ui.Form(c, func() {
 				ui.Field(c, "输出目录", func() {
 					ui.Row(c).Gap(6).Children(func() {
-						ui.TextInput(c, &a.outputPath).Grow(1).MinWidth(0).Placeholder("留空则保存到输出结果")
+						ui.TextInput(c, &a.outputPath).Height(24).Grow(1).MinWidth(0).Placeholder("留空则保存到输出结果")
 						uiIconBtn(c, "pick-output-dir", "选择…", "选择输出目录", iconFolderOpen, 24, false, false, tok).
 							Disabled(a.running).OnClick(func() { a.pickOutputDir() })
 					})
@@ -229,7 +248,8 @@ func (a *App) outputSettings(c *ui.Context) {
 				a.outputPathLine(c, "生图保存到 "+gen, gen)
 				a.outputPathLine(c, "洗图保存到 "+wash, wash)
 				if a.outputNote != "" {
-					ui.Text(c, a.outputNote).FontSize(tok.caption).TextColor(tok.danger)
+					errFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
+					ui.Text(c, a.outputNote).FontSize(tok.caption).TextColor(errFg)
 				}
 			}).FillWidth().Gap(5)
 		})
@@ -242,7 +262,7 @@ func (a *App) outputSettings(c *ui.Context) {
 				})
 				if a.genAutoNumber || a.washAutoNumber {
 					ui.Field(c, "序号前缀", func() {
-						ui.TextInput(c, &a.numPrefix).Grow(1).MinWidth(0).Placeholder("留空则只存序号，如 001.png").Disabled(a.running)
+						ui.TextInput(c, &a.numPrefix).Height(24).Grow(1).MinWidth(0).Placeholder("留空则只存序号，如 001.png").Disabled(a.running)
 					})
 					ui.Field(c, "编号设置", func() {
 						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -250,9 +270,9 @@ func (a *App) outputSettings(c *ui.Context) {
 							ui.NumberInput(c, &a.numWidth, 0, 16, 1).Label("补零位数").Disabled(a.running)
 						})
 					})
-					ui.Text(c, "开启自动编号后，文件按「前缀+序号」命名（如图001.png），同一天同前缀接着排号，起始值只在没有更大的号时生效，不覆盖已有文件。").FontSize(tok.caption).TextColor(tok.muted)
+					ui.Text(c, "开启自动编号后，文件按「前缀+序号」命名（如图001.png），同一天同前缀接着排号，起始值只在没有更大的号时生效，不覆盖已有文件。").FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 				} else {
-					ui.Text(c, "同一天的结果放进同一个日期文件夹，文件从 _01 起编，不覆盖已有文件。").FontSize(tok.caption).TextColor(tok.muted)
+					ui.Text(c, "同一天的结果放进同一个日期文件夹，文件从 _01 起编，不覆盖已有文件。").FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 				}
 			}).FillWidth().Gap(5)
 		})
@@ -260,7 +280,8 @@ func (a *App) outputSettings(c *ui.Context) {
 }
 
 func (a *App) outputPathLine(c *ui.Context, line, dir string) {
-	text := ui.Text(c, line).FontSize(a.look.caption).TextColor(a.look.muted).SingleLine().Tooltip(line).Cursor(ui.CursorPointer)
+	tok := a.uiTokens(c)
+	text := ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(line).Cursor(ui.CursorPointer)
 	if text.Clicked() {
 		a.openResultFolder(dir)
 	}
@@ -268,7 +289,7 @@ func (a *App) outputPathLine(c *ui.Context, line, dir string) {
 
 // downloadSettings 是结果图直接下载的通道。浏览器页面里 fetch 拿不到时才会走它。
 func (a *App) downloadSettings(c *ui.Context) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	settingsColumns(c, func() {
 		a.settingsCard(c, "下载", "下载并发、重试和限速。", func() {
 			ui.Form(c, func() {
@@ -279,11 +300,11 @@ func (a *App) downloadSettings(c *ui.Context) {
 				ui.Field(c, "失败重试", func() {
 					ui.NumberInput(c, &a.downloadRetries, 0, 10, 1).Disabled(a.running)
 				})
-				ui.Text(c, "网络中断或服务器 5xx 时自动重试，服务器给了等待时间就按它的来。").FontSize(tok.caption).TextColor(tok.muted)
+				ui.Text(c, "网络中断或服务器 5xx 时自动重试，服务器给了等待时间就按它的来。").FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 				ui.Field(c, "限速 (KB/s)", func() {
 					ui.NumberInput(c, &a.downloadRateKB, 0, 102400, 64).Disabled(a.running)
 				})
-				ui.Text(c, "0 表示不限制。只在本机直接下载时生效，页面内取回的图不受影响。").FontSize(tok.caption).TextColor(tok.muted)
+				ui.Text(c, "0 表示不限制。只在本机直接下载时生效，页面内取回的图不受影响。").FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 			}).FillWidth().Gap(5)
 		})
 	}, func() {
@@ -306,7 +327,8 @@ func (a *App) downloadSettings(c *ui.Context) {
 					})
 				}
 				if err := a.downloadImageFilter().Validate(); err != nil {
-					ui.Text(c, err.Error()).FontSize(tok.caption).TextColor(tok.danger)
+					errFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.danger, 0.14)
+					ui.Text(c, err.Error()).FontSize(tok.caption).TextColor(errFg)
 				}
 			}).FillWidth().Gap(5)
 		})
@@ -314,7 +336,7 @@ func (a *App) downloadSettings(c *ui.Context) {
 }
 
 func (a *App) accountSettings(c *ui.Context) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	boundBridge := a.store != nil && a.store.Get("browserBackend") == "camoufox_extension"
 	settingsColumns(c, func() {
 		a.settingsCard(c, "账号与并发", "用哪些平台、同时跑几个账号。", func() {
@@ -341,7 +363,7 @@ func (a *App) accountSettings(c *ui.Context) {
 					})
 				}
 				ui.Text(c, a.platformLine()).FontSize(tok.caption).TextColor(tok.muted)
-				ui.Text(c, fmt.Sprintf("豆包、千问、ChatGPT 每个平台同时最多 %d 张。Antigravity 一次只跑一个账号。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(tok.caption).TextColor(tok.muted)
+				ui.Text(c, fmt.Sprintf("豆包、千问、ChatGPT 每个平台同时最多 %d 张。Antigravity 一次只跑一个账号。点开始时只跑当前这一边的账号。", tasks.PlatformInFlight)).FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 				ui.Field(c, "ChatGPT 模型", func() {
 					motionSelect(c, &a.chatGPTModel, []string{"gpt-image-2", "auto"}).Disabled(a.running)
 				})
@@ -356,21 +378,22 @@ func (a *App) accountSettings(c *ui.Context) {
 							OnChange(func() { a.markDailyCapSet(platform) })
 					})
 				}
-				ui.Text(c, "按供应商分别设置每个账号每天最多出图的次数；0 表示不限制。到达上限或报错时换下一个账号。").FontSize(tok.caption).TextColor(tok.muted)
+				ui.Text(c, "按供应商分别设置每个账号每天最多出图的次数；0 表示不限制。到达上限或报错时换下一个账号。").FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 			}).FillWidth().Gap(5)
 		})
 	})
 }
 
 func (a *App) platformCheck(c *ui.Context, name string, on *bool) {
+	tok := a.uiTokens(c)
 	ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-		platformIcon(c, name, 14, a.look)
+		platformIcon(c, name, 14, tok)
 		ui.Checkbox(c, on, name).Disabled(a.running).OnChange(func() { a.platformAuto = false })
 	})
 }
 
 func (a *App) ruleSettings(c *ui.Context) {
-	tok := a.look
+	tok := a.uiTokens(c)
 	settingsColumns(c, func() {
 		a.settingsCard(c, "生成规则", "提示词后缀、审核改写和去水印。", func() {
 			ui.Form(c, func() {
@@ -383,7 +406,7 @@ func (a *App) ruleSettings(c *ui.Context) {
 				ui.Field(c, "审核改写词", func() {
 					ui.TextInput(c, &a.riskyWords).Placeholder("逗号分隔").Disabled(a.running)
 				})
-				ui.Text(c, "审核不通过时去掉这些词，并加上温和说法，最多自动重试 2 次。").FontSize(tok.caption).TextColor(tok.muted)
+				ui.Text(c, "审核不通过时去掉这些词，并加上温和说法，最多自动重试 2 次。").FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted)
 			}).FillWidth().Gap(5)
 		})
 	}, func() {

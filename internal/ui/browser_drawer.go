@@ -220,33 +220,47 @@ func (a *App) browserDrawerView(c *ui.Context) {
 		c.WriteClipboard(s.copyText)
 		s.copyText, s.copyReady = "", false
 	}
-	tok := a.look
+	tok := a.uiTokens(c)
 	w, _ := c.Size()
 	drawerW := min(w, max(float32(580), w*0.64))
 	busy := a.browserDrawerBusy(s.row.ID)
 	manual := s.manual && !busy && s.err == "" && !s.loading
+	scrim := ui.RGBA(15, 23, 42, 0.28)
+	if tok.dark {
+		scrim = ui.RGBA(2, 6, 23, 0.50)
+	}
 	ui.Overlay(c, func() {
 		back := ui.Row(c.Key("browser-drawer-backdrop")).Absolute().Left(0).Top(0).Right(0).Bottom(0).
-			Background(ui.RGBA(0, 0, 0, 0.22)).Modal()
+			Background(scrim).Modal()
 		if back.OverlayShortcut(0, ui.KeyEscape) {
 			a.closeBrowserDrawer()
 		}
 		back.Children(func() {
 			ui.Box(c.Key("dismiss-browser-drawer")).Grow(1).FillHeight().OnClick(a.closeBrowserDrawer)
 			ui.Column(c.Key("browser-drawer")).Width(drawerW).FillHeight().Background(tok.card).
-				BorderWidth(0, 0, 0, 1).BorderColor(tok.border).Shadow(-6, 0, 24, 0, ui.RGBA(0, 0, 0, 0.12)).
+				BorderWidth(0, 0, 0, 1).BorderColor(tok.border).Shadow(-8, 0, 28, 0, tok.lift).
 				Role(ui.RoleDialog).Label("浏览器 · " + s.row.Name).Transition(motionTravel(12, 0)).Children(func() {
-				ui.Row(c).FillWidth().Gap(6).Padding(8, 12).AlignItems(ui.Center).Children(func() {
-					ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-						ui.Text(c, s.row.Name).FontSize(tok.title).Bold().SingleLine()
-						label := "仅查看"
+				ui.Row(c).FillWidth().Gap(8).Padding(10, 14).AlignItems(ui.Center).
+					BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
+					platformIcon(c, s.row.Platform, 18, tok)
+					ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+						modeLabel, modeTone := "仅查看", "neutral"
+						statusDetail := ""
 						if s.manual {
-							label = "手动操作 · 该账号已暂停自动出图"
+							modeLabel, modeTone = "手动操作", "warning"
+							statusDetail = "该账号已暂停自动出图"
 							if busy {
-								label = "等待当前任务完成，再进入手动操作"
+								modeLabel, modeTone = "等待任务", "accent"
+								statusDetail = "等待当前任务完成，再进入手动操作"
 							}
 						}
-						ui.Text(c, label).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, s.row.Name).FontSize(tok.title).FontWeight(600).TextColor(tok.text).SingleLine()
+							uiBadge(c, "drawer-mode-badge", modeLabel, modeTone, tok)
+						})
+						if statusDetail != "" {
+							ui.Text(c, statusDetail).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+						}
 					})
 					label := "接管操作"
 					if s.manual {
@@ -255,7 +269,13 @@ func (a *App) browserDrawerView(c *ui.Context) {
 					if s.resuming {
 						label = "正在恢复…"
 					}
-					ui.Button(c, label).FontSize(tok.caption).Disabled(s.loading || s.resuming || s.err != "").OnClick(func() {
+					var modeBtn ui.Element
+					if !s.manual && !s.resuming {
+						modeBtn = uiBtn(ui.PrimaryButton(c, label), tok)
+					} else {
+						modeBtn = uiBtn(ui.Button(c, label), tok)
+					}
+					modeBtn.Disabled(s.loading || s.resuming || s.err != "").OnClick(func() {
 						if s.manual {
 							s.manual, s.resuming = false, true
 							a.browserDrawerSend(s, cdp.PageInput{Kind: "resume"})
@@ -268,7 +288,7 @@ func (a *App) browserDrawerView(c *ui.Context) {
 						}
 					})
 					headless := a.manager != nil && a.manager.IsHeadless(s.row.ID)
-					standalone := ui.Button(c, "独立窗口").FontSize(tok.caption).Disabled(s.loading || headless)
+					standalone := uiBtn(ui.Button(c, "独立窗口"), tok).Disabled(s.loading || headless)
 					if headless {
 						standalone.Tooltip("后台运行时请在此接管操作；需要独立窗口可先停止账号再启动")
 					}
@@ -279,16 +299,20 @@ func (a *App) browserDrawerView(c *ui.Context) {
 							}
 						}()
 					})
-					ui.Button(c, "收起").FontSize(tok.caption).Label("收起浏览器").OnClick(a.closeBrowserDrawer)
+					uiBtn(ui.Button(c, "收起"), tok).Label("收起浏览器").OnClick(a.closeBrowserDrawer)
 				})
-				ui.Row(c).FillWidth().Gap(8).Padding(8, 16).Background(tok.sunken).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).FillWidth().Gap(6).Padding(6, 14).Background(tok.sunken).AlignItems(ui.Center).
+					BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
+					ui.Icon(c, iconLink).FontSize(12).TextColor(tok.muted).Shrink(0)
 					ui.Text(c, s.url).Grow(1).MinWidth(0).SingleLine().FontSize(tok.caption).TextColor(tok.muted).Tooltip(s.url)
-					ui.Button(c, "刷新网页").FontSize(tok.caption).Disabled(!manual).OnClick(func() { a.browserDrawerSend(s, cdp.PageInput{Kind: "reload"}) })
+					uiMiniBtn(ui.Button(c, "刷新网页"), tok).Disabled(!manual).OnClick(func() { a.browserDrawerSend(s, cdp.PageInput{Kind: "reload"}) })
 				})
 				if s.err != "" {
-					ui.Row(c).FillWidth().Gap(10).Padding(10, 16).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, s.err).Grow(1).MinWidth(0).FontSize(tok.caption).TextColor(tok.danger)
-						ui.Button(c, "重新连接").OnClick(func() { a.openBrowserDrawer(s.row) })
+					errFg, errBg, errBorder := semanticToneColors(tok.dark, tok.text, tok.danger, 0.12)
+					ui.Row(c).FillWidth().Gap(10).Padding(8, 14).AlignItems(ui.Center).
+						Background(errBg).BorderWidth(0, 0, 1, 0).BorderColor(errBorder).Children(func() {
+						ui.Text(c, s.err).Grow(1).MinWidth(0).FontSize(tok.caption).TextColor(errFg)
+						uiMiniBtn(ui.Button(c, "重新连接"), tok).OnClick(func() { a.openBrowserDrawer(s.row) })
 					})
 				}
 				stage := ui.Box(c.Key("browser-page")).FillWidth().Grow(1).MinHeight(0).Clip().Focusable().
@@ -306,7 +330,7 @@ func (a *App) browserDrawerView(c *ui.Context) {
 					stage.Children(func() {
 						ui.Column(c).Fill().Center().Gap(12).Children(func() {
 							ui.Spinner(c).Size(24, 24)
-							ui.Text(c, "正在连接浏览器…").TextColor(tok.muted)
+							ui.Text(c, "正在连接浏览器…").FontSize(tok.body).TextColor(tok.muted)
 						})
 					})
 				}
@@ -317,7 +341,8 @@ func (a *App) browserDrawerView(c *ui.Context) {
 				if s.compose != "" {
 					footer = s.compose
 				}
-				ui.Text(c, footer).FontSize(tok.caption).TextColor(tok.muted).Padding(10, 16).FillWidth()
+				ui.Text(c, footer).FontSize(tok.caption).TextColor(tok.muted).Padding(7, 14).FillWidth().
+					Background(tok.sunken).BorderWidth(1, 0, 0, 0).BorderColor(tok.border)
 			})
 		})
 	})
@@ -455,14 +480,14 @@ func (a *App) laneBrowserButton(c *ui.Context, ln tasks.AccountLane) {
 	}
 	uiIconBtn(c, "view-browser", "查看浏览器 "+ln.Name, "查看浏览器", iconEye, 22, false, false, a.look).
 		OnClick(func() {
-		if a.store == nil {
-			return
-		}
-		for _, row := range a.store.Browsers() {
-			if row.ID == ln.ID {
-				a.openBrowserDrawer(row)
+			if a.store == nil {
 				return
 			}
-		}
-	})
+			for _, row := range a.store.Browsers() {
+				if row.ID == ln.ID {
+					a.openBrowserDrawer(row)
+					return
+				}
+			}
+		})
 }
