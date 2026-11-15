@@ -208,6 +208,8 @@ type App struct {
 	outputNote       string
 	thumbs           map[string]*ui.Bitmap
 	thumbWait        map[string]bool
+	previews         map[string]*ui.Bitmap
+	previewWait      map[string]bool
 	look             tokens
 	flowPin          int
 	skipImages       bool
@@ -281,11 +283,15 @@ type App struct {
 	washSession    int64
 	fissionSession int64
 	workspacePage  string // 上次停留的图片生成模式
-	historyOpen    bool
-	genList        ui.ListState
-	washList       ui.ListState
-	fissionList    ui.ListState
-	stamps         map[string]int64
+	historyOpen     bool
+	resultsDoneOpen bool
+	genList         ui.ListState
+	washList        ui.ListState
+	fissionList     ui.ListState
+	genDoneList     ui.ListState
+	washDoneList    ui.ListState
+	fissionDoneList ui.ListState
+	stamps          map[string]int64
 
 	tab          int
 	settingsTab  int

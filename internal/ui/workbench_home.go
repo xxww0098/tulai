@@ -90,7 +90,7 @@ func fitCols(inner, min float32, max int) int {
 }
 
 func (a *App) homePage(c *ui.Context) {
-	a.workColumns(c, func() { a.genInput(c) })
+	a.workColumns(c, func() { a.genInput(c) }, false)
 }
 
 // homeStage 上面是账号列表，出图结果撑满剩下的高度。
@@ -165,6 +165,7 @@ func (a *App) stageButton(c *ui.Context, index int, label string, n int) {
 	b.OnClick(func() {
 		a.stageTab = index
 		a.stagePicked = true
+		a.resultsDoneOpen = false
 	})
 	b.Children(func() {
 		platformIcon(c, label, 12, a.look)

@@ -13,13 +13,13 @@ import (
 )
 
 // workColumns 左边是这一页的输入与开始卡片，右边是账号队列和出图结果；运行日志已移至顶部弹出。
-func (a *App) workColumns(c *ui.Context, input func()) {
+func (a *App) workColumns(c *ui.Context, input func(), mergeRun bool) {
 	w, _ := c.Size()
 	if homeSplit(w) {
 		ui.Column(c).Grow(1).MinHeight(0).Gap(6).Children(func() {
 			a.loginBanner(c)
 			ui.Row(c).Grow(1).MinHeight(0).Gap(homeGap).AlignItems(ui.Stretch).Children(func() {
-				a.workSide(c, input)
+				a.workSide(c, input, mergeRun)
 				a.homeStage(c)
 			})
 		})
@@ -29,7 +29,9 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 				a.loginBanner(c)
 				a.platformPicker(c)
 				input()
-				a.runCard(c)
+				if !mergeRun {
+					a.runCard(c, false)
+				}
 				a.platformStage(c)
 			})
 		})
@@ -40,13 +42,29 @@ func (a *App) workColumns(c *ui.Context, input func()) {
 }
 
 // workSide 输入在上并撑满可用高度，开始卡片固定贴底。
-func (a *App) workSide(c *ui.Context, input func()) {
-	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).FillHeight().MinHeight(0).Gap(6).Children(func() {
-		ui.Scroll(c.Key("work-side-input")).FillWidth().Grow(1).MinHeight(0).
-			TrackScroll(&a.workInputScroll).Children(func() {
-			ui.Column(c).FillWidth().Gap(6).Children(input)
+func (a *App) workSide(c *ui.Context, input func(), mergeRun bool) {
+	gap := float32(6)
+	if mergeRun {
+		gap = 0
+	}
+	ui.Column(c.Key("work-side")).Width(composerW).Shrink(0).FillHeight().MinHeight(0).Gap(gap).Children(func() {
+		_, winH := c.Size()
+		// 滚动容器会以无限高度测量子元素，无法分配剩余空间；极矮窗口仍保留滚动。
+		flexible := mergeRun && winH >= 560
+		var viewport ui.Element
+		if flexible {
+			viewport = ui.Column(c.Key("work-side-input"))
+		} else {
+			viewport = ui.Scroll(c.Key("work-side-input")).TrackScroll(&a.workInputScroll)
+		}
+		viewport.FillWidth().Grow(1).MinHeight(0).Children(func() {
+			content := ui.Column(c).FillWidth().Gap(6)
+			if flexible {
+				content.Grow(1).MinHeight(0)
+			}
+			content.Children(input)
 		})
-		a.runCard(c)
+		a.runCard(c, mergeRun)
 	})
 }
 
@@ -57,7 +75,15 @@ func (a *App) genInput(c *ui.Context) {
 
 func (a *App) washInput(c *ui.Context) {
 	a.washImageCard(c)
-	a.washPromptCard(c)
+	w, _ := c.Size()
+	if homeSplit(w) {
+		a.washPromptCard(c)
+	} else {
+		ui.Column(c).FillWidth().Children(func() {
+			a.washPromptCard(c)
+			a.runCard(c, true)
+		})
+	}
 }
 
 // promptFocus 是生图的主输入：直接写、粘贴，或从 txt 载入。
@@ -237,11 +263,18 @@ func (a *App) quietButton(c *ui.Context, label string) ui.Element {
 		Shrink(0).Disabled(a.running)
 }
 
-func (a *App) runCard(c *ui.Context) {
+func (a *App) runCard(c *ui.Context, merged bool) {
 	tok := a.look
 	plan := a.workbenchPlan()
 	card := a.stepCard(c, "step-run", stepPending).Gap(4)
+	if merged {
+		card.Label("洗图操作区").NoShadow().Radius(0, 0, tok.radiusM, tok.radiusM).
+			BorderWidth(0, 1, 1, 1).Padding(0, 10, 8, 10)
+	}
 	card.Children(func() {
+		if merged {
+			ui.Divider(c).Background(tok.border).Margin(0, 0, 3, 0)
+		}
 		target := "本次发送至：" + a.stagePlatform()
 		if a.running {
 			target = "当前查看：" + a.stagePlatform()

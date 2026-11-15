@@ -844,6 +844,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	a.runPage = page
 	a.running = true
 	a.useRunView = false
+	a.resultsDoneOpen = false
 	if page == pageWash {
 		a.onPage(page, func() { a.beginWashRun() })
 	}

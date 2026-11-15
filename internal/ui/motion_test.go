@@ -242,7 +242,7 @@ func TestManyGeneratingCardsStayReadable(t *testing.T) {
 	if tt.HasText("排队中") {
 		t.Fatal("pending status pill should not render in results pane")
 	}
-	if _, ok := tt.Find("img-39.png"); !ok {
+	if _, ok := tt.Find("结果卡img-39.png"); !ok {
 		t.Fatal("last card was not built")
 	}
 }

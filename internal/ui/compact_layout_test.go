@@ -17,10 +17,16 @@ func TestCompactWorkspaceGivesResultsMoreRoom(t *testing.T) {
 			a := &App{
 				tab: page, statePage: page, platformAuto: true,
 				browserRows: []store.Browser{loggedLane(1, "主力", "豆包"), loggedLane(2, "备用", "豆包")},
-				queue: []tasks.Task{{
-					Index: 1, Platform: "豆包", Status: tasks.StatusSuccess,
-					Prompt: "一只猫", Results: []string{"结果.png"},
-				}},
+				queue: []tasks.Task{
+					{
+						Index: 1, Platform: "豆包", Status: tasks.StatusRunning,
+						Prompt: "一只蓝猫",
+					},
+					{
+						Index: 2, Platform: "豆包", Status: tasks.StatusSuccess,
+						Prompt: "一只猫", Results: []string{"结果.png"},
+					},
+				},
 			}
 			tt := ui.NewTester(a.view, 1024, 700)
 			tt.SetPreferences(ui.Preferences{ReduceMotion: true, TextScale: 1})
@@ -30,8 +36,12 @@ func TestCompactWorkspaceGivesResultsMoreRoom(t *testing.T) {
 				t.Fatalf("结果区没有获得足够空间: %+v", pane)
 			}
 			shot := assertVisible(t, tt, "结果图", 1024, 700)
-			if shot.W < 110 || shot.H < 110 || shot.X+shot.W > pane.X+pane.W {
-				t.Fatalf("结果缩略图太小或超出结果区: shot=%+v pane=%+v", shot, pane)
+			if shot.W < 60 || shot.W > 80 || shot.H < 60 || shot.H > 80 || shot.X+shot.W > pane.X+pane.W {
+				t.Fatalf("结果缩略图尺寸不符合紧凑网格或超出结果区: shot=%+v pane=%+v", shot, pane)
+			}
+			doneBtn := assertVisible(t, tt, "已完成 1", 1024, 700)
+			if doneBtn.X+doneBtn.W > pane.X+pane.W {
+				t.Fatalf("已完成按钮超出结果区: btn=%+v pane=%+v", doneBtn, pane)
 			}
 		})
 	}

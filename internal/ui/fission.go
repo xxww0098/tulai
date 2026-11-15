@@ -15,7 +15,7 @@ func (a *App) fissionPage(c *ui.Context) {
 	a.workColumns(c, func() {
 		a.imageCard(c, "fission-image", "母图", true)
 		a.fissionPromptCard(c)
-	})
+	}, false)
 }
 
 func (a *App) fissionPromptCard(c *ui.Context) {

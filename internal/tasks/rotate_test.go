@@ -308,15 +308,15 @@ func TestDailyCapSkipsFullAccount(t *testing.T) {
 	if len(used) != 1 || used[0] != second.ID {
 		t.Fatalf("full account should be skipped: used=%v queue=%+v", used, queue)
 	}
-	if queue[0].Status != StatusSuccess || queue[1].Status != StatusFailed || !strings.Contains(queue[1].Error, "今日已达上限") {
-		t.Fatalf("second task has nowhere to go: %+v", queue)
+	if queue[0].Status != StatusSuccess || queue[1].Status != StatusSkipped || !queue[1].Undispatched || !strings.Contains(queue[1].Error, "额度已用完") {
+		t.Fatalf("second task should stop without being counted as failed: %+v", queue)
 	}
 	if browserByID(t, st, first.ID).UsedToday(time.Now()) != 1 || browserByID(t, st, second.ID).UsedToday(time.Now()) != 1 {
 		t.Fatalf("counts = 甲 %d 乙 %d", browserByID(t, st, first.ID).UsedToday(time.Now()), browserByID(t, st, second.ID).UsedToday(time.Now()))
 	}
 }
 
-func TestDailyCapAllFullFailsClosed(t *testing.T) {
+func TestDailyCapAllFullStopsUndispatched(t *testing.T) {
 	st := openRotateStore(t)
 	first := addNamed(t, st, "豆包", "甲")
 	second := addNamed(t, st, "豆包", "乙")
@@ -332,7 +332,7 @@ func TestDailyCapAllFullFailsClosed(t *testing.T) {
 		return nil
 	})
 	queue := e.View().Snapshot()
-	if err != nil || calls != 0 || len(queue) != 1 || queue[0].Status != StatusFailed || !strings.Contains(queue[0].Error, "今日已达上限") {
+	if err != nil || calls != 0 || len(queue) != 1 || queue[0].Status != StatusSkipped || !queue[0].Undispatched || !strings.Contains(queue[0].Error, "额度已用完") {
 		t.Fatalf("calls=%d err=%v queue=%+v", calls, err, queue)
 	}
 }

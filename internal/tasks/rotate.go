@@ -191,6 +191,27 @@ func (e *Engine) accountsFor(platform string) []store.Browser {
 	return out
 }
 
+// allDoubaoAccountsFull 只把明确的日上限或平台额度耗尽视为停止条件。
+// 冷却、登录、人工接管和禁用仍可能恢复，不能当作额度用完。
+func (e *Engine) allDoubaoAccountsFull(now time.Time) bool {
+	rows := e.accountsFor("豆包")
+	if len(rows) == 0 {
+		return false
+	}
+	limit := e.capFor("豆包")
+	for _, b := range rows {
+		if b.Disabled || e.AccountManual(b.ID) {
+			return false
+		}
+		localFull := limit > 0 && b.UsedToday(now) >= limit
+		platformFull := b.Health == store.HealthExhausted && !b.Usable(now) && classifyFault(errors.New(b.LastError)) == faultQuota
+		if !localFull && !platformFull {
+			return false
+		}
+	}
+	return true
+}
+
 func (t *Task) ranOnOr(fallback int64) int64 {
 	if t != nil && t.ranOn > 0 {
 		return t.ranOn

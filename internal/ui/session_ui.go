@@ -224,6 +224,7 @@ func (a *App) newWorkspace() {
 	}
 	a.clearWorkspace(page)
 	a.historyOpen = false
+	a.resultsDoneOpen = false
 	if a.store != nil {
 		a.saveSettings()
 	}
@@ -255,12 +256,16 @@ func (a *App) clearWorkspace(page int) {
 		a.batchMode = batchText
 	}
 	a.dropStamps(page)
+	a.resultsDoneOpen = false
 	if page == pageWash {
 		a.washList = ui.ListState{}
+		a.washDoneList = ui.ListState{}
 	} else if page == pageFission {
 		a.fissionList = ui.ListState{}
+		a.fissionDoneList = ui.ListState{}
 	} else {
 		a.genList = ui.ListState{}
+		a.genDoneList = ui.ListState{}
 	}
 }
 
@@ -302,12 +307,16 @@ func (a *App) reopenSession(id int64) {
 	a.applySession(page, sess, items, true)
 	a.setSessionID(page, id)
 	a.historyOpen = false
+	a.resultsDoneOpen = false
 	if page == pageWash {
 		a.washList = ui.ListState{}
+		a.washDoneList = ui.ListState{}
 	} else if page == pageFission {
 		a.fissionList = ui.ListState{}
+		a.fissionDoneList = ui.ListState{}
 	} else {
 		a.genList = ui.ListState{}
+		a.genDoneList = ui.ListState{}
 	}
 	a.saveSettings()
 	logging.Log.Info("已恢复历史任务")

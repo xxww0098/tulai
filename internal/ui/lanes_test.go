@@ -566,29 +566,27 @@ func TestRunningLaneShowsTheJobAndFliesToTheResult(t *testing.T) {
 			t.Fatalf("missing %q", label)
 		}
 	}
+	if _, ok := tt.Find("结果卡风景.png"); !ok {
+		t.Fatal("running card missing")
+	}
 	a.queue = []tasks.Task{{
 		Index: 1, Platform: "豆包", BrowserID: 1, Status: tasks.StatusSuccess,
 		Images: []string{"风景.png"}, Prompt: "水彩一只猫", Results: []string{"out.png"},
 	}}
 	tt.Frame()
-	early, ok := tt.Find("产出豆包主力")
-	if !ok {
-		t.Fatal("result badge missing")
+	if _, ok := tt.Find("结果卡out.png"); ok {
+		t.Fatal("completed card should not stay persistently in main results pane")
 	}
-	tt.Advance(motionUI + 40*time.Millisecond)
-	late, ok := tt.Find("产出豆包主力")
-	if !ok {
-		t.Fatal("result badge left")
+	if !tt.HasText("已完成 1") {
+		t.Fatalf("done button missing: %v", tt.Texts())
 	}
-	tt.Advance(motionUI)
-	settled, ok := tt.Find("产出豆包主力")
-	if !ok {
-		t.Fatal("result badge left after settling")
+	if err := tt.Click("已完成 1"); err != nil {
+		t.Fatal(err)
 	}
-	if dx, dy := late.X-settled.X, late.Y-settled.Y; dx > 1 || dx < -1 || dy > 1 || dy < -1 {
-		t.Fatalf("badge kept moving: mid %v settled %v (from %v)", late, settled, early)
+	if _, ok := tt.Find("结果卡out.png"); !ok {
+		t.Fatal("completed card missing inside done popover")
 	}
-	tt.Advance(200 * time.Millisecond)
+	tt.Advance(300 * time.Millisecond)
 	if tt.FramePending() {
 		t.Fatal("settled result kept asking for frames")
 	}

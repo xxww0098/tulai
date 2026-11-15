@@ -15,9 +15,6 @@ import (
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
-// jobFly 让刚完成的缩略图从账号车道飞到结果格。同一单只标一处。
-type jobFly struct{ Task int }
-
 // LaneHeader 是已经在出图时面板顶上的那一行。
 func LaneHeader(slots, done, total int) string {
 	if slots < 0 {

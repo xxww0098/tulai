@@ -220,10 +220,22 @@ func TestWashPageRestoresSourcesAndResults(t *testing.T) {
 	}
 	tt := ui.NewTester(b.view, 1280, 900)
 	tt.Advance(200 * time.Millisecond)
-	for _, label := range []string{"原图", "poster.png", "mug.png", "2 张", "poster_01.png", "出图超时，请重试", "洗图指令"} {
+	for _, label := range []string{"原图", "poster.png", "mug.png", "2 张", "已完成 1", "出图超时，请重试", "洗图指令"} {
 		if !tt.HasText(label) {
 			t.Fatalf("洗图页缺少 %q，看到 %v", label, tt.Texts())
 		}
+	}
+	if tt.HasText("poster_01.png") {
+		t.Fatalf("已完成结果不该常驻在主视图: %v", tt.Texts())
+	}
+	if err := tt.Click("已完成 1"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("poster_01.png") {
+		t.Fatalf("已完成浮层缺少 %q，看到 %v", "poster_01.png", tt.Texts())
+	}
+	if err := tt.Click("关闭已完成面板"); err != nil {
+		t.Fatal(err)
 	}
 	if err := tt.Click("自由生图"); err != nil {
 		t.Fatal(err)
@@ -378,14 +390,23 @@ func TestNewTaskClearsResultGrid(t *testing.T) {
 	}
 	tt := ui.NewTester(a.view, 1280, 900)
 	tt.Advance(200 * time.Millisecond)
+	if !tt.HasText("已完成 1") {
+		t.Fatalf("缺少已完成入口: %v", tt.Texts())
+	}
+	if tt.HasText("session-cat-result.png") {
+		t.Fatalf("已完成结果不该常驻在主视图: %v", tt.Texts())
+	}
+	if err := tt.Click("已完成 1"); err != nil {
+		t.Fatal(err)
+	}
 	if !tt.HasText("session-cat-result.png") {
-		t.Fatalf("结果格没有上一批的图: %v", tt.Texts())
+		t.Fatalf("已完成浮层没有上一批的图: %v", tt.Texts())
 	}
 	if err := tt.Click("新建任务"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if tt.HasText("session-cat-result.png") || len(a.queue) != 0 || a.prompts != "" {
+	if tt.HasText("session-cat-result.png") || tt.HasText("已完成 1") || a.resultsDoneOpen || len(a.queue) != 0 || a.prompts != "" {
 		t.Fatalf("新建任务还留着结果 prompts=%q queue=%+v texts=%v", a.prompts, a.queue, tt.Texts())
 	}
 	if !tt.HasText("出图结果会出现在这里") {
@@ -400,8 +421,14 @@ func TestNewTaskClearsResultGrid(t *testing.T) {
 	if a.prompts != "一只猫" || len(a.queue) != 1 || len(a.queue[0].Results) != 1 || a.queue[0].Results[0] != img {
 		t.Fatalf("历史没有把结果带回来: prompts=%q queue=%+v logs=%v", a.prompts, a.queue, logging.Log.Entries())
 	}
+	if !tt.HasText("已完成 1") {
+		t.Fatalf("恢复后缺少已完成入口: %v", tt.Texts())
+	}
+	if err := tt.Click("已完成 1"); err != nil {
+		t.Fatal(err)
+	}
 	if !tt.HasText("session-cat-result.png") {
-		t.Fatalf("恢复后结果格是空的: %v", tt.Texts())
+		t.Fatalf("恢复后结果浮层是空的: %v", tt.Texts())
 	}
 }
 
@@ -629,6 +656,12 @@ func TestResultFolderButtonSitsBesideTheName(t *testing.T) {
 	}}}
 	tt := ui.NewTester(a.view, 1280, 800)
 	tt.Advance(80 * time.Millisecond)
+	if !tt.HasText("已完成 1") {
+		t.Fatalf("done button missing: %v", tt.Texts())
+	}
+	if err := tt.Click("已完成 1"); err != nil {
+		t.Fatal(err)
+	}
 	btn, ok := tt.Find("在文件夹中显示")
 	if !ok {
 		t.Fatal("folder button missing")
@@ -660,6 +693,9 @@ func TestMissingResultFilePlaceholder(t *testing.T) {
 		Results: []string{filepath.Join(t.TempDir(), "gone.png")},
 	}}}
 	tt := ui.NewTester(a.view, 1280, 800)
+	if err := tt.Click("已完成 1"); err != nil {
+		t.Fatal(err)
+	}
 	if !tt.HasText("文件已移除") {
 		t.Fatalf("missing placeholder, texts %v", tt.Texts())
 	}

@@ -67,6 +67,7 @@ func (a *App) syncPage() {
 	// 换页后左栏输入区从顶部开始，不沿用另一页的滚动位置。
 	a.workInputScroll.Y = 0
 	a.historyOpen = false
+	a.resultsDoneOpen = false
 	if a.parked == nil {
 		a.parked = make(map[int]pageState)
 	}
@@ -317,13 +318,13 @@ func pageLabel(page int) string {
 }
 
 func (a *App) washPage(c *ui.Context) {
-	a.workColumns(c, func() { a.washInput(c) })
+	a.workColumns(c, func() { a.washInput(c) }, true)
 }
 
 // washPromptCard 是洗图指令。默认是内置的一段，改过的会保存。
 func (a *App) washPromptCard(c *ui.Context) {
 	tok := a.look
-	_, winH := c.Size()
+	winW, winH := c.Size()
 	promptHeight := float32(90)
 	if winH < 720 {
 		promptHeight = 68
@@ -338,13 +339,21 @@ func (a *App) washPromptCard(c *ui.Context) {
 	case batch:
 		hint = "每批最多 10 张 · 按源文件名保存"
 	}
-	a.stepCard(c, "wash-prompt", stepDone).Children(func() {
+	card := a.stepCard(c, "wash-prompt", stepDone).Label("洗图指令区").NoShadow().
+		Radius(tok.radiusM, tok.radiusM, 0, 0).BorderWidth(1, 1, 0, 1)
+	if homeSplit(winW) {
+		card.Grow(1)
+	}
+	card.Children(func() {
 		ui.Row(c).FillWidth().Gap(5).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "洗图指令").FontSize(tok.title).Bold().Shrink(0)
 			ui.Spacer(c)
 			a.washReset(c)
 		})
-		ui.TextArea(c, &a.prompts).Height(promptHeight).MinHeight(promptHeight).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
+		input := ui.TextArea(c, &a.prompts).Height(promptHeight).MinHeight(promptHeight).FillWidth().Label("洗图指令").Placeholder(DefaultWashPrompt).Disabled(a.running)
+		if homeSplit(winW) {
+			input.Grow(1)
+		}
 		ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip(hint)
 		ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Center).Children(func() {
 			a.washPromptSelect(c)

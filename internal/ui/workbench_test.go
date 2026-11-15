@@ -520,6 +520,9 @@ func TestResultCardShowsEveryShot(t *testing.T) {
 		Results: []string{"a.png", "b.png", "c.png", "d.png"},
 	}}}
 	tt := ui.NewTester(four.view, 1280, 900)
+	if err := tt.Click("已完成 1"); err != nil {
+		t.Fatal(err)
+	}
 	n := 0
 	for _, text := range tt.Texts() {
 		if text == "结果图" {
@@ -537,6 +540,9 @@ func TestResultCardShowsEveryShot(t *testing.T) {
 		Results: []string{"1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png"},
 	}}}
 	more := ui.NewTester(many.view, 1280, 900)
+	if err := more.Click("已完成 1"); err != nil {
+		t.Fatal(err)
+	}
 	n = 0
 	for _, text := range more.Texts() {
 		if text == "结果图" {

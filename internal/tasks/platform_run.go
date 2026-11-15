@@ -359,6 +359,14 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		var batchIndices []int
 		var earliest time.Time
 		now := time.Now()
+		// 额度用尽通常要等到次日，不能把未派发的豆包任务一直留在运行中。
+		// 已派发的批次先收完，避免丢失它们可能返回的结果。
+		if ctx.Err() == nil && platform == "豆包" && active == 0 && len(pending) > 0 && e.allDoubaoAccountsFull(now) {
+			logging.Log.Warning("豆包所有账号额度已用完，自动停止剩余任务")
+			e.stopQueuedWithReason(pending, events, "账号额度已用完，已停止")
+			pending = nil
+			break
+		}
 		if active < e.platformCap(platform, now) && ctx.Err() == nil {
 			busy, readyAt := sched.snap()
 			for i := 0; i < len(pending); i++ {
@@ -627,6 +635,10 @@ func splitModerationBatch(batch []Task, subLimit int) []Task {
 
 // stopQueued 把还没开跑的任务标成已停止，卡片和页头不再留在排队里。
 func (e *Engine) stopQueued(pending []Task, events chan<- runEvent) {
+	e.stopQueuedWithReason(pending, events, "已停止")
+}
+
+func (e *Engine) stopQueuedWithReason(pending []Task, events chan<- runEvent, reason string) {
 	for _, t := range pending {
 		switch t.Status {
 		case StatusSuccess, StatusFailed, StatusSkipped, StatusNeedsUser:
@@ -636,7 +648,7 @@ func (e *Engine) stopQueued(pending []Task, events chan<- runEvent) {
 			t.Undispatched = true
 		}
 		t.Status = StatusSkipped
-		t.Error = "已停止"
+		t.Error = reason
 		for _, item := range batchMembers(t) {
 			if e != nil && e.view != nil {
 				e.view.Update(item)

@@ -8,7 +8,10 @@ import (
 	"github.com/xxww0098/tulai/internal/images"
 )
 
-const thumbPx = 256
+const (
+	thumbPx   = 256
+	previewPx = 640
+)
 
 // ponytail: 全局 4 路解码。一次拖进上百张把磁盘打满时，再改成按窗口排队。
 var thumbGate = make(chan struct{}, 4)
@@ -76,6 +79,83 @@ func (a *App) scheduleThumb(path string) {
 			return
 		}
 		apply()
+	}()
+}
+
+// cachedPreview 按需返回保持原始宽高比的高清预览图。未解码完时先回退缩略图，避免悬停首帧闪烁。
+func (a *App) cachedPreview(path string) *ui.Bitmap {
+	if path == "" {
+		return nil
+	}
+	a.mu.Lock()
+	bmp, ok := a.previews[path]
+	waiting := a.previewWait[path]
+	win := a.window
+	a.mu.Unlock()
+	if ok {
+		if bmp != nil {
+			return bmp
+		}
+		return a.cachedThumb(path)
+	}
+	if win == nil {
+		img, err := images.Thumb(path, previewPx)
+		var decoded *ui.Bitmap
+		if err == nil && img != nil {
+			decoded = ui.NewBitmap(img)
+		}
+		a.mu.Lock()
+		if a.previews == nil {
+			a.previews = map[string]*ui.Bitmap{}
+		}
+		a.previews[path] = decoded
+		a.mu.Unlock()
+		if decoded != nil {
+			return decoded
+		}
+		return a.cachedThumb(path)
+	}
+	if !waiting {
+		a.schedulePreview(path)
+	}
+	return a.cachedThumb(path)
+}
+
+func (a *App) schedulePreview(path string) {
+	a.mu.Lock()
+	if a.previews != nil {
+		if _, ok := a.previews[path]; ok {
+			a.mu.Unlock()
+			return
+		}
+	}
+	if a.previewWait == nil {
+		a.previewWait = map[string]bool{}
+	}
+	if a.previewWait[path] {
+		a.mu.Unlock()
+		return
+	}
+	a.previewWait[path] = true
+	a.mu.Unlock()
+	go func() {
+		thumbGate <- struct{}{}
+		defer func() { <-thumbGate }()
+		img, err := images.Thumb(path, previewPx)
+		apply := func() {
+			var bmp *ui.Bitmap
+			if err == nil && img != nil {
+				bmp = ui.NewBitmap(img)
+			}
+			a.mu.Lock()
+			if a.previews == nil {
+				a.previews = map[string]*ui.Bitmap{}
+			}
+			a.previews[path] = bmp
+			delete(a.previewWait, path)
+			a.mu.Unlock()
+		}
+		a.postUI(apply)
 	}()
 }
 
