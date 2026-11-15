@@ -95,9 +95,10 @@ func (a *App) historyPanel(c *ui.Context) {
 		return
 	}
 	tok := a.look
-	ui.Column(c.Key("history-panel")).Label("历史任务").FillWidth().Shrink(0).Gap(4).Padding(6, 8).
-		Radius(tok.radiusM).Background(tok.card).Border(1, tok.border).Children(func() {
-		ui.Text(c, "历史任务").FontSize(tok.caption).Bold().TextColor(tok.muted).SingleLine()
+	uiCardSurface(ui.Column(c.Key("history-panel")).Label("历史任务").FillWidth().Shrink(0).Gap(5).Padding(8, 10), tok).
+		Shadow(0, 2, 6, 0, tok.shadow).Children(func() {
+		uiSectionTitle(c, "历史任务", "", tok)
+		ui.Divider(c).Background(tok.border)
 		a.historyBody(c)
 	})
 }
@@ -110,7 +111,8 @@ func (a *App) historyBody(c *ui.Context) {
 	}
 	rows, err := a.store.History(workspacePageKey(a.statePage))
 	if err != nil {
-		ui.Text(c, "读取任务记录失败").FontSize(tok.caption).TextColor(tok.danger)
+		errFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.danger, 0.12)
+		ui.Text(c, "读取任务记录失败").FontSize(tok.caption).TextColor(errFg)
 		return
 	}
 	if len(rows) == 0 {
@@ -130,18 +132,23 @@ func (a *App) historyRow(c *ui.Context, sess store.Session) {
 	tok := a.look
 	shown, full := sessionPreview(sess)
 	id := sess.ID
-	ui.Column(c.Key(id)).FillWidth().Gap(3).Padding(4, 6).Radius(tok.radiusS).Background(tok.sunken).Children(func() {
+	row := ui.Column(c.Key(id)).FillWidth().Gap(4).Padding(5, 7).Radius(tok.radiusS).
+		Background(tok.sunken).Border(1, tok.border)
+	if row.Hovered() {
+		row.Background(tok.sunkenHi).Border(1, tok.borderStrong)
+	}
+	row.Children(func() {
 		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 			if when := sessionWhen(sess.Updated); when != "" {
-				ui.Text(c, when).FontSize(tok.caption).TextColor(tok.muted).Shrink(0).SingleLine()
+				ui.Text(c, when).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").Shrink(0).SingleLine()
 			}
-			ui.Text(c, sessionCountText(sess)).FontSize(tok.caption).TextColor(tok.muted).Shrink(0).SingleLine()
-			ui.Text(c, shown).FontSize(tok.caption).Grow(1).MinWidth(0).SingleLine().Tooltip(full)
+			ui.Text(c, sessionCountText(sess)).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").Shrink(0).SingleLine()
+			ui.Text(c, shown).FontSize(tok.caption).FontWeight(500).TextColor(tok.text).Grow(1).MinWidth(0).SingleLine().Tooltip(full)
 		})
 		ui.Row(c).Gap(5).Children(func() {
-			ui.Button(c.Key("restore"), "恢复").FontSize(tok.caption).Padding(1, 7).Radius(tok.radiusS).Shrink(0).
+			uiMiniBtn(ui.Button(c.Key("restore"), "恢复"), tok).
 				Disabled(a.running).OnClick(func() { a.reopenSession(id) })
-			ui.Button(c.Key("delete"), "删除").FontSize(tok.caption).Padding(1, 7).Radius(tok.radiusS).Shrink(0).
+			uiMiniBtn(ui.Button(c.Key("delete"), "删除"), tok).
 				OnClick(func() { a.deleteSession(id) })
 		})
 	})

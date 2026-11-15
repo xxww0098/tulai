@@ -89,8 +89,7 @@ func (a *App) resultsPane(c *ui.Context) {
 	th := *c.Theme()
 	th.TooltipDelay = resultPreviewDelay
 
-	pane := ui.Themed(c.Key("results"), &th).Label("出图结果区").FillWidth().Padding(8, 10).Gap(6).
-		Radius(tok.radiusM).Background(tok.card).Border(1, tok.border)
+	pane := uiCardSurface(ui.Themed(c.Key("results"), &th).Label("出图结果区").FillWidth().Padding(8, 10).Gap(6), tok)
 	if homeSplit(w) {
 		pane.Grow(1).MinHeight(0)
 	}
@@ -108,8 +107,11 @@ func (a *App) resultsPane(c *ui.Context) {
 		}
 
 		if tally.Needs > 0 {
-			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(tok.warning)
+			warnFg, _, _ := semanticToneColors(tok.dark, tok.text, tok.warning, 0.12)
+			ui.Text(c, verificationHint).FontSize(tok.caption).TextColor(warnFg)
 		}
+
+		ui.Divider(c).Background(tok.border)
 
 		rows := make([]resultRow, 0, len(split.activeRows)+len(split.issueRows))
 		rows = append(rows, split.activeRows...)
@@ -187,11 +189,12 @@ func (a *App) resultsHead(c *ui.Context, items []tasks.Task, tally TaskTally, sp
 
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 				if tally.Running > 0 {
 					waitingDot(c)
 				}
-				ui.Text(c, "出图进度").FontSize(tok.title).Bold().Shrink(0)
+				ui.Text(c, "出图进度").FontSize(tok.title).Bold().TextColor(tok.text).Shrink(0)
+				platformIcon(c, platform, 12, tok)
 				ui.Text(c, "当前服务商："+platform).FontSize(tok.caption).TextColor(tok.muted).MinWidth(0).SingleLine()
 			})
 			if len(items) > 0 {
@@ -200,7 +203,7 @@ func (a *App) resultsHead(c *ui.Context, items []tasks.Task, tally TaskTally, sp
 					tally.Failed, tally.Needs, tally.Review, tally.Stopped,
 					a.runningOn(platform), a.liveParallel(),
 				)
-				ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+				ui.Text(c, line).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").SingleLine()
 			}
 		})
 
@@ -256,8 +259,9 @@ func (a *App) resultsEmpty(c *ui.Context) {
 	} else if a.fissioning() {
 		text = "4 张裂变结果会出现在这里"
 	}
-	ui.Row(c.Key("stage-empty")).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Icon(c, iconImages).FontSize(16).TextColor(tok.muted)
+	ui.Row(c.Key("stage-empty")).Padding(8, 10).Radius(tok.radiusS).Background(tok.sunken).
+		Border(1, tok.border).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Icon(c, iconImages).FontSize(15).TextColor(tok.muted)
 		ui.Text(c, text).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
 	})
 }
@@ -272,6 +276,7 @@ func (a *App) resultsDoneSummary(c *ui.Context, split resultSplit) {
 	if len(split.doneTiles) > count {
 		sub = fmt.Sprintf("共输出 %d 张结果图，已收纳到右上角「已完成」", len(split.doneTiles))
 	}
+	badgeFg, badgeBg, badgeBorder := semanticToneColors(tok.dark, tok.text, tok.success, 0.14)
 	ui.Column(c.Key("done-summary")).Grow(1).FillWidth().Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 		ui.Column(c.Key("done-card")).
 			Background(tok.sunken).
@@ -283,13 +288,15 @@ func (a *App) resultsDoneSummary(c *ui.Context, split resultSplit) {
 			Children(func() {
 				ui.Box(c.Key("badge")).
 					Size(32, 32).Radius(16).
-					Background(tok.success.Mix(tok.card, 0.85)).
+					Background(badgeBg).
+					Border(1, badgeBorder).
 					Justify(ui.Center).AlignItems(ui.Center).
 					Children(func() {
-						ui.Icon(c, iconCheck).FontSize(15).TextColor(tok.success)
+						ui.Icon(c, iconCheck).FontSize(15).TextColor(badgeFg)
 					})
-				ui.Text(c, fmt.Sprintf("本轮已完成 %d 项", count)).FontSize(tok.title).Bold()
-				ui.Text(c, sub).FontSize(tok.caption).TextColor(tok.muted)
+				ui.Text(c, fmt.Sprintf("本轮已完成 %d 项", count)).FontSize(tok.title).Bold().
+					TextColor(tok.text).FontFeatures("tnum")
+				ui.Text(c, sub).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum")
 				ui.Row(c.Key("cta")).Padding(4, 0, 0, 0).Gap(8).Children(func() {
 					uiIconTextBtn(c, "view-done", "查看已完成", "查看已完成结果", iconCheck, 28, true, tok).
 						OnClick(func() { a.resultsDoneOpen = true })
@@ -540,11 +547,10 @@ func (a *App) resultHeader(c *ui.Context, row resultRow) {
 		accLabel = "分组待处理"
 	}
 	ui.Row(c.Key(row.key)).Label(accLabel).FillWidth().Padding(4, 8).Gap(8).
-		Radius(tok.radiusS).Background(tok.sunken).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, title).FontSize(tok.body).Bold().SingleLine().MinWidth(0).Grow(1)
+		Radius(tok.radiusS).Background(tok.sunken).Border(1, tok.border).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, title).FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine().MinWidth(0).Grow(1)
 		if row.summary != "" {
-			ui.Text(c, row.summary).FontSize(tok.caption).FontFeatures("tnum").
-				TextColor(tok.muted).SingleLine().Shrink(0)
+			uiBadge(c, "hdr-sum", row.summary, "neutral", tok)
 		}
 	})
 }
@@ -688,16 +694,16 @@ func (a *App) resultIssueRow(c *ui.Context, row resultRow) {
 				ui.Column(c.Key("info")).Grow(1).MinWidth(0).Gap(2).Children(func() {
 					ui.Row(c.Key("top")).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
 						statusPill(c, statusText)
-						ui.Text(c, title).FontSize(tok.body).SingleLine().MinWidth(0).Grow(1)
+						ui.Text(c, title).FontSize(tok.body).FontWeight(500).TextColor(tok.text).SingleLine().MinWidth(0).Grow(1)
 						if account != "" {
-							ui.Text(c, account).FontSize(tok.caption).TextColor(tok.muted).SingleLine().Shrink(0)
+							ui.Text(c, account).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").SingleLine().Shrink(0)
 						}
 					})
 					reasonCol := tok.muted
 					if task.Status == tasks.StatusFailed {
-						reasonCol = tok.danger
+						reasonCol, _, _ = semanticToneColors(tok.dark, tok.text, tok.danger, 0.12)
 					} else if task.Status == tasks.StatusNeedsUser || task.Status == tasks.StatusNeedsReview {
-						reasonCol = tok.warning
+						reasonCol, _, _ = semanticToneColors(tok.dark, tok.text, tok.warning, 0.12)
 					}
 					if reason == "" {
 						reason = statusText
@@ -780,7 +786,7 @@ func (a *App) resultsDonePopover(c *ui.Context, anchor ui.Element, split resultS
 			Background(tok.card).
 			Border(1, tok.border).
 			Radius(tok.radiusL).
-			Shadow(0, 10, 28, 0, tok.shadow).
+			Shadow(0, 8, 22, 0, tok.lift).
 			Padding(12).
 			Gap(8).
 			Label("已完成结果弹窗")
@@ -791,18 +797,19 @@ func (a *App) resultsDonePopover(c *ui.Context, anchor ui.Element, split resultS
 		panel.Children(func() {
 			ui.Row(c.Key("pop-head")).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Column(c.Key("pop-title")).Grow(1).MinWidth(0).Gap(1).Children(func() {
-					ui.Text(c, "已完成结果").FontSize(tok.title).Bold()
+					ui.Text(c, "已完成结果").FontSize(tok.title).Bold().TextColor(tok.text)
 					sub := fmt.Sprintf("共 %d 张结果图 · 悬停可预览大图", len(split.doneTiles))
 					if split.doneTasks > 0 && split.doneTasks != len(split.doneTiles) {
 						sub = fmt.Sprintf("%d 项任务 · %d 张结果图 · 悬停可预览大图", split.doneTasks, len(split.doneTiles))
 					}
-					ui.Text(c, sub).FontSize(tok.caption).TextColor(tok.muted).SingleLine()
+					ui.Text(c, sub).FontSize(tok.caption).TextColor(tok.muted).FontFeatures("tnum").SingleLine()
 				})
 				uiIconTextBtn(c, "pop-open", "打开输出目录", "打开输出目录", iconFolderOpen, 24, false, tok).
 					OnClick(func() { a.openOutputFolder() })
 				uiIconBtn(c, "pop-close", "关闭已完成面板", "关闭", iconX, 24, false, true, tok).
 					OnClick(func() { a.resultsDoneOpen = false })
 			})
+			ui.Divider(c).Background(tok.border)
 
 			st := a.doneResultList()
 			st.Key = func(i int) any {
@@ -848,8 +855,11 @@ func (a *App) resultDoneTile(c *ui.Context, tile resultTile, tileW float32) {
 				p := path
 				btn.OnClick(func() { a.openResult(p) })
 			}
+			if btn.Hovered() {
+				btn.Border(1, tok.borderStrong)
+			}
 			if btn.FocusVisible() {
-				btn.Border(2, tok.accent)
+				btn.Border(1, tok.accent)
 			}
 			shot = hoverPressPose(btn)
 		} else {
@@ -957,7 +967,7 @@ func (a *App) attachTileHoldPreview(c *ui.Context, anchor ui.Element, tile resul
 			Background(tok.card).
 			Border(1, tok.border).
 			Radius(tok.radiusL).
-			Shadow(0, 10, 26, 0, tok.shadow).
+			Shadow(0, 8, 22, 0, tok.lift).
 			Padding(10).
 			Gap(8).
 			Label("大图预览").
@@ -968,6 +978,7 @@ func (a *App) attachTileHoldPreview(c *ui.Context, anchor ui.Element, tile resul
 					Radius(tok.radiusM).
 					Clip().
 					Background(tok.sunken).
+					Border(1, tok.border).
 					Justify(ui.Center).
 					AlignItems(ui.Center).
 					Children(func() {

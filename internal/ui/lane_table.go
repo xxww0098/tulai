@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -45,8 +44,8 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 	// 展开历史时立即让出位置，避免卡片挡住恢复按钮。
 	reveal.Position = false
 	reveal.Colors = true
-	ui.Column(c.Key("lane-table")).Label("账号表格").FillWidth().Gap(4).Padding(6, 9).Radius(tok.radiusM).
-		Background(tok.card).Border(1, tok.border).Shadow(0, 1, 2, 0, tok.shadow).Transition(reveal).Children(func() {
+	uiCardSurface(ui.Column(c.Key("lane-table")).Label("账号表格").FillWidth().Gap(4).Padding(6, 9), tok).
+		Shadow(0, 1, 2, 0, tok.shadow).Transition(reveal).Children(func() {
 		a.laneHeader(c)
 		if mail {
 			a.agyLoginPanel(c)
@@ -58,12 +57,15 @@ func (a *App) laneTable(c *ui.Context, board tasks.Board) {
 				if mail {
 					hint = "添加账号后，在这里查看状态与 Gemini 用量。"
 				}
-				ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted).FillWidth().Padding(12, 0).BorderWidth(1, 0, 0, 0).BorderColor(tok.border)
+				ui.Row(c).FillWidth().Padding(8, 10).Radius(tok.radiusS).Background(tok.sunken).
+					Border(1, tok.border).Children(func() {
+					ui.Text(c, hint).FontSize(tok.caption).TextColor(tok.muted)
+				})
 			}
 			return
 		}
-		ui.Row(c.Key("lane-head")).FillWidth().Gap(6).Padding(2, 0, 4, 0).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(tok.border).Children(func() {
+		ui.Row(c.Key("lane-head")).FillWidth().Gap(6).Padding(4, 6).AlignItems(ui.Center).
+			Background(tok.sunken).Radius(tok.radiusS).BorderWidth(1, 0, 1, 0).BorderColor(tok.border).Children(func() {
 			head := func(label string) ui.Element {
 				return ui.Text(c, label).FontSize(tok.caption).FontWeight(600).TextColor(tok.muted).SingleLine()
 			}
@@ -107,18 +109,15 @@ func (a *App) laneRow(c *ui.Context, ln tasks.AccountLane, i int) {
 	winW, _ := c.Size()
 	isAgy := ln.Platform == agy.Platform
 	compact := winW < 1150
-	row := ui.Row(c.Key(ln.ID)).FillWidth().Height(laneRowH).Gap(6).Padding(3, 0).AlignItems(ui.Center).
+	row := ui.Row(c.Key(ln.ID)).FillWidth().Height(laneRowH).Gap(6).Padding(3, 6).AlignItems(ui.Center).
 		Radius(tok.radiusS).Label("车道"+ln.Name).Transition(laneEnter(i)).BorderWidth(0, 0, 1, 0).BorderColor(tok.border.Alpha(0.6))
-	if row.Hovered() {
+	switch {
+	case row.Hovered():
 		row.Background(tok.sunken)
-	}
-	if ln.State == tasks.LaneRunning && !c.Preferences().ReduceMotion {
-		row.DrawOver(func(p *ui.Painter, r ui.Rect) {
-			p.AnimationFrame()
-			phase := float32(p.Now().UnixMilli()%1400) / 1400
-			wave := float32(0.5 + 0.5*math.Sin(float64(phase)*2*math.Pi))
-			p.Fill(ui.Rect{X: r.X, Y: r.Y + 6, W: 2, H: r.H - 12}, tok.accent.Alpha(0.35+0.5*wave), 1)
-		})
+	case ln.State == tasks.LaneRunning:
+		row.Background(tok.accent.Alpha(0.05))
+	case i%2 == 1:
+		row.Background(tok.rail)
 	}
 	stateW, quotaW, opsW, accountGrow, taskGrow := laneColumns(winW, isAgy)
 	row.Children(func() {
