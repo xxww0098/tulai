@@ -35,32 +35,72 @@ func (l Level) String() string {
 	return "?"
 }
 
-// Entry 一条日志。
+// Entry 一条界面日志。正文和详情在入环时已脱敏；磁盘上的原始行不改。
 type Entry struct {
-	Time  time.Time
-	Level Level
-	Text  string
+	Seq     int
+	Time    time.Time
+	Level   Level
+	Text    string
+	Source  string
+	Detail  string
+	Elapsed time.Duration
 }
 
 // Log 全局日志实例。
 var Log = New(8000)
 
-// Logger 线程安全的环形日志，支持一个订阅回调（UI 刷新用）。
+// Logger 线程安全的环形日志。sink 给界面醒一帧；subs 是面板自己的订阅，关闭时卸掉。
 type Logger struct {
 	mu     sync.Mutex
 	buf    []Entry
 	max    int
+	seq    int
 	sink   func(Entry)
+	subs   map[int]func(Entry)
+	subID  int
 	onSink sync.Once
 }
 
 // New 创建容量 max 的日志器。
 func New(max int) *Logger { return &Logger{buf: make([]Entry, 0, max), max: max} }
 
-// SetSink 设置订阅回调（只允许设置一次，在 UI 就绪时调用）。
+// SetSink 设置界面醒帧回调。后一次替换前一次。
 func (l *Logger) SetSink(fn func(Entry)) {
+	if l == nil {
+		return
+	}
 	l.mu.Lock()
 	l.sink = fn
+	l.mu.Unlock()
+}
+
+// Subscribe 登记一个订阅。返回的函数卸掉它；卸掉之后新日志不再送给这次订阅，再订一次又会收到。
+func (l *Logger) Subscribe(fn func(Entry)) (cancel func()) {
+	if l == nil || fn == nil {
+		return func() {}
+	}
+	l.mu.Lock()
+	if l.subs == nil {
+		l.subs = map[int]func(Entry){}
+	}
+	l.subID++
+	id := l.subID
+	l.subs[id] = fn
+	l.mu.Unlock()
+	return func() {
+		l.mu.Lock()
+		delete(l.subs, id)
+		l.mu.Unlock()
+	}
+}
+
+// Clear 只丢掉内存里的面板缓冲。不删日志文件，也不动任务。
+func (l *Logger) Clear() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.buf = l.buf[:0]
 	l.mu.Unlock()
 }
 

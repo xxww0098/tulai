@@ -2,8 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"math"
-	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -194,22 +192,6 @@ func (a *App) topbarLogControl(c *ui.Context) {
 			}
 		})
 	})
-
-	if !a.logOpen {
-		return
-	}
-	winW, winH := c.Size()
-	popW := min(float32(460), max(float32(300), winW-24))
-	popH := min(float32(360), max(float32(200), winH-topbarH-20))
-	ui.PopoverBase(c, b, &a.logOpen, func(panel ui.Element) {
-		panel.AttachTo(b, ui.AnchorBottomRight, ui.AnchorTopRight).Margin(4, 0, 0, 0).
-			AttachEdgeMargin(8).Width(popW).Height(popH).Padding(8).Radius(tok.radiusM).
-			Background(tok.card).Border(1, tok.border).Shadow(0, 8, 24, 0, tok.lift).
-			Transition(motionPopup())
-		panel.Children(func() {
-			a.runLog(c, true)
-		})
-	})
 }
 
 func (a *App) navRail(c *ui.Context) {
@@ -351,100 +333,6 @@ func railTip(c *ui.Context, anchor ui.Element, text string) {
 			Shadow(0, 4, 14, 0, ui.RGBA(16, 32, 64, 0.18)).Transition(motionPopup())
 		tip.Children(func() {
 			ui.Text(c, text).FontSize(11).SingleLine()
-		})
-	})
-}
-
-// logLineH 是运行日志一行的高度。跟视口对齐后，贴底滚动不会把第一行切掉半个字。
-const logLineH float32 = 17
-
-// logTailPad 让内容高度减去视口之后正好是整行。贴底时视口顶部落在行边界上。
-func logTailPad(viewport float32) float32 {
-	if viewport <= 1 {
-		return 0
-	}
-	rem := math.Mod(float64(viewport), float64(logLineH))
-	if rem < 0.01 {
-		return 0
-	}
-	return float32(rem)
-}
-
-// runLog 在顶部日志弹出面板（或测试独立容器）里展示运行日志，贴底时自动跟随最新一行。
-func (a *App) runLog(c *ui.Context, fill bool) {
-	tok := a.look
-	card := ui.Column(c.Key("run-log")).Label("运行日志区").FillWidth().Gap(4)
-	if fill {
-		card.Grow(1).MinHeight(0)
-	}
-	limit := 6
-	if fill {
-		limit = 300
-	}
-	card.Children(func() {
-		notes := logging.VisibleTail(logging.Log.Entries(), limit)
-		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, iconTerminal).FontSize(12).TextColor(tok.muted)
-			ui.Text(c, "运行日志").FontSize(tok.body).Bold()
-			if len(notes) > 0 {
-				ui.Row(c).Height(16).Padding(0, 5).Radius(999).Center().Background(tok.sunken).Children(func() {
-					ui.Text(c, fmt.Sprintf("%d", len(notes))).FontSize(9.5).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
-				})
-			}
-			ui.Spacer(c)
-			uiIconBtn(c, "open-log", "打开日志文件", "打开日志文件", iconExternalLink, 20, false, false, tok).
-				OnClick(func() { a.openLogFile() })
-			if a.logOpen {
-				uiIconBtn(c, "close-log", "收起", "关闭日志面板", iconX, 20, false, true, tok).
-					OnClick(func() { a.logOpen = false })
-			}
-		})
-		if len(notes) == 0 {
-			ui.Text(c, "每个任务的开始、提交和结束会写在这里").FontSize(tok.caption).TextColor(tok.muted)
-			return
-		}
-		lines := func() {
-			for _, line := range notes {
-				bg := tok.sunken
-				switch line.Level {
-				case logging.Success:
-					bg = tok.success.Alpha(0.14)
-				case logging.Warning:
-					bg = tok.warning.Alpha(0.14)
-				case logging.Error:
-					bg = tok.danger.Alpha(0.14)
-				}
-				msg := strings.TrimSpace(line.Text)
-				ui.Row(c).FillWidth().Height(logLineH).Gap(5).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, line.Time.Local().Format("15:04:05")).Width(52).Shrink(0).
-						FontSize(tok.caption).FontFeatures("tnum").TextColor(tok.muted).SingleLine()
-					ui.Row(c).Size(28, 15).Shrink(0).Radius(4).Background(bg).Center().Children(func() {
-						ui.Text(c, line.Level.String()).FontSize(9).TextColor(tok.text).SingleLine()
-					})
-					ui.Text(c, msg).Grow(1).MinWidth(0).FontSize(tok.caption).TextColor(tok.text).
-						SingleLine().Tooltip(msg)
-				})
-			}
-		}
-		if !fill {
-			lines()
-			return
-		}
-		if a.logScroll.Y >= a.logScroll.MaxY {
-			a.logScroll.Y = math.MaxFloat32
-		}
-		scroll := ui.Scroll(c.Key("run-log-lines")).Label("运行日志内容").FillWidth().Grow(1).MinHeight(0)
-		pad := float32(0)
-		if a.logScroll.MaxY > 0 {
-			pad = logTailPad(scroll.Bounds().H)
-		}
-		scroll.TrackScroll(&a.logScroll).Children(func() {
-			ui.Column(c).FillWidth().Gap(0).Children(func() {
-				lines()
-				if pad > 0.5 {
-					ui.Box(c.Key("log-pad")).Height(pad)
-				}
-			})
 		})
 	})
 }

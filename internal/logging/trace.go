@@ -142,8 +142,8 @@ func Emit(level Level, line Line) {
 		line.Stage = "log"
 	}
 	writeLine(level, line)
-	if line.Msg != "" {
-		Log.addRaw(level, line.Msg)
+	if strings.TrimSpace(line.Msg) != "" || strings.TrimSpace(line.Error) != "" {
+		Log.record(level, line)
 	}
 }
 
@@ -172,21 +172,42 @@ func writeLine(level Level, line Line) {
 	}
 }
 
-func (l *Logger) addRaw(level Level, msg string) {
+func (l *Logger) record(level Level, line Line) {
 	if l == nil {
 		return
 	}
-	e := Entry{Time: time.Now(), Level: level, Text: msg}
+	line = boundLine(line)
 	l.mu.Lock()
-	if len(l.buf) >= l.max {
-		l.buf = l.buf[1:]
+	l.seq++
+	entry := Entry{
+		Seq:     l.seq,
+		Time:    time.Now(),
+		Level:   level,
+		Text:    Redact(line.Msg),
+		Source:  SourceOf(line),
+		Detail:  Redact(entryDetail(line)),
+		Elapsed: line.Elapsed,
 	}
-	l.buf = append(l.buf, e)
+	l.buf = append(l.buf, entry)
+	if l.max > 0 && len(l.buf) > l.max {
+		l.buf = append([]Entry(nil), l.buf[len(l.buf)-l.max:]...)
+	}
 	sink := l.sink
+	subs := make([]func(Entry), 0, len(l.subs))
+	for _, fn := range l.subs {
+		subs = append(subs, fn)
+	}
 	l.mu.Unlock()
 	if sink != nil {
-		sink(e)
+		sink(entry)
 	}
+	for _, fn := range subs {
+		fn(entry)
+	}
+}
+
+func (l *Logger) addRaw(level Level, msg string) {
+	l.record(level, Line{Msg: msg})
 }
 
 type boundAccount struct {
@@ -250,6 +271,7 @@ func boundLine(line Line) Line {
 }
 
 func (l *Logger) add(level Level, msg string) {
-	l.addRaw(level, msg)
-	writeLine(level, boundLine(Line{Stage: "log", Msg: msg}))
+	line := boundLine(Line{Msg: msg})
+	l.record(level, line)
+	writeLine(level, line)
 }
