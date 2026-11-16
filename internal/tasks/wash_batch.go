@@ -73,6 +73,7 @@ func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImage
 		if batch[i].splitModeration {
 			first.splitModeration = true
 		}
+		first.sendSeq = max(first.sendSeq, batch[i].sendSeq)
 	}
 	first.batch = batch
 	return first, indices

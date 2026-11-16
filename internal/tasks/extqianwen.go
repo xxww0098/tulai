@@ -124,6 +124,14 @@ func (e *Engine) currentExtBatch() string {
 	return e.extBatch
 }
 
+func (e *Engine) extIdempotencyPrefix(t *Task) string {
+	base := e.currentExtBatch() + ":" + strconv.Itoa(t.Index)
+	if t == nil || t.sendSeq <= 0 {
+		return base
+	}
+	return base + ":" + strconv.Itoa(t.sendSeq)
+}
+
 func (e *Engine) closeExtensionBridge() {
 	e.extStartMu.Lock()
 	defer e.extStartMu.Unlock()
@@ -739,7 +747,7 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 	}
 	out, err := runExtension(ctx, sess, QianwenJob{
 		TaskID:            strconv.Itoa(t.Index),
-		IdempotencyPrefix: e.currentExtBatch() + ":" + strconv.Itoa(t.Index),
+		IdempotencyPrefix: e.extIdempotencyPrefix(t),
 		Prompt:            prompt,
 		Ratio:             nativeRatio,
 		Images:            t.Images,
@@ -764,6 +772,11 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		t.submitted = true
 		t.sentAt = out.SubmittedAt
 		logging.Log.Info("#%d 已发送提示词（%.20s…）", t.Index, t.Prompt)
+	} else if !t.submitted && out.sendAttempted && err != nil &&
+		!errors.Is(err, strategy.ErrSubmissionUncertain) &&
+		!errors.Is(err, captcha.ErrVerificationRequired) &&
+		extbridge.CodeOf(err) != extbridge.ETimeout {
+		t.sendSeq++
 	}
 	if boundWash {
 		saveAt := time.Now()

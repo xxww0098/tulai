@@ -547,6 +547,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		}
 		if errors.Is(err, strategy.ErrPlatformReply) {
 			t.submitted = false
+			t.sendSeq++
 			t.sentURL, t.sentWrap = "", ""
 			name := e.accountName(t.ranOnOr(t.BrowserID))
 			if !t.replyRetried {

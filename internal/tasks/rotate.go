@@ -128,6 +128,7 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	task.BrowserID = next
 	task.avoidBrowser = 0
 	task.submitted = false
+	task.sendSeq++
 	task.sentURL, task.sentWrap = "", ""
 	task.chatGPT = nil
 	task.rotated = true
@@ -154,6 +155,7 @@ func (e *Engine) rotateOnFailure(task *Task, now time.Time) bool {
 	task.avoidBrowser = current
 	task.BrowserID = next
 	task.submitted = false
+	task.sendSeq++
 	task.sentURL, task.sentWrap = "", ""
 	task.chatGPT = nil
 	task.rotated = true

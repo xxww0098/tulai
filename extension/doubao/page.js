@@ -135,6 +135,65 @@ globalThis.TULAIPage = (function () {
     return walk(comp).replace(/\n$/, '')
   }
 
+  function isLockedChild(node) {
+    if (!node || node.nodeType !== 1) return false
+    if (node.getAttribute && (node.getAttribute('contenteditable') === 'false' || node.getAttribute('data-testid') === 'skill_input_exit_button')) return true
+    return all(node, '[contenteditable="false"],[data-testid="skill_input_exit_button"]').length > 0
+  }
+
+  function setEditableWithChips(comp, doc, text) {
+    const kids = Array.from(comp.childNodes || [])
+    let lastLocked = null
+    let lastLockedIdx = -1
+    const unlocked = []
+    for (let i = 0; i < kids.length; i++) {
+      if (isLockedChild(kids[i])) {
+        lastLocked = kids[i]
+        lastLockedIdx = i
+      } else {
+        unlocked.push({ node: kids[i], index: i })
+      }
+    }
+    const unlockedBefore = unlocked.some(function (item) { return item.index < lastLockedIdx })
+    let inserted = false
+    if (!unlockedBefore) {
+      try {
+        const sel = doc && doc.getSelection && doc.getSelection()
+        const range = doc && doc.createRange && doc.createRange()
+        if (sel && range) {
+          if (lastLocked) range.setStartAfter(lastLocked)
+          else range.selectNodeContents(comp)
+          range.setEnd(comp, kids.length)
+          sel.removeAllRanges()
+          sel.addRange(range)
+          inserted = !!(doc.execCommand && doc.execCommand('insertText', false, text))
+        }
+      } catch (e) {
+        inserted = false
+      }
+    }
+    if (!inserted) {
+      for (let i = 0; i < unlocked.length; i++) {
+        const node = unlocked[i].node
+        if (typeof comp.removeChild === 'function') {
+          try { comp.removeChild(node) } catch (e) {}
+        } else if (Array.isArray(comp.childNodes)) {
+          const idx = comp.childNodes.indexOf(node)
+          if (idx !== -1) comp.childNodes.splice(idx, 1)
+          if (Array.isArray(comp.children)) {
+            const cidx = comp.children.indexOf(node)
+            if (cidx !== -1) comp.children.splice(cidx, 1)
+          }
+        }
+      }
+      const textNode = doc && typeof doc.createTextNode === 'function'
+        ? doc.createTextNode(text)
+        : { nodeType: 3, nodeValue: text }
+      if (typeof comp.appendChild === 'function') comp.appendChild(textNode)
+      else if (Array.isArray(comp.childNodes)) comp.childNodes.push(textNode)
+    }
+  }
+
   function setComposer(comp, text) {
     if (!comp) return false
     if (typeof comp.focus === 'function') comp.focus()
@@ -148,16 +207,22 @@ globalThis.TULAIPage = (function () {
       dispatchInput(comp, text)
       return normalize(readComposer(comp)) === normalize(text)
     }
-    try {
-      const sel = (comp.ownerDocument || document).getSelection()
-      const range = (comp.ownerDocument || document).createRange()
-      range.selectNodeContents(comp)
-      sel.removeAllRanges()
-      sel.addRange(range)
-      const doc = comp.ownerDocument || document
-      if (!doc.execCommand || !doc.execCommand('insertText', false, text)) comp.textContent = text
-    } catch (e) {
-      comp.textContent = text
+    const doc = comp.ownerDocument || (typeof document !== 'undefined' ? document : null)
+    if (all(comp, '[contenteditable="false"],[data-testid="skill_input_exit_button"]').length > 0) {
+      setEditableWithChips(comp, doc, text)
+    } else {
+      try {
+        const sel = doc && doc.getSelection && doc.getSelection()
+        const range = doc && doc.createRange && doc.createRange()
+        if (sel && range) {
+          range.selectNodeContents(comp)
+          sel.removeAllRanges()
+          sel.addRange(range)
+        }
+        if (!doc || !doc.execCommand || !doc.execCommand('insertText', false, text)) comp.textContent = text
+      } catch (e) {
+        comp.textContent = text
+      }
     }
     dispatchInput(comp, text)
     return normalize(readComposer(comp)) === normalize(text)
@@ -207,8 +272,39 @@ globalThis.TULAIPage = (function () {
     return closest(comp, '[data-testid="chat_input"]') || attachmentScope(comp, uploadEntry(doc, comp))
   }
 
+  const SIBLING_SKILL_RE = /^(PPT\s*生成|帮我写作|视频生成|录音转写|更多技能|AI\s*搜索|音乐生成)$/
+
+  function hasSiblingSkillButton(scope, exclude) {
+    return all(scope, 'button,[role="button"]').some(function (el) {
+      return el !== exclude && visible(el) && SIBLING_SKILL_RE.test(normalize(el.innerText))
+    })
+  }
+
+  function skillToolbarScope(doc) {
+    const base = imageModeScope(doc)
+    if (!base) return null
+    for (let node = base, depth = 0; node && node !== doc.body && depth <= 3; node = node.parentElement, depth++) {
+      if (depth > 0 && all(node, USER_Q + ',' + ASSISTANT_Q + ',nav,aside').length) break
+      if (hasSiblingSkillButton(node, null)) return node
+    }
+    return base
+  }
+
+  function inSkillToolbar(el) {
+    if (closest(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]') ||
+        all(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]').length) {
+      return true
+    }
+    const body = (el && el.ownerDocument && el.ownerDocument.body) || null
+    for (let bar = el && el.parentElement, depth = 0; bar && bar !== body && depth <= 4; bar = bar.parentElement, depth++) {
+      if (all(bar, USER_Q + ',' + ASSISTANT_Q + ',nav,aside').length) break
+      if (hasSiblingSkillButton(bar, el)) return true
+    }
+    return false
+  }
+
   function imageModeControl(doc) {
-    const scope = imageModeScope(doc)
+    const scope = skillToolbarScope(doc) || imageModeScope(doc)
     const direct = all(scope, '[data-testid="skill_bar_button_3"],[data-skill-id="skill_bar_button_3"]').find(enabled)
     if (direct) return direct
     const bars = all(scope, '[data-testid="guidance-skill-bar"]')
@@ -222,6 +318,12 @@ globalThis.TULAIPage = (function () {
       return enabled(el) && exactText(el, '图像生成')
     })
     if (item) return item
+    if (scope && hasSiblingSkillButton(scope, null)) {
+      const btn = all(scope, 'button,[role="button"]').find(function (el) {
+        return enabled(el) && exactText(el, '图像生成') && !closest(el, '[data-testid="skill_input_exit_button"]')
+      })
+      if (btn) return btn
+    }
     const menus = all(doc, '[role="menu"][data-state="open"],[role="listbox"][data-state="open"],[data-radix-popper-content-wrapper]').filter(visible)
     for (let i = 0; i < menus.length; i++) {
       const entry = all(menus[i], 'button,[role="menuitem"],[role="option"],[data-component-type="skill-item"]').find(function (el) {
@@ -238,12 +340,12 @@ globalThis.TULAIPage = (function () {
     if (all(scope, '[data-testid="skill_input_exit_button"]').some(function (el) {
       return visible(el) && exactText(el, '图像生成')
     })) return true
+    if (ratioControl(doc)) return true
     return all(scope, 'button,[role="button"],span,div').some(function (el) {
       if (!visible(el) || !exactText(el, '图像生成')) return false
       if (el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true') return true
       // 普通工具栏始终有同名入口，只有输入区里的已选模式标签才算切换成功。
-      return !closest(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]') &&
-        !all(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]').length
+      return !inSkillToolbar(el)
     })
   }
 
@@ -273,7 +375,11 @@ globalThis.TULAIPage = (function () {
         clicks++
         lastClick = Date.now()
       } else if (!control && !moreOpened) {
-        const more = all(imageModeScope(doc), '[data-testid="skill_bar_button_more"]').find(enabled)
+        const toolbar = skillToolbarScope(doc)
+        const more = all(toolbar, '[data-testid="skill_bar_button_more"]').find(enabled) ||
+          all(toolbar, 'button,[role="button"]').find(function (el) {
+            return enabled(el) && exactText(el, '更多技能')
+          })
         if (more) {
           moreOpened = true
           activate(more)

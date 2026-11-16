@@ -102,6 +102,9 @@ func ClassifyFailure(status Status, raw string) FailHint {
 		return FailHint{FailUnknown, "出图失败，请重试", "重试"}
 	}
 	if isModeration(errors.New(text)) {
+		if strings.Contains(text, "版权") {
+			return FailHint{FailModeration, "触发版权限制，无法生成", "改提示词重试"}
+		}
 		return FailHint{FailModeration, "这条内容没通过审核", "改提示词重试"}
 	}
 	switch classifyFault(errors.New(text)) {
@@ -209,6 +212,7 @@ func (e *Engine) softenModeration(t *Task, err error) (again, stop bool) {
 	t.Rewritten = true
 	t.soften++
 	t.submitted = false
+	t.sendSeq++
 	t.sentURL, t.sentWrap = "", ""
 	t.Error = ""
 	if t.Attempts > 0 {

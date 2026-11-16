@@ -533,7 +533,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				(soloFails < 3 || splitSaves > 0) {
 				subLimit := max(1, len(t.batch)/2)
 				logging.Log.Info("[queue]  #%d-%d 豆包批次触发内容审核，自动拆分为每批最多 %d 张重试", t.batch[0].Index, t.batch[len(t.batch)-1].Index, subLimit)
-				split := splitModerationBatch(t.batch, subLimit)
+				split := splitModerationBatch(t.batch, subLimit, t.sendSeq+1)
 				pending = append(split, pending...)
 				for _, item := range split {
 					if e.view != nil {
@@ -609,7 +609,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 	}
 }
 
-func splitModerationBatch(batch []Task, subLimit int) []Task {
+func splitModerationBatch(batch []Task, subLimit, nextSendSeq int) []Task {
 	split := make([]Task, 0, len(batch))
 	for _, orig := range batch {
 		orig.BrowserID = 0
@@ -623,6 +623,7 @@ func splitModerationBatch(batch []Task, subLimit int) []Task {
 		orig.slot = 0
 		orig.ranOn = 0
 		orig.submitted = false
+		orig.sendSeq = nextSendSeq
 		orig.noUse = false
 		orig.sentAt = time.Time{}
 		orig.batch = nil

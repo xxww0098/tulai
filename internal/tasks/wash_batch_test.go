@@ -3,13 +3,17 @@ package tasks
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -873,5 +877,213 @@ func TestSoloImagesAndRebuildRetryPreventRebundling(t *testing.T) {
 	}
 	if !reflect.DeepEqual(retryBatches, wantRetryBatches) {
 		t.Fatalf("RebuildRetry bundles mismatch: got %v want %v", retryBatches, wantRetryBatches)
+	}
+}
+
+func TestDoubaoExtensionCopyrightBatchSplitsWithoutSendCacheCollision(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	addNamed(t, st, "豆包", "甲")
+
+	dir := t.TempDir()
+	names := []string{"01.png", "02.png", "copyright.png", "04.png"}
+	sources := make([]string, len(names))
+	srcByBytes := map[string]string{}
+	outByName := map[string][]byte{}
+	for i, name := range names {
+		srcData := resultPNG(t, byte(i+1))
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, srcData, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sources[i] = p
+		srcByBytes[string(srcData)] = name
+		outByName[name] = resultPNG(t, byte(i+60))
+	}
+
+	var mu sync.Mutex
+	var attachments []string
+	var uploadedSources []string
+	var pageMark bool
+	var conversation string
+	convSeq := 0
+	const tabID = 7
+
+	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
+		mu.Lock()
+		defer mu.Unlock()
+		name, _ := env.Name()
+		switch name {
+		case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt:
+			return ackOK(env, map[string]any{"captchaBlocked": false})
+		case extbridge.CmdWashChat:
+			var p struct {
+				Mode     string `json:"mode"`
+				Expected string `json:"expected"`
+			}
+			_ = json.Unmarshal(env.Payload, &p)
+			switch p.Mode {
+			case "ready":
+				return ackOK(env, map[string]any{"ready": conversation == "", "tabId": tabID})
+			case "fresh":
+				conversation = ""
+				pageMark = false
+				attachments = nil
+				uploadedSources = nil
+				return ackOK(env, map[string]any{"tabId": tabID})
+			case "check":
+				return ackOK(env, map[string]any{
+					"reusable":     conversation != "" && conversation == p.Expected,
+					"conversation": conversation,
+					"tabId":        tabID,
+				})
+			default:
+				return ackFail(env, extbridge.EProtocol, "unexpected washChat mode")
+			}
+		case extbridge.CmdUpload:
+			var p struct {
+				FileName   string `json:"fileName"`
+				DataBase64 string `json:"dataBase64"`
+				Finish     bool   `json:"finish"`
+				Clean      bool   `json:"clean"`
+			}
+			_ = json.Unmarshal(env.Payload, &p)
+			if p.Clean {
+				attachments = nil
+				uploadedSources = nil
+			}
+			if p.Finish {
+				raw, err := base64.StdEncoding.DecodeString(p.DataBase64)
+				if err != nil {
+					return ackFail(env, extbridge.EUploadFail, err.Error())
+				}
+				srcName := srcByBytes[string(raw)]
+				attachments = append(attachments, p.FileName)
+				uploadedSources = append(uploadedSources, srcName)
+			}
+			return ackOK(env, map[string]any{"attachments": append([]string(nil), attachments...)})
+		case extbridge.CmdSend:
+			pageMark = true
+			if conversation == "" {
+				convSeq++
+				conversation = fmt.Sprintf("https://www.doubao.com/chat/conv-%d", convSeq)
+			}
+			return ackOK(env, nil)
+		case extbridge.CmdWaitResult:
+			if !pageMark {
+				return ackFail(env, extbridge.ESelectorMiss, "还没有本轮发送标记，不能收集结果")
+			}
+			if slices.Contains(uploadedSources, "copyright.png") {
+				return ackFail(env, extbridge.EModeration, "审核不通过: 抱歉，由于版权相关限制，暂时无法创作对应的内容，换其他主题试试吧。")
+			}
+			images := make([]map[string]any, len(uploadedSources))
+			for i, srcName := range uploadedSources {
+				images[i] = map[string]any{
+					"url":         "https://cdn.example/" + srcName,
+					"rawUrl":      "https://cdn.example/" + srcName,
+					"sourceIndex": i + 1,
+				}
+			}
+			return ackOK(env, map[string]any{
+				"conversation": conversation,
+				"tabId":        tabID,
+				"images":       images,
+			})
+		case extbridge.CmdDownload:
+			var p struct {
+				URL    string `json:"url"`
+				Offset int    `json:"offset"`
+			}
+			_ = json.Unmarshal(env.Payload, &p)
+			srcName := strings.TrimPrefix(p.URL, "https://cdn.example/")
+			return chunkAck(env, outByName[srcName], p.Offset)
+		default:
+			return ackFail(env, extbridge.EProtocol, name)
+		}
+	})
+
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+
+	var progress Progress
+	err := e.RunObserved(context.Background(), Options{
+		Platforms:  []string{"豆包"},
+		Prompts:    []string{"数字油画洗图"},
+		Images:     sources,
+		Wash:       true,
+		Concurrency: 1,
+		RetryCount: 2,
+		WaitResult: true,
+		DailyCap:   100,
+		OutputPath: filepath.Join(dir, "out"),
+	}, func(Task) {}, func(p Progress) { progress = p }, func(ctx context.Context, task *Task) error {
+		var wash extensionWashChat
+		var err error
+		if task.submitted {
+			e.clearExtensionWash(task.BrowserID)
+		} else {
+			wash, err = e.prepareExtensionWash(ctx, sess, task)
+			if err != nil {
+				return err
+			}
+		}
+		out, err := runExtension(ctx, sess, QianwenJob{
+			TaskID:            strconv.Itoa(task.Index),
+			IdempotencyPrefix: e.extIdempotencyPrefix(task),
+			Prompt:            task.Prompt,
+			Images:            task.Images,
+			Wait:              5 * time.Second,
+			SkipSubmit:        task.submitted,
+			VerifyAttachments: true,
+		}, "豆包")
+		if out.Submitted {
+			task.submitted = true
+			task.sentAt = out.SubmittedAt
+		} else if !task.submitted && out.sendAttempted && err != nil &&
+			!errors.Is(err, strategy.ErrSubmissionUncertain) &&
+			extbridge.CodeOf(err) != extbridge.ETimeout {
+			task.sendSeq++
+		}
+		saveErr := e.saveExtensionWash(ctx, task, out.Results, out.sourceIndices, err)
+		if task.submitted {
+			e.finishExtensionWash(task, wash, out, saveErr == nil && ctx.Err() == nil)
+		} else {
+			e.clearExtensionWash(task.BrowserID)
+		}
+		return saveErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.Done != 4 || progress.Total != 4 {
+		t.Fatalf("unexpected progress: %+v", progress)
+	}
+	snap := e.View().Snapshot()
+	if len(snap) != 4 {
+		t.Fatalf("queue len = %d", len(snap))
+	}
+	for i, item := range snap {
+		name := names[i]
+		if name == "copyright.png" {
+			if item.Status != StatusFailed {
+				t.Fatalf("copyright item should fail, got %+v", item)
+			}
+			if strings.Contains(item.Error, "还没有本轮发送标记") || strings.Contains(item.Error, "发送状态未确认") {
+				t.Fatalf("idempotency cache collided on copyright item: %q", item.Error)
+			}
+			hint := ClassifyFailure(item.Status, item.Error)
+			if hint.Class != FailModeration || hint.Sentence != "触发版权限制，无法生成" {
+				t.Fatalf("unexpected failure hint: %+v (err=%q)", hint, item.Error)
+			}
+			continue
+		}
+		if item.Status != StatusSuccess || len(item.Results) != 1 {
+			t.Fatalf("healthy item %s failed: %+v", name, item)
+		}
+		got, readErr := os.ReadFile(item.Results[0])
+		if readErr != nil || !bytes.Equal(got, outByName[name]) {
+			t.Fatalf("healthy item %s saved wrong content: err=%v", name, readErr)
+		}
 	}
 }

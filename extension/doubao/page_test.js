@@ -375,6 +375,30 @@ async function testImageMode() {
   assert.strictEqual((await Page.ensureImageMode(skillBar.doc, null, 800)).ok, true, '技能栏文本按钮也要能点击')
   assert.strictEqual(guidanceBtn.clicked, 1)
 
+  const newBar = surface()
+  const row = newBar.box.parentElement.append(new El('div'))
+  const imgBtn = row.append(new El('button')).addText('图像生成')
+  row.append(new El('button')).addText('PPT生成')
+  row.append(new El('button')).addText('更多技能')
+  imgBtn.click = function () {
+    imgBtn.clicked = (imgBtn.clicked || 0) + 1
+    newBar.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+  }
+  assert.strictEqual(Page.imageModeActive(newBar.doc), false, '新版技能栏未选中图像生成时不能误判已激活')
+  assert.strictEqual((await Page.ensureImageMode(newBar.doc, null, 800)).ok, true, '新版技能栏应能点击图像生成并激活')
+  assert.strictEqual(imgBtn.clicked, 1)
+
+  const editableDoc = makeDoc('www.doubao.com')
+  const editableWrap = editableDoc.body.append(new El('div', { class: 'guidance-input-surface' }))
+  const editableComp = editableWrap.append(new El('div', { contenteditable: 'true' }))
+  editableComp.append(new El('div', { 'data-testid': 'skill_input_exit_button', contenteditable: 'false' })).addText('图像生成')
+  assert.strictEqual(Page.setComposer(editableComp, '数字油画洗图'), true, '含技能退出标签的 contenteditable 输入框应能写入提示词')
+  assert.strictEqual(Page.readComposer(editableComp), '数字油画洗图')
+  assert.strictEqual(Page.imageModeActive(editableDoc), true, '写入提示词后不能抹掉图像生成模式标签')
+  assert.strictEqual(Page.setComposer(editableComp, '第二轮洗图'), true)
+  assert.strictEqual(Page.readComposer(editableComp), '第二轮洗图')
+  assert.strictEqual(Page.imageModeActive(editableDoc), true)
+
   const guest = surface()
   guest.doc.body.append(new El('button')).addText('登录')
   assert.strictEqual(Page.loginWall(guest.doc), false, '仅有底部输入框和登录按钮时不直接破坏原有判定')

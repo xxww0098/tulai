@@ -20,6 +20,7 @@ func TestClassifyFailure(t *testing.T) {
 		button string
 	}{
 		{StatusFailed, "审核不通过: 内容不符合规范", FailModeration, "改提示词重试"},
+		{StatusFailed, "审核不通过: 抱歉，由于版权相关限制，暂时无法创作对应的内容", FailModeration, "改提示词重试"},
 		{StatusFailed, strategy.ErrModeration.Error(), FailModeration, "改提示词重试"},
 		{StatusFailed, "E_MODERATION: 疑似敏感", FailModeration, "改提示词重试"},
 		{StatusFailed, "登录已失效", FailAuth, "去重登"},
@@ -64,6 +65,7 @@ func TestClassifyFailureNamesTheCategory(t *testing.T) {
 		{StatusSkipped, "已停止", "已停止", FailUnknown},
 		{StatusSkipped, "", "已停止", FailUnknown},
 		{StatusFailed, "账号额度已用尽", "账号额度已用完", FailQuota},
+		{StatusFailed, "审核不通过: 抱歉，由于版权相关限制，暂时无法创作对应的内容", "触发版权限制，无法生成", FailModeration},
 		{StatusFailed, "登录已失效", "登录失效了，请重新登录", FailAuth},
 		{StatusFailed, "结果缺少来源；2 张未匹配结果保存在 /tmp/待核对", "结果已放入待核对，请检查", FailUnmatched},
 		{StatusFailed, "未按源图保存", "无法确认图片对应关系，请检查豆包页面", FailUnknown},

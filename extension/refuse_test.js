@@ -18,10 +18,14 @@ const hits = [
   'The image content does not comply with green network verification.',
   '换个话题聊聊吧',
   '我还没学会如何回答这个问题',
+  '抱歉，由于版权相关限制，暂时无法创作对应的内容，换其他主题试试吧。',
+  '很抱歉，由于安全审核原因，图片无法生成。',
+  '该图片涉及版权保护，暂时无法创作相关内容',
 ]
 for (const text of hits) {
   assert.ok(match(text), 'should match: ' + text)
 }
+assert.ok(match('抱歉，由于版权相关限制，暂时无法创作对应的内容，换其他主题试试吧。').includes('版权'))
 
 assert.strictEqual(match('画一只在窗台上的猫，水彩'), '')
 assert.strictEqual(match(''), '')
