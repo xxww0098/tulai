@@ -46,11 +46,17 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	if a == nil || b.ExtAccount != "" || a.manager == nil {
 		return nil
 	}
-	a.mu.Lock()
-	viewing := a.browserViewingID == b.ID
-	a.mu.Unlock()
-	if viewing {
-		return nil
+	if a.manager.IsHeadless(b.ID) && !a.browserDrawerBusy(b.ID) {
+		// 无头页面里豆包验证码图片可能显示不出来、刷新也不变；登录和验证改在有窗口的浏览器里做。
+		// 资料目录不变，登录状态保留；下一批任务会照常切回后台浏览器。
+		a.stopHeadlessForWindow(b.ID)
+	} else {
+		a.mu.Lock()
+		viewing := a.browserViewingID == b.ID
+		a.mu.Unlock()
+		if viewing {
+			return nil
+		}
 	}
 	page := accountHomeURL(b)
 	ws, err := a.manager.Start(b, a.dataRoot, a.browserBackend, page, false)
@@ -87,6 +93,30 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 	}
 	a.watchLogin(b, ws)
 	return nil
+}
+
+// stopHeadlessForWindow 先收起正在看这个账号的面板，再关掉后台浏览器，避免面板报「连接已断开」。
+func (a *App) stopHeadlessForWindow(id int64) {
+	closed := make(chan (<-chan struct{}), 1)
+	a.postUI(func() {
+		if s := a.browserDrawer; s != nil && s.row.ID == id {
+			a.closeBrowserDrawer()
+			closed <- s.done
+			return
+		}
+		closed <- nil
+	})
+	select {
+	case done := <-closed:
+		if done != nil {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	case <-time.After(3 * time.Second):
+	}
+	a.manager.Stop(id)
 }
 
 func accountLabel(b store.Browser) string {

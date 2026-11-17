@@ -837,13 +837,22 @@ func (e *Engine) boundAddonDir(row store.Browser) (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cancelIdleCloseLocked(row.ID)
+	account := "tulai-bound-" + strconv.FormatInt(row.ID, 10)
 	if dir := e.firefoxAddons[row.ID]; dir != "" {
+		// 切换「显示浏览器窗口」后浏览器会按新形态重开，届时读到新的配置。
+		info := e.pairInfo()
+		if err := extbundle.WriteFirefoxBridgeSettings(dir, info.Port, info.Token, account, e.browsers.TaskVisible()); err != nil {
+			return "", fmt.Errorf("准备 Firefox 页面桥: %w", err)
+		}
 		return dir, nil
 	}
 	dir, err := os.MkdirTemp("", "tulai-firefox-bridge-")
 	if err == nil {
 		info := e.pairInfo()
-		_, err = extbundle.InstallFirefoxBridge(dir, info.Port, info.Token, "tulai-bound-"+strconv.FormatInt(row.ID, 10))
+		_, err = extbundle.InstallFirefoxBridge(dir, info.Port, info.Token, account)
+		if err == nil && e.browsers.TaskVisible() {
+			err = extbundle.WriteFirefoxBridgeSettings(dir, info.Port, info.Token, account, true)
+		}
 	}
 	if err != nil {
 		if dir != "" {

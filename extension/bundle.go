@@ -269,18 +269,28 @@ func InstallFirefoxBridge(dir, port, token, account string) (string, error) {
 			return "", err
 		}
 	}
-	settings, err := json.Marshal(map[string]string{"port": port, "token": token, "profileId": account})
-	if err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, "firefox", "settings.js")
-	if err := os.WriteFile(path, append([]byte("globalThis.TULAI_FIREFOX_CONFIG = "), append(settings, '\n')...), 0o600); err != nil {
-		return "", err
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := WriteFirefoxBridgeSettings(dir, port, token, account, false); err != nil {
 		return "", err
 	}
 	return dir, nil
+}
+
+// WriteFirefoxBridgeSettings 重写页面桥的本机配置。windowBack 为真时页面桥只切标签、不抢窗口焦点；
+// 浏览器下次加载页面桥时生效。
+func WriteFirefoxBridgeSettings(dir, port, token, account string, windowBack bool) error {
+	fields := map[string]string{"port": port, "token": token, "profileId": account}
+	if windowBack {
+		fields["windowBack"] = "1"
+	}
+	settings, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "firefox", "settings.js")
+	if err := os.WriteFile(path, append([]byte("globalThis.TULAI_FIREFOX_CONFIG = "), append(settings, '\n')...), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // Install 把扩展解压到 <configDir>/extension/<版本>/，并同步到稳定目录 current。

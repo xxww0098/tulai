@@ -425,6 +425,9 @@ async function start(params) {
         'browser.sessionstore.resume_from_crash': false,
         // An aborted operation closes its page; keep the account environment alive.
         'browser.tabs.closeWindowWithLastTab': false,
+        // A visible account window often sits behind other apps; Windows occlusion
+        // tracking would then mark the page hidden and throttle it.
+        ...(params.headless ? {} : { 'widget.windows.window_occlusion_tracking.enabled': false }),
       },
     });
     const identityJSON = Object.keys(options.env).filter(key => /^CAMOU_CONFIG_\d+$/.test(key))

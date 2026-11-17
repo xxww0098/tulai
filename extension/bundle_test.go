@@ -257,3 +257,33 @@ func TestInstallFirefoxBridgeUsesBoundIdentity(t *testing.T) {
 		t.Fatalf("bridge identity configuration: %v", err)
 	}
 }
+
+func TestWriteFirefoxBridgeSettingsWindowBack(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "bridge")
+	if _, err := InstallFirefoxBridge(dir, "18965", "tok", "tulai-bound-1"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "firefox", "settings.js")
+	read := func() string {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if strings.Contains(read(), "windowBack") {
+		t.Fatalf("default install must keep window focus: %s", read())
+	}
+	if err := WriteFirefoxBridgeSettings(dir, "18965", "tok", "tulai-bound-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); !strings.Contains(got, `"windowBack":"1"`) || !strings.Contains(got, `"token":"tok"`) {
+		t.Fatalf("windowBack settings = %s", got)
+	}
+	if err := WriteFirefoxBridgeSettings(dir, "18965", "tok", "tulai-bound-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(read(), "windowBack") {
+		t.Fatalf("switching back must drop windowBack: %s", read())
+	}
+}

@@ -288,11 +288,20 @@ func (a *App) browserDrawerView(c *ui.Context) {
 						}
 					})
 					headless := a.manager != nil && a.manager.IsHeadless(s.row.ID)
-					standalone := uiBtn(ui.Button(c, "独立窗口"), tok).Disabled(s.loading || headless)
+					standalone := uiBtn(ui.Button(c, "独立窗口"), tok).Disabled(s.loading || headless && busy)
 					if headless {
-						standalone.Tooltip("后台运行时请在此接管操作；需要独立窗口可先停止账号再启动")
+						standalone.Tooltip("在有窗口的浏览器里打开这个账号，验证码图片显示不出来时用它处理")
 					}
 					standalone.OnClick(func() {
+						if headless {
+							row := s.row
+							go func() {
+								ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+								defer cancel()
+								_ = a.ensureAccountPage(ctx, row)
+							}()
+							return
+						}
 						go func() {
 							if err := cdp.BringToFront(context.Background(), loginEndpoint(s.row)); err != nil {
 								a.browserDrawerUpdate(s, func() { s.err = "无法唤起浏览器：" + err.Error() })
@@ -485,9 +494,31 @@ func (a *App) laneBrowserButton(c *ui.Context, ln tasks.AccountLane) {
 			}
 			for _, row := range a.store.Browsers() {
 				if row.ID == ln.ID {
+					if a.manager != nil && a.manager.TaskVisible() {
+						a.showAccountWindow(row)
+						return
+					}
 					a.openBrowserDrawer(row)
 					return
 				}
 			}
 		})
+}
+
+// settingTaskBrowserVisible 是「生图时显示浏览器窗口」的设置键。
+const settingTaskBrowserVisible = "task_browser_visible"
+
+// showAccountWindow 在显示窗口模式下把账号窗口拉到前台；没开时用有窗口的浏览器打开。
+func (a *App) showAccountWindow(row store.Browser) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		if a.manager.IsRunning(row.ID) && !a.manager.IsHeadless(row.ID) {
+			if err := cdp.BringToFront(ctx, loginEndpoint(row)); err != nil {
+				logging.Log.Warning("%s 窗口没有拿到前台：%v", accountLabel(row), err)
+			}
+			return
+		}
+		_ = a.ensureAccountPage(ctx, row)
+	}()
 }

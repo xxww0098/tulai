@@ -39,9 +39,41 @@ type Manager struct {
 	configDir string
 	store     *store.Store
 	headless  bool
+	// taskVisible 让任务浏览器显示窗口（设置「生图时显示浏览器窗口」）。
+	taskVisible bool
 }
 
 func NewManager() *Manager { return &Manager{procs: map[int64]*camoufox.Process{}} }
+
+// SetTaskVisible 切换任务浏览器是否显示窗口；已开的浏览器形态不符时，下一次任务会重开。
+func (m *Manager) SetTaskVisible(on bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.taskVisible = on
+	m.mu.Unlock()
+}
+
+// TaskVisible 是当前任务浏览器是否显示窗口。
+func (m *Manager) TaskVisible() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.taskVisible
+}
+
+// LoadedAddon 是正在运行的浏览器装着的页面桥目录；没运行或没装时为空。
+func (m *Manager) LoadedAddon(id int64) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.procs[id].Alive() {
+		return ""
+	}
+	return m.addons[id]
+}
 
 // SetStore attaches the account store used for same-platform shared-exit warnings.
 func (m *Manager) SetStore(st *store.Store) {
@@ -63,7 +95,8 @@ func (m *Manager) StartViewWithAddon(b store.Browser, dataRoot, startURL, addon 
 	return m.start(context.Background(), b, dataRoot, startURL, true, false, addon)
 }
 
-// StartTask uses a headless process even if the account was left open for login.
+// StartTask uses a headless process unless task windows are enabled, even if the
+// account was left open for login.
 func (m *Manager) StartTask(ctx context.Context, b store.Browser, dataRoot, backend, startURL string) (string, error) {
 	return m.start(ctx, b, dataRoot, startURL, true, true, "")
 }
@@ -93,8 +126,12 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	quiet := m.quiet[b.ID]
 	loadedAddon := m.addons[b.ID]
 	st := m.store
+	headless := background || m.headless
+	if task {
+		headless = !m.taskVisible || m.headless
+	}
 	m.mu.Unlock()
-	if running.Alive() && (!task || quiet && loadedAddon == addon) {
+	if running.Alive() && (!task || quiet == headless && loadedAddon == addon) {
 		if task {
 			logging.Log.Info("账号[%s] 复用已打开的浏览器", b.Name)
 		}
@@ -133,12 +170,15 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 		delete(m.addons, b.ID)
 		m.mu.Unlock()
 	}
-	headless := background || m.headless
 	var addons []string
 	if addon != "" {
 		addons = []string{addon}
 	}
 	roots := collisionRoots(dataRoot, dir, configDir, st)
+	if task && !headless {
+		// 显示窗口生图时，多个账号窗口一起弹出也不能抢走用户正在用的窗口。
+		defer holdForeground()()
+	}
 	proc, err := camoufox.Start(ctx, configDir, camoufox.Options{
 		Profile:        dir,
 		Proxy:          proxy,

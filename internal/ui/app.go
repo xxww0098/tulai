@@ -666,6 +666,9 @@ func (a *App) loadSettings() {
 	a.proxyURL = strings.TrimSpace(s.Get("proxy_server"))
 	a.proxySaved = a.proxyURL
 	a.pushProxy()
+	if a.manager != nil {
+		a.manager.SetTaskVisible(s.GetBool(settingTaskBrowserVisible))
+	}
 
 	a.refreshBrowsers()
 	a.newBrowserPlat = "豆包"

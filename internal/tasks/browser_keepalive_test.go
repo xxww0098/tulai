@@ -57,7 +57,7 @@ func TestCloseRunBrowsersKeepsHeadlessBoundBrowserUntilIdle(t *testing.T) {
 		plain := addNamed(t, st, "豆包", "乙")
 		e := NewEngine(st, browser.NewManager(), nil, "")
 		e.idleAfter = time.Minute
-		e.keepHeadless = func(id int64) bool { return id == bound.ID }
+		e.keepAlive = func(id int64) bool { return id == bound.ID }
 		keepDir := t.TempDir()
 		dropDir := t.TempDir()
 		e.runBrowsers = map[int64]struct{}{bound.ID: {}, plain.ID: {}}

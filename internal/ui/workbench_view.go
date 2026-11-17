@@ -356,6 +356,15 @@ func (a *App) accountSettings(c *ui.Context) {
 					a.store.Set("browserBackend", mode)
 				})
 				ui.Text(c, "使用已有账号的指纹和登录状态，页面桥随任务启动。").FontSize(tok.caption).TextColor(tok.muted)
+				visible := a.manager.TaskVisible()
+				ui.Checkbox(c, &visible, "生图时显示浏览器窗口").Disabled(a.running || a.store == nil || a.manager == nil).OnChange(func() {
+					if a.manager == nil || a.store == nil {
+						return
+					}
+					a.manager.SetTaskVisible(visible)
+					a.store.SetInt(settingTaskBrowserVisible, boolInt(visible))
+				})
+				ui.Text(c, "所有账号共用。窗口在后面打开，不抢当前窗口；别把账号窗口最小化，否则网页可能变慢。下一批任务按新设置重开浏览器。").FontSize(tok.caption).TextColor(tok.muted)
 				ui.Checkbox(c, &a.platformAuto, "自动使用已登录的平台").Disabled(a.running)
 				if !a.platformAuto {
 					ui.Row(c).Gap(10).Wrap().AlignItems(ui.Center).Children(func() {

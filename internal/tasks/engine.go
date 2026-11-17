@@ -56,7 +56,7 @@ type Engine struct {
 	idleClose     map[int64]*time.Timer // 保活浏览器到点关闭
 	idleGuard     func(id int64) bool   // 界面还在用的账号不做空闲关闭
 	idleAfter     time.Duration         // 测试把空闲窗口缩短；空则用 browserIdleClose
-	keepHeadless  func(id int64) bool   // 测试替换的保活判定；空则查浏览器管理器
+	keepAlive     func(id int64) bool   // 测试替换的保活判定；空则查浏览器管理器
 	srcHashes     map[string]string     // 源图路径 → SHA256（当前任务的回声过滤）
 	dataRoot      string
 	active        map[int64]bool
@@ -1142,16 +1142,15 @@ func (e *Engine) closeRunBrowsers() {
 	e.mu.Lock()
 	ids := e.runBrowsers
 	e.runBrowsers = nil
-	// 无头且已装页面桥的绑定浏览器保活：下一批任务直接复用，不再整轮冷启动。
-	var headless func(int64) bool
-	if e.keepHeadless != nil {
-		headless = e.keepHeadless
-	} else if e.browsers != nil {
-		headless = e.browsers.IsHeadless
+	// 已装页面桥的绑定浏览器保活（无头或显示窗口都算）：下一批任务直接复用，不再整轮冷启动。
+	alive := e.keepAlive
+	if alive == nil && e.browsers != nil {
+		browsers := e.browsers
+		alive = func(id int64) bool { dir := e.firefoxAddons[id]; return dir != "" && browsers.LoadedAddon(id) == dir }
 	}
 	var kept []int64
 	for id := range ids {
-		if headless != nil && headless(id) && e.firefoxAddons[id] != "" {
+		if alive != nil && alive(id) && e.firefoxAddons[id] != "" {
 			kept = append(kept, id)
 			delete(ids, id)
 		}
@@ -1247,7 +1246,8 @@ func (e *Engine) idleExpired(id int64) {
 	delete(e.firefoxAddons, id)
 	e.mu.Unlock()
 	e.dropSessions(id)
-	if e.browsers != nil {
+	// 用户之后自己开的窗口（没装这个页面桥）不归空闲关闭管。
+	if e.browsers != nil && (!e.browsers.IsRunning(id) || e.browsers.LoadedAddon(id) == dir) {
 		e.browsers.Stop(id)
 		if e.store != nil {
 			e.store.SetRunning(id, e.browsers.IsRunning(id))

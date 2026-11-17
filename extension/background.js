@@ -555,6 +555,9 @@ async function focusTab(tab) {
   try {
     await chrome.tabs.update(tab.id, { active: true })
   } catch (e) {}
+  // 显示窗口生图时只切标签，不把窗口抢到前台。
+  const cfg = globalThis.TULAI_FIREFOX_CONFIG
+  if (cfg && cfg.windowBack === '1') return
   if (tab.windowId != null) {
     try {
       await chrome.windows.update(tab.windowId, { focused: true })
