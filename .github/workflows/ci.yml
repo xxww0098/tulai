@@ -188,6 +188,10 @@ jobs:
         with:
           name: camoufox-runtime-windows-amd64
           path: internal/camoufox/bundled
+      - name: Verify Windows runtime bundle before packaging
+        env:
+          TULAI_REQUIRE_WINDOWS_BUNDLE: "1"
+        run: go test -run '^TestBundledWindowsArchiveUnpacks$' -count=1 ./internal/camoufox
       - name: Package
         env:
           CGO_ENABLED: "0"

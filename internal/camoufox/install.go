@@ -168,7 +168,7 @@ func Installed(dataDir string) (Runtime, bool) {
 	}
 	wantLock, _ := driver.ReadFile("driver/package-lock.json")
 	gotLock, err := os.ReadFile(filepath.Join(dir, "package-lock.json"))
-	if err != nil || !bytes.Equal(wantLock, gotLock) {
+	if err != nil || !bytes.Equal(canonicalLock(wantLock), canonicalLock(gotLock)) {
 		return Runtime{}, false
 	}
 	files := []string{nodePath(dir), marker.Executable, filepath.Join(dir, "node_modules", "camoufox", "package.json")}

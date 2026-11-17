@@ -2,6 +2,7 @@ package camoufox
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -25,9 +26,13 @@ type runtimeBundleManifest struct {
 	Lock     string `json:"lock_sha256"`
 }
 
+func canonicalLock(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+}
+
 func expectedBundleManifest(platform string) runtimeBundleManifest {
 	lock, _ := driver.ReadFile("driver/package-lock.json")
-	digest := sha256.Sum256(lock)
+	digest := sha256.Sum256(canonicalLock(lock))
 	return runtimeBundleManifest{Format: 1, Platform: platform, Node: nodeVersion, Launcher: Version, Lock: hex.EncodeToString(digest[:])}
 }
 

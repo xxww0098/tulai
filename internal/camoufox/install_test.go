@@ -232,6 +232,14 @@ func TestInstalledRequiresPinnedDependenciesAndBinary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "ready.json"), marker, 0600); err != nil {
 		t.Fatal(err)
 	}
+	wantLock, _ := driver.ReadFile("driver/package-lock.json")
+	crlfLock := bytes.ReplaceAll(canonicalLock(wantLock), []byte("\n"), []byte("\r\n"))
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), crlfLock, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Installed(root); !ok {
+		t.Fatal("CRLF dependency lock rejected")
+	}
 	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("changed"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -4,9 +4,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -81,5 +84,62 @@ func TestWindowsRuntimeBundleRejectsUnsafeEntries(t *testing.T) {
 				t.Fatalf("accepted %q", name)
 			}
 		})
+	}
+}
+
+func TestCanonicalLockNormalizesCRLF(t *testing.T) {
+	lf, err := driver.ReadFile("driver/package-lock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlf := bytes.ReplaceAll(canonicalLock(lf), []byte("\n"), []byte("\r\n"))
+	if !bytes.Equal(canonicalLock(crlf), canonicalLock(lf)) {
+		t.Fatal("canonicalLock did not normalize CRLF to LF")
+	}
+	sum := sha256.Sum256(canonicalLock(crlf))
+	if got, want := hex.EncodeToString(sum[:]), expectedBundleManifest("windows/amd64").Lock; got != want {
+		t.Fatalf("normalized lock sha256 = %s, want %s", got, want)
+	}
+
+	var data bytes.Buffer
+	archive := zip.NewWriter(&data)
+	manifestEntry, err := archive.Create("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	badManifest := expectedBundleManifest("windows/amd64")
+	badManifest.Lock = strings.Repeat("0", 64)
+	content, err := json.Marshal(badManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manifestEntry.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = unpackRuntimeBundle(context.Background(), bytes.NewReader(data.Bytes()), int64(data.Len()), t.TempDir(), "windows/amd64")
+	if err == nil || err.Error() != "内置启动环境版本或依赖锁不匹配" {
+		t.Fatalf("unpack err = %v, want 内置启动环境版本或依赖锁不匹配", err)
+	}
+}
+
+func TestBundledWindowsArchiveUnpacks(t *testing.T) {
+	const bundlePath = "bundled/windows-amd64.zip"
+	f, err := os.Open(bundlePath)
+	if os.IsNotExist(err) && os.Getenv("TULAI_REQUIRE_WINDOWS_BUNDLE") != "1" {
+		t.Skip("bundled/windows-amd64.zip not present")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unpackRuntimeBundle(context.Background(), f, info.Size(), t.TempDir(), "windows/amd64"); err != nil {
+		t.Fatal(err)
 	}
 }
