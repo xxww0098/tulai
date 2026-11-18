@@ -168,7 +168,19 @@ func waitForRemoved(t *testing.T, path string, timeout time.Duration) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("path was not cleaned up: %s", path)
+	// Tell "another process still holds it" apart from "the helper never
+	// deleted it", so a failure here names the cause.
+	info, statErr := os.Stat(path)
+	var removeErr error
+	if statErr == nil && info.IsDir() {
+		removeErr = os.RemoveAll(path)
+	} else {
+		removeErr = os.Remove(path)
+	}
+	if removeErr != nil {
+		t.Fatalf("path was not cleaned up and is still locked (%v): %s", removeErr, path)
+	}
+	t.Fatalf("path was left behind by the update helper but removes cleanly: %s", path)
 }
 
 func TestWindowsDetachedPortableReplaceAndRelaunch(t *testing.T) {
