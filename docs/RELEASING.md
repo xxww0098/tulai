@@ -4,7 +4,7 @@
 
 ## 0.1.30
 
-受管 Camoufox 关闭 Canvas 随机占位图并清除旧资料里的 Canvas 提取保护偏好，网页从 Canvas 导出的图（验证码、滑块图、预览）可以正常显示。启动账号浏览器不再为读取显卡多开一个 Firefox 探测进程，首次启动固定屏蔽 WebGPU。页面桥扩展仍为 0.3.21。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
+受管 Camoufox 关闭 Canvas 随机占位图并清除旧资料里的 Canvas 提取保护偏好，网页从 Canvas 导出的图（验证码、滑块图、预览）可以正常显示。启动账号浏览器不再为读取显卡多开一个 Firefox 探测进程，首次启动固定屏蔽 WebGPU。另外修复并发名额占满时后发任务先跑的顺序问题。页面桥扩展仍为 0.3.21。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.29
 

@@ -471,7 +471,10 @@ func TestManualConcurrencyOneAcrossPlatforms(t *testing.T) {
 func TestSlotReleaseWakesAllWaitingPlatforms(t *testing.T) {
 	sched := &slotSched{notify: make(chan struct{})}
 	now := time.Now()
-	if !sched.claim(1, now, 1) || sched.claim(2, now, 1) {
+	if claimed, _ := sched.claim(1, now, 1); !claimed {
+		t.Fatal("the first task must reserve the only slot")
+	}
+	if claimed, atLimit := sched.claim(2, now, 1); claimed || !atLimit {
 		t.Fatal("the global limit must reserve the only slot")
 	}
 	first, second := sched.watch(), sched.watch()
@@ -483,7 +486,7 @@ func TestSlotReleaseWakesAllWaitingPlatforms(t *testing.T) {
 			t.Fatal("every waiting platform must be notified")
 		}
 	}
-	if !sched.claim(2, now, 1) {
+	if claimed, _ := sched.claim(2, now, 1); !claimed {
 		t.Fatal("the released slot must be reusable")
 	}
 	select {

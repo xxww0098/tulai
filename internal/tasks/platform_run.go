@@ -47,17 +47,22 @@ func (s *slotSched) snap() (map[int64]bool, map[int64]time.Time) {
 	return busy, ready
 }
 
-func (s *slotSched) claim(slot int64, now time.Time, limit int) bool {
+// claim 占一个名额。atLimit 说明失败是因为手动并发上限已经满了（不是这个名额
+// 自己忙）：这时候后面的任务也不该再往后找，否则它们会抢在队首任务前面跑。
+func (s *slotSched) claim(slot int64, now time.Time, limit int) (claimed, atLimit bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.busy[slot] || now.Before(s.ready[slot]) || (limit > 0 && len(s.busy) >= limit) {
-		return false
+	if s.busy[slot] || now.Before(s.ready[slot]) {
+		return false, false
+	}
+	if limit > 0 && len(s.busy) >= limit {
+		return false, true
 	}
 	if s.busy == nil {
 		s.busy = map[int64]bool{}
 	}
 	s.busy[slot] = true
-	return true
+	return true, false
 }
 
 func (s *slotSched) unclaim(slot int64) {
@@ -427,7 +432,12 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					noteCool(&earliest, e.accountsFor(task.Platform), now)
 					continue
 				}
-				if !sched.claim(resource, now, e.opts.Concurrency) {
+				if ok, atLimit := sched.claim(resource, now, e.opts.Concurrency); !ok {
+					if atLimit {
+						// 名额已经满了（快照过期）：后面的任务照样派不出去，而且会抢在
+						// 队首任务前面跑。等完成事件唤醒后从队首重新扫描。
+						break
+					}
 					continue
 				}
 				claimed = resource
