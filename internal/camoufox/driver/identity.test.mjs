@@ -5,19 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {promisify} from 'node:util';
-import {claimFingerprint, createIdentity, prepareIdentity, prepareRendering, preserveVoices} from './identity.mjs';
+import {claimFingerprint, createIdentity, prepareIdentity, preserveVoices} from './identity.mjs';
 
 const device={'navigator.userAgent':'Mozilla/5.0 (Macintosh; rv:150.0) Gecko/20100101 Firefox/150.0','navigator.platform':'MacIntel','navigator.oscpu':'Intel Mac OS X 10.15','navigator.hardwareConcurrency':8,'canvas:seed':42,'screen.width':1920,'screen.height':1080,'screen.availWidth':1920,'screen.availHeight':1004,'screen.colorDepth':24};
-
-test('enable canvas noise with host GPU while preserving saved WebGL identity',()=>{
- const saved={...device,'webGl:vendor':'Apple','webGl:renderer':'Apple M1','webGl:parameters':{7937:'Apple M1'}};
- assert.deepEqual(prepareRendering(saved,['Apple','Apple M1']),{config:saved,canvasNoise:true});
- assert.deepEqual(prepareRendering(saved,['Other','GPU']),{config:saved,canvasNoise:true});
- assert.deepEqual(prepareRendering(saved,null),{config:saved,canvasNoise:false});
- assert.deepEqual(prepareRendering(saved,undefined),{config:saved});
- assert.deepEqual(prepareRendering(undefined,['Apple','Apple M1']),{config:undefined});
- assert.equal(saved['webGl:renderer'],'Apple M1');
-});
 
 test('restarts retain the device; upgrades track the real Firefox version',()=>{
  const saved={...device};

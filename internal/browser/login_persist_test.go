@@ -110,6 +110,61 @@ func TestCamoufoxStartsOnlyAccountWindow(t *testing.T) {
 	}
 }
 
+func TestCamoufoxCanvasReadback(t *testing.T) {
+	config := camoufoxtest.ConfigDir(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<!doctype html><title>Canvas image fixture</title>`)
+	}))
+	defer server.Close()
+	const legacyPrefs = `user_pref("privacy.baselineFingerprintingProtection.overrides", "+CanvasImageExtractionPrompt,+CanvasExtractionBeforeUserInputIsBlocked,+CanvasExtractionFromThirdPartiesIsBlocked");` + "\n"
+	const readback = `(async () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#123456';
+  ctx.fillRect(0, 0, 32, 32);
+  const image = new Image();
+  image.src = canvas.toDataURL('image/png');
+  await image.decode();
+  const decoded = document.createElement('canvas').getContext('2d');
+  decoded.drawImage(image, 0, 0);
+  return [Array.from(ctx.getImageData(4, 4, 1, 1).data), Array.from(decoded.getImageData(4, 4, 1, 1).data)];
+})()`
+	for _, headless := range []bool{true, false} {
+		if !headless && runtime.GOOS != "darwin" {
+			continue
+		}
+		t.Run(fmt.Sprintf("headless=%t", headless), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), camoufoxtest.StartTimeout)
+			defer cancel()
+			profile := t.TempDir()
+			if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(legacyPrefs), 0600); err != nil {
+				t.Fatal(err)
+			}
+			proc, err := camoufox.Start(ctx, config, camoufox.Options{Profile: profile, Headless: headless}, os.Stderr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(proc.Close)
+			if err := proc.Call(ctx, proc.Page, "Page.navigate", map[string]any{"url": server.URL}, nil); err != nil {
+				t.Fatal(err)
+			}
+			var out struct {
+				Result           struct{ Value [][]int }
+				ExceptionDetails any
+			}
+			if err := proc.Call(ctx, proc.Page, "Runtime.evaluate", map[string]any{"expression": readback}, &out); err != nil {
+				t.Fatal(err)
+			}
+			want := [][]int{{18, 52, 86, 255}, {18, 52, 86, 255}}
+			if out.ExceptionDetails != nil || !reflect.DeepEqual(out.Result.Value, want) {
+				t.Fatalf("Canvas readback and exported PNG = %v, want %v (page error: %v)", out.Result.Value, want, out.ExceptionDetails)
+			}
+		})
+	}
+}
+
 func TestCamoufoxMacHeadlessProbeMatchesWindowGPU(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS 有头/无头显卡一致性")
@@ -392,8 +447,10 @@ func TestCamoufoxAccountIsolationAndRestart(t *testing.T) {
 		t.Fatalf("device fingerprint changed across restart:\n%s\n%s", deviceBefore, got)
 	}
 	renderingAfter := readRendering()
+	// Canvas readers get the drawn pixels, so the same drawing must hash the same
+	// within a session and across a restart; only WebGL and WebGPU stay pinned.
 	if string(renderingAfter.WebGL) != string(renderingBefore.WebGL) || renderingAfter.WebGPU != renderingBefore.WebGPU ||
-		(renderingBefore.Canvas == renderingRepeat.Canvas && renderingAfter.Canvas != renderingBefore.Canvas) {
+		renderingBefore.Canvas != renderingRepeat.Canvas || renderingAfter.Canvas != renderingBefore.Canvas {
 		t.Fatalf("rendering fingerprint changed across restart:\n%+v\n%+v", renderingBefore, renderingAfter)
 	}
 	manager.StopAll()
@@ -562,27 +619,27 @@ func TestCamoufoxMultiAccountAntiCorrelationAndBridgeStealth(t *testing.T) {
 	if canvasAlpha1 == "" || canvasAlpha2 == "" || canvasBeta == "" {
 		t.Fatalf("2D canvas hashes were empty: alpha=%q repeat=%q beta=%q", canvasAlpha1, canvasAlpha2, canvasBeta)
 	}
-	rt, _ := camoufox.Installed(runtimeDir)
-	probe := exec.CommandContext(ctx, rt.Node, "--input-type=module", "-e", `
-import {hostGpu} from 'camoufox/dist/host_rendering.js';
-console.log(JSON.stringify(await hostGpu(process.argv[1], true, process.env, {})));
-`, rt.Executable)
-	probe.Dir = rt.Dir
-	output, err := probe.Output()
-	if err != nil {
-		t.Fatalf("probe canvas rendering device: %v", err)
-	}
-	var gpu []string
-	if err := json.Unmarshal(output, &gpu); err != nil {
-		t.Fatalf("decode canvas rendering device: %v", err)
-	}
-	device := strings.ToLower(strings.TrimSpace(strings.Join(gpu, " ")))
-	software := device == "" || strings.Contains(device, "llvmpipe") || strings.Contains(device, "microsoft basic render driver") ||
-		strings.Contains(device, "swiftshader") || strings.Contains(device, "generic renderer")
-	if software {
-		t.Logf("canvas noise is disabled for the software renderer %q", device)
-	} else if canvasAlpha1 == canvasBeta || canvasAlpha1 == canvasAlpha2 {
-		t.Fatalf("expected randomized canvas readbacks: alpha=%q repeat=%q beta=%q", canvasAlpha1, canvasAlpha2, canvasBeta)
+	// Managed browsers turn Canvas randomization off so pages that export an image
+	// from a canvas (verification puzzles, previews) get the pixels they drew.
+	// A solid fill must therefore read back exactly, in every account, on repeats.
+	const canvasPixelJS = `(() => {
+		const c = document.createElement('canvas');
+		c.width = c.height = 16;
+		const g = c.getContext('2d');
+		g.fillStyle = '#123456';
+		g.fillRect(0, 0, 16, 16);
+		return Array.from(g.getImageData(4, 4, 1, 1).data).join(',');
+	})()`
+	for _, readback := range []struct {
+		account string
+		proc    *camoufox.Process
+		target  string
+	}{{"acc-alpha", pAlpha, tAlpha}, {"acc-beta", pBeta, tBeta}, {"acc-alpha repeat", pAlpha, tAlpha}} {
+		var pixel string
+		evalInto(t, ctx, readback.proc, readback.target, canvasPixelJS, &pixel)
+		if pixel != "18,52,86,255" {
+			t.Fatalf("%s canvas readback = %q, want the drawn pixels 18,52,86,255", readback.account, pixel)
+		}
 	}
 
 	assertStorageAndCookie(t, ctx, pAlpha, tAlpha, "alpha")

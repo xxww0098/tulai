@@ -322,7 +322,7 @@ test('GPU probe never opens a visible window before the account browser', async 
   }
 });
 
-function setupBridgeSandbox(t, {gpuResult = ['Apple', 'Apple M1'], gpuError = '', candidates = []}) {
+function setupBridgeSandbox(t, {candidates = []}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-bridge-rpc-'));
   t.after(() => fs.rmSync(root, {recursive:true, force:true}));
   for (const file of ['bridge.mjs', 'identity.mjs', 'download-watch.mjs', 'kernel-repair.mjs', 'windows-compat.mjs']) {
@@ -337,12 +337,7 @@ function setupBridgeSandbox(t, {gpuResult = ['Apple', 'Apple M1'], gpuError = ''
   }));
   fs.writeFileSync(path.join(pkg, 'dist', 'utils.js'), `
     export const STOCK_MEDIA_DEFAULTS = {colorScheme:null, reducedMotion:null, forcedColors:null, contrast:null};
-    export const utilsDeps = {
-      hostGpu: async () => {
-        if (process.env.TEST_GPU_ERROR) throw new Error(process.env.TEST_GPU_ERROR);
-        return JSON.parse(process.env.TEST_GPU_RESULT);
-      },
-    };
+    export const utilsDeps = {hostGpu: async () => null};
   `);
   fs.writeFileSync(path.join(pkg, 'index.js'), `
     import {EventEmitter} from 'node:events';
@@ -402,6 +397,8 @@ function setupBridgeSandbox(t, {gpuResult = ['Apple', 'Apple M1'], gpuError = ''
     export const launchOptions = async opts => {
       trace.launchCalls.push({
         os:opts.os, headless:opts.headless, canvas_noise:opts.canvas_noise,
+        canvasOverrides:opts.firefox_user_prefs['privacy.baselineFingerprintingProtection.overrides'],
+        webgpuStatus:opts.firefox_user_prefs['gfx.blacklist.webgpu'],
         pin_cpu_cores:opts.pin_cpu_cores, i_know_what_im_doing:opts.i_know_what_im_doing,
         config:opts.config ?? null,
       });
@@ -435,8 +432,6 @@ function setupBridgeSandbox(t, {gpuResult = ['Apple', 'Apple M1'], gpuError = ''
       env:{
         ...process.env,
         TEST_TRACE_FILE:traceFile,
-        TEST_GPU_RESULT:JSON.stringify(gpuResult),
-        TEST_GPU_ERROR:gpuError,
         TEST_CANDIDATES:JSON.stringify(candidates),
       },
       stdio:['pipe', 'pipe', 'pipe'],
@@ -489,11 +484,10 @@ const sampleDevice = {
   'webGl:parameters':{7937:'Apple M1'},
 };
 
-test('start activates canvas_noise, pin_cpu_cores, collisionRoots, and preserves WebGL while stripping legacy keys', async t => {
+test('start keeps Canvas images readable and preserves WebGL while stripping legacy keys', async t => {
   const firstCandidate = {...sampleDevice};
   const uniqueCandidate = {...sampleDevice, 'navigator.hardwareConcurrency':12, 'window.innerWidth':1280};
   const {root, runRpc} = setupBridgeSandbox(t, {
-    gpuResult:['Apple', 'Apple M1'],
     candidates:[firstCandidate, uniqueCandidate],
   });
   const downloadBrowser = path.join(root, 'DownloadBrowser');
@@ -508,7 +502,9 @@ test('start activates canvas_noise, pin_cpu_cores, collisionRoots, and preserves
   assert.equal(firstRun.responses.find(r => r.id === 1)?.result?.targetId, '1');
   assert.equal(firstRun.trace.launchCalls.length, 2);
   for (const call of firstRun.trace.launchCalls) {
-    assert.equal(call.canvas_noise, true);
+    assert.equal(call.canvas_noise, false);
+    assert.equal(call.canvasOverrides, '');
+    assert.equal(call.webgpuStatus, 4);
     assert.equal(call.pin_cpu_cores, true);
   }
   const identityPath = path.join(profile, '.tulai-identity.json');
@@ -522,12 +518,14 @@ test('start activates canvas_noise, pin_cpu_cores, collisionRoots, and preserves
   }));
 
   const restartRun = await runRpc([
-    {id:1, method:'start', params:{profile, executable:'fake-exe', headless:true}},
+    {id:1, method:'start', params:{profile, executable:'fake-exe', headless:false}},
     {id:2, method:'Browser.close', params:{}},
   ]);
   assert.equal(restartRun.responses.find(r => r.id === 1)?.result?.targetId, '1');
   const restartLaunch = restartRun.trace.launchCalls.at(-1);
-  assert.equal(restartLaunch.canvas_noise, true);
+  assert.equal(restartLaunch.canvas_noise, false);
+  assert.equal(restartLaunch.canvasOverrides, '');
+  assert.equal(restartLaunch.webgpuStatus, 4);
   assert.equal(restartLaunch.pin_cpu_cores, true);
   assert.equal(restartLaunch.config['webGl:vendor'], 'Apple');
   assert.equal(restartLaunch.config['webGl:renderer'], 'Apple M1');
@@ -537,25 +535,8 @@ test('start activates canvas_noise, pin_cpu_cores, collisionRoots, and preserves
   }
 });
 
-test('start disables canvas_noise for software rasterizer or null GPU and falls back when probe fails', async t => {
-  for (const [label, opts, expectedNoise] of [
-    ['null GPU', {gpuResult:null}, false],
-    ['llvmpipe software renderer', {gpuResult:['Mesa', 'llvmpipe (LLVM 15.0, 256 bits)']}, false],
-    ['probe error fallback', {gpuError:'probe failed'}, undefined],
-  ]) {
-    const {root, runRpc} = setupBridgeSandbox(t, {...opts, candidates:[sampleDevice]});
-    const profile = path.join(root, 'profile', label.replace(/\W+/g, '-'));
-    const {trace} = await runRpc([
-      {id:1, method:'start', params:{profile, executable:'fake-exe', headless:true}},
-      {id:2, method:'Browser.close', params:{}},
-    ]);
-    assert.equal(trace.launchCalls.at(-1).canvas_noise, expectedNoise, label);
-    assert.equal(trace.launchCalls.at(-1).pin_cpu_cores, true, label);
-  }
-});
-
 test('isolated contexts inherit media defaults, proxy, scopeBootstrap, bindings, and close cleanly with their page', async t => {
-  const {root, runRpc} = setupBridgeSandbox(t, {gpuResult:['Apple', 'Apple M1'], candidates:[sampleDevice]});
+  const {root, runRpc} = setupBridgeSandbox(t, {candidates:[sampleDevice]});
   const profile = path.join(root, 'accounts', 'acc-isolated');
   const {responses, trace} = await runRpc([
     {id:1, method:'start', params:{profile, executable:'fake-exe', headless:true, proxy:'http://user:pass@127.0.0.1:8080'}},

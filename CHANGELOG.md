@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.1.30
+
+- 受管 Camoufox 关闭 Canvas 随机占位图（`canvas_noise: false`），并把旧版本写进浏览器资料的 Canvas 提取保护偏好（`privacy.baselineFingerprintingProtection.overrides`）重置为空：由网页从 Canvas 导出的图，例如验证码、滑块图和预览，可以正常显示，读回的是真实像素。Canvas 读数因此不再随机化。
+- 启动账号浏览器不再为了判断显卡而额外启动一次 Firefox：Canvas 是否随机不再由显卡读数决定，按显卡探测结果生成的缓存文件一并移除，macOS 和 Windows 上的账号启动少一个探测进程。
+- 启动时固定写入 `gfx.blacklist.webgpu`（设备被屏蔽），账号页面不再拿到宿主显卡的 WebGPU 适配器，首次启动和重启后的设备信息一致。
+- 页面桥扩展仍为 0.3.21，无需为本次更新重新安装扩展。
+
 ## 0.1.29
 
 - 加速 Camoufox 首次安装下载：内核下载自动在多个 GitHub 加速镜像（`ghfast.top`、`gh-proxy.com`）与直连源之间测速选优；支持 HTTP Range 的下载源使用 6 路并发分段下载并在单块超时、断流或低速时无损切换备用源；不支持 Range 的镜像保持单流直下并在中断时通过支持 Range 的备用源续传，下载全程仍校验固定 SHA-256。

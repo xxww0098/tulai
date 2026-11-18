@@ -1,9 +1,9 @@
 import fs from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
 import { request as playwrightRequest } from 'playwright-core';
-import { createIdentity, prepareIdentity, prepareRendering, preserveVoices } from './identity.mjs';
+import { createIdentity, prepareIdentity, preserveVoices } from './identity.mjs';
 import { downloadKernel } from './download-watch.mjs';
 import { repairKernel } from './kernel-repair.mjs';
 import { prepareWindowsExecutable } from './windows-compat.mjs';
@@ -26,14 +26,6 @@ const STOCK_MEDIA_DEFAULTS = utils.STOCK_MEDIA_DEFAULTS ?? {
   colorScheme: null, reducedMotion: null, forcedColors: null, contrast: null,
 };
 const LEGACY_CONFIG_KEYS = ['canvas:seed', 'canvas:aaOffset', 'canvas:aaCapOffset', 'fonts:spacing_seed', 'audio:seed'];
-const SOFTWARE_RENDERERS = ['llvmpipe', 'Microsoft Basic Render Driver', 'SwiftShader', 'Generic Renderer'];
-function isHardwareGpu(gpu) {
-  if (!gpu) return false;
-  const text = Array.isArray(gpu) ? `${gpu[0] ?? ''} ${gpu[1] ?? ''}` : String(gpu?.renderer ?? gpu ?? '');
-  if (!text.trim()) return false;
-  const lower = text.toLowerCase();
-  return !SOFTWARE_RENDERERS.some(name => lower.includes(name.toLowerCase()));
-}
 function stripLegacyConfigKeys(config) {
   if (!config || typeof config !== 'object') return config;
   const cleaned = { ...config };
@@ -115,38 +107,6 @@ if (process.platform === 'darwin' || process.platform === 'win32') {
   // before the account browser opens. Validate before extending to other platforms.
   const hostGpu = utilsDeps.hostGpu;
   utilsDeps.hostGpu = (executable, _headless, env, prefs) => hostGpu(executable, true, env, prefs);
-}
-
-// The GPU probe launches a whole second Firefox; the launcher only caches it in
-// memory, so every bridge start pays it again. Hardware rarely changes - keep
-// one reading per executable (keyed by mtime+size, upgrades invalidate) in the
-// tulai cache dir. Any cache miss or write failure falls back to the live probe.
-function gpuCacheFile(executable) {
-  const dir = process.env.TULAI_CAMOUFOX_CACHE;
-  if (!dir) return '';
-  let stat;
-  try { stat = fs.statSync(executable); } catch { return ''; }
-  const key = createHash('sha256').update(`${process.platform}|${executable}|${stat.mtimeMs}|${stat.size}`).digest('hex').slice(0, 24);
-  return path.join(dir, `host-gpu-${key}.json`);
-}
-async function cachedHostGpu(executable) {
-  const file = gpuCacheFile(executable);
-  if (file) {
-    try {
-      const cached = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (cached === null || Array.isArray(cached)) return cached;
-    } catch { /* 没有缓存或已损坏就实测 */ }
-  }
-  const gpu = await utilsDeps.hostGpu(executable, true, process.env, {});
-  if (file) {
-    try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      const tmp = `${file}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(gpu));
-      fs.renameSync(tmp, file);
-    } catch { /* 缓存写不上不影响启动 */ }
-  }
-  return gpu;
 }
 
 // GitHub 加速镜像 base（ghproxy 形式：base + '/' + 原 URL）。未设置或不是
@@ -490,27 +450,20 @@ async function start(params) {
   try { saved = JSON.parse(fs.readFileSync(identityPath, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw new Error(`账号指纹文件无法读取：${error.message}`); }
   const config = prepareIdentity(saved, installedVerStr(path.dirname(params.executable)).split('.')[0], Boolean(params.proxy));
-  let host;
-  if (params.headless || process.platform === 'darwin' || process.platform === 'win32') {
-    try {
-      const gpu = await cachedHostGpu(params.executable);
-      host = isHardwareGpu(gpu) ? gpu : null;
-    } catch (error) {
-      process.stderr.write(`无法确认 Canvas 渲染设备，保留 Camoufox 默认保护：${error.message}\n`);
-    }
-  }
   const generate = async (identityConfig = config) => {
-    const prepared = prepareRendering(identityConfig, host);
-    const canvasNoise = prepared.canvasNoise ?? (host === undefined ? undefined : Boolean(host));
     const options = await launchOptions({
       os: hostOS, headless: Boolean(params.headless), main_world_eval: true,
-      config: stripLegacyConfigKeys(prepared.config), canvas_noise: canvasNoise, pin_cpu_cores: true,
+      config: stripLegacyConfigKeys(identityConfig), canvas_noise: false, pin_cpu_cores: true,
       i_know_what_im_doing: Boolean(saved),
       addons: params.addons || undefined,
       proxy: proxyOptions(params.proxy),
       geoip: params.proxy ? params.geoip !== false : undefined,
       executable_path: params.executable || undefined,
       firefox_user_prefs: {
+        // Firefox persists the Canvas placeholder overrides from older launches.
+        'privacy.baselineFingerprintingProtection.overrides': '',
+        // Match the saved-identity WebGPU policy on the first launch (FEATURE_BLOCKED_DEVICE).
+        'gfx.blacklist.webgpu': 4,
         'browser.sessionstore.resume_from_crash': false,
         // An aborted operation closes its page; keep the account environment alive.
         'browser.tabs.closeWindowWithLastTab': false,

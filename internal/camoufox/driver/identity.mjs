@@ -154,13 +154,6 @@ export async function preserveVoices(saved, config, generate) {
   return generate(refreshed);
 }
 
-// Enable canvas readback noise when the host has a GPU while preserving saved WebGL identity across restarts.
-export function prepareRendering(config, host) {
-  if (!config || host === undefined) return {config};
-  if (!host) return {config, canvasNoise: false};
-  return {config, canvasNoise: true};
-}
-
 // Persist device identity, but refresh browser version and proxy-derived location.
 export function prepareIdentity(saved, firefoxVersion, hasProxy) {
   if (saved === undefined) return undefined;
