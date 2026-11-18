@@ -154,12 +154,21 @@ func TestPageViewControlsExistingPageAndDetaches(t *testing.T) {
 	if err != nil || frame.Title != "clicked" || frame.Width <= 0 || frame.Height <= 0 {
 		t.Fatalf("click/frame = %+v %v", frame, err)
 	}
+	// A wheel tick that arrives before the page is ready to scroll is dropped on
+	// slow runners, so send another one whenever the position stops moving.
 	input(PageInput{Kind: "mouseWheel", X: 400, Y: 300, DY: 650})
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
+	last := -1.0
 	for time.Now().Before(deadline) {
 		frame, err = view.Frame(ctx)
 		if err == nil && frame.ScrollY > 500 {
 			break
+		}
+		if err == nil && frame.ScrollY == last {
+			input(PageInput{Kind: "mouseWheel", X: 400, Y: 300, DY: 650})
+		}
+		if err == nil {
+			last = frame.ScrollY
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
