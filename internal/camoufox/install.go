@@ -78,7 +78,7 @@ func stageText(stage string) string {
 	return ""
 }
 
-//go:embed driver/bridge.mjs driver/identity.mjs driver/download-watch.mjs driver/windows-compat.mjs driver/package.json driver/package-lock.json
+//go:embed driver/bridge.mjs driver/identity.mjs driver/download-watch.mjs driver/kernel-repair.mjs driver/windows-compat.mjs driver/package.json driver/package-lock.json
 var driver embed.FS
 
 type Runtime struct {
@@ -271,6 +271,7 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 		if err := writeDriver(ready.Dir); err != nil {
 			return Runtime{}, err
 		}
+		clearInstallDiagnostic(ready.Dir)
 		return ready, nil
 	}
 	artifact, ok := nodeArtifacts[runtime.GOOS+"/"+runtime.GOARCH]
@@ -317,7 +318,8 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 		}
 	}
 	if err != nil {
-		return Runtime{}, err
+		writeInstallDiagnostic(stage, err)
+		return Runtime{}, kernelInstallError(kernelCacheDir(stage), err)
 	}
 	var marker struct {
 		Executable string `json:"executable"`
@@ -330,6 +332,7 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 	if info, err := os.Stat(marker.Executable); err != nil || !info.Mode().IsRegular() {
 		return Runtime{}, errors.New("Camoufox 安装未完成，缺少浏览器程序")
 	}
+	clearInstallDiagnostic(stage)
 	marker.Version = Version
 	marker.Platform = runtime.GOOS + "/" + runtime.GOARCH
 	data, _ := json.Marshal(marker)
@@ -475,6 +478,21 @@ func verifyNodePackages(ctx context.Context, dir, proxy string) error {
 	return err
 }
 
+// kernelCacheDir 是内核和指纹数据的缓存目录。安装与启动共用同一份内核，
+// 所以两边都用这个函数算出路径。
+func kernelCacheDir(dir string) string {
+	return filepath.Join(filepath.Dir(dir), "cache", runtime.GOOS+"-"+runtime.GOARCH)
+}
+
+// kernelInstallError 给"启动库找不到 camoufox.exe"补上可执行的下一步：这个错误
+// 基本只来自内核解压不完整（安全软件隔离了刚解压的浏览器程序）。
+func kernelInstallError(cacheDir string, err error) error {
+	if !strings.Contains(err.Error(), "CamoufoxNotInstalled") {
+		return err
+	}
+	return fmt.Errorf("%w\n提示：Camoufox 内核文件不完整。若重试仍失败，请把 %s 加入安全软件白名单后再试；详细日志在 runtime/camoufox/install-error.log", err, cacheDir)
+}
+
 func writeInstallDiagnostic(dir string, err error) {
 	path := filepath.Join(filepath.Dir(dir), "install-error.log")
 	body := fmt.Sprintf("%s\n%s\n", time.Now().Format(time.RFC3339), err)
@@ -486,7 +504,7 @@ func clearInstallDiagnostic(dir string) {
 }
 
 func writeDriver(dir string) error {
-	for _, name := range []string{"bridge.mjs", "identity.mjs", "download-watch.mjs", "windows-compat.mjs", "package.json", "package-lock.json"} {
+	for _, name := range []string{"bridge.mjs", "identity.mjs", "download-watch.mjs", "kernel-repair.mjs", "windows-compat.mjs", "package.json", "package-lock.json"} {
 		data, err := driver.ReadFile("driver/" + name)
 		if err != nil {
 			return err

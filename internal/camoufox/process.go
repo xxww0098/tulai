@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -284,7 +283,7 @@ func runtimeEnv(proxy, dir string) []string {
 		env = append(env, "HTTPS_PROXY="+proxy, "HTTP_PROXY="+proxy, "npm_config_proxy="+proxy, "npm_config_https_proxy="+proxy)
 	}
 	return append(env, "NODE_USE_ENV_PROXY=1", "NO_COLOR=1", "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1",
-		"TULAI_CAMOUFOX_CACHE="+filepath.Join(filepath.Dir(dir), "cache", runtime.GOOS+"-"+runtime.GOARCH))
+		"TULAI_CAMOUFOX_CACHE="+kernelCacheDir(dir))
 }
 
 // absUniquePaths resolves roots against the host process cwd before bridge.mjs

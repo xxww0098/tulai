@@ -5,6 +5,7 @@ import readline from 'node:readline';
 import { request as playwrightRequest } from 'playwright-core';
 import { createIdentity, prepareIdentity, prepareRendering, preserveVoices } from './identity.mjs';
 import { watchDownload } from './download-watch.mjs';
+import { repairKernel } from './kernel-repair.mjs';
 import { prepareWindowsExecutable } from './windows-compat.mjs';
 
 // Camoufox resolves its cache at import time; restore the real environment before launching Firefox.
@@ -155,6 +156,52 @@ function mirrorBase(value) {
   return /^https?:\/\//i.test(base) ? base : '';
 }
 
+// 缓存布局由已安装的 camoufox 包决定，路径一律从它读取。
+async function kernelPaths() {
+  const paths = await import('camoufox/dist/paths.js');
+  return {installDir: paths.INSTALL_DIR, osName: paths.OS_NAME, launchFile: paths.LAUNCH_FILE};
+}
+
+// 启动库只凭 version.json 认定"已安装"，内核文件缺失时它既不重新下载也起不来，
+// 重试于是每次都停在同一步。先清掉这种装不完整的版本目录。
+async function repairKernelCache() {
+  try {
+    const {installDir, osName, launchFile} = await kernelPaths();
+    const removed = repairKernel(installDir, osName, launchFile);
+    if (removed.length) console.error(`已移除不完整的 Camoufox 内核：${removed.join(', ')}`);
+  } catch (error) {
+    console.error(`检查 Camoufox 内核失败：${error?.message ?? error}`);
+  }
+}
+
+// Windows 上 mozglue 的 SxS 清单会让部分机器起不来，改用已验证的兼容副本。
+async function launchKernel() {
+  try {
+    return await launchOptions({ os: hostOS, headless: true });
+  } catch (error) {
+    if (process.platform !== 'win32' || !/spawn UNKNOWN/.test(String(error?.message)) || typeof utilsDeps.launchPath !== 'function') throw error;
+    const original = utilsDeps.launchPath();
+    const compatible = prepareWindowsExecutable(original);
+    if (compatible === original) throw error;
+    return await launchOptions({ os: hostOS, headless: true, executable_path: compatible });
+  }
+}
+
+// 仍起不来就强制重装一次：下载、解压、再启动，把"看似已安装"的残缺状态真正修好。
+async function reinstallKernel(error) {
+  console.error(`Camoufox 启动失败，正在重新下载内核：${error?.message ?? error}`);
+  const {installVersioned} = await import('camoufox/dist/multiversion.js');
+  const {pkgmanDeps} = await import('camoufox/dist/pkgman.js');
+  await installVersioned(await pkgmanDeps.newFetcher(), true);
+  try {
+    return await launchKernel();
+  } catch (retryError) {
+    const {installDir} = await kernelPaths();
+    throw new Error(`${retryError?.message ?? retryError}\nCamoufox 内核已重新下载，但仍找不到浏览器程序（${path.join(installDir, 'browsers')}）。` +
+      '常见原因是安全软件拦截了刚解压的 camoufox.exe：请把该目录加入白名单后重试。', {cause: retryError});
+  }
+}
+
 if (process.argv[2] === 'install') {
   delete process.env.CAMOUFOX_EXECUTABLE_PATH;
   // The official launcher downloads the kernel through its own package. Wrap
@@ -239,6 +286,7 @@ if (process.argv[2] === 'install') {
   } catch {
     // A future launcher may move this seam; install without live progress.
   }
+  await repairKernelCache();
   // launchOptions also prepares fpgen and probes a browser after extracting the
   // kernel. Report those phases separately so extraction does not appear stuck.
   for (const [name, stage] of [['generateFingerprint', 'model'], ['hostGpu', 'verify']]) {
@@ -251,13 +299,9 @@ if (process.argv[2] === 'install') {
   }
   let options;
   try {
-    options = await launchOptions({ os: hostOS, headless: true });
+    options = await launchKernel();
   } catch (error) {
-    if (process.platform !== 'win32' || !/spawn UNKNOWN/.test(String(error?.message)) || typeof utilsDeps.launchPath !== 'function') throw error;
-    const original = utilsDeps.launchPath();
-    const compatible = prepareWindowsExecutable(original);
-    if (compatible === original) throw error;
-    options = await launchOptions({ os: hostOS, headless: true, executable_path: compatible });
+    options = await reinstallKernel(error);
   }
   emit({ executable: options.executablePath });
   process.exit(0);

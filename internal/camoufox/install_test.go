@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +68,7 @@ func TestConcurrentDriverRefreshUsesUniqueStagingFiles(t *testing.T) {
 	}
 	workers.Wait()
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 6 {
+	if err != nil || len(entries) != 7 {
 		t.Fatalf("unfinished driver refresh: %v %v", entries, err)
 	}
 	for _, entry := range entries {
@@ -401,5 +402,29 @@ func TestDownloadNodeTriesEveryBaseBeforeFailing(t *testing.T) {
 	}
 	if _, statErr := os.Stat(dest); statErr == nil {
 		t.Fatal("failed download left a partial archive behind")
+	}
+}
+func TestKernelInstallErrorExplainsIncompleteKernel(t *testing.T) {
+	plain := errors.New("下载启动环境失败")
+	if got := kernelInstallError("/cache", plain); got.Error() != plain.Error() {
+		t.Fatalf("unrelated error rewritten: %v", got)
+	}
+	cacheDir := filepath.Join("runtime", "camoufox", "cache", "windows-amd64")
+	missing := errors.New("准备 Camoufox 失败: exit status 1\nCamoufoxNotInstalled: Camoufox is not installed at X")
+	err := kernelInstallError(cacheDir, missing)
+	for _, want := range []string{cacheDir, "白名单", "install-error.log", "CamoufoxNotInstalled"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("hint %q missing from %q", want, err.Error())
+		}
+	}
+}
+
+func TestKernelCacheDirSitsBesideTheRuntime(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runtime", "camoufox")
+	for _, dir := range []string{filepath.Join(root, ".install-test"), filepath.Join(root, Version)} {
+		want := filepath.Join(root, "cache", runtime.GOOS+"-"+runtime.GOARCH)
+		if got := kernelCacheDir(dir); got != want {
+			t.Fatalf("cache for %s = %q, want %q", dir, got, want)
+		}
 	}
 }
