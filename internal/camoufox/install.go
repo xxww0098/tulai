@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -110,32 +111,79 @@ var nodeDistBases = []string{
 // 会把 lock 文件里 npmjs.org 的地址改写到当前 registry，包完整性仍由 integrity 校验。
 const npmMirrorRegistry = "https://registry.npmmirror.com"
 
-// kernelMirrorDefault 是内核下载失败后重试用的 GitHub 加速镜像（ghproxy 形式，
+// kernelMirrorDefaults 是内核下载使用的 GitHub 加速镜像列表（ghproxy 形式，
 // base + '/' + 原 URL）。下载内容由固定 sha256 校验，镜像只能加速、无法篡改。
-const kernelMirrorDefault = "https://gh-proxy.com"
-
-// kernelMirror 返回内核镜像 base，以及它是否由环境变量显式指定。
-// TULAI_CAMOUFOX_MIRROR 指定自建镜像并优先使用，设为 off/none 时关闭镜像重试。
-func kernelMirror() (string, bool) {
-	value := strings.TrimSpace(os.Getenv("TULAI_CAMOUFOX_MIRROR"))
-	if value == "" {
-		return kernelMirrorDefault, false
-	}
-	if strings.EqualFold(value, "off") || strings.EqualFold(value, "none") {
-		return "", false
-	}
-	return strings.TrimRight(value, "/"), true
+var kernelMirrorDefaults = []string{
+	"https://ghfast.top",
+	"https://gh-proxy.com",
 }
 
-// kernelAttempts 排列内核安装的尝试环境：默认直连失败后用镜像重试，显式配置镜像时优先。
-func kernelAttempts(mirror string, explicit bool) [][]string {
-	switch {
-	case mirror == "":
+// kernelMirrors 返回内核镜像列表，以及它是否由环境变量显式指定。
+// TULAI_CAMOUFOX_MIRROR 指定自建镜像（逗号分隔）并优先使用，设为 off/none 时关闭镜像。
+func kernelMirrors() ([]string, bool) {
+	value := strings.TrimSpace(os.Getenv("TULAI_CAMOUFOX_MIRROR"))
+	if value == "" {
+		return append([]string(nil), kernelMirrorDefaults...), false
+	}
+	if strings.EqualFold(value, "off") || strings.EqualFold(value, "none") {
+		return nil, false
+	}
+	var out []string
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(value, ",") {
+		base := strings.TrimRight(strings.TrimSpace(part), "/")
+		if base == "" || seen[base] {
+			continue
+		}
+		seen[base] = true
+		out = append(out, base)
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return out, true
+}
+
+func appendUniqueMirrors(primary, extra []string) []string {
+	out := make([]string, 0, len(primary)+len(extra))
+	seen := make(map[string]bool, len(primary)+len(extra))
+	for _, list := range [][]string{primary, extra} {
+		for _, item := range list {
+			base := strings.TrimRight(strings.TrimSpace(item), "/")
+			if base == "" || seen[base] {
+				continue
+			}
+			seen[base] = true
+			out = append(out, base)
+		}
+	}
+	return out
+}
+
+// kernelAttempts 排列内核安装的尝试环境：未设代理时优先使用多镜像测速与并发分段下载，
+// 设了代理时直连与镜像同轮测速（直连优先），显式配置 TULAI_CAMOUFOX_MIRROR 时优先该镜像。
+func kernelAttempts(mirrors []string, explicit bool, proxy string) [][]string {
+	if len(mirrors) == 0 {
 		return [][]string{nil}
-	case explicit:
-		return [][]string{{"TULAI_CAMOUFOX_MIRROR=" + mirror}, nil}
-	default:
-		return [][]string{nil, {"TULAI_CAMOUFOX_MIRROR=" + mirror}}
+	}
+	if explicit {
+		all := appendUniqueMirrors(mirrors, kernelMirrorDefaults)
+		return [][]string{
+			{"TULAI_CAMOUFOX_MIRROR=" + mirrors[0], "TULAI_CAMOUFOX_MIRRORS=" + strings.Join(all, ",")},
+			nil,
+		}
+	}
+	csv := strings.Join(mirrors, ",")
+	if strings.TrimSpace(proxy) != "" {
+		return [][]string{
+			{"TULAI_CAMOUFOX_MIRRORS=" + csv, "TULAI_CAMOUFOX_DIRECT_FIRST=1"},
+			{"TULAI_CAMOUFOX_MIRRORS=" + csv},
+			nil,
+		}
+	}
+	return [][]string{
+		{"TULAI_CAMOUFOX_MIRRORS=" + csv},
+		nil,
 	}
 }
 
@@ -308,9 +356,14 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 		}
 	}
 	var out []byte
-	for i, extraEnv := range kernelAttempts(kernelMirror()) {
+	mirrors, explicit := kernelMirrors()
+	for i, extraEnv := range kernelAttempts(mirrors, explicit, proxy) {
 		if i > 0 && progress != nil {
-			progress(Progress{Stage: StageBrowser, Text: "正在通过镜像重试下载 Camoufox 内核和指纹数据…"})
+			text := "正在通过备用线路重试下载 Camoufox 内核和指纹数据…"
+			if len(extraEnv) > 0 {
+				text = "正在通过镜像重试下载 Camoufox 内核和指纹数据…"
+			}
+			progress(Progress{Stage: StageBrowser, Text: text})
 		}
 		out, err = runInstall(ctx, stage, proxy, extraEnv, browserProgress, filepath.Join(stage, "bridge.mjs"), "install")
 		if err == nil || ctx.Err() != nil {
@@ -444,12 +497,15 @@ func installPackages(ctx context.Context, dir, proxy string, progress func(Progr
 
 func installLockedPackages(ctx context.Context, dir, proxy string, progress func(Progress)) error {
 	npmArgs := []string{npmPath(dir), "ci", "--ignore-scripts", "--omit=dev", "--include=optional", "--no-audit", "--no-fund"}
-	if _, err := runInstall(ctx, dir, proxy, nil, nil, npmArgs...); err != nil {
+	primaryCtx, cancelPrimary := context.WithTimeout(ctx, 30*time.Second)
+	_, err := runInstall(primaryCtx, dir, proxy, nil, nil, append(append([]string{}, npmArgs...), "--fetch-timeout=15000", "--fetch-retries=1")...)
+	cancelPrimary()
+	if err != nil {
 		if ctx.Err() != nil {
-			return err
+			return ctx.Err()
 		}
 		if progress != nil {
-			progress(Progress{Stage: StagePackages, Text: "官方源安装启动库失败，正在通过国内镜像重试…"})
+			progress(Progress{Stage: StagePackages, Text: "官方源安装启动库较慢或失败，正在通过国内镜像重试…"})
 		}
 		if _, err := runInstall(ctx, dir, proxy, nil, nil, append(npmArgs, "--registry="+npmMirrorRegistry)...); err != nil {
 			return err
@@ -638,7 +694,7 @@ func (l *limitedLog) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// downloadNode 依次尝试 nodeDistBases 里的下载源；官方源失败后换镜像重试，
+// downloadNode 依次尝试 nodeDistBases 里的下载源；官方源失败或过慢时换镜像重试，
 // 重试前报告换源状态，内容始终用固定 SHA-256 校验。
 func downloadNode(ctx context.Context, dest string, artifact nodeArtifact, proxy string, progress func(Progress)) error {
 	var errs []error
@@ -656,7 +712,8 @@ func downloadNode(ctx context.Context, dest string, artifact nodeArtifact, proxy
 			}
 		}
 		_ = os.Remove(dest)
-		if err := fetchNodeArchive(ctx, dest, base+"/"+artifact.File, artifact, proxy, report); err != nil {
+		hasFallback := i < len(nodeDistBases)-1
+		if err := fetchNodeArchive(ctx, dest, base+"/"+artifact.File, artifact, proxy, hasFallback, report); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", base, err))
 			continue
 		}
@@ -665,8 +722,11 @@ func downloadNode(ctx context.Context, dest string, artifact nodeArtifact, proxy
 	return fmt.Errorf("下载启动环境失败: %w", errors.Join(errs...))
 }
 
-func fetchNodeArchive(ctx context.Context, dest, downloadURL string, artifact nodeArtifact, proxy string, report func(done, total int64)) error {
+func fetchNodeArchive(ctx context.Context, dest, downloadURL string, artifact nodeArtifact, proxy string, hasFallback bool, report func(done, total int64)) error {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if hasFallback {
+		transport.ResponseHeaderTimeout = 12 * time.Second
+	}
 	if proxy != "" {
 		u, err := url.Parse(proxy)
 		if err != nil {
@@ -675,8 +735,10 @@ func fetchNodeArchive(ctx context.Context, dest, downloadURL string, artifact no
 		transport.Proxy = http.ProxyURL(u)
 	}
 	defer transport.CloseIdleConnections()
+	attemptCtx, cancelAttempt := context.WithCancel(ctx)
+	defer cancelAttempt()
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Minute}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return err
 	}
@@ -697,13 +759,57 @@ func fetchNodeArchive(ctx context.Context, dest, downloadURL string, artifact no
 	if report != nil {
 		report(0, total)
 	}
-	body := io.Reader(resp.Body)
-	if report != nil {
-		body = &progressReader{r: resp.Body, total: total, report: report}
+	var bytesRead atomic.Int64
+	var lastByteNano atomic.Int64
+	lastByteNano.Store(time.Now().UnixNano())
+	var slowErr atomic.Value
+	if hasFallback {
+		started := time.Now()
+		doneWatch := make(chan struct{})
+		defer close(doneWatch)
+		go func() {
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-doneWatch:
+					return
+				case <-attemptCtx.Done():
+					return
+				case now := <-ticker.C:
+					last := time.Unix(0, lastByteNano.Load())
+					if now.Sub(last) >= 10*time.Second {
+						slowErr.Store(errors.New("下载启动环境超时"))
+						cancelAttempt()
+						return
+					}
+					if elapsed := now.Sub(started); elapsed >= 4*time.Second {
+						const minBytesPerSec = 256 * 1024
+						if bytesRead.Load() < int64(elapsed.Seconds()*minBytesPerSec) {
+							slowErr.Store(errors.New("下载启动环境速度过慢"))
+							cancelAttempt()
+							return
+						}
+					}
+				}
+			}
+		}()
 	}
+	body := io.Reader(&progressReader{
+		r:     resp.Body,
+		total: total,
+		onRead: func(done int64) {
+			bytesRead.Store(done)
+			lastByteNano.Store(time.Now().UnixNano())
+		},
+		report: report,
+	})
 	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(body, 128<<20+1))
 	err = errors.Join(err, f.Close())
 	if err != nil {
+		if stored, ok := slowErr.Load().(error); ok && ctx.Err() == nil {
+			return stored
+		}
 		return err
 	}
 	if n > 128<<20 || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
@@ -718,12 +824,16 @@ type progressReader struct {
 	total  int64
 	done   int64
 	last   time.Time
+	onRead func(done int64)
 	report func(done, total int64)
 }
 
 func (p *progressReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
 	p.done += int64(n)
+	if p.onRead != nil && n > 0 {
+		p.onRead(p.done)
+	}
 	if p.report != nil && (err != nil || p.last.IsZero() || time.Since(p.last) >= 150*time.Millisecond) {
 		p.last = time.Now()
 		p.report(p.done, p.total)

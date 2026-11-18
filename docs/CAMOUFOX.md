@@ -8,15 +8,15 @@
 
 Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文件执行 `npm ci`，验证原生模块后生成内置资源；发布流水线在 Windows 上测试资源加载，再把它嵌入应用。资源记录平台、Node、Camoufox 和依赖锁摘要，解压时拒绝路径越界、非常规文件和版本不匹配。源码开发构建的启动库安装后也会先加载 Camoufox 和 `impit`；若校验失败，会按锁文件重新执行 `npm ci` 后再验证。
 
-安装进度按字节报告：开发构建的 Node 启动环境由 Go 直接下载并读 `Content-Length`；浏览器内核由官方启动库下载，`bridge.mjs install` 复用它的 `webdl` 下载函数，把已下载字节数写成 `{"event":"progress"}` 行。Go 读这些行并推给界面，界面显示百分比、速度和剩余时间；内置资源解压等无法按字节计量的阶段只显示状态文字。
+安装进度按字节报告：开发构建的 Node 启动环境由 Go 直接下载并读 `Content-Length`；浏览器内核由官方启动库调度下载，`bridge.mjs install` 通过多源测速与并发分段下载替换单流下载，把已下载字节数写成 `{"event":"progress"}` 行。Go 读这些行并推给界面，界面显示百分比、速度和剩余时间；内置资源解压等无法按字节计量的阶段只显示状态文字。
 
-官方源失败时依次换镜像重试：Node 启动环境改用 npmmirror 的 Node 发行镜像（内容与官方一致，仍按固定 SHA-256 校验），npm 依赖改用 npmmirror registry（npm 会把 lock 文件里的官方地址改写到当前 registry，完整性仍由 integrity 校验），内核下载改用 GitHub 加速镜像。GitHub API 不发布资源摘要，`bridge.mjs` 把固定 sha256 附加到启动库选中的内核资产上，因此无论直连还是镜像，内核下载都强制校验，镜像只能加速、无法篡改。`TULAI_CAMOUFOX_MIRROR` 可指定自建镜像（ghproxy 形式：base + `/` + 原 URL）并优先使用，设为 `off` 关闭镜像重试；配置了该变量时内核安装不再访问 api.github.com。CI 按 `install.go` 固定的版本和依赖锁缓存 `runtime/camoufox` 目录，命中时跳过全部下载。
+官方源失败、卡顿或速度过慢时自动切换镜像：Node 启动环境在官方源失败、长时间无字节或低速时切换至 npmmirror 的 Node 发行镜像（内容与官方一致，仍按固定 SHA-256 校验），npm 依赖在失败或超时后改用 npmmirror registry（npm 会把 lock 文件里的官方地址改写到当前 registry，完整性仍由 integrity 校验），内核下载自动在多个 GitHub 加速镜像与直连源之间测速选优（未配置代理时优先镜像并附带直连兜底，已配置代理时直连与镜像同轮测速），支持 HTTP Range 源使用 6 路并发分段下载与断点容错切换，不支持 Range 的镜像保持单流直下并在中断时尝试通过支持 Range 的备用源续传。GitHub API 不发布资源摘要，`bridge.mjs` 把固定 sha256 附加到启动库选中的内核资产上，因此无论直连还是镜像，内核下载都强制校验，镜像只能加速、无法篡改。`TULAI_CAMOUFOX_MIRROR` 可指定自建镜像（ghproxy 形式：base + `/` + 原 URL）并优先使用，设为 `off` 关闭镜像；配置了镜像时内核安装不再访问 api.github.com。CI 按 `install.go` 固定的版本和依赖锁缓存 `runtime/camoufox` 目录，命中时跳过全部下载。
 
 运行环境在应用配置目录的 `runtime/camoufox/0.5.9/`，浏览器和模型缓存位于 `runtime/camoufox/cache/<系统>-<架构>/`。账号资料在 `BrowserData/Camoufox/account-*`。每个账号一个独立 Firefox 进程和持久化 profile，Cookie、LocalStorage 和指纹文件彼此分离。同一账号的并发启动串行，已启动时复用本应用记录的进程，不凭一个开放端口判断归属。Firefox 自己的 profile 锁阻止其他进程同时打开资料。
 
 默认在原账号 profile 中加载临时 Firefox 页面桥，通过本机连接绑定到同一账号记录；可在「设置 → 账号与并发」关闭。豆包洗图按账号和标签页隔离会话，每个完成的对话最多用于 10 张；重试、页面变化或未确认结果时从新对话开始。发送请求的响应由 Firefox `webRequest` 流式观察并原样转发；只把状态和受限信号写入日志，豆包原图地址只用于匹配和下载。批次结束后关闭本批浏览器并清理临时扩展，账号登录资料保留。
 
-多个应用进程安装同一运行环境时使用跨进程锁，等待前一项安装完成后复用结果，避免重复下载和同时写入内核缓存。内核下载连续 30 秒没有进度时会尝试下一下载源；持续有进度的下载不设总时限。安装界面会分别提示指纹数据准备和浏览器图形环境验证。
+多个应用进程安装同一运行环境时使用跨进程锁，等待前一项安装完成后复用结果，避免重复下载和同时写入内核缓存。内核下载连续 12 秒没有进度或低速时会自动切换或重试下载源；持续有进度的下载不设总时限。安装界面会分别提示指纹数据准备和浏览器图形环境验证。
 
 固定的 Windows x64 内核在部分系统上可能因 `mozglue` 并行程序集清单而无法启动。若原程序启动返回 `spawn UNKNOWN`，且可执行文件的 SHA-256 与该固定版本完全一致，安装器会创建并校验一个兼容副本，只移除其清单中对应的依赖声明；原始程序和浏览器代码保留。其他版本不会套用这一处理。豆包页面桥批量洗图在结果确认后最多同时下载三张，保持结果和源图索引对应；运行日志分别记录上传、生成与匹配、结果下载的耗时。
 
@@ -47,7 +47,7 @@ Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文�
 
 屏幕、视口与 Navigator 的可用组合有限。新账号生成身份时通过 `collisionRoots` 同时扫描 `BrowserData/Camoufox` 与 `DownloadBrowser` 目录并钉住 `pin_cpu_cores: true`，若连续 128 次抽取都与已有设备/视口组合重复，启动会报错，不会覆盖或更改已有账号的指纹；`.tulai-fingerprint-locks` 中超过 5 分钟的过期互斥锁会自动回收。
 
-启动器不会继承外部 `CAMOU_CONFIG_*`、`CAMOU_PREFS_*`、`FONTCONFIG_FILE`、`NAPI_RS_*` 或 `TULAI_CAMOUFOX_MIRROR`，避免其他程序的配置覆盖账号指纹、字体或原生模块，镜像重试也只由安装流程控制。无头启动会核对 GPU；有窗口启动在 macOS 和 Windows 核对（Windows 的有头 / 无头读数已在 AMD GPU 上验证一致），且核对始终以无头窗口进行——否则新账号首次生成指纹时会先闪出一个临时探测窗口，看起来像浏览器打开了两次。检测到硬件 GPU 时启用 `canvas_noise` 随机化 2D Canvas 像素读数，软件渲染时不启用；重启继续保留首次写入 `.tulai-identity.json` 的 `webGl:vendor` / `webGl:renderer` 及音频配置。设备更换、未核对或 GPU 探测失败时，Canvas 仍由 Camoufox 的保护策略处理，输出可能发生变化。
+启动器不会继承外部 `CAMOU_CONFIG_*`、`CAMOU_PREFS_*`、`FONTCONFIG_FILE`、`NAPI_RS_*`、`TULAI_CAMOUFOX_MIRROR`、`TULAI_CAMOUFOX_MIRRORS` 或 `TULAI_CAMOUFOX_DIRECT_FIRST`，避免其他程序的配置覆盖账号指纹、字体或原生模块，镜像重试也只由安装流程控制。无头启动会核对 GPU；有窗口启动在 macOS 和 Windows 核对（Windows 的有头 / 无头读数已在 AMD GPU 上验证一致），且核对始终以无头窗口进行——否则新账号首次生成指纹时会先闪出一个临时探测窗口，看起来像浏览器打开了两次。检测到硬件 GPU 时启用 `canvas_noise` 随机化 2D Canvas 像素读数，软件渲染时不启用；重启继续保留首次写入 `.tulai-identity.json` 的 `webGl:vendor` / `webGl:renderer` 及音频配置。设备更换、未核对或 GPU 探测失败时，Canvas 仍由 Camoufox 的保护策略处理，输出可能发生变化。
 
 当前没有自编译 Gecko、增加 C++ 补丁或修改 NSS。Audio / RFP 的策略沿用所固定 Camoufox 版本的默认值，没有把参考清单中的旧噪声开关直接叠加进去。特别是当前上游已经调整了音频种子行为，不能把旧文档当成当前版本的可用配置。
 

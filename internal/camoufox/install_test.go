@@ -297,35 +297,50 @@ func TestRuntimeCacheIsSharedByInstallAndLaunch(t *testing.T) {
 
 func TestRuntimeEnvDropsInheritedMirrorOverride(t *testing.T) {
 	t.Setenv("TULAI_CAMOUFOX_MIRROR", "https://leak.example")
+	t.Setenv("TULAI_CAMOUFOX_MIRRORS", "https://leak2.example")
+	t.Setenv("TULAI_CAMOUFOX_DIRECT_FIRST", "1")
 	for _, item := range runtimeEnv("", t.TempDir()) {
-		if strings.HasPrefix(item, "TULAI_CAMOUFOX_MIRROR=") {
+		if strings.HasPrefix(item, "TULAI_CAMOUFOX_MIRROR=") ||
+			strings.HasPrefix(item, "TULAI_CAMOUFOX_MIRRORS=") ||
+			strings.HasPrefix(item, "TULAI_CAMOUFOX_DIRECT_FIRST=") {
 			t.Fatalf("inherited mirror override: %q", item)
 		}
 	}
 }
 
 func TestKernelMirrorAttempts(t *testing.T) {
-	if base, explicit := kernelMirror(); base != kernelMirrorDefault || explicit {
-		t.Fatalf("default mirror = %q explicit=%v", base, explicit)
+	mirrors, explicit := kernelMirrors()
+	if explicit || len(mirrors) != len(kernelMirrorDefaults) || mirrors[0] != kernelMirrorDefaults[0] {
+		t.Fatalf("default mirrors = %v explicit=%v", mirrors, explicit)
 	}
-	if got, want := kernelAttempts(kernelMirrorDefault, false),
-		[][]string{nil, {"TULAI_CAMOUFOX_MIRROR=" + kernelMirrorDefault}}; !equalAttempts(got, want) {
-		t.Fatalf("default attempts = %v, want %v", got, want)
+	defaultCSV := strings.Join(kernelMirrorDefaults, ",")
+	if got, want := kernelAttempts(mirrors, false, ""),
+		[][]string{{"TULAI_CAMOUFOX_MIRRORS=" + defaultCSV}, nil}; !equalAttempts(got, want) {
+		t.Fatalf("default direct attempts = %v, want %v", got, want)
+	}
+	if got, want := kernelAttempts(mirrors, false, "http://127.0.0.1:7890"),
+		[][]string{
+			{"TULAI_CAMOUFOX_MIRRORS=" + defaultCSV, "TULAI_CAMOUFOX_DIRECT_FIRST=1"},
+			{"TULAI_CAMOUFOX_MIRRORS=" + defaultCSV},
+			nil,
+		}; !equalAttempts(got, want) {
+		t.Fatalf("default proxy attempts = %v, want %v", got, want)
 	}
 	t.Setenv("TULAI_CAMOUFOX_MIRROR", "https://mirror.example/")
-	base, explicit := kernelMirror()
-	if base != "https://mirror.example" || !explicit {
-		t.Fatalf("explicit mirror = %q explicit=%v", base, explicit)
+	mirrors, explicit = kernelMirrors()
+	if len(mirrors) != 1 || mirrors[0] != "https://mirror.example" || !explicit {
+		t.Fatalf("explicit mirrors = %v explicit=%v", mirrors, explicit)
 	}
-	if got, want := kernelAttempts(base, explicit),
-		[][]string{{"TULAI_CAMOUFOX_MIRROR=https://mirror.example"}, nil}; !equalAttempts(got, want) {
+	wantAll := strings.Join(append([]string{"https://mirror.example"}, kernelMirrorDefaults...), ",")
+	if got, want := kernelAttempts(mirrors, explicit, ""),
+		[][]string{{"TULAI_CAMOUFOX_MIRROR=https://mirror.example", "TULAI_CAMOUFOX_MIRRORS=" + wantAll}, nil}; !equalAttempts(got, want) {
 		t.Fatalf("explicit attempts = %v, want %v", got, want)
 	}
 	t.Setenv("TULAI_CAMOUFOX_MIRROR", "off")
-	if base, _ := kernelMirror(); base != "" {
-		t.Fatalf("disabled mirror = %q", base)
+	if mirrors, _ := kernelMirrors(); len(mirrors) != 0 {
+		t.Fatalf("disabled mirrors = %v", mirrors)
 	}
-	if got, want := kernelAttempts("", false), [][]string{nil}; !equalAttempts(got, want) {
+	if got, want := kernelAttempts(nil, false, ""), [][]string{nil}; !equalAttempts(got, want) {
 		t.Fatalf("disabled attempts = %v, want %v", got, want)
 	}
 }

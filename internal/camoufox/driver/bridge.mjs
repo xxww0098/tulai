@@ -4,7 +4,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { request as playwrightRequest } from 'playwright-core';
 import { createIdentity, prepareIdentity, prepareRendering, preserveVoices } from './identity.mjs';
-import { watchDownload } from './download-watch.mjs';
+import { downloadKernel } from './download-watch.mjs';
 import { repairKernel } from './kernel-repair.mjs';
 import { prepareWindowsExecutable } from './windows-compat.mjs';
 
@@ -156,6 +156,46 @@ function mirrorBase(value) {
   return /^https?:\/\//i.test(base) ? base : '';
 }
 
+function parseMirrorList(value) {
+  const seen = new Set();
+  const out = [];
+  for (const part of String(value ?? '').split(',')) {
+    const base = mirrorBase(part);
+    if (!base || seen.has(base)) continue;
+    seen.add(base);
+    out.push(base);
+  }
+  return out;
+}
+
+function buildDownloadCandidates(url, { mirror, mirrors, directFirst }) {
+  const allMirrors = [];
+  const seenMirror = new Set();
+  for (const item of [mirror, ...(mirrors ?? [])]) {
+    const base = mirrorBase(item);
+    if (!base || seenMirror.has(base)) continue;
+    seenMirror.add(base);
+    allMirrors.push(base);
+  }
+  let canonical = String(url ?? '').trim();
+  for (const base of allMirrors) {
+    const prefix = `${base}/`;
+    if (canonical.startsWith(prefix)) {
+      canonical = canonical.slice(prefix.length);
+      break;
+    }
+  }
+  const canMirror = /^https:\/\/github\.com\//i.test(canonical);
+  const mirrorUrls = canMirror ? allMirrors.map(base => `${base}/${canonical}`) : [];
+  if (directFirst) {
+    return [canonical, ...mirrorUrls];
+  }
+  if (mirrorUrls.length > 0) {
+    return [...mirrorUrls, canonical];
+  }
+  return [String(url ?? '').trim()];
+}
+
 // 缓存布局由已安装的 camoufox 包决定，路径一律从它读取。
 async function kernelPaths() {
   const paths = await import('camoufox/dist/paths.js');
@@ -208,9 +248,10 @@ if (process.argv[2] === 'install') {
   // that one download so tulai can show bytes, percent and speed; the install
   // path itself stays the official one.
   const mirror = mirrorBase(process.env.TULAI_CAMOUFOX_MIRROR);
+  const mirrors = parseMirrorList(process.env.TULAI_CAMOUFOX_MIRRORS);
+  const directFirst = process.env.TULAI_CAMOUFOX_DIRECT_FIRST === '1';
   try {
     const { CamoufoxFetcher } = await import('camoufox');
-    const { webdl } = await import('camoufox/dist/pkgman.js');
     const getReleases = CamoufoxFetcher.prototype.getReleases;
     if (typeof getReleases === 'function') {
       const { effectivePin } = await import('camoufox/dist/browser-pin.js');
@@ -261,6 +302,10 @@ if (process.argv[2] === 'install') {
           if (repo === pin.repo && mirror) {
             return [{tag_name:pin.tag, prerelease:false, assets:mirrorAssets}];
           }
+          if (repo === pin.repo && mirrors.length > 0) {
+            const primaryAssets = directFirst ? kernelAssets(url => url) : kernelAssets(url => `${mirrors[0]}/${url}`);
+            return [{tag_name:pin.tag, prerelease:false, assets:primaryAssets}];
+          }
           try {
             const releases = await getReleases.call(this, repo);
             return repo === pin.repo ? withDigests(releases) : releases;
@@ -273,15 +318,15 @@ if (process.argv[2] === 'install') {
     }
     let last = 0;
     CamoufoxFetcher.downloadFile = async (file, url) => {
-      await watchDownload(progress => webdl(url, undefined, false, file, {
-        progressCallback: (done, total) => {
-          progress();
+      const candidates = buildDownloadCandidates(url, { mirror, mirrors, directFirst });
+      await downloadKernel(file, candidates, {
+        onProgress: (done, total) => {
           const now = Date.now();
           if (done !== total && now - last < 200) return;
           last = now;
           emit({ event: 'progress', stage: 'browser', done, total });
         },
-      }));
+      });
     };
   } catch {
     // A future launcher may move this seam; install without live progress.

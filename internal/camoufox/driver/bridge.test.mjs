@@ -260,6 +260,26 @@ test('installer serves the pinned kernel from a configured mirror without touchi
     url:'https://example.invalid/from-api',
     sha:'2644bd14f1cc345c768f6a70b576bcc87eb3d0bf0df54856d6fe0bbc3027515f',
   });
+
+  // TULAI_CAMOUFOX_MIRRORS also serves pinned assets without calling GitHub API,
+  // and respects TULAI_CAMOUFOX_DIRECT_FIRST=1 for proxy environments.
+  const runMulti = (directFirst) => {
+    const cache = path.join(root, `multi-${directFirst}`);
+    const env = {...process.env, HOME:cache, LOCALAPPDATA:cache, XDG_CACHE_HOME:cache, TULAI_CAMOUFOX_CACHE:cache,
+      TULAI_CAMOUFOX_MIRRORS:'https://m1.test/,https://m2.test', TULAI_CAMOUFOX_DIRECT_FIRST:directFirst ? '1' : '',
+      GITHUB_TOKEN:'', TEST_PLATFORM:'darwin', TEST_ARCH:'arm64', TEST_API:''};
+    return promisify(execFile)(process.execPath, [path.join(root, 'run.mjs'), 'install'], {env});
+  };
+  const {stdout: mStdout} = await runMulti(false);
+  assert.deepEqual(JSON.parse(JSON.parse(mStdout).executable), {
+    url:`https://m1.test/${github}/camoufox-158.0.1-beta.41-mac.arm64.zip`,
+    sha:'9038f86d666c9780b6fff199d488737b8596c01f24e3e517845a0ecfb0cf8add',
+  });
+  const {stdout: dStdout} = await runMulti(true);
+  assert.deepEqual(JSON.parse(JSON.parse(dStdout).executable), {
+    url:`${github}/camoufox-158.0.1-beta.41-mac.arm64.zip`,
+    sha:'9038f86d666c9780b6fff199d488737b8596c01f24e3e517845a0ecfb0cf8add',
+  });
 });
 
 test('GPU probe never opens a visible window before the account browser', async t => {

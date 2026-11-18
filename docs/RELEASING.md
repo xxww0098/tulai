@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.28
+# 发布 tulai 0.1.29
 
-当前桌面端版本是 **0.1.28**，标签 **`v0.1.28`**。页面桥扩展是 **0.3.21**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+当前桌面端版本是 **0.1.29**，标签 **`v0.1.29`**。页面桥扩展是 **0.3.21**；0.1.8 发布时的扩展是 0.3.10。扩展版本独立编号。
+
+## 0.1.29
+
+加速 Camoufox 首次安装下载：内核安装自动在多个 GitHub 加速镜像与直连源之间测速选优，支持 HTTP Range 的源使用 6 路并发分段下载与断点容错切换，不支持 Range 的镜像在断流或低速时通过备用 Range 源续传，下载仍强制校验固定 SHA-256；Node 启动环境与 npm 依赖增加响应超时和低速切换至 `npmmirror`。页面桥扩展仍为 0.3.21。完整更新说明见 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ## 0.1.28
 
@@ -136,8 +140,8 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.28` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.28` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.28` 之后，模块版本就是这个标签。 |
+| 桌面端 | `0.1.29` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
+| Go 模块 | `v0.1.29` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.29` 之后，模块版本就是这个标签。 |
 | 页面桥扩展 | `0.3.21` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
