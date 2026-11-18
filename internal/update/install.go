@@ -753,7 +753,16 @@ func WindowsScript() string {
 		"  Cleanup-Self",
 		"  exit 1",
 		"}",
-		"if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }",
+		// 杀毒软件扫描刚写入的 exe 时会短暂占用它，删一次失败就会留下 tulai.exe.previous。
+		// 多试几十次，每次之间停 250ms，仍然失败也不影响新程序运行。
+		"if (Test-Path -LiteralPath $backup) {",
+		"  $cleanupTries = 0",
+		"  while ((Test-Path -LiteralPath $backup) -and ($cleanupTries -lt 20)) {",
+		"    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue",
+		"    if (Test-Path -LiteralPath $backup) { Start-Sleep -Milliseconds 250 }",
+		"    $cleanupTries = $cleanupTries + 1",
+		"  }",
+		"}",
 		"Remove-Item -LiteralPath $stamp -Force -ErrorAction SilentlyContinue",
 		"Cleanup-Self",
 		"exit 0",
