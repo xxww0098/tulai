@@ -43,10 +43,10 @@ func handleCommand(args []string) bool {
 }
 
 func runningVersion() string {
-	if mygo.App.Version() == "" {
-		mygo.App.SetVersion(ProductVersion)
+	if version := mygo.App.Version(); version != "" {
+		return version
 	}
-	return mygo.App.Version()
+	return ProductVersion
 }
 
 func runUpdate(args []string) int {

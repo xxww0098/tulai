@@ -396,6 +396,7 @@ func TestWindowsReplaceScript(t *testing.T) {
 		// is opened again: a silent install skips the finish page.
 		"$installArgs = @('/S', ('/D=' + $dir))",
 		"if ($Source -eq '') {",
+		"$ok = (-not $proc.HasExited) -or (Test-Path -LiteralPath $stamp)",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("script missing %s:\n%s", needle, script)

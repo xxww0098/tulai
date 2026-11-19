@@ -13,13 +13,7 @@ import (
 )
 
 func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
+	client := newFixtureClient(t)
 	hook := mustRead(t, filepath.Join("js", "hook.js"))
 	composer := mustRead(t, filepath.Join("js", "composer.js"))
 	pages := map[string]string{}
@@ -258,7 +252,7 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 
 func openFixture(t *testing.T, client *cdp.Client, url, hook, composer string) *cdp.Session {
 	t.Helper()
-	sess, err := client.NewSession(url, nil)
+	sess, err := client.NewIsolatedSession(url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

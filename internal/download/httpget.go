@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpproxy"
 )
 
 // DefaultUserAgent 是直接下载时带上的浏览器标识。结果图地址多为 CDN，空 UA 容易被拒。
@@ -66,7 +68,15 @@ func proxyFunc(raw string) func(*http.Request) (*url.URL, error) {
 	if err != nil || parsed.Host == "" {
 		return nil
 	}
-	return http.ProxyURL(parsed)
+	config := httpproxy.Config{
+		HTTPProxy:  parsed.String(),
+		HTTPSProxy: parsed.String(),
+		NoProxy:    httpproxy.FromEnvironment().NoProxy,
+	}
+	proxyForURL := config.ProxyFunc()
+	return func(req *http.Request) (*url.URL, error) {
+		return proxyForURL(req.URL)
+	}
 }
 
 // Get 发出一次 GET。prepare 在发送前调用，调用方用它加 Range 和自己的头。

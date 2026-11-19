@@ -848,25 +848,29 @@ func (a *App) submitDownloadComposer() {
 		a.dlComposerErr = err.Error()
 		return
 	}
+	if !ensureDownloadDir(a.downloadDir()) {
+		a.dlComposerErr = "无法创建保存目录"
+		return
+	}
 	if a.dlBrowserMode {
 		valid := parseDownloadURLs(a.dlURLs)
 		if len(valid) != 1 {
 			a.dlComposerErr = "浏览器模式每次需要一个网址"
 			return
 		}
-		if a.dlBrowserBusy || a.dlBrowser == nil || !a.dlBrowser.Alive() || a.dlBrowserURL != valid[0] {
-			a.dlComposerErr = "请先打开该网址的下载浏览器并完成登录"
-			return
-		}
-	}
-	if !ensureDownloadDir(a.downloadDir()) {
-		a.dlComposerErr = "无法创建保存目录"
+		a.submitDownloadBrowserURL(valid[0])
 		return
 	}
-	added, invalid := a.addDownloadURLs(a.dlURLs)
+	a.enqueueDownloadComposer(a.dlURLs)
+}
+
+func (a *App) enqueueDownloadComposer(raw string) {
+	added, invalid := a.addDownloadURLs(raw)
 	if added == 0 {
 		if invalid > 0 {
 			a.dlComposerErr = "没有可用的 HTTP / HTTPS 地址"
+		} else if a.dlBrowserMode {
+			a.dlComposerErr = "该网址已有下载任务，请在下载列表中查看"
 		} else {
 			a.dlComposerErr = "先粘贴至少一个地址"
 		}

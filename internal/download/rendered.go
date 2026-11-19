@@ -69,8 +69,8 @@ func OpenRendered(ctx context.Context, profileDir, rawURL, proxy string, headles
 }
 
 // OpenRenderedAssisted enables the download button in the dedicated browser.
-func OpenRenderedAssisted(ctx context.Context, profileDir, rawURL, proxy string, headless bool, handler DownloadRequest) (*RenderedSession, error) {
-	return openRenderedWithAssistant(ctx, profileDir, rawURL, proxy, headless, browser.ConfigDir(), handler)
+func OpenRenderedAssisted(ctx context.Context, profileDir, rawURL string, headless bool, handler DownloadRequest) (*RenderedSession, error) {
+	return openRenderedWithAssistant(ctx, profileDir, rawURL, "", headless, browser.ConfigDir(), handler)
 }
 
 func openRendered(ctx context.Context, profileDir, rawURL, proxy string, headless bool, runtimeDir string) (*RenderedSession, error) {
@@ -109,7 +109,7 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	if err != nil {
 		return nil, err
 	}
-	options := camoufox.Options{Profile: profileDir, Headless: headless}
+	options := camoufox.Options{Profile: profileDir, Headless: headless, DirectNetwork: true}
 	var assistant *downloadAssistant
 	if handler != nil {
 		var addon string
@@ -129,7 +129,7 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	life, closeTab := context.WithCancel(process.Context())
 	tab := camoufox.PageContext(life, process, process.Page)
 	closeAlloc := func() { process.Close() }
-	getter := NewHTTPGetter(proxy)
+	getter := NewHTTPGetter("")
 	getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	transport := getter.client.Transport.(*http.Transport)
 	transport.DialContext = safeDownloadDial
@@ -192,19 +192,19 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	})
 	context.AfterFunc(tab, unsubscribe)
 	context.AfterFunc(process.Context(), s.markClosed)
-	target := "about:blank"
 	if start != nil {
-		target = start.String()
+		if err := s.run(ctx, camoufox.Navigate(tuchongBrowserEntry(start))); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("打开下载浏览器: %w", err)
+		}
 	}
-	err = s.run(ctx, camoufox.Navigate(target))
+	if err := ctx.Err(); err != nil {
+		s.Close()
+		return nil, err
+	}
 	s.mu.Lock()
 	s.frozen = true
 	s.mu.Unlock()
-
-	if err != nil {
-		s.Close()
-		return nil, fmt.Errorf("打开下载浏览器: %w", err)
-	}
 	return s, nil
 }
 
@@ -225,7 +225,7 @@ func (s *RenderedSession) OpenTarget(ctx context.Context, rawURL string) error {
 		s.startIP = literal.Unmap()
 	}
 	s.mu.Unlock()
-	err = s.run(ctx, page.BringToFront(), camoufox.Navigate(start.String()))
+	err = s.run(ctx, page.BringToFront(), camoufox.Navigate(tuchongBrowserEntry(start)))
 	s.mu.Lock()
 	s.frozen = true
 	if err != nil {
@@ -255,12 +255,26 @@ func (s *RenderedSession) downloadMarkers() extbundle.DownloadAddonMarkers {
 
 // BindCurrent selects the tab whose download button was clicked without reloading it.
 func (s *RenderedSession) BindCurrent(ctx context.Context, rawURL, marker string) error {
+	if !downloadRequestMarker.MatchString(marker) {
+		return errors.New("当前网页的下载请求无效，请重新点击下载")
+	}
+	return s.bindPage(ctx, rawURL, marker)
+}
+
+func (s *RenderedSession) BindOpenPage(ctx context.Context, rawURL string) error {
+	return s.bindPage(ctx, rawURL, "")
+}
+
+func (s *RenderedSession) bindPage(ctx context.Context, rawURL, marker string) error {
 	start, err := crawlInputURL(rawURL)
-	if err != nil || start.User != nil || QzoneURLHasCredentials(rawURL) || !downloadRequestMarker.MatchString(marker) {
+	if err != nil || start.User != nil || QzoneURLHasCredentials(rawURL) {
 		return errors.New("当前网址无效或包含登录令牌，请移除后重试")
 	}
 	if !s.Alive() {
 		return errors.New("下载浏览器已关闭，请重新打开")
+	}
+	matches := func(observed string) bool {
+		return observed == rawURL || (marker == "" && pinterestSearchURLMatches(rawURL, observed))
 	}
 	var targets struct {
 		Infos []struct {
@@ -274,10 +288,15 @@ func (s *RenderedSession) BindCurrent(ctx context.Context, rawURL, marker string
 	}
 	var selected string
 	var selectedTab context.Context
-	markers := s.downloadMarkers()
-	selector := fmt.Sprintf("[%s][%s]", markers.HostAttr, markers.RequestAttr)
+	var selectedURL string
+	script := `({url:location.href})`
+	if marker != "" {
+		markers := s.downloadMarkers()
+		selector := fmt.Sprintf("[%s][%s]", markers.HostAttr, markers.RequestAttr)
+		script = fmt.Sprintf(`({url:location.href,match:Array.from(document.querySelectorAll(%q)).some(el=>el.getAttribute(%q)===%q)})`, selector, markers.RequestAttr, marker)
+	}
 	for _, target := range targets.Infos {
-		if target.Type != "page" || target.URL != rawURL {
+		if target.Type != "page" || !matches(target.URL) {
 			continue
 		}
 		tab := camoufox.PageContext(s.life, s.process, target.ID)
@@ -285,22 +304,33 @@ func (s *RenderedSession) BindCurrent(ctx context.Context, rawURL, marker string
 			URL   string
 			Match bool
 		}
-		script := fmt.Sprintf(`({url:location.href,match:Array.from(document.querySelectorAll(%q)).some(el=>el.getAttribute(%q)===%q)})`, selector, markers.RequestAttr, marker)
 		err := runRendered(ctx, tab, chromedp.Evaluate(script, &state))
-		if err == nil && state.URL == rawURL && state.Match {
+		if err == nil && matches(state.URL) && (marker == "" || state.Match) {
 			if selected != "" {
-				return errors.New("无法确定下载标签页，请重试")
+				return errors.New("有多个标签页符合该网址，请在目标页点击「下载到 tulai」")
 			}
-			selected, selectedTab = target.ID, tab
+			selected, selectedTab, selectedURL = target.ID, tab, state.URL
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if selected == "" {
-		return errors.New("网页已切换或关闭，请在目标页面重新点击下载")
+		if marker != "" {
+			return errors.New("网页已切换或关闭，请在目标页面重新点击下载")
+		}
+		s.mu.RLock()
+		explicitlyOpened := s.expected == "" && s.start != nil && s.start.String() == start.String()
+		s.mu.RUnlock()
+		if explicitlyOpened && !isPinterestSearch(start) {
+			return nil
+		}
+		return errors.New("下载浏览器中未找到该网页，请打开填写的网址。若站点要求登录或验证，请处理后返回目标页")
 	}
 	s.mu.Lock()
 	doc := s.documents[selected]
 	s.target, s.tab, s.start = selected, selectedTab, start
-	s.expected = rawURL
+	s.expected = selectedURL
 	s.pageURL, s.pageIP = nil, netip.Addr{}
 	s.docURL, s.docIP, s.startIP, s.frozen = doc.url, doc.ip, netip.Addr{}, true
 	if doc.url != nil && sameOrigin(start, doc.url) {
@@ -392,6 +422,8 @@ func runRendered(ctx, tab context.Context, actions ...camoufox.Action) error {
 
 type renderedSnapshot struct {
 	URL        string   `json:"url"`
+	Status     int      `json:"status"`
+	ReadyState string   `json:"readyState"`
 	Title      string   `json:"title"`
 	Base       string   `json:"base"`
 	HTML       []string `json:"html"`
@@ -407,13 +439,15 @@ type renderedSnapshot struct {
 // shortcut: each snapshot examines at most 10,000 elements and 8 MiB of markup;
 // add configurable bounds when larger pages must be fully scanned.
 const renderedSnapshotScript = `(() => {
+  const navigation = performance.getEntriesByType("navigation")[0];
+  const status = navigation && navigation.name.split("#")[0] === location.href.split("#")[0] ? navigation.responseStatus : 0;
   const html = [document.documentElement ? document.documentElement.outerHTML : ""];
   const current = [], background = [], roots = [document];
   let count = 0, truncated = false, total = html[0].length;
   for (let i = 0; i < roots.length && !truncated; i++) {
     const root = roots[i];
     if (i) { const text = root.innerHTML || ""; total += text.length; html.push(text); }
-    if (total > 8388608) return {url:location.href, tooLarge:true};
+    if (total > 8388608) return {url:location.href, status, readyState:document.readyState, tooLarge:true};
     for (const element of root.querySelectorAll("*")) {
       if (++count > 10000) { truncated = true; break; }
       if (element.shadowRoot) roots.push(element.shadowRoot);
@@ -422,7 +456,7 @@ const renderedSnapshotScript = `(() => {
     }
   }
   const body = document.body, root = document.documentElement;
-  return {url:location.href,title:document.title,base:document.baseURI,html,current,background,
+  return {url:location.href,status,readyState:document.readyState,title:document.title,base:document.baseURI,html,current,background,
     scrollY:window.scrollY,height:Math.max(root ? root.scrollHeight : 0, body ? body.scrollHeight : 0),
     viewport:window.innerHeight,truncated};
 })()`
@@ -430,6 +464,47 @@ const renderedSnapshotScript = `(() => {
 // shortcut: only the current page and at most eight viewport scrolls are
 // examined; add task-configurable crawling when deeper rendered pages are needed.
 const maxRenderedScrolls = 8
+
+func renderedAccessSite(target *url.URL) string {
+	switch {
+	case isZhihuPage(target):
+		return "知乎"
+	case isBehanceProject(target), isBehanceProfile(target):
+		return "Behance"
+	default:
+		return ""
+	}
+}
+
+func (s *RenderedSession) captureSnapshot(ctx context.Context, waitForAccess bool) (renderedSnapshot, error) {
+	var snapshot renderedSnapshot
+	var deadline time.Time
+	for {
+		var current renderedSnapshot
+		err := s.run(ctx, chromedp.Evaluate(renderedSnapshotScript, &current))
+		if err == nil {
+			snapshot = current
+		}
+		recovering := !deadline.IsZero() && snapshot.ReadyState == "loading"
+		if !waitForAccess || (snapshot.Status != http.StatusForbidden && !recovering) {
+			return snapshot, err
+		}
+		target, parseErr := crawlInputURL(snapshot.URL)
+		if parseErr != nil || !sameRenderedSite(s.start, target) || renderedAccessSite(target) == "" {
+			return snapshot, err
+		}
+		if deadline.IsZero() {
+			deadline = time.Now().Add(6 * time.Second)
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return snapshot, err
+		}
+		if err := Wait(ctx, min(remaining, 400*time.Millisecond)); err != nil {
+			return snapshot, err
+		}
+	}
+}
 
 // Capture reads the currently visible page after the user has completed login.
 func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
@@ -455,8 +530,8 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 		}
 	}()
 	for step := 0; step <= maxRenderedScrolls; step++ {
-		var snapshot renderedSnapshot
-		if err := s.run(ctx, chromedp.Evaluate(renderedSnapshotScript, &snapshot)); err != nil {
+		snapshot, err := s.captureSnapshot(ctx, step == 0 && renderedAccessSite(s.start) != "")
+		if err != nil {
 			return result, err
 		}
 		if expected != "" && snapshot.URL != expected {
@@ -465,6 +540,9 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 		page, err := crawlInputURL(snapshot.URL)
 		if err != nil || !sameRenderedSite(s.start, page) {
 			return result, errors.New("浏览器当前页面已离开原始站点，请返回目标网页后重试")
+		}
+		if isPinterestSearch(s.start) && !pinterestSameSearch(s.start, page) {
+			return result, errors.New("Pinterest 搜索已跳转或查询条件发生变化，请在下载浏览器中返回目标搜索结果")
 		}
 		if isNeteasePhotoPage(s.start) {
 			return discoverNeteasePhoto(ctx, s.Getter(), s.start)
@@ -549,8 +627,21 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 		if isSOImageSearch(s.start) && !isSOImageSearch(page) {
 			return result, errors.New("360 图片页面已跳转，可能需要安全验证")
 		}
-		if isZhihuPage(s.start) && !isZhihuPage(page) {
+		if original := zhihuPageRef(s.start); original.id != "" && zhihuPageRef(page) != original {
 			return result, errors.New("知乎页面已跳转，可能需要登录或安全验证")
+		}
+		if id := behanceProjectID(s.start); id != "" && behanceProjectID(page) != id {
+			return result, errors.New("Behance 作品已跳转，可能需要登录或安全验证")
+		}
+		if route := tuchongRouteOf(s.start); route.site != "" && tuchongRouteOf(page) != route {
+			return result, errors.New("图虫作品或作者页面已跳转，可能需要登录或安全验证")
+		}
+		if snapshot.Status == http.StatusUnauthorized || snapshot.Status == http.StatusForbidden {
+			site := renderedAccessSite(page)
+			if site != "" {
+				status := &HTTPStatusError{URL: page.String(), StatusCode: snapshot.Status}
+				return result, fmt.Errorf("%s页面访问受限，请在下载浏览器中完成登录或验证并确认内容可见: %w", site, status)
+			}
 		}
 		if isUnsplashPage(s.start) && !isUnsplashPage(page) {
 			return result, errors.New("Unsplash 页面已跳转，可能需要登录或安全验证")
@@ -892,9 +983,6 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 			if isAicaigouShop(page) {
 				return discoverAicaigouShop(ctx, s.Getter(), page)
 			}
-			if isTuchongPage(page) && tuchongRouteOf(page).post == "" {
-				return discoverTuchong(ctx, s.Getter(), page)
-			}
 			if is1688Offer(page) || isBilibiliPost(page) || isImgurPage(page) || isTaobaoItem(page) ||
 				isFlickrPage(page) || isHuabanPage(page) || isWechatArticle(page) || isJDProduct(page) ||
 				isAliExpressProduct(page) || isAmazonSearch(page) || isAmazonProduct(page) || isInstagramPost(page) ||
@@ -1082,7 +1170,7 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 				case isImgurPage(page):
 					return imgurPage(ctx, doc, page)
 				case isFlickrPage(page):
-					return flickrCollect(ctx, s.Getter(), page, doc)
+					return flickrCollect(ctx, s.Getter(), page, doc, true)
 				case isHuabanPage(page):
 					return huabanCollect(ctx, s.Getter(), page, doc)
 				case isWechatArticle(page):
@@ -1100,6 +1188,12 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 				case isPinduoduoProduct(page):
 					return pinduoduoCollect(ctx, s.Getter(), page, doc)
 				case isTuchongPage(page):
+					if tuchongRouteOf(page).post == "" {
+						if tuchongVerificationPage(doc) {
+							return result, errTuchongVerification
+						}
+						return discoverTuchong(ctx, s.Getter(), page)
+					}
 					return tuchongPostPage(ctx, doc, page)
 				case isBehanceProject(page), isBehanceProfile(page):
 					return behanceCollect(ctx, s.Getter(), page, doc)
@@ -1149,7 +1243,9 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 			break
 		}
 		if step == maxRenderedScrolls {
-			partial = errors.Join(partial, errors.New("网页滚动超过 8 屏的扫描上限"))
+			if !isPinterestSearch(page) {
+				partial = errors.Join(partial, errors.New("网页滚动超过 8 屏的扫描上限"))
+			}
 			break
 		}
 		if err := s.run(ctx, chromedp.Evaluate(`window.scrollBy({top: window.innerHeight, behavior: "instant"})`, nil)); err != nil {
@@ -1162,10 +1258,14 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 	if first == nil {
 		return result, errors.New("没有可采集的网页")
 	}
+	if isPinterestSearch(first) && len(result.Items) == 0 {
+		return result, errors.Join(partial, errors.New("Pinterest 搜索页未发现可下载的 Pin 图片，请等待结果加载后重试"))
+	}
 	return result, partial
 }
 
 func addRenderedSnapshot(result *Discovery, seen map[string]bool, page *url.URL, snapshot renderedSnapshot) error {
+	pinterestSearch := isPinterestSearch(page)
 	base := page
 	if u, err := crawlURL(page, snapshot.Base); err == nil {
 		base = u
@@ -1173,6 +1273,14 @@ func addRenderedSnapshot(result *Discovery, seen map[string]bool, page *url.URL,
 	add := func(raw string) {
 		u, err := crawlURL(base, raw)
 		if err != nil || u.User != nil {
+			return
+		}
+		if pinterestSearch {
+			item, ok := pinterestItem(page, u.String())
+			if ok && !seen[item.URL] {
+				seen[item.URL] = true
+				result.Items = append(result.Items, item)
+			}
 			return
 		}
 		normalized := weiboOriginalURL(page.String(), u.String())
@@ -1198,7 +1306,7 @@ func addRenderedSnapshot(result *Discovery, seen map[string]bool, page *url.URL,
 			return err
 		}
 		walkHTML(doc, func(n *html.Node) {
-			if n.Type != html.ElementNode {
+			if n.Type != html.ElementNode || (pinterestSearch && !pinterestSearchPinImage(page, n)) {
 				return
 			}
 			for _, raw := range imageCandidates(n) {
@@ -1210,6 +1318,9 @@ func addRenderedSnapshot(result *Discovery, seen map[string]bool, page *url.URL,
 				}
 			}
 		})
+	}
+	if pinterestSearch {
+		return nil
 	}
 	for _, raw := range snapshot.Current {
 		add(raw)
@@ -1476,7 +1587,7 @@ func isPublicDownloadIP(ip netip.Addr) bool {
 
 func safeDownloadDial(ctx context.Context, networkName, address string) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}
-	return safeDownloadDialWith(ctx, networkName, address, lookupTemuImageIPs, dialer.DialContext)
+	return safeDownloadDialWith(ctx, networkName, address, lookupImageIPs, dialer.DialContext)
 }
 
 func safeDownloadDialWith(ctx context.Context, networkName, address string,
@@ -1495,7 +1606,7 @@ func safeDownloadDialWith(ctx context.Context, networkName, address string,
 	var last error
 	for _, rawIP := range ips {
 		ip := rawIP.Unmap()
-		if !ip.IsValid() || (networkName == "tcp4" && !ip.Is4()) || (networkName == "tcp6" && !ip.Is6()) ||
+		if !ip.IsValid() || imageFakeIPRange.Contains(ip) || (networkName == "tcp4" && !ip.Is4()) || (networkName == "tcp6" && !ip.Is6()) ||
 			(!isPublicDownloadIP(ip) && (!policy.allowedLocal.IsValid() || ip != policy.allowedLocal.Unmap())) {
 			continue
 		}

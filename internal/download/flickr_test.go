@@ -252,14 +252,23 @@ func TestFlickrRenderedCapture(t *testing.T) {
 	const target = "https://www.flickr.com/photos/name/albums/123/?token=synthetic"
 	photo := flickrTestPhoto("11", map[string]string{"l": "//live.staticflickr.com/73/11_safe_b.jpg"})
 	page := flickrTestHTML(true, "123", []map[string]any{photo}, 2, false, true)
+	picture := filterPNG(t, 11, 7)
 	var apiCalls atomic.Int32
 	session.getter.client.Transport = flickrTestTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "live.staticflickr.com" && r.Header.Get("Cookie") == "" {
+			if r.URL.Path == "/73/11_safe_b.jpg" {
+				return renderedFixturePNGResponse(r, picture), nil
+			}
+			if r.URL.Path == "/73/11_orig_o.jpg" || r.URL.Path == "/73/11_large_k.jpg" {
+				return &http.Response{StatusCode: http.StatusTooManyRequests, Request: r, Body: http.NoBody}, nil
+			}
+		}
 		if r.URL.Host != "www.flickr.com" || r.URL.Path != "/services/rest/" || r.URL.Query().Get("api_key") != flickrTestKey || !strings.Contains(r.Header.Get("Cookie"), "synthetic_session=example") {
 			return nil, errors.New("unexpected HTTP request or missing same-origin session")
 		}
 		apiCalls.Add(1)
 		body := flickrTestAPI("123", 1, 1, 2,
-			map[string]any{"id": "11", "url_o": "https://live.staticflickr.com/73/11_orig_o.jpg"},
+			map[string]any{"id": "11", "url_o": "https://live.staticflickr.com/73/11_orig_o.jpg", "url_k": "https://live.staticflickr.com/73/11_large_k.jpg"},
 			map[string]any{"id": "12", "url_l": "https://live.staticflickr.com/73/12_safe_b.jpg"})
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Request: r, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
@@ -298,9 +307,10 @@ func TestFlickrRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
-	if err != nil || len(got.Items) != 2 || apiCalls.Load() != 1 || !strings.Contains(got.Items[0].URL, "11_orig_o") || !strings.Contains(got.Items[1].URL, "12_safe_b") {
+	if err != nil || len(got.Items) != 2 || apiCalls.Load() != 1 || !strings.Contains(got.Items[0].URL, "11_safe_b") || !strings.Contains(got.Items[1].URL, "12_safe_b") {
 		t.Fatalf("capture = %+v, API calls %d, err %v", got.Items, apiCalls.Load(), err)
 	}
+	assertSavedRenderedPNG(t, ctx, session, got.Items[0], picture)
 	for _, item := range got.Items {
 		if item.Headers["Referer"] != "https://www.flickr.com/" {
 			t.Fatalf("referer = %q", item.Headers["Referer"])

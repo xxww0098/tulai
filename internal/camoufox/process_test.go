@@ -31,6 +31,31 @@ func TestRuntimeEnvIsolatesFingerprintConfiguration(t *testing.T) {
 	}
 }
 
+func TestBrowserRuntimeEnvDirectNetwork(t *testing.T) {
+	proxyVars := []string{"HTTP_PROXY", "https_proxy", "ALL_PROXY", "npm_config_https_proxy"}
+	for _, key := range proxyVars {
+		t.Setenv(key, "http://127.0.0.1:65535")
+	}
+	t.Setenv("TULAI_RUNTIME_ENV_TEST", "preserved")
+
+	dir := t.TempDir()
+	for _, direct := range []bool{true, false} {
+		values := make(map[string]string)
+		for _, item := range browserRuntimeEnv(dir, direct) {
+			key, value, _ := strings.Cut(item, "=")
+			values[strings.ToUpper(key)] = value
+		}
+		for _, key := range proxyVars {
+			if _, present := values[strings.ToUpper(key)]; present == direct {
+				t.Errorf("direct=%v: %s present=%v", direct, key, present)
+			}
+		}
+		if values["TULAI_RUNTIME_ENV_TEST"] != "preserved" {
+			t.Errorf("direct=%v: unrelated environment was removed", direct)
+		}
+	}
+}
+
 func TestCallReplyCancellationAndExit(t *testing.T) {
 	life, cancel := context.WithCancel(context.Background())
 	defer cancel()

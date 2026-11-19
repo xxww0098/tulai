@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"sync"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,9 +88,7 @@ func (s cleanupFixtureStrategy) InstallHook(*cdp.Session) error {
 
 func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	config := camoufoxtest.ConfigDir(t)
-	if filepath.Clean(config) != filepath.Clean(browser.ConfigDir()) {
-		t.Skip("test runtime must match the browser manager configuration")
-	}
+	camoufoxtest.WithoutProxy(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" {
 			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "kept", Path: "/", MaxAge: 3600})
@@ -99,13 +97,13 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 			fmt.Fprint(w, cookie.Value)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	root := t.TempDir()
 	st, err := store.Open(filepath.Join(root, "config.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	t.Cleanup(func() { st.Close() })
 	var accounts []store.Browser
 	for _, name := range []string{"one", "two"} {
 		row, err := st.AddBrowser("豆包", name, filepath.Join(root, name))
@@ -115,8 +113,8 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 		st.UpdateBrowser(row.ID, false, true)
 		accounts = append(accounts, row)
 	}
-	mgr := browser.NewManager()
-	defer mgr.StopAll()
+	mgr := browser.NewManagerWithConfig(config)
+	t.Cleanup(mgr.StopAll)
 	unrelated := store.Browser{ID: 9001, Name: "unrelated", Port: 49991, UserDataDir: filepath.Join(root, "unrelated")}
 	if _, err := mgr.Start(unrelated, root, browser.KindCamoufox, server.URL+"/check", true); err != nil {
 		t.Fatal(err)
@@ -126,11 +124,8 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	started := make(chan int, 2)
 	firstDone := make(chan struct{})
 	release := make(chan struct{})
-	releaseTask := sync.OnceFunc(func() { close(release) })
-	defer func() { releaseTask(); e.Stop() }()
-	done := make(chan error, 1)
-	go func() {
-		done <- e.run(context.Background(), Options{Platforms: []string{"豆包"}, Prompts: []string{"one", "two"}, Concurrency: 2},
+	done := runBrowserCleanupBatch(t, func(ctx context.Context) error {
+		return e.run(ctx, Options{Platforms: []string{"豆包"}, Prompts: []string{"one", "two"}, Concurrency: 2},
 			func(task Task) {
 				if task.Index == 1 && task.Status == StatusSuccess {
 					close(firstDone)
@@ -141,15 +136,26 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 				}
 				started <- task.Index
 				if task.Index == 2 {
-					<-release
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 				}
 				return nil
 			})
-	}()
+	})
+	startDeadline := time.NewTimer(camoufoxtest.StartTimeout + 30*time.Second)
+	defer startDeadline.Stop()
 	for range 2 {
 		select {
 		case <-started:
-		case <-time.After(45 * time.Second):
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Fatalf("batch ended before both accounts started: %+v", e.View().Snapshot())
+		case <-startDeadline.C:
 			t.Fatal("accounts did not start")
 		}
 	}
@@ -163,7 +169,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 			t.Fatal("a browser stopped while the batch was still running")
 		}
 	}
-	releaseTask()
+	close(release)
 	select {
 	case err := <-done:
 		if err != nil {
@@ -180,7 +186,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	if !mgr.IsRunning(unrelated.ID) {
 		t.Fatal("an unrelated browser was closed")
 	}
-	ep, err := mgr.StartTask(context.Background(), accounts[0], root, browser.KindCamoufox, server.URL+"/check")
+	ep, err := mgr.StartTask(t.Context(), accounts[0], root, browser.KindCamoufox, server.URL+"/check")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +194,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	var out struct{ Result struct{ Value string } }
 	if err := proc.Call(ctx, proc.Page, "Runtime.evaluate", map[string]any{"expression": "document.body.textContent"}, &out); err != nil || out.Result.Value != "kept" {
@@ -196,7 +202,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	}
 	mgr.Stop(accounts[0].ID)
 	fixture.fail = true
-	err = e.run(context.Background(), Options{Platforms: []string{"豆包"}, Prompts: []string{"fail"}, Concurrency: 1},
+	err = e.run(t.Context(), Options{Platforms: []string{"豆包"}, Prompts: []string{"fail"}, Concurrency: 1},
 		func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
 			_, err := e.session(ctx, task.Platform, task.BrowserID, fixture)
 			return err
@@ -204,10 +210,13 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	if err != nil || mgr.IsRunning(accounts[0].ID) || mgr.IsRunning(accounts[1].ID) {
 		t.Fatalf("browser survived a session setup failure: %v", err)
 	}
+	if task := e.View().Snapshot()[0]; task.Status != StatusFailed || !strings.Contains(task.Error, "test hook failure") {
+		t.Fatalf("expected a session hook failure: %+v", task)
+	}
 	fixture.fail = false
 	stopping := make(chan struct{})
-	go func() {
-		done <- e.run(context.Background(), Options{Platforms: []string{"豆包"}, Prompts: []string{"stop"}, Concurrency: 1},
+	done = runBrowserCleanupBatch(t, func(ctx context.Context) error {
+		return e.run(ctx, Options{Platforms: []string{"豆包"}, Prompts: []string{"stop"}, Concurrency: 1},
 			func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
 				if _, err := e.session(ctx, task.Platform, task.BrowserID, fixture); err != nil {
 					return err
@@ -216,12 +225,15 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			})
-	}()
+	})
 	select {
 	case <-stopping:
 	case err := <-done:
-		t.Fatalf("stop test finished before starting: %v", err)
-	case <-time.After(30 * time.Second):
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("stop test finished before starting: %+v", e.View().Snapshot())
+	case <-time.After(camoufoxtest.StartTimeout + 30*time.Second):
 		t.Fatal("stop test did not start")
 	}
 	e.Stop()
@@ -233,4 +245,18 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	case <-time.After(25 * time.Second):
 		t.Fatal("stop did not finish cleanup")
 	}
+}
+
+func runBrowserCleanupBatch(t *testing.T, run func(context.Context) error) <-chan error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		done <- run(t.Context())
+	}()
+	t.Cleanup(func() {
+		for range done {
+		}
+	})
+	return done
 }

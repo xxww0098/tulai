@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/agytest"
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
@@ -33,22 +34,13 @@ func (m *loginCredentials) Read(ctx context.Context) ([]byte, error) {
 
 func TestLoginSavesKeyringOnlyOAuth(t *testing.T) {
 	home := t.TempDir()
-	script := filepath.Join(home, "agy-login.sh")
-	if err := os.WriteFile(script, []byte(`#!/bin/sh
-printf '%s\n' 'Authentication required. Please visit the URL to log in:' 'https://accounts.google.com/o/oauth2/auth?client_id=agy'
-IFS= read -r code
-unset code
-: > "$HOME/keyring-ready"
-printf '%s\n' 'OAuth: authenticated successfully as keyring@example.com'
-exec sleep 30
-`), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	bin := agytest.Executable(t)
+	writeFixture(t, home, "login-keyring")
 	previous := Keyring
 	token := []byte(strings.ReplaceAll(testCredential, "test-refresh", "new-login-refresh"))
 	Keyring = &loginCredentials{memoryCredentials: memoryCredentials{data: []byte(testCredential)}, marker: filepath.Join(home, "keyring-ready"), token: token}
 	t.Cleanup(func() { Keyring = previous })
-	sess, err := startLogin(context.Background(), script, home, "", 3*time.Second)
+	sess, err := startLogin(context.Background(), bin, home, "", 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,8 +71,8 @@ func TestLoginCanCancelWhileWaitingForCredentialSwitch(t *testing.T) {
 	next := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
-	script := agyScript(t)
-	go func() { _, err := StartLogin(ctx, script, next, ""); result <- err }()
+	bin := agytest.Executable(t)
+	go func() { _, err := StartLogin(ctx, bin, next, ""); result <- err }()
 	cancel()
 	select {
 	case err := <-result:
@@ -96,10 +88,10 @@ func TestLoginCanCancelWhileWaitingForCredentialSwitch(t *testing.T) {
 }
 
 func TestLoginSubmitDoesNotKeepCode(t *testing.T) {
-	script := agyScript(t)
+	bin := agytest.Executable(t)
 	home := t.TempDir()
 	writeFixture(t, home, "login")
-	sess, err := startLogin(context.Background(), script, home, DefaultModel, 5*time.Second)
+	sess, err := startLogin(context.Background(), bin, home, DefaultModel, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,10 +131,10 @@ func TestLoginSubmitDoesNotKeepCode(t *testing.T) {
 }
 
 func TestLoginTimeout(t *testing.T) {
-	script := agyScript(t)
+	bin := agytest.Executable(t)
 	home := t.TempDir()
 	writeFixture(t, home, "hang")
-	sess, err := startLogin(context.Background(), script, home, "", 300*time.Millisecond)
+	sess, err := startLogin(context.Background(), bin, home, "", 300*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}

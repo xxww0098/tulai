@@ -378,6 +378,7 @@ function setupBridgeSandbox(t, {candidates = []}) {
       ctx.exposeBinding = async name => { record.bindings.push(name); save(); };
       ctx.newPage = async () => {
         const page = makePage(record);
+        page.context = () => ctx;
         record.pagesList = ctx.pagesList;
         ctx.pagesList.push(page);
         save();
@@ -544,11 +545,12 @@ test('isolated contexts inherit media defaults, proxy, scopeBootstrap, bindings,
     {id:3, method:'Target.createTarget', params:{isolated:true, url:'https://example.test/first'}},
     {id:4, method:'Target.createTarget', params:{isolated:true, proxy:'http://127.0.0.1:9090', url:'https://example.test/second'}},
     {id:5, method:'Runtime.addBinding', target:'1', params:{name:'latePipe'}},
-    {id:6, method:'Page.close', target:'2', params:{}},
-    {id:7, method:'Target.closeTarget', params:{targetId:'3'}},
-    {id:8, method:'Browser.close', params:{}},
+    {id:6, method:'Runtime.addBinding', target:'2', params:{name:'privatePipe'}},
+    {id:7, method:'Page.close', target:'2', params:{}},
+    {id:8, method:'Target.closeTarget', params:{targetId:'3'}},
+    {id:9, method:'Browser.close', params:{}},
   ]);
-  for (const reqId of [1, 2, 3, 4, 5, 6, 7, 8]) {
+  for (const reqId of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
     const res = responses.find(r => r.id === reqId);
     assert.ok(res && !res.error, `request ${reqId} failed: ${res?.error}`);
   }
@@ -567,12 +569,14 @@ test('isolated contexts inherit media defaults, proxy, scopeBootstrap, bindings,
   const persistentContext = trace.contexts.find(c => c.kind === 'persistent');
   const isolatedContexts = trace.contexts.filter(c => c.kind === 'isolated');
   assert.equal(isolatedContexts.length, 2);
-  for (const ctx of isolatedContexts) {
+  assert.deepEqual(persistentContext.bindings, ['tulaiPipe', 'latePipe']);
+  for (const [index, ctx] of isolatedContexts.entries()) {
     assert.equal(ctx.defaultTimeout, 25000);
     assert.equal(ctx.closed, true);
     assert.ok(ctx.initScripts[0]?.includes('__tulai|tulai'), 'missing scopeBootstrap init script');
     assert.equal(ctx.initScripts[0], persistentContext.initScripts[0]);
-    assert.deepEqual(ctx.bindings, ['tulaiPipe', 'latePipe']);
-    assert.equal(ctx.evaluated.length, 2, 'latePipe must evaluate on active isolated pages');
+    const expectedBindings = index === 0 ? ['tulaiPipe', 'latePipe', 'privatePipe'] : ['tulaiPipe', 'latePipe'];
+    assert.deepEqual(ctx.bindings, expectedBindings);
+    assert.equal(ctx.evaluated.length, 2 * (expectedBindings.length - 1), 'late bindings must evaluate on active isolated pages');
   }
 });

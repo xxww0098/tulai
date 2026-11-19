@@ -107,18 +107,14 @@ func (d *Downloader) Download(ctx context.Context, job Job, item Item, progress 
 	}
 	var err error
 	for attempt := 0; attempt <= d.opt.Retries; attempt++ {
-		err = d.once(ctx, job, item, progress)
+		err = d.once(ctx, job, item, attempt, progress)
 		if err == nil || attempt == d.opt.Retries || ctx.Err() != nil || !ShouldRetry(err) {
 			return err
 		}
 		delay := RetryDelay(err, attempt, d.opt.RetryBase)
 		var status *HTTPStatusError
-		if errors.As(err, &status) && d.opt.HostLimit != nil {
-			target := status.URL
-			if target == "" {
-				target = item.URL
-			}
-			d.opt.HostLimit.Cooldown(target, delay)
+		if d.opt.HostLimit != nil && errors.As(err, &status) && status.StatusCode != http.StatusTooManyRequests {
+			d.opt.HostLimit.Cooldown(firstNonEmpty(status.URL, item.URL), delay)
 		}
 		send(ctx, progress, Progress{URL: item.URL, Stage: "retry", Err: err})
 		if waitErr := Wait(ctx, delay); waitErr != nil {
@@ -128,7 +124,7 @@ func (d *Downloader) Download(ctx context.Context, job Job, item Item, progress 
 	return err
 }
 
-func (d *Downloader) once(ctx context.Context, job Job, item Item, progress ProgressFunc) error {
+func (d *Downloader) once(ctx context.Context, job Job, item Item, attempt int, progress ProgressFunc) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -304,11 +300,19 @@ func (d *Downloader) once(ctx context.Context, job Job, item Item, progress Prog
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return &HTTPStatusError{
+		status := &HTTPStatusError{
 			URL:        firstNonEmpty(resp.FinalURL, sources[sourceIndex]),
 			StatusCode: resp.StatusCode,
 			RetryAfter: ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
+		if status.StatusCode == http.StatusTooManyRequests && d.opt.HostLimit != nil {
+			delay := RetryDelay(status, attempt, d.opt.RetryBase)
+			d.opt.HostLimit.Cooldown(item.URL, delay)
+			if canonicalHost(status.URL) != canonicalHost(item.URL) {
+				d.opt.HostLimit.Cooldown(status.URL, delay)
+			}
+		}
+		return status
 	}
 
 	total := contentLength(resp)

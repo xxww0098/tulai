@@ -7,7 +7,6 @@ import (
 	"image/jpeg"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -355,7 +354,7 @@ func agyOpts(out, prompt string, wash bool, images []string) Options {
 		Platforms:     []string{agy.Platform},
 		Prompts:       []string{prompt},
 		OutputPath:    out,
-		AgyBin:        agyBinPath(),
+		AgyBin:        agyFixtureBin,
 		AgyModel:      agy.DefaultModel,
 		AgyTimeoutSec: 60,
 		SendWait:      0,
@@ -364,16 +363,6 @@ func agyOpts(out, prompt string, wash bool, images []string) Options {
 		Images:        images,
 	}
 	return opts
-}
-
-func agyBinPath() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return ""
-	}
-	path := filepath.Join(filepath.Dir(file), "..", "agy", "testdata", "agy.sh")
-	_ = os.Chmod(path, 0o755)
-	return path
 }
 
 func writeAgyJPEG(t *testing.T, path string) {

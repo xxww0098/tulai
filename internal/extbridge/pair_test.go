@@ -10,12 +10,13 @@ import (
 )
 
 func TestPairServerReturnsTokenOnLoopback(t *testing.T) {
-	p, err := StartPair(func() PairInfo { return PairInfo{Token: "abc123abc123abc123abc123abc123ab", Port: "18770"} })
+	p, err := startPair("0", func() PairInfo { return PairInfo{Token: "abc123abc123abc123abc123abc123ab", Port: "18770"} })
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { p.Close() })
-	resp, err := http.Get("http://" + p.Addr() + PairPath)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://" + p.Addr() + PairPath)
 	if err != nil {
 		t.Fatal(err)
 	}

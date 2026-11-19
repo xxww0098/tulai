@@ -20,9 +20,10 @@ import (
 )
 
 var (
-	tuchongNumericID = regexp.MustCompile(`^[0-9]{1,20}$`)
-	tuchongImagePath = regexp.MustCompile(`^/([0-9]{1,20})/(?:t|l|f)/([0-9]{1,20})\.(jpg|jpeg|png|webp)$`)
-	tuchongPostState = regexp.MustCompile(`\bwindow\s*\.\s*post\s*=`)
+	tuchongNumericID       = regexp.MustCompile(`^[0-9]{1,20}$`)
+	tuchongImagePath       = regexp.MustCompile(`^/([0-9]{1,20})/(?:t|l|f|ft640)/([0-9]{1,20})\.(jpg|jpeg|png|webp)$`)
+	tuchongPostState       = regexp.MustCompile(`\bwindow\s*\.\s*post\s*=`)
+	errTuchongVerification = errors.New("图虫要求安全验证，请在当前下载浏览器完成验证并确认作品可见后重试")
 )
 
 // shortcut: limit author crawls while reporting incomplete results.
@@ -55,6 +56,43 @@ func tuchongRouteOf(u *url.URL) tuchongRoute {
 }
 
 func isTuchongPage(u *url.URL) bool { return tuchongRouteOf(u).site != "" }
+
+func tuchongBrowserEntry(target *url.URL) string {
+	if isTuchongPage(target) && target.Scheme == "https" && strings.EqualFold(target.Host, "tuchong.com") &&
+		target.RawQuery == "" && !target.ForceQuery && target.Fragment == "" {
+		entry := *target
+		entry.Host = "www.tuchong.com"
+		return entry.String()
+	}
+	return target.String()
+}
+
+func tuchongVerificationPage(doc *html.Node) bool {
+	if doc == nil {
+		return false
+	}
+	found := false
+	walkHTML(doc, func(n *html.Node) {
+		if found || n.Type != html.ElementNode {
+			return
+		}
+		switch n.Data {
+		case "iframe":
+			source, err := url.Parse(attribute(n, "src"))
+			found = err == nil && source.User == nil && strings.EqualFold(source.Hostname(), "rmc.bytedance.com") &&
+				strings.HasPrefix(source.Path, "/verifycenter/captcha/")
+		case "script":
+			for child := n.FirstChild; child != nil; child = child.NextSibling {
+				if child.Type == html.TextNode && strings.Contains(child.Data, "CaptchaVerifyData") &&
+					strings.Contains(child.Data, "CaptchaChallengeCookie") && strings.Contains(child.Data, "captcha-proxy") {
+					found = true
+					break
+				}
+			}
+		}
+	})
+	return found
+}
 
 func tuchongImageURL(page *url.URL, raw string) (string, bool) {
 	initial, err := url.Parse(strings.TrimSpace(raw))
@@ -135,6 +173,9 @@ func tuchongPostPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 	if route.post == "" || doc == nil {
 		return result, errors.New("图虫作品页面无效")
 	}
+	if tuchongVerificationPage(doc) {
+		return result, errTuchongVerification
+	}
 	var mismatch bool
 	walkHTML(doc, func(n *html.Node) {
 		if ctx.Err() != nil || n.Type != html.ElementNode {
@@ -193,8 +234,14 @@ func tuchongPostPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 		if !content {
 			return
 		}
-		image, ok := tuchongImageURL(page, attribute(n, "src"))
-		if !ok {
+		var image string
+		for _, key := range []string{"data-src", "src"} {
+			if candidate, ok := tuchongImageURL(page, attribute(n, key)); ok {
+				image = candidate
+				break
+			}
+		}
+		if image == "" {
 			invalid++
 			return
 		}
@@ -223,7 +270,7 @@ func tuchongPostPage(ctx context.Context, doc *html.Node, page *url.URL) (Discov
 		problems = append(problems, fmt.Errorf("图虫作品超过 %d 张图片，结果不完整", maxTuchongImages))
 	}
 	if len(result.Items) == 0 {
-		problems = append(problems, errors.New("图虫作品未返回图片，可能需要登录或验证"))
+		problems = append(problems, errors.New("图虫作品未返回图片，请在下载浏览器确认作品已加载并完成站点要求的验证后重试"))
 	}
 	return result, errors.Join(problems...)
 }
@@ -292,6 +339,12 @@ func tuchongFeed(ctx context.Context, getter Getter, origin *url.URL, site strin
 	}
 	if len(data) > maxPageBytes {
 		return out, errors.New("图虫列表超过 8 MiB 上限")
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(data), []byte("<")) {
+		if doc, err := html.Parse(bytes.NewReader(data)); err == nil && tuchongVerificationPage(doc) {
+			return out, errTuchongVerification
+		}
+		return out, errors.New("图虫列表返回了网页，请在下载浏览器确认作者作品列表已加载并完成站点要求的验证后重试")
 	}
 	if json.Unmarshal(data, &out) != nil || out.Result != "SUCCESS" || out.PostList == nil || out.More == nil {
 		return out, errors.New("图虫列表响应无效，可能需要登录或验证")
@@ -375,7 +428,8 @@ func tuchongAuthor(ctx context.Context, getter Getter, root *url.URL, site strin
 					return finish(ctx.Err())
 				}
 				var status *HTTPStatusError
-				if errors.As(err, &status) && (status.StatusCode == 401 || status.StatusCode == 403 || status.StatusCode == 429) {
+				if errors.Is(err, errTuchongVerification) || (errors.As(err, &status) &&
+					(status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusForbidden || status.StatusCode == http.StatusTooManyRequests)) {
 					return finish(err)
 				}
 			}

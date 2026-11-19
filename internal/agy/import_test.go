@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xxww0098/tulai/internal/agytest"
 )
 
 func TestDetectAtLoggedInAndMissing(t *testing.T) {
@@ -95,13 +97,7 @@ func TestCopyAccountFilesOnlyAllowed(t *testing.T) {
 	if !bytes.Equal(got, token) {
 		t.Fatal("凭证内容不一致")
 	}
-	info, err := os.Stat(TokenPath(dst))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("凭证权限 %o", info.Mode().Perm())
-	}
+	assertCredentialFile(t, TokenPath(dst))
 	for _, name := range []string{"installation_id", "jetski_state.pbtxt"} {
 		if _, err := os.Stat(filepath.Join(cliDir(dst), name)); err != nil {
 			t.Fatal(name, err)
@@ -133,14 +129,14 @@ func TestCopyAccountFilesOnlyAllowed(t *testing.T) {
 }
 
 func TestImportRejectsDuplicateAndInsideRoot(t *testing.T) {
-	script := agyScript(t)
+	bin := agytest.Executable(t)
 	src := t.TempDir()
 	writeImportSource(t, src, []byte(testCredential))
 	root := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := Import(ctx, ImportRequest{
-		SourceHome: src, AccountRoot: root, Bin: script,
+		SourceHome: src, AccountRoot: root, Bin: bin,
 		ExistingEmails: []string{"LATER@gmail.com"}, Timeout: 3 * time.Second,
 	})
 	if err != ErrAlreadyImported {
@@ -157,7 +153,7 @@ func TestImportRejectsDuplicateAndInsideRoot(t *testing.T) {
 	inside := filepath.Join(root, "acc9")
 	writeImportSource(t, inside, []byte(testCredential))
 	_, err = Import(ctx, ImportRequest{
-		SourceHome: inside, AccountRoot: root, Bin: script, Timeout: 3 * time.Second,
+		SourceHome: inside, AccountRoot: root, Bin: bin, Timeout: 3 * time.Second,
 	})
 	if err != ErrAlreadyImported {
 		t.Fatalf("inside %v", err)
@@ -172,7 +168,7 @@ func TestImportRejectsDuplicateAndInsideRoot(t *testing.T) {
 }
 
 func TestImportVerifyFailureRemovesNewHome(t *testing.T) {
-	script := agyScript(t)
+	bin := agytest.Executable(t)
 	src := t.TempDir()
 	writeImportSource(t, src, []byte(testCredential))
 	root := t.TempDir()
@@ -180,7 +176,7 @@ func TestImportVerifyFailureRemovesNewHome(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := Import(ctx, ImportRequest{
-		SourceHome: src, AccountRoot: root, Bin: script, Model: DefaultModel, Timeout: 3 * time.Second,
+		SourceHome: src, AccountRoot: root, Bin: bin, Model: DefaultModel, Timeout: 3 * time.Second,
 	})
 	if err == nil || err.Error() != "验证没有通过" {
 		t.Fatalf("%v", err)
@@ -203,7 +199,7 @@ func TestImportVerifyFailureRemovesNewHome(t *testing.T) {
 }
 
 func TestImportVerifySuccess(t *testing.T) {
-	script := agyScript(t)
+	bin := agytest.Executable(t)
 	src := t.TempDir()
 	token := []byte(testCredential)
 	writeImportSource(t, src, token)
@@ -211,7 +207,7 @@ func TestImportVerifySuccess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	res, err := Import(ctx, ImportRequest{
-		SourceHome: src, AccountRoot: root, Bin: script, Model: "gemini-3.8-flash", Timeout: 3 * time.Second,
+		SourceHome: src, AccountRoot: root, Bin: bin, Model: "gemini-3.8-flash", Timeout: 3 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,13 +222,7 @@ func TestImportVerifySuccess(t *testing.T) {
 	if !bytes.Equal(got, token) {
 		t.Fatal("导入后凭证内容不一致")
 	}
-	info, err := os.Stat(TokenPath(res.Home))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("权限 %o", info.Mode().Perm())
-	}
+	assertCredentialFile(t, TokenPath(res.Home))
 	prompt, err := os.ReadFile(filepath.Join(res.Home, "last-prompt.txt"))
 	if err != nil {
 		t.Fatal(err)

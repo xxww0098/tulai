@@ -30,6 +30,7 @@ var (
 
 // Flickr's original and large sizes have distinct secrets; only use URLs supplied by Flickr.
 var flickrSizes = []string{"o", "6k", "5k", "4k", "3k", "k", "h", "f", "l", "c", "z", "m", "w", "n", "s", "t", "q", "sq"}
+var flickrAlbumSizes = []string{"h", "f", "l", "c", "z", "m", "w", "n", "s", "t", "q", "sq", "o", "6k", "5k", "4k", "3k", "k"}
 
 type flickrPageRef struct {
 	id    string
@@ -80,6 +81,7 @@ type flickrFound struct {
 type flickrCollection struct {
 	items []flickrFound
 	index map[string]int
+	sizes []string
 }
 
 func flickrRef(u *url.URL) flickrPageRef {
@@ -134,11 +136,11 @@ func discoverFlickr(ctx context.Context, getter Getter, root *url.URL) (Discover
 	if doc == nil || flickrRef(final) != want || (root.Scheme == "https" && final.Scheme != "https") {
 		return result, errors.New("Flickr 页面不可用或跳转到了其他照片或相册")
 	}
-	return flickrCollect(ctx, getter, final, doc)
+	return flickrCollect(ctx, getter, final, doc, false)
 }
 
 // flickrCollect works with fetched HTML and the current rendered browser document.
-func flickrCollect(ctx context.Context, getter Getter, page *url.URL, doc *html.Node) (Discovery, error) {
+func flickrCollect(ctx context.Context, getter Getter, page *url.URL, doc *html.Node, rendered bool) (Discovery, error) {
 	result := Discovery{IsPage: true}
 	ref := flickrRef(page)
 	if err := ctx.Err(); err != nil {
@@ -194,7 +196,10 @@ func flickrCollect(ctx context.Context, getter Getter, page *url.URL, doc *html.
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	found := flickrCollection{index: make(map[string]int)}
+	found := flickrCollection{index: make(map[string]int), sizes: flickrSizes}
+	if rendered && ref.album {
+		found.sizes = flickrAlbumSizes
+	}
 	if !ref.album {
 		matched := false
 		if export != nil {
@@ -262,7 +267,7 @@ func (f *flickrCollection) addModel(page *url.URL, photo flickrModel) error {
 		return errors.New("Flickr 照片编号无效")
 	}
 	invalid := false
-	for rank, size := range flickrSizes {
+	for rank, size := range f.sizes {
 		if entry, ok := photo.Sizes.Data[size]; ok && entry.Data.URL != "" {
 			if f.add(page, photo.ID, entry.Data.URL, rank) {
 				if invalid {
@@ -281,7 +286,7 @@ func (f *flickrCollection) add(page *url.URL, id, raw string, rank int) bool {
 	if err != nil || u.User != nil || u.Scheme != "https" || (u.Port() != "" && u.Port() != "443") || !flickrHostPattern.MatchString(strings.ToLower(u.Hostname())) || !strings.HasPrefix(path.Base(u.Path), id+"_") || !imagePath(u.Path) {
 		return false
 	}
-	item := Item{URL: u.String()}
+	item := Item{URL: u.String(), RequireImage: true, PublicOnly: true}
 	if referer := imageReferer(page.String(), item.URL); referer != "" {
 		item.Headers = map[string]string{"Referer": referer}
 	}
@@ -374,7 +379,7 @@ func flickrAlbumPages(ctx context.Context, getter Getter, page *url.URL, albumID
 				continue
 			}
 			valid, invalid := false, false
-			for rank, size := range flickrSizes {
+			for rank, size := range found.sizes {
 				var rawURL string
 				if json.Unmarshal(photo["url_"+size], &rawURL) != nil || rawURL == "" {
 					continue

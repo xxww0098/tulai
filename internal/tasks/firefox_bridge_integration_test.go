@@ -26,8 +26,6 @@ import (
 
 func TestFirefoxBridgeObservesStreamAndDownloadsRaw(t *testing.T) {
 	config := camoufoxtest.ConfigDir(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 	preview := "https://p3.byteimg.com/test/image.jpeg~tplv-preview.png"
 	raw := "https://p3.byteimg.com/test/image.jpeg~tplv-image_raw.png"
 	data := resultPNG(t, 29)
@@ -144,7 +142,9 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 		t.Fatal(err)
 	}
 	geoip := false
-	proc, err := camoufox.Start(ctx, config, camoufox.Options{Profile: t.TempDir(), Headless: true, Proxy: proxy.URL, GeoIP: &geoip, IgnoreHTTPSErrors: true, Addons: []string{addon}}, os.Stderr)
+	startCtx, cancelStart := context.WithTimeout(t.Context(), camoufoxtest.StartTimeout)
+	proc, err := camoufox.Start(startCtx, config, camoufox.Options{Profile: t.TempDir(), Headless: true, Proxy: proxy.URL, GeoIP: &geoip, IgnoreHTTPSErrors: true, Addons: []string{addon}}, os.Stderr)
+	cancelStart()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,6 +162,8 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 		t.Fatal(err)
 	}
 	defer pageSession.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
 	var session *extbridge.Session
 	for session == nil {
 		next, err := srv.Next(ctx)

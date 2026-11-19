@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,6 +56,7 @@ func TestTuchongRoutesAndImages(t *testing.T) {
 		{"https://photo.tuchong.com/123/t/456.jpg?keep=1", "https://photo.tuchong.com/123/f/456.jpg?keep=1"},
 		{"http://photo.tuchong.com/123/l/456.jpg", "https://photo.tuchong.com/123/f/456.jpg"},
 		{"https://photo.tuchong.com/123/f/456.jpg", "https://photo.tuchong.com/123/f/456.jpg"},
+		{"https://photo.tuchong.com/123/ft640/456.jpg", "https://photo.tuchong.com/123/f/456.jpg"},
 		{"https://photo.tuchong.com.evil.test/123/f/456.jpg", ""},
 		{"https://user@photo.tuchong.com/123/f/456.jpg", ""},
 		{"https://photo.tuchong.com:8443/123/f/456.jpg", ""},
@@ -64,6 +66,26 @@ func TestTuchongRoutesAndImages(t *testing.T) {
 		got, ok := tuchongImageURL(page, tc.raw)
 		if got != tc.want || ok != (tc.want != "") {
 			t.Errorf("image %q=%q %t", tc.raw, got, ok)
+		}
+	}
+}
+
+func TestTuchongBrowserEntry(t *testing.T) {
+	for _, scenario := range []struct{ source, entry string }{
+		{"https://tuchong.com/123/456/", "https://www.tuchong.com/123/456/"},
+		{"https://tuchong.com/123/", "https://www.tuchong.com/123/"},
+		{"https://www.tuchong.com/123/", "https://www.tuchong.com/123/"},
+		{"https://tuchong.com/123/456/?token=fixture", "https://tuchong.com/123/456/?token=fixture"},
+		{"https://tuchong.com/123/456/#section", "https://tuchong.com/123/456/#section"},
+		{"https://tuchong.com/rest/2/sites/123/posts", "https://tuchong.com/rest/2/sites/123/posts"},
+		{"https://other.example/123/", "https://other.example/123/"},
+	} {
+		target, err := url.Parse(scenario.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry := tuchongBrowserEntry(target); entry != scenario.entry || target.String() != scenario.source {
+			t.Errorf("navigation entry for %s = %s", scenario.source, entry)
 		}
 	}
 }
@@ -130,7 +152,7 @@ func TestTuchongPostPartialAndSafety(t *testing.T) {
 
 func TestTuchongAuthorPaginationAndPartial(t *testing.T) {
 	root, _ := url.Parse("https://tuchong.com/123/")
-	for _, mode := range []string{"complete", "detail-fail", "no-cursor", "repeated", "cancel"} {
+	for _, mode := range []string{"complete", "detail-fail", "detail-verification", "list-html", "no-cursor", "repeated", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -143,6 +165,9 @@ func TestTuchongAuthorPaginationAndPartial(t *testing.T) {
 					t.Fatalf("unsafe %s %v", req.URL, req.Header)
 				}
 				if req.URL.Path == "/rest/2/sites/123/posts" {
+					if mode == "list-html" {
+						return tuchongTestResponse(raw, 200, "text/html", `<html><title>需要验证</title></html>`), nil
+					}
 					if req.URL.Query().Get("page") == "1" {
 						before := `12345`
 						if mode == "no-cursor" {
@@ -163,6 +188,9 @@ func TestTuchongAuthorPaginationAndPartial(t *testing.T) {
 				if id == "2" && mode == "detail-fail" {
 					return tuchongTestResponse(raw, 404, "text/html", `not found`), nil
 				}
+				if id == "2" && mode == "detail-verification" {
+					return tuchongTestResponse(raw, 200, "text/html", `<iframe src="https://rmc.bytedance.com/verifycenter/captcha/v2"></iframe>`), nil
+				}
 				if id == "2" && mode == "cancel" {
 					cancel()
 				}
@@ -176,11 +204,20 @@ func TestTuchongAuthorPaginationAndPartial(t *testing.T) {
 				}
 			} else {
 				want := 2
-				if mode == "cancel" {
+				if mode == "cancel" || mode == "detail-verification" {
 					want = 1
+				}
+				if mode == "list-html" {
+					want = 0
 				}
 				if err == nil || len(got.Items) != want || (mode == "cancel" && !errors.Is(err, context.Canceled)) {
 					t.Fatalf("mode=%s got=%d calls=%v err=%v", mode, len(got.Items), calls, err)
+				}
+				if mode == "detail-verification" && (!errors.Is(err, errTuchongVerification) || len(calls) != 3) {
+					t.Fatalf("verification did not stop the remaining requests: %v, calls=%v", err, calls)
+				}
+				if mode == "list-html" && (!strings.Contains(err.Error(), "返回了网页") || len(calls) != 1) {
+					t.Fatalf("expected verification guidance without detail requests: %v, calls=%v", err, calls)
 				}
 			}
 		})
@@ -224,10 +261,16 @@ func TestTuchongRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	const postURL = "https://tuchong.com/123/456/"
-	const authorURL = "https://tuchong.com/123/"
+	const postURL = "https://tuchong.com/123/456/?fixture=1"
+	const authorURL = "https://tuchong.com/123/?fixture=1"
 	const imageURL = "https://photo.tuchong.com/123/f/1.jpg"
-	const post = `<html><title>synthetic work</title><script>window.post={"post_id":"456","site_id":"123"};</script><article class="post-content"><img class="multi-photo-image" src="https://photo.tuchong.com/123/l/1.jpg"></article><img src="https://photo.tuchong.com/123/f/999.jpg"></html>`
+	const post = `<html><title>synthetic work</title><script>window.post={"post_id":"456","site_id":"123"};</script><article class="post-content"><img class="multi-photo-image" src="/placeholder.gif" data-src="https://photo.tuchong.com/123/ft640/1.jpg"></article><img src="https://photo.tuchong.com/123/f/999.jpg"></html>`
+	var blocked atomic.Bool
+	var blockedTransfers atomic.Int32
+	session.getter.client.Transport = tuchongRoundTrip(func(*http.Request) (*http.Response, error) {
+		blockedTransfers.Add(1)
+		return nil, errors.New("unexpected transfer before verification")
+	})
 	responses := make(chan error, 8)
 	camoufox.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
@@ -240,6 +283,9 @@ func TestTuchongRenderedCapture(t *testing.T) {
 				body := post
 				if paused.Request.URL == authorURL {
 					body = `<html><title>synthetic author</title></html>`
+				}
+				if blocked.Load() {
+					body = `<iframe src="https://rmc.bytedance.com/verifycenter/captcha/v2"></iframe>` + body
 				}
 				action = fetch.FulfillRequest(paused.RequestID, 200).
 					WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).
@@ -258,8 +304,18 @@ func TestTuchongRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fetch.Enable()); err != nil {
 		t.Fatal(err)
 	}
-	session.start, _ = url.Parse(postURL)
-	if err := session.run(ctx, camoufox.Navigate(postURL)); err != nil {
+	blocked.Store(true)
+	for _, target := range []string{postURL, authorURL} {
+		if err := session.OpenTarget(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+		denied, err := session.Capture(ctx)
+		if !errors.Is(err, errTuchongVerification) || len(denied.Items) != 0 {
+			t.Fatalf("verification page was used as source: %s, %d images, %v", target, len(denied.Items), err)
+		}
+	}
+	blocked.Store(false)
+	if err := session.OpenTarget(ctx, postURL); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
@@ -271,40 +327,47 @@ func TestTuchongRenderedCapture(t *testing.T) {
 	if err != nil || session.PageURL() != postURL || len(got.Items) != 1 || got.Items[0].URL != imageURL {
 		t.Fatalf("post=%+v page=%s err=%v", got, session.PageURL(), err)
 	}
+	if blockedTransfers.Load() != 0 {
+		t.Fatalf("unexpected transfer before verification: %d", blockedTransfers.Load())
+	}
 	type capturedRequest struct{ host, cookie, authorization string }
 	var mu sync.Mutex
 	var requests []capturedRequest
+	picture := filterPNG(t, 17, 9)
 	session.getter.client.Transport = tuchongRoundTrip(func(r *http.Request) (*http.Response, error) {
 		mu.Lock()
 		requests = append(requests, capturedRequest{r.URL.Host, r.Header.Get("Cookie"), r.Header.Get("Authorization")})
 		mu.Unlock()
-		body, contentType := "image", "image/jpeg"
+		if r.URL.String() == imageURL {
+			return renderedFixturePNGResponse(r, picture), nil
+		}
+		var body, contentType string
 		if r.URL.Path == "/rest/2/sites/123/posts" {
 			body, contentType = `{"result":"SUCCESS","post_list":[{"post_id":"456"}],"before_timestamp":12345,"more":false}`, "application/json"
 		} else if r.URL.Host == "tuchong.com" {
 			body, contentType = post, "text/html"
+		} else {
+			return nil, errors.New("unexpected download URL")
 		}
 		h := make(http.Header)
 		h.Set("Content-Type", contentType)
 		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
-	if err := session.run(ctx, camoufox.Navigate(authorURL)); err != nil {
+	assertSavedRenderedPNG(t, ctx, session, got.Items[0], picture)
+	if err := session.OpenTarget(ctx, authorURL); err != nil {
 		t.Fatal(err)
 	}
 	author, err := session.Capture(ctx)
 	if err != nil || session.PageURL() != authorURL || len(author.Items) != 1 || author.Items[0].URL != imageURL {
 		t.Fatalf("author=%+v page=%s err=%v", author, session.PageURL(), err)
 	}
-	resp, err := session.Getter().Get(ctx, imageURL, func(r *http.Request) { r.Header.Set("Referer", author.Items[0].Headers["Referer"]) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
+	assertSavedRenderedPNG(t, ctx, session, author.Items[0], picture)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 3 || requests[0].host != "tuchong.com" || requests[1].host != "tuchong.com" ||
-		!strings.Contains(requests[0].cookie, "synthetic_session=example") || !strings.Contains(requests[1].cookie, "synthetic_session=example") ||
-		requests[2].host != "photo.tuchong.com" || requests[2].cookie != "" || requests[2].authorization != "" {
+	if len(requests) != 4 || requests[0].host != "photo.tuchong.com" || requests[0].cookie != "" || requests[0].authorization != "" ||
+		requests[1].host != "tuchong.com" || requests[2].host != "tuchong.com" ||
+		!strings.Contains(requests[1].cookie, "synthetic_session=example") || !strings.Contains(requests[2].cookie, "synthetic_session=example") ||
+		requests[3].host != "photo.tuchong.com" || requests[3].cookie != "" || requests[3].authorization != "" {
 		t.Fatalf("incorrect synthetic credential scope %+v", requests)
 	}
 	select {

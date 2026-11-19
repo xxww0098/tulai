@@ -6,18 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/xxww0098/tulai/internal/cdp"
 )
 
 func TestQianwenLiveFixtures(t *testing.T) {
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
+	client := newFixtureClient(t)
 	hook := mustRead(t, filepath.Join("js", "hook.js"))
 	composer := mustRead(t, filepath.Join("js", "composer.js"))
 	pages := map[string]string{}
@@ -140,13 +132,7 @@ func TestQianwenLiveFixtures(t *testing.T) {
 }
 
 func TestQianwenGenerationFixtures(t *testing.T) {
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
+	client := newFixtureClient(t)
 	hook := mustRead(t, filepath.Join("js", "hook.js"))
 	composer := mustRead(t, filepath.Join("js", "composer.js"))
 	names := []string{"live-gen-3", "live-gen-15", "live-gen-40", "live-gen-45", "live-gen-98-final"}

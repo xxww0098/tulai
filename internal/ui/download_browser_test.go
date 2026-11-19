@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/png"
 	"net/http"
@@ -44,6 +45,12 @@ func (f *fakeDownloadBrowser) BindCurrent(_ context.Context, target, _ string) e
 	f.target = target
 	return nil
 }
+func (f *fakeDownloadBrowser) BindOpenPage(_ context.Context, target string) error {
+	if target != f.target {
+		return errors.New("下载浏览器中未找到该网页，请打开填写的网址")
+	}
+	return nil
+}
 func (f *fakeDownloadBrowser) Getter() download.Getter { return f.getter }
 func (f *fakeDownloadBrowser) Alive() bool             { return !f.closed }
 func (f *fakeDownloadBrowser) Close()                  { f.closed = true }
@@ -68,10 +75,18 @@ func TestDownloadUsesOpenedBrowserForRenderedPage(t *testing.T) {
 	fake := &fakeDownloadBrowser{
 		result: download.Discovery{IsPage: true, Title: "登录后的相册", Items: []download.Item{{URL: server.URL + "/image.png"}}},
 		getter: download.NewHTTPGetter(""),
+		target: page,
 	}
 	a.dlDir, a.dlURLs, a.dlBrowserMode = t.TempDir(), page, true
-	a.dlBrowser, a.dlBrowserURL = fake, page
-	a.submitDownloadComposer()
+	a.dlBrowser, a.dlBrowserURL = fake, server.URL+"/"
+	a.tab, a.dlComposerOn = pageDownload, true
+	tt := ui.NewTester(a.view, 1024, 700)
+	if err := tt.Click("立即下载"); err != nil {
+		t.Fatal(err)
+	}
+	if a.dlComposerOn || a.dlComposerErr != "" || a.dlBrowserURL != page {
+		t.Fatalf("已打开的网页没有通过校验: open=%v url=%q err=%q", a.dlComposerOn, a.dlBrowserURL, a.dlComposerErr)
+	}
 	if !fake.used || len(a.dlTasks) != 1 || a.dlTasks[0].Phase != dlDone || !a.dlTasks[0].Rendered {
 		t.Fatalf("浏览器任务 = %+v, capture=%v", a.dlTasks, fake.used)
 	}
@@ -97,8 +112,8 @@ func TestDownloadBrowserModeRequiresMatchingPage(t *testing.T) {
 	if len(a.dlTasks) != 0 || !strings.Contains(a.dlComposerErr, "打开") {
 		t.Fatalf("未打开浏览器时不应入队: %+v, %q", a.dlTasks, a.dlComposerErr)
 	}
-	a.dlBrowser = &fakeDownloadBrowser{}
-	a.dlBrowserURL = "https://other.test/gallery"
+	a.dlBrowser = &fakeDownloadBrowser{target: "https://example.test/other-gallery"}
+	a.dlBrowserURL = a.dlURLs
 	a.submitDownloadComposer()
 	if len(a.dlTasks) != 0 || !strings.Contains(a.dlComposerErr, "打开") {
 		t.Fatalf("网址不匹配时不应入队: %+v, %q", a.dlTasks, a.dlComposerErr)
@@ -115,9 +130,7 @@ func TestDownloadBrowserModeControlsAreVisible(t *testing.T) {
 }
 
 func TestDownloadBrowserCanOpenBeforeEnteringURL(t *testing.T) {
-	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"} {
-		t.Setenv(key, "")
-	}
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:65535")
 	browser.SetProxy("")
 	t.Cleanup(func() { browser.SetProxy("") })
 	a, _ := newDownloadApp(t)
@@ -238,6 +251,24 @@ func TestResumeBrowserTaskRequiresReopeningPage(t *testing.T) {
 	}
 }
 
+func TestResumeBrowserTaskBindsNavigatedPage(t *testing.T) {
+	a, _ := newDownloadApp(t)
+	const page = "https://example.test/gallery"
+	session := &fakeDownloadBrowser{
+		target: page,
+		result: download.Discovery{IsPage: true},
+		getter: download.NewHTTPGetter(""),
+	}
+	a.dlBrowser, a.dlBrowserURL = session, "https://example.test/"
+	task := newDownloadTask(1, page, t.TempDir())
+	task.Rendered, task.Phase = true, dlPaused
+	a.dlTasks = []*downloadTask{task}
+	a.resumeTask(task)
+	if !session.used || a.dlBrowserURL != page || task.Err != "网页中没有找到图片" {
+		t.Fatalf("已有任务未采集新打开的网页: task=%+v browser=%q", task, a.dlBrowserURL)
+	}
+}
+
 func TestDownloadBrowserCannotReplaceSessionWhileTaskQueued(t *testing.T) {
 	a, _ := newDownloadApp(t)
 	old := &fakeDownloadBrowser{}
@@ -328,27 +359,24 @@ func TestDownloadBrowserClosedSessionIsNotQueued(t *testing.T) {
 	}
 }
 
-func TestDownloadBrowserProxyDoesNotCloseExisting(t *testing.T) {
-	a, _ := newDownloadApp(t)
-	browser.SetProxy("http://127.0.0.1:7890")
+func TestDownloadBrowserReusesExistingSessionWithGlobalProxy(t *testing.T) {
 	t.Cleanup(func() { browser.SetProxy("") })
-	old := &fakeDownloadBrowser{}
-	a.dlBrowser, a.dlBrowserURL = old, "https://example.test/first"
-	a.dlURLs = "https://example.test/second"
-	a.openDownloadBrowser()
-	if a.dlBrowser != old || !old.Alive() || !strings.Contains(a.dlBrowserErr, "代理") {
-		t.Fatalf("代理不可用时不应关闭已有浏览器: browser=%v alive=%v err=%q", a.dlBrowser, old.Alive(), a.dlBrowserErr)
-	}
-}
-
-func TestDownloadBrowserRejectsInvalidProxy(t *testing.T) {
-	a, _ := newDownloadApp(t)
-	browser.SetProxy("ftp://127.0.0.1:21")
-	t.Cleanup(func() { browser.SetProxy("") })
-	old := &fakeDownloadBrowser{}
-	a.dlBrowser, a.dlBrowserURL = old, "https://example.test/first"
-	a.openDownloadBrowserURL("https://example.test/second")
-	if a.dlBrowser != old || !old.Alive() || !strings.Contains(a.dlBrowserErr, "代理地址无效") {
-		t.Fatalf("无效代理不应关闭或直接使用已有浏览器: browser=%v alive=%v err=%q", a.dlBrowser, old.Alive(), a.dlBrowserErr)
+	for _, proxy := range []string{"http://127.0.0.1:65535", "ftp://127.0.0.1:21"} {
+		t.Run(proxy, func(t *testing.T) {
+			app, _ := newDownloadApp(t)
+			browser.SetProxy(proxy)
+			session := &fakeDownloadBrowser{}
+			app.dlBrowser, app.dlBrowserURL = session, "https://example.test/first"
+			const target = "https://example.test/second"
+			app.openDownloadBrowserURL(target)
+			deadline := time.Now().Add(time.Second)
+			for app.dlBrowserBusy && time.Now().Before(deadline) {
+				app.flushUIUpdates()
+				time.Sleep(time.Millisecond)
+			}
+			if app.dlBrowserBusy || app.dlBrowser != session || !session.Alive() || app.dlBrowserURL != target || app.dlBrowserErr != "" {
+				t.Fatalf("未在已有专用浏览器打开网址: busy=%v url=%q err=%q", app.dlBrowserBusy, app.dlBrowserURL, app.dlBrowserErr)
+			}
+		})
 	}
 }

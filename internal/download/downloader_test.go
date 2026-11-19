@@ -218,6 +218,29 @@ func TestDownloadDoesNotRetryNotFound(t *testing.T) {
 	}
 }
 
+func TestDownloadRateLimitCoolsHostAfterFinalAttempt(t *testing.T) {
+	server := &script{steps: []http.HandlerFunc{
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "5")
+			w.WriteHeader(http.StatusTooManyRequests)
+		},
+	}}
+	limiter := NewHostLimiter(1)
+	downloader := New(Options{Getter: server, HostLimit: limiter})
+	job := Job{Directory: t.TempDir()}
+	err := downloader.Download(t.Context(), job, Item{URL: "https://cdn.example/first.jpg"}, nil)
+	var status *HTTPStatusError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusTooManyRequests || status.RetryAfter != 5*time.Second {
+		t.Fatalf("first download error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	err = downloader.Download(ctx, job, Item{URL: "https://cdn.example/second.jpg"}, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || server.hits.Load() != 1 {
+		t.Fatalf("second download did not wait for host cooldown: %v, requests=%d", err, server.hits.Load())
+	}
+}
+
 func TestDownloadSkipsExistingAndArchive(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "keep.jpg"), []byte("already"), 0o644); err != nil {

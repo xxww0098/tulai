@@ -1,16 +1,57 @@
 package download
 
 import (
+	"bytes"
 	"context"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/xxww0098/tulai/internal/camoufoxtest"
 )
+
+func dedicatedFixtureData(t *testing.T) string {
+	t.Helper()
+	if os.Getenv("TULAI_CAMOUFOX_TEST_DATA") == "" {
+		t.Skip("set TULAI_CAMOUFOX_TEST_DATA to an isolated Camoufox runtime")
+	}
+	return camoufoxtest.ConfigDir(t)
+}
+
+func openDedicatedFixture(t *testing.T, dataDir, profile, target string, handler DownloadRequest) (*RenderedSession, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), camoufoxtest.StartTimeout)
+	defer cancel()
+	return openRenderedWithAssistant(ctx, profile, target, "", true, dataDir, handler)
+}
+
+func renderedFixturePNGResponse(request *http.Request, picture []byte) *http.Response {
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"image/png"}},
+		Request: request, Body: io.NopCloser(bytes.NewReader(picture))}
+}
+
+func assertSavedRenderedPNG(t *testing.T, ctx context.Context, session *RenderedSession, item Item, picture []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	item.Filename = "sample.png"
+	if err := New(Options{Getter: session.Getter()}).Download(ctx, Job{Directory: dir}, item, nil); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, item.Filename))
+	if err != nil || !bytes.Equal(saved, picture) {
+		t.Fatalf("saved PNG differs from the response: %v", err)
+	}
+	decoded, err := png.Decode(bytes.NewReader(saved))
+	if err != nil || decoded.Bounds().Dx() <= 0 || decoded.Bounds().Dy() <= 0 {
+		t.Fatalf("saved PNG could not be decoded: %v", err)
+	}
+}
 
 // fixtureBrowser maps browser traffic to one local fixture, including TLS CONNECT tunnels.
 func fixtureBrowser(t *testing.T, server *httptest.Server) (context.Context, context.CancelFunc, func()) {

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {promisify} from 'node:util';
-import {claimFingerprint, createIdentity, prepareIdentity, preserveVoices} from './identity.mjs';
+import {claimFingerprint, createIdentity, prepareIdentity, preserveVoices, refreshIdentity} from './identity.mjs';
 
 const device={'navigator.userAgent':'Mozilla/5.0 (Macintosh; rv:150.0) Gecko/20100101 Firefox/150.0','navigator.platform':'MacIntel','navigator.oscpu':'Intel Mac OS X 10.15','navigator.hardwareConcurrency':8,'canvas:seed':42,'screen.width':1920,'screen.height':1080,'screen.availWidth':1920,'screen.availHeight':1004,'screen.colorDepth':24};
 
@@ -17,6 +17,27 @@ test('restarts retain the device; upgrades track the real Firefox version',()=>{
  assert.equal(upgraded['canvas:seed'],42);
  assert.match(saved['navigator.userAgent'],/Firefox\/150\.0/);
 });
+
+test('refreshing a Windows identity retries a locked destination', {skip: process.platform !== 'win32'}, async t => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-identity-'));
+ t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+ const identityPath = path.join(root, '.tulai-identity.json');
+ fs.writeFileSync(identityPath, JSON.stringify(device));
+ const rename = fs.renameSync;
+ let attempts = 0;
+ t.mock.method(fs, 'renameSync', (source, destination) => {
+   if (++attempts === 1) throw Object.assign(new Error('file is in use'), {code: 'EPERM'});
+   rename(source, destination);
+ });
+ await refreshIdentity(identityPath, device, {...device});
+ assert.equal(attempts, 0);
+ const upgraded = prepareIdentity(device, '158', false);
+ await refreshIdentity(identityPath, device, upgraded);
+ assert.equal(attempts, 2);
+ assert.deepEqual(JSON.parse(fs.readFileSync(identityPath)), upgraded);
+ assert.deepEqual(fs.readdirSync(root), ['.tulai-identity.json']);
+});
+
 test('addon paths are configured afresh instead of persisted as device identity',()=>{
  const saved={...device,addons:['/old/download-helper']};
  assert.deepEqual(prepareIdentity(saved,'150',false),device);

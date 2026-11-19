@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
 	"image"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +18,9 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"golang.org/x/net/html"
+
+	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/camoufoxtest"
 )
 
 const goooodPublicArticle = "https://www.gooood.cn/hangzhou-hesheng-mansion-by-9m-design.htm"
@@ -213,15 +214,13 @@ func TestGoooodRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
 		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<html></html>") }))
-	defer server.Close()
-	session, err := OpenRendered(ctx, filepath.Join(t.TempDir(), "profile"), server.URL, "", true)
+	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
 	const target = "https://www.gooood.cn/a.htm?token=synthetic"
 	var calls atomic.Int32
 	session.getter.client.Transport = goooodRoundTripper(func(*http.Request) (*http.Response, error) {
@@ -394,15 +393,13 @@ func TestGoooodRenderedListCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
 		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<html></html>") }))
-	defer server.Close()
-	session, err := OpenRendered(ctx, filepath.Join(t.TempDir(), "profile"), server.URL, "", true)
+	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
 	const first = `<html><title>List</title><a class="article-cover-link" href="/a.htm"></a><nav class="pagination"><a aria-label="下一页" href="/type/platform/page/2">→</a></nav></html>`
 	const second = `<html><a class="article-cover-link" href="/b.htm"></a><nav class="pagination"><span>2/2</span></nav></html>`
 	var calls atomic.Int32
@@ -481,17 +478,15 @@ func TestGoooodMissingNextIsPartial(t *testing.T) {
 
 func TestGoooodRenderedLiveList(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" || os.Getenv("TULAI_GOOOOD_LIVE") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_GOOOOD_LIVE=1 for isolated Chrome and a live article")
+		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_GOOOOD_LIVE=1 for isolated Camoufox and a live article")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<html></html>") }))
-	defer server.Close()
-	session, err := OpenRendered(ctx, filepath.Join(t.TempDir(), "profile"), server.URL, "", true)
+	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
 	fixture := `<html><a class="article-cover-link" href="/hangzhou-hesheng-mansion-by-9m-design.htm"></a><nav class="pagination"></nav></html>`
 	responses := make(chan error, 8)
 	camoufox.ListenTarget(session.tab, func(event any) {

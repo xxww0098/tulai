@@ -16,6 +16,13 @@ var next atomic.Int64
 
 const StartTimeout = 3 * time.Minute
 
+func WithoutProxy(t testing.TB) {
+	t.Helper()
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		t.Setenv(key, "")
+	}
+}
+
 func ConfigDir(t testing.TB) string {
 	t.Helper()
 	if testing.Short() {
@@ -41,9 +48,9 @@ func ConfigDir(t testing.TB) string {
 func Start(t testing.TB, rawURL string) (*camoufox.Process, string) {
 	t.Helper()
 	dir := ConfigDir(t)
-	ctx, cancel := context.WithTimeout(context.Background(), StartTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), StartTimeout)
 	defer cancel()
-	p, err := camoufox.Start(ctx, dir, camoufox.Options{Profile: t.TempDir(), Headless: true}, os.Stderr)
+	p, err := camoufox.Start(ctx, dir, camoufox.Options{Profile: t.TempDir(), Headless: true, DirectNetwork: true}, os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +69,7 @@ func Start(t testing.TB, rawURL string) (*camoufox.Process, string) {
 func StartWithProxy(t testing.TB, proxy string) (context.Context, context.CancelFunc, func()) {
 	t.Helper()
 	dir := ConfigDir(t)
-	ctx, cancel := context.WithTimeout(context.Background(), StartTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), StartTimeout)
 	defer cancel()
 	geoip := false
 	p, err := camoufox.Start(ctx, dir, camoufox.Options{Profile: t.TempDir(), Headless: true, Proxy: proxy, GeoIP: &geoip, IgnoreHTTPSErrors: true}, os.Stderr)

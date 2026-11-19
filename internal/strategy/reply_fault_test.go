@@ -6,21 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/xxww0098/tulai/internal/cdp"
 )
 
 // 千问2 真实页面：回复只有「请求异常，请检查网络连接」和重新生成图标，没有图卡。
 // 检测要直接报 error-reply，而不是 no-new-image 等到超时。
 // 豆包新对话：长连接让 readyState 停在 interactive，空对话加上输入框就该能打字。
 func TestReplyFaultAndDoubaoReady(t *testing.T) {
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
+	client := newFixtureClient(t)
 	hook := mustRead(t, filepath.Join("js", "hook.js"))
 	composer := mustRead(t, filepath.Join("js", "composer.js"))
 	pages := map[string]string{

@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -34,13 +33,6 @@ type mockChat struct{ base }
 
 func (mockChat) Platform() string { return "mock" }
 func (mockChat) HomeURL() string  { return "" } // 由测试注入 URL
-
-// launchCamoufox 启动无头 Camoufox，返回关闭函数。
-func launchCamoufox(t *testing.T) (wsURL string, shutdown func()) {
-	t.Helper()
-	p, endpoint := camoufoxtest.Start(t, "about:blank")
-	return endpoint, p.Close
-}
 
 // noisePNG 生成一张 >20KB 的随机噪声图（触发 hook 的网络图片阈值）。
 func noisePNG(size int) []byte {
@@ -144,8 +136,7 @@ func TestChatFlowE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 
 	resultPNG := noisePNG(400)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,11 +151,7 @@ func TestChatFlowE2E(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,8 +220,7 @@ func TestUploadTrustedPointerDownE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	html := `<!doctype html><body><div data-chat-input-body="1"><textarea style="width:420px;height:60px"></textarea><button id="entry" aria-label="添加附件">+</button><button>发送</button><div id="menu" role="menu" style="display:none;width:160px;height:80px"><button id="upload">本地上传</button></div></div><script>
 window.__trustedPointer=0;window.__entryClicks=0;window.__uploadClicks=0;
 entry.onpointerdown=function(event){if(event.isTrusted){window.__trustedPointer++;menu.style.display='block'}};
@@ -242,12 +228,7 @@ entry.onclick=function(){window.__entryClicks++};upload.onclick=function(){windo
 </script>`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, html) }))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,8 +248,7 @@ func TestUploadMenuClicksOnceE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	html := `<!doctype html><body><div data-chat-input-body="1"><textarea style="width:420px;height:60px"></textarea><button id="entry" aria-label="添加附件">+</button><button>发送</button><div id="menu" role="menu" style="display:none;width:160px;height:80px"><button id="upload">本地上传</button></div></div><script>
 window.__entryClicks=0;window.__uploadClicks=0;
 entry.onclick=function(){window.__entryClicks++;menu.style.display=menu.style.display==='none'?'block':'none'};
@@ -276,12 +256,7 @@ upload.onclick=function(){window.__uploadClicks++;var input=document.createEleme
 </script>`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, html) }))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,18 +276,12 @@ func TestUploadDoesNotClickHistoryE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	html := `<!doctype html><body><button id="history">本地上传 私密历史会话</button><div data-chat-input-body="1"><textarea style="width:420px;height:60px"></textarea><button aria-label="添加附件">+</button><button>发送</button></div><script>window.__historyClicks=0;history.onclick=function(){window.__historyClicks++};</script>`
 	html = strings.Replace(html, "history.onclick", "document.getElementById('history').onclick", 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, html) }))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,17 +302,12 @@ func TestUploadTargetsCurrentComposerE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, strings.Replace(strings.Replace(chatMockHTML, `data-chat-input-body="1"`, `data-chat-input-body=""`, 1), `<button id="send">发送</button>`, `<button id="send" aria-label="语音">麦克风</button>`, 1))
 	}))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,18 +331,12 @@ func TestUploadSiblingPreviewScopeE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	html := strings.Replace(chatMockHTML, `<div id="compose" data-chat-input-body="1">`, `<div id="surface" class="guidance-input-surface relative flex flex-col"><div id="preview"></div><div id="compose" data-chat-input-body="">`, 1)
 	html = strings.Replace(html, "<div id=\"preview\"></div>\n</div>", "</div></div>", 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, html) }))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,17 +376,12 @@ func TestUploadRequiresNewComposerAttachmentE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, strings.Replace(chatMockHTML, "document.body.appendChild(input);", "input.addEventListener('change',function(){document.getElementById('preview').replaceChildren()});document.body.appendChild(input);", 1))
 	}))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,8 +415,7 @@ func TestFetchResultBytesCORSE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	imageData := noisePNG(220)
 	asset := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("tulai-fixture-auth")
@@ -480,12 +432,7 @@ func TestFetchResultBytesCORSE2E(t *testing.T) {
 		fmt.Fprint(w, "<!doctype html><body>fixture</body>")
 	}))
 	defer page.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	sess, err := client.NewSession(page.URL, nil)
+	sess, err := client.NewIsolatedSession(page.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,8 +450,7 @@ func TestSignedStreamResultURLE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	resultPNG := noisePNG(220)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -523,12 +469,7 @@ func TestSignedStreamResultURLE2E(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,8 +525,7 @@ func TestWaitForGenerationStreamE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	preview := noisePNG(384)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -606,14 +546,9 @@ func TestWaitForGenerationStreamE2E(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
 	for _, transport := range []string{"fetch", "xhr"} {
 		t.Run(transport, func(t *testing.T) {
-			sess, err := client.NewSession(srv.URL, nil)
+			sess, err := client.NewIsolatedSession(srv.URL, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -657,8 +592,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	small := noisePNG(200)
 	oldImage := noisePNG(128)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -690,11 +624,6 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
 	for _, tc := range []struct{ name, action string }{
 		{"fetch reject", `fetch('http://127.0.0.1:1/chat/rejected').catch(function(){})`},
 		{"fetch abort", `var control=new AbortController();fetch('/chat/hang',{signal:control.signal}).catch(function(){});setTimeout(function(){control.abort()},50)`},
@@ -702,7 +631,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 		{"xhr error", `var xhr=new XMLHttpRequest();xhr.open('GET','http://127.0.0.1:1/chat/rejected');xhr.send()`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sess, err := client.NewSession(srv.URL, nil)
+			sess, err := client.NewIsolatedSession(srv.URL, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -724,7 +653,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 	}
 	for _, transport := range []string{"fetch", "xhr", "image fetch", "image xhr"} {
 		t.Run("old "+transport+" response", func(t *testing.T) {
-			sess, err := client.NewSession(srv.URL, nil)
+			sess, err := client.NewIsolatedSession(srv.URL, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -758,7 +687,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 		})
 	}
 	t.Run("generation reset", func(t *testing.T) {
-		sess, err := client.NewSession(srv.URL, nil)
+		sess, err := client.NewIsolatedSession(srv.URL, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -790,7 +719,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 		}
 	})
 	t.Run("old request and stable small DOM", func(t *testing.T) {
-		sess, err := client.NewSession(srv.URL, nil)
+		sess, err := client.NewIsolatedSession(srv.URL, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -817,7 +746,7 @@ func TestGenerationPendingLifecycleE2E(t *testing.T) {
 		}
 	})
 	t.Run("total timeout", func(t *testing.T) {
-		sess, err := client.NewSession(srv.URL, nil)
+		sess, err := client.NewIsolatedSession(srv.URL, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -844,14 +773,8 @@ func TestWaitForResultStopsWithSessionE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	sess, err := client.NewSession("about:blank", nil)
+	client := newFixtureClient(t)
+	sess, err := client.NewIsolatedSession("about:blank", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,16 +799,11 @@ func TestSendPromptE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, chatMockHTML)
 	}))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		name, setup string
 		wantError   bool
@@ -949,7 +867,7 @@ func TestSendPromptE2E(t *testing.T) {
 			document.getElementById('composer').addEventListener('keydown',function(e){if(e.key==='Enter')window.__enterCount++});`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sess, err := client.NewSession(srv.URL, nil)
+			sess, err := client.NewIsolatedSession(srv.URL, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1026,8 +944,7 @@ func TestUploadPreviewE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 	previewPNG, resultPNG := noisePNG(220), noisePNG(400)
 	html := strings.Replace(chatMockHTML, "prev.textContent = '已选择 ' + input.files.length + ' 个文件';", `
 		var busy=document.createElement('span'); busy.setAttribute('role','progressbar'); busy.textContent='上传中';
@@ -1054,11 +971,7 @@ func TestUploadPreviewE2E(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1182,8 +1095,7 @@ func TestCaptchaGridE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short 模式跳过")
 	}
-	ws, shutdown := launchCamoufox(t)
-	defer shutdown()
+	client := newFixtureClient(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1191,11 +1103,7 @@ func TestCaptchaGridE2E(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := cdp.NewClient(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess, err := client.NewSession(srv.URL, nil)
+	sess, err := client.NewIsolatedSession(srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,11 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/xxww0098/tulai/internal/agytest"
 )
 
 func TestParseUsageFixture(t *testing.T) {
@@ -116,7 +117,7 @@ func TestFetchUsageReadsFixture(t *testing.T) {
 	}
 	t.Setenv("HOME", "/tmp/not-the-account")
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
-	got, err := fetchUsage(context.Background(), usageScript(t), home, 5*time.Second)
+	got, err := fetchUsage(context.Background(), agytest.Executable(t), home, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,9 +144,6 @@ func TestFetchUsageReadsFixture(t *testing.T) {
 }
 
 func TestFetchUsageRejectsFailedCommandWithValidQuota(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell fixture")
-	}
 	home := t.TempDir()
 	writeToken(t, home)
 	data, err := os.ReadFile(filepath.Join("testdata", "usage.json"))
@@ -155,11 +153,10 @@ func TestFetchUsageRejectsFailedCommandWithValidQuota(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "usage.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(t.TempDir(), "agy-failed.sh")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat \"$HOME/usage.json\"\nprintf '%s\\n' 'secret-should-not-leak' >&2\nexit 7\n"), 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "mode.txt"), []byte("failed-quota"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = fetchUsage(context.Background(), bin, home, time.Second)
+	_, err = fetchUsage(context.Background(), agytest.Executable(t), home, 5*time.Second)
 	if !errors.Is(err, errUsageCommand) || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("failed command supplied usable quota or leaked output: %v", err)
 	}
@@ -191,9 +188,6 @@ func (m *usageFileCredentials) Write(_ context.Context, data []byte) error {
 }
 
 func TestFetchUsageAuthSavesRefreshedCredential(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell fixture")
-	}
 	for _, tc := range []struct {
 		name                 string
 		failSave, cancelSave bool
@@ -221,12 +215,10 @@ func TestFetchUsageAuthSavesRefreshedCredential(t *testing.T) {
 			Keyring = keyring
 			t.Cleanup(func() { Keyring = previous })
 			t.Setenv("TULAI_USAGE_TEST_KEYRING", keyring.path)
-			bin := filepath.Join(t.TempDir(), "agy-auth.sh")
-			script := "#!/bin/sh\ncp \"$HOME/refresh.json\" \"$TULAI_USAGE_TEST_KEYRING\"\nprintf '%s\\n' 'Authentication required'\nexec sleep 30\n"
-			if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+			if err := os.WriteFile(filepath.Join(home, "mode.txt"), []byte("refresh-auth"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := fetchUsage(ctx, bin, home, 5*time.Second)
+			_, err := fetchUsage(ctx, agytest.Executable(t), home, 5*time.Second)
 			if tc.cancelSave && !tc.failSave {
 				if !errors.Is(err, errUsageCanceled) {
 					t.Fatalf("canceled auth cleanup reported a login failure: %v", err)
@@ -266,7 +258,7 @@ func (m *blockedUsageCredentials) Write(context.Context, []byte) error {
 func TestFetchUsageStopsWhileWaitingForCredentials(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "cancel"}[canceled], func(t *testing.T) {
-			home, bin := t.TempDir(), usageScript(t)
+			home, bin := t.TempDir(), agytest.Executable(t)
 			writeToken(t, home)
 			synctest.Test(t, func(t *testing.T) {
 				previousGate := cliGate
@@ -324,7 +316,7 @@ func TestFetchUsageStopsWhileWaitingForCredentials(t *testing.T) {
 }
 
 func TestFetchUsageKeepsRemainingBudgetAfterCredentialLock(t *testing.T) {
-	home, bin := t.TempDir(), usageScript(t)
+	home, bin := t.TempDir(), agytest.Executable(t)
 	writeToken(t, home)
 	synctest.Test(t, func(t *testing.T) {
 		previousGate := cliGate
@@ -381,7 +373,7 @@ func TestFetchUsageKillsAuthAndIgnoresStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	_, err := fetchUsage(context.Background(), usageScript(t), home, 5*time.Second)
+	_, err := fetchUsage(context.Background(), agytest.Executable(t), home, 5*time.Second)
 	if !errorsIsLogin(err) {
 		t.Fatalf("auth err = %v", err)
 	}
@@ -397,7 +389,7 @@ func TestFetchUsageKillsAuthAndIgnoresStdin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "mode.txt"), []byte("stdin"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err = fetchUsage(context.Background(), usageScript(t), home, 5*time.Second)
+	_, err = fetchUsage(context.Background(), agytest.Executable(t), home, 5*time.Second)
 	if !errorsIsLogin(err) {
 		t.Fatalf("stdin err = %v", err)
 	}
@@ -413,7 +405,7 @@ func TestFetchUsageTimeoutAndGarbage(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	_, err := fetchUsage(context.Background(), usageScript(t), home, 300*time.Millisecond)
+	_, err := fetchUsage(context.Background(), agytest.Executable(t), home, 300*time.Millisecond)
 	if err == nil || err.Error() != "超时" {
 		t.Fatalf("timeout = %v", err)
 	}
@@ -426,7 +418,7 @@ func TestFetchUsageTimeoutAndGarbage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "mode.txt"), []byte("bad"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err = fetchUsage(context.Background(), usageScript(t), home, 5*time.Second)
+	_, err = fetchUsage(context.Background(), agytest.Executable(t), home, 5*time.Second)
 	if err == nil || strings.Contains(err.Error(), "secret") || err.Error() == "" {
 		t.Fatalf("bad = %v", err)
 	}
@@ -438,7 +430,7 @@ func TestFetchUsageTimeoutAndGarbage(t *testing.T) {
 	writeToken(t, home)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = fetchUsage(ctx, usageScript(t), home, 5*time.Second)
+	_, err = fetchUsage(ctx, agytest.Executable(t), home, 5*time.Second)
 	if !errors.Is(err, errUsageCanceled) {
 		t.Fatalf("cancel = %v", err)
 	}
@@ -446,15 +438,6 @@ func TestFetchUsageTimeoutAndGarbage(t *testing.T) {
 
 func errorsIsLogin(err error) bool {
 	return err != nil && err.Error() == ErrNeedLogin.Error()
-}
-
-func usageScript(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "agy-usage.sh")
-	if err := os.WriteFile(path, []byte(usageScriptBody), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 func readUsageFile(t *testing.T, home, name string) string {
@@ -465,40 +448,3 @@ func readUsageFile(t *testing.T, home, name string) string {
 	}
 	return string(buf)
 }
-
-const usageScriptBody = `#!/bin/sh
-printf '%s\n' "$PWD" > "$HOME/seen-cwd.txt"
-printf '%s\n' "$HOME" > "$HOME/seen-home.txt"
-printf '%s\n' "${HTTP_PROXY-}" > "$HOME/seen-proxy.txt"
-printf '%s\n' "$*" > "$HOME/seen-args.txt"
-mode=ok
-if [ -f "$HOME/mode.txt" ]; then
-  mode=$(tr -d '[:space:]' < "$HOME/mode.txt")
-fi
-case "$mode" in
-auth)
-  printf '%s\n' 'Authentication required. Please visit the URL'
-  exec sleep 30
-  ;;
-stdin)
-  if IFS= read -r line; then
-    printf '%s\n' "$line" > "$HOME/stdin.txt"
-  else
-    printf 'none\n' > "$HOME/stdin.txt"
-  fi
-  printf '%s\n' 'Authentication required'
-  exit 0
-  ;;
-sleep)
-  exec sleep 30
-  ;;
-bad)
-  printf '%s\n' 'not-json secret-should-not-leak'
-  exit 1
-  ;;
-*)
-  cat "$HOME/usage.json"
-  exit 0
-  ;;
-esac
-`

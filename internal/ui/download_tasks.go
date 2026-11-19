@@ -26,6 +26,7 @@ type dlPhase int
 type downloadBrowser interface {
 	Capture(context.Context) (download.Discovery, error)
 	BindCurrent(context.Context, string, string) error
+	BindOpenPage(context.Context, string) error
 	OpenTarget(context.Context, string) error
 	Getter() download.Getter
 	Alive() bool
@@ -385,7 +386,7 @@ func (a *App) pumpDownloads() {
 		if active >= limit {
 			break
 		}
-		if t.Phase == dlQueued {
+		if t.Phase == dlQueued && (!t.Rendered || a.dlBrowserTask == nil) {
 			a.startDownloadTask(t)
 			active++
 		}
@@ -410,13 +411,16 @@ func (a *App) startDownloadTask(t *downloadTask) {
 
 	opts := a.downloadOptions()
 	var rendered downloadBrowser
+	bindRendered := false
 	if t.Rendered {
-		if a.dlBrowser == nil || !a.dlBrowser.Alive() || a.dlBrowserURL != t.URL {
+		if a.dlBrowserBusy || a.dlBrowserTask != nil || a.dlBrowser == nil || !a.dlBrowser.Alive() {
 			cancel()
-			a.finishDownloadTask(t, errors.New("请在新建任务中打开相同网址的下载浏览器，登录后再继续"))
+			a.finishDownloadTask(t, errors.New("请在下载浏览器打开该任务的网址后再继续"))
 			return
 		}
 		rendered = a.dlBrowser
+		bindRendered = a.dlBrowserURL != t.URL
+		a.dlBrowserTask = t
 		opts.Getter = rendered.Getter()
 	}
 	dl := download.New(opts)
@@ -428,6 +432,20 @@ func (a *App) startDownloadTask(t *downloadTask) {
 		pageDir = t.Path
 	}
 	run := func() {
+		if bindRendered {
+			bindCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+			err := rendered.BindOpenPage(bindCtx, rawURL)
+			stop()
+			if err != nil {
+				a.dlRun(func() { a.finishDownloadTask(t, err) })
+				return
+			}
+			a.dlRun(func() {
+				if a.dlBrowser == rendered {
+					a.dlBrowserURL = rawURL
+				}
+			})
+		}
 		if t.ImportedImage {
 			err := dl.Download(ctx, job, download.Item{URL: rawURL, Filename: targetName, RequireImage: true}, func(p download.Progress) {
 				a.dlRun(func() { a.applyTaskProgress(t, p) })
@@ -629,6 +647,9 @@ func (a *App) applyTaskProgress(t *downloadTask, p download.Progress) {
 }
 
 func (a *App) finishDownloadTask(t *downloadTask, err error) {
+	if a.dlBrowserTask == t {
+		a.dlBrowserTask = nil
+	}
 	if a.downloadsRunning > 0 {
 		a.downloadsRunning--
 	}

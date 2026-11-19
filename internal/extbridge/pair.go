@@ -35,10 +35,14 @@ type PairServer struct {
 
 // StartPair 监听固定端口。info 每次请求现读，重新生成令牌后扩展下一轮就能拿到。
 func StartPair(info func() PairInfo) (*PairServer, error) {
+	return startPair(PairPort, info)
+}
+
+func startPair(port string, info func() PairInfo) (*PairServer, error) {
 	if info == nil {
 		return nil, errors.New("extbridge: 缺少对接信息")
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", PairPort))
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
 	if err != nil {
 		return nil, err
 	}

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
 import { request as playwrightRequest } from 'playwright-core';
-import { createIdentity, prepareIdentity, preserveVoices } from './identity.mjs';
+import { createIdentity, prepareIdentity, preserveVoices, refreshIdentity } from './identity.mjs';
 import { downloadKernel } from './download-watch.mjs';
 import { repairKernel } from './kernel-repair.mjs';
 import { prepareWindowsExecutable } from './windows-compat.mjs';
@@ -316,12 +316,14 @@ let context;
 let contextOptions = {};
 let requestOptions = {};
 let launchProxy;
-let closing = false;
+let startup;
+let closing;
 let nextPage = 0;
 let nextFrame = 0;
 const pages = new Map();
 const frames = new Map();
 const bindings = new Set();
+const contextBindings = new WeakMap();
 const controllers = new Map();
 const networkOptions = new Map();
 const responseBodies = new Map();
@@ -464,6 +466,7 @@ async function start(params) {
         'privacy.baselineFingerprintingProtection.overrides': '',
         // Match the saved-identity WebGPU policy on the first launch (FEATURE_BLOCKED_DEVICE).
         'gfx.blacklist.webgpu': 4,
+        ...(params.directNetwork ? { 'network.proxy.type': 0 } : {}),
         'browser.sessionstore.resume_from_crash': false,
         // An aborted operation closes its page; keep the account environment alive.
         'browser.tabs.closeWindowWithLastTab': false,
@@ -496,11 +499,7 @@ async function start(params) {
   context = await Camoufox({ persistent_context: true, from_options: options });
   await context.addInitScript({content: mainWorld(scopeBootstrap)});
   for (const current of context.pages()) await current.evaluate(mainWorld(scopeBootstrap));
-  if (saved) {
-    const temporary = `${identityPath}.${process.pid}.tmp`;
-    try { fs.writeFileSync(temporary, JSON.stringify(identity), {mode:0o600,flag:'wx'}); fs.renameSync(temporary,identityPath); }
-    finally { fs.rmSync(temporary,{force:true}); }
-  }
+  if (saved) await refreshIdentity(identityPath, saved, identity);
   context.setDefaultTimeout(25000);
   context.on('page', pageID);
   context.on('close', () => { if (!closing) process.exit(0); });
@@ -509,14 +508,28 @@ async function start(params) {
   return { targetId: pageID(page) };
 }
 
-async function close() {
-  if (closing) return;
-  closing = true;
-  for (const privateContext of new Set(privateContexts.values())) {
-    await privateContext.close().catch(() => {});
+function close() {
+  closing ??= Promise.resolve(startup).catch(() => {}).then(async () => {
+    for (const privateContext of new Set(privateContexts.values())) {
+      await privateContext.close().catch(() => {});
+    }
+    privateContexts.clear();
+    await Promise.all(privateClosing.values());
+    await context?.close();
+  });
+  return closing;
+}
+
+function ensureBinding(targetContext, bindingName, applyExisting = true) {
+  let registered = contextBindings.get(targetContext);
+  if (!registered) {
+    registered = new Map();
+    contextBindings.set(targetContext, registered);
   }
-  privateContexts.clear();
-  await context?.close();
+  if (!registered.has(bindingName)) {
+    registered.set(bindingName, installBinding(targetContext, bindingName, applyExisting));
+  }
+  return registered.get(bindingName);
 }
 
 async function installBinding(targetContext, bindingName, applyExisting = true) {
@@ -603,9 +616,8 @@ async function continueRequest(page, target, route, signal) {
 async function dispatch(method, params, target, signal) {
   signal.throwIfAborted();
   switch (method) {
-    case 'start': return start(params);
+    case 'start': return startup ??= start(params);
     case 'ping': return {};
-    case 'Browser.close': await close(); return {};
     case 'Target.setDiscoverTargets': return {};
     case 'Target.getTargets':
       return { targetInfos: [...pages].filter(([, page]) => !page.isClosed()).map(([id, page]) => ({ targetId: id, type: 'page', url: page.url() })) };
@@ -622,7 +634,7 @@ async function dispatch(method, params, target, signal) {
         try {
           isolatedContext.setDefaultTimeout?.(25000);
           await isolatedContext.addInitScript({ content: mainWorld(scopeBootstrap) });
-          for (const name of bindings) await installBinding(isolatedContext, name, false);
+          for (const name of bindings) await ensureBinding(isolatedContext, name, false);
           page = await isolatedContext.newPage();
         } catch (error) {
           await isolatedContext.close().catch(() => {});
@@ -703,18 +715,29 @@ async function dispatch(method, params, target, signal) {
         return { result: { type: value === null ? 'object' : typeof value, value: value ?? null } };
       } catch (error) { return { exceptionDetails: { text: error.message } }; }
     }
-    case 'Runtime.addBinding':
-      if (!bindings.has(params.name)) {
-        await installBinding(context, params.name);
+    case 'Runtime.addBinding': {
+      const owner = page.context();
+      if (owner === context) bindings.add(params.name);
+      await ensureBinding(owner, params.name);
+      if (owner === context) {
         for (const privateContext of new Set(privateContexts.values())) {
-          await installBinding(privateContext, params.name);
+          await ensureBinding(privateContext, params.name);
         }
-        bindings.add(params.name);
       }
       return {};
+    }
     case 'Page.addScriptToEvaluateOnNewDocument':
       await page.addInitScript({ content: mainWorld(scopedInit(params.source)) }); return { identifier: 'tulai' };
-    case 'Page.navigate': await page.goto(params.url, { waitUntil: params.wait === 'commit' ? 'commit' : 'domcontentloaded', timeout: 60000 }); return {};
+    case 'Page.navigate': {
+      const deadline = Date.now() + 60000;
+      const response = await page.goto(params.url, {waitUntil: 'commit', timeout: 60000});
+      const contentType = response?.headers()['content-type']?.toLowerCase();
+      if (params.wait !== 'commit' && response && !contentType?.startsWith('image/')) {
+        signal.throwIfAborted();
+        await page.waitForLoadState('domcontentloaded', {timeout: Math.max(1, deadline - Date.now())});
+      }
+      return {};
+    }
     case 'Page.reload': await page.reload({ waitUntil: 'domcontentloaded' }); return {};
     case 'Page.close': await closeTargetPage(target, page); return {};
     case 'Page.bringToFront': await page.bringToFront(); return {};
@@ -796,6 +819,12 @@ input.on('line', line => {
   let request;
   try { request = JSON.parse(line); } catch { return; }
   if (request.method === 'cancel') { controllers.get(request.id)?.abort(); return; }
+  if (request.method === 'Browser.close') {
+    close()
+      .then(() => emit({ id: request.id, result: {} }), error => emit({ id: request.id, error: String(error.message || error) }))
+      .finally(() => process.exit(0));
+    return;
+  }
   const controller = new AbortController();
   controllers.set(request.id, controller);
   const timer = setTimeout(() => controller.abort(), Math.max(1, request.timeout || 60000));
@@ -812,7 +841,6 @@ input.on('line', line => {
     .finally(() => {
       clearTimeout(timer);
       controllers.delete(request.id);
-      if (request.method === 'Browser.close') process.exit(0);
     });
 });
 input.on('close', () => close().finally(() => process.exit(0)));

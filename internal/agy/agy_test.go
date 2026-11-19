@@ -4,10 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xxww0098/tulai/internal/agytest"
 )
 
 const testCredential = `{"token":{"access_token":"test-access","refresh_token":"test-refresh","token_type":"Bearer","expiry":"2026-12-01T00:00:00Z"},"auth_method":"consumer"}`
@@ -164,7 +165,7 @@ func TestNextAccountDir(t *testing.T) {
 }
 
 func TestRunFakeAgy(t *testing.T) {
-	script := agyScript(t)
+	bin := agytest.Executable(t)
 	t.Run("success", func(t *testing.T) {
 		home := t.TempDir()
 		writeToken(t, home)
@@ -174,7 +175,7 @@ func TestRunFakeAgy(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		path, err := Run(ctx, Request{Bin: script, Home: home, Model: DefaultModel, Prompt: Instruction("一只猫", "")})
+		path, err := Run(ctx, Request{Bin: bin, Home: home, Model: DefaultModel, Prompt: Instruction("一只猫", "")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -191,7 +192,7 @@ func TestRunFakeAgy(t *testing.T) {
 		writeFixture(t, home, "quota")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := Run(ctx, Request{Bin: script, Home: home, Prompt: "x"})
+		_, err := Run(ctx, Request{Bin: bin, Home: home, Prompt: "x"})
 		var quota *QuotaError
 		if !errorAs(err, &quota) {
 			t.Fatalf("%v", err)
@@ -204,7 +205,7 @@ func TestRunFakeAgy(t *testing.T) {
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := Run(ctx, Request{Bin: script, Home: home, Prompt: "x"})
+		_, err := Run(ctx, Request{Bin: bin, Home: home, Prompt: "x"})
 		if err != ErrNeedLogin {
 			t.Fatalf("%v", err)
 		}
@@ -217,7 +218,7 @@ func TestRunFakeAgy(t *testing.T) {
 	})
 	t.Run("no token", func(t *testing.T) {
 		home := t.TempDir()
-		_, err := Run(context.Background(), Request{Bin: script, Home: home, Prompt: "x"})
+		_, err := Run(context.Background(), Request{Bin: bin, Home: home, Prompt: "x"})
 		if err != ErrNeedLogin {
 			t.Fatalf("%v", err)
 		}
@@ -234,7 +235,7 @@ func TestRunFakeAgy(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, err := Run(ctx, Request{
-			Bin:    script,
+			Bin:    bin,
 			Home:   home,
 			Model:  DefaultModel,
 			Prompt: Instruction("把海报洗一下", ref),
@@ -278,7 +279,7 @@ func TestRunFakeAgy(t *testing.T) {
 		writeFixture(t, home, "deny")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := Run(ctx, Request{Bin: script, Home: home, Prompt: "x"})
+		_, err := Run(ctx, Request{Bin: bin, Home: home, Prompt: "x"})
 		if err == nil || err.Error() != "agy 拒绝读取参考图" {
 			t.Fatalf("%v", err)
 		}
@@ -297,19 +298,6 @@ func instructionRef(prompt string) string {
 		return ""
 	}
 	return rest[:j]
-}
-
-func agyScript(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("找不到测试文件")
-	}
-	path := filepath.Join(filepath.Dir(file), "testdata", "agy.sh")
-	if err := os.Chmod(path, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 func writeToken(t *testing.T, home string) {

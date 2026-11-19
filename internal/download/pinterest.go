@@ -109,6 +109,47 @@ func isPinterestPage(u *url.URL) bool {
 	return ref.pin != "" || ref.board != ""
 }
 
+func isPinterestSearch(u *url.URL) bool {
+	return pinterestHost(u) && (u.EscapedPath() == "/search/pins/" || u.EscapedPath() == "/search/pins")
+}
+
+func pinterestSearchURLMatches(requested, observed string) bool {
+	want, wantErr := url.Parse(requested)
+	got, gotErr := url.Parse(observed)
+	return wantErr == nil && gotErr == nil && pinterestSameSearch(want, got)
+}
+
+func pinterestSameSearch(want, got *url.URL) bool {
+	if !isPinterestSearch(want) || !isPinterestSearch(got) || !sameOrigin(want, got) ||
+		want.Fragment != "" || got.Fragment != "" {
+		return false
+	}
+	wantQuery, wantErr := url.ParseQuery(want.RawQuery)
+	gotQuery, gotErr := url.ParseQuery(got.RawQuery)
+	if wantErr != nil || gotErr != nil || len(wantQuery["q"]) != 1 || len(gotQuery["q"]) != 1 ||
+		strings.TrimSpace(wantQuery.Get("q")) == "" {
+		return false
+	}
+	for _, key := range []string{"rs", "b_id", "source_id", "top_pin_ids"} {
+		wantQuery.Del(key)
+		gotQuery.Del(key)
+	}
+	return wantQuery.Encode() == gotQuery.Encode()
+}
+
+func pinterestSearchPinImage(page *url.URL, node *html.Node) bool {
+	if node.Type != html.ElementNode || (node.Data != "img" && node.Data != "source") {
+		return false
+	}
+	for parent := node.Parent; parent != nil; parent = parent.Parent {
+		if parent.Type == html.ElementNode && parent.Data == "a" {
+			link, err := crawlURL(page, attribute(parent, "href"))
+			return err == nil && sameOrigin(page, link) && pinterestPageRef(link).pin != ""
+		}
+	}
+	return false
+}
+
 func discoverPinterest(ctx context.Context, getter Getter, root *url.URL) (Discovery, error) {
 	result := Discovery{IsPage: true}
 	if err := ctx.Err(); err != nil {

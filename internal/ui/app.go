@@ -155,6 +155,7 @@ type App struct {
 	dlBrowser        downloadBrowser
 	dlBrowserURL     string
 	dlBrowserBusy    bool
+	dlBrowserTask    *downloadTask
 	dlBrowserErr     string
 	dlBrowserCancel  context.CancelFunc
 	dlHost           *download.HostLimiter

@@ -3,6 +3,8 @@ package download
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"errors"
 	"image"
 	"image/png"
 	"io"
@@ -11,22 +13,164 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 
 	"github.com/xxww0098/tulai/internal/camoufox"
 )
 
-func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
-	runtimeDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")
-	if runtimeDir == "" {
-		t.Skip("set TULAI_CAMOUFOX_TEST_DATA to an isolated Camoufox runtime")
+func TestRenderedSiteAccessRecovery(t *testing.T) {
+	runtimeDir := dedicatedFixtureData(t)
+	session, err := openDedicatedFixture(t, runtimeDir, filepath.Join(t.TempDir(), "profile"), "", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
+
+	zhihu := "https://zhuanlan.zhihu.com/p/123"
+	behance := "https://www.behance.net/gallery/123/Work"
+	pages := map[string]string{
+		zhihu:   `<div class="Post-RichText"><img data-original="https://pic1.zhimg.com/article.png"></div>`,
+		behance: behanceTestHTML("project", behanceTestProject("123")),
+	}
+	picture := filterPNG(t, 13, 9)
+	session.getter.client.Transport = flickrTestTransport(func(req *http.Request) (*http.Response, error) {
+		if req.Header.Get("Cookie") != "" || (req.URL.String() != "https://pic1.zhimg.com/article.png" &&
+			req.URL.String() != "https://mir-s3-cdn-cf.behance.net/project_modules/source/one.jpg") {
+			return nil, errors.New("unexpected transfer after page capture")
+		}
+		return renderedFixturePNGResponse(req, picture), nil
+	})
+	var status atomic.Int32
+	var acceptAfterRefresh atomic.Bool
+	camoufox.ListenTarget(session.tab, func(event any) {
+		paused, ok := event.(*fetch.EventRequestPaused)
+		if !ok {
+			return
+		}
+		go func() {
+			var action camoufox.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			if body, ok := pages[paused.Request.URL]; ok && paused.ResourceType == network.ResourceTypeDocument {
+				code := status.Load()
+				if code == http.StatusForbidden && acceptAfterRefresh.CompareAndSwap(true, false) {
+					status.Store(http.StatusOK)
+					body = `<meta http-equiv="refresh" content="1">`
+				}
+				action = fetch.FulfillRequest(paused.RequestID, int64(code)).
+					WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).
+					WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
+			}
+			if err := camoufox.Run(session.tab, action); err != nil && session.tab.Err() == nil {
+				t.Logf("fixture interception: %v", err)
+			}
+		}()
+	})
+	if err := session.run(ctx, fetch.Enable()); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{zhihu, behance} {
+		status.Store(http.StatusForbidden)
+		if err := session.OpenTarget(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+		blocked, err := session.Capture(ctx)
+		var accessError *HTTPStatusError
+		if !errors.As(err, &accessError) || accessError.StatusCode != http.StatusForbidden || len(blocked.Items) != 0 {
+			t.Fatalf("%s: 403 capture returned %d images and %v", target, len(blocked.Items), err)
+		}
+		acceptAfterRefresh.Store(true)
+		if err := session.OpenTarget(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+		found, err := session.Capture(ctx)
+		if err != nil || len(found.Items) == 0 {
+			t.Fatalf("%s: authorized page returned %d images and %v", target, len(found.Items), err)
+		}
+		assertSavedRenderedPNG(t, ctx, session, found.Items[0], picture)
+	}
+}
+
+func TestDedicatedBrowserBindsNavigatedTab(t *testing.T) {
+	runtimeDir := dedicatedFixtureData(t)
+	var imageData bytes.Buffer
+	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 3, 3))); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/image.png" {
+			cookie, err := r.Cookie("download_session")
+			if err != nil || cookie.Value != "fixture" {
+				http.Error(w, "sign in", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(imageData.Bytes())
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: "download_session", Value: "fixture", Path: "/", HttpOnly: true})
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, `<title>Home</title>`)
+	}))
+	defer server.Close()
+
+	session, err := openDedicatedFixture(t, runtimeDir, filepath.Join(t.TempDir(), "profile"), server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	tab, closeTab, err := camoufox.NewPage(ctx, session.tab, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTab()
+	const route = "/search/pins/?q=Wallpaper%20aesthetic"
+	if err := runRendered(ctx, tab, camoufox.Navigate(server.URL+"/"), chromedp.Evaluate(
+		`history.pushState(null, "", "`+route+`"); document.title = "Search results"; document.body.innerHTML = '<img src="/image.png">';`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	target := server.URL + route
+	if err := session.BindOpenPage(ctx, server.URL+"/search/pins/?q=another"); err == nil {
+		t.Fatal("不应绑定到不同搜索")
+	}
+	if err := session.BindCurrent(ctx, target, ""); err == nil {
+		t.Fatal("下载助手请求必须携带有效的标记")
+	}
+	if err := session.BindOpenPage(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	found, err := session.Capture(ctx)
+	if err != nil || found.Title != "Search results" || len(found.Items) != 1 || found.Items[0].URL != server.URL+"/image.png" {
+		t.Fatalf("手动跳转的标签页采集失败或被刷新: %+v, %v", found, err)
+	}
+	item := found.Items[0]
+	item.Filename = "image.png"
+	dir := t.TempDir()
+	if err := New(Options{Getter: session.Getter()}).Download(ctx, Job{Directory: dir}, item, nil); err != nil {
+		t.Fatalf("绑定后无法使用浏览器登录态下载: %v", err)
+	}
+	if saved, err := os.ReadFile(filepath.Join(dir, item.Filename)); err != nil || !bytes.Equal(saved, imageData.Bytes()) {
+		t.Fatalf("保存的图片不匹配: %v", err)
+	}
+	if err := runRendered(ctx, tab, chromedp.Evaluate(`history.pushState(null, "", "?q=another")`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := session.Capture(ctx); err == nil || len(found.Items) != 0 {
+		t.Fatalf("标签页切换到不同搜索后仍被采集: %+v, %v", found, err)
+	}
+}
+
+func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
+	runtimeDir := dedicatedFixtureData(t)
 	var imageData bytes.Buffer
 	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 3, 3))); err != nil {
 		t.Fatal(err)
@@ -50,11 +194,13 @@ func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
 	defer server.Close()
 	targetURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
 
-	session, err := openRendered(ctx, filepath.Join(t.TempDir(), "profile"), "", "", true, runtimeDir)
+	session, err := openDedicatedFixture(t, runtimeDir, filepath.Join(t.TempDir(), "profile"), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
 	if !session.Alive() {
 		t.Fatal("空白专用浏览器未运行")
 	}
@@ -116,13 +262,51 @@ func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
 	}
 }
 
-func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
-	runtimeDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")
-	if runtimeDir == "" {
-		t.Skip("set TULAI_CAMOUFOX_TEST_DATA to an isolated Camoufox runtime")
+func TestDedicatedBrowserDownloadsImageURL(t *testing.T) {
+	runtimeDir := dedicatedFixtureData(t)
+	var imageData bytes.Buffer
+	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 24, 16))); err != nil {
+		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/asset" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(imageData.Bytes())
+	}))
+	defer server.Close()
+
+	session, err := openDedicatedFixture(t, runtimeDir, t.TempDir(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
+	target := server.URL + "/asset"
+	if err := session.OpenTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	found, err := session.Capture(ctx)
+	if err != nil || len(found.Items) != 1 || found.Items[0].URL != target {
+		t.Fatalf("direct image capture: %+v, %v", found.Items, err)
+	}
+	destination := t.TempDir()
+	item := found.Items[0]
+	item.Filename = "download.png"
+	if err := New(Options{Getter: session.Getter()}).Download(ctx, Job{Directory: destination}, item, nil); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(filepath.Join(destination, item.Filename))
+	if err != nil || !bytes.Equal(saved, imageData.Bytes()) {
+		t.Fatalf("direct image download differs from source: %v", err)
+	}
+}
+
+func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
+	runtimeDir := dedicatedFixtureData(t)
 	var imageData bytes.Buffer
 	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 3, 3))); err != nil {
 		t.Fatal(err)
@@ -149,11 +333,13 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 	root := t.TempDir()
 	profile := filepath.Join(root, "config", "DownloadBrowser")
 	accountProfile := filepath.Join(root, "BrowserData", "Camoufox", "account-1")
-	first, err := openRendered(ctx, profile, server.URL+"/login", "", true, runtimeDir)
+	first, err := openDedicatedFixture(t, runtimeDir, profile, server.URL+"/login", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
 	if !first.Alive() {
 		t.Fatal("新打开的专用浏览器未运行")
 	}
@@ -183,13 +369,16 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 		t.Fatalf("图片保存不正确: %v", err)
 	}
 
-	account, err := openRendered(ctx, accountProfile, server.URL+"/gallery", "", true, runtimeDir)
+	cancel()
+	account, err := openDedicatedFixture(t, runtimeDir, accountProfile, server.URL+"/gallery", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer account.Close()
+	accountCtx, cancelAccount := context.WithTimeout(t.Context(), time.Minute)
+	defer cancelAccount()
 	var separate string
-	if err := account.run(ctx, chromedp.Evaluate(`document.cookie + '|' + (localStorage.getItem('download-test') || '')`, &separate)); err != nil {
+	if err := account.run(accountCtx, chromedp.Evaluate(`document.cookie + '|' + (localStorage.getItem('download-test') || '')`, &separate)); err != nil {
 		t.Fatal(err)
 	}
 	if separate != "|" {
@@ -205,25 +394,30 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 		t.Fatal("关闭后未通知会话结束")
 	}
 
-	reopened, err := openRendered(ctx, profile, server.URL+"/gallery", "", true, runtimeDir)
+	reopened, err := openDedicatedFixture(t, runtimeDir, profile, "", nil)
 	if err != nil {
 		t.Fatalf("重新打开下载环境: %v", err)
 	}
 	defer reopened.Close()
+	reopenCtx, cancelReopen := context.WithTimeout(t.Context(), time.Minute)
+	defer cancelReopen()
+	if err := reopened.OpenTarget(reopenCtx, server.URL+"/gallery"); err != nil {
+		t.Fatalf("重开专用环境后打开网页: %v", err)
+	}
 	var reopenedFingerprint, savedState string
-	if err := reopened.run(ctx, chromedp.Evaluate(fingerprintScript, &reopenedFingerprint),
+	if err := reopened.run(reopenCtx, chromedp.Evaluate(fingerprintScript, &reopenedFingerprint),
 		chromedp.Evaluate(`document.cookie + '|' + (localStorage.getItem('download-test') || '')`, &savedState)); err != nil {
 		t.Fatal(err)
 	}
 	if reopenedFingerprint != fingerprint || !strings.Contains(savedState, "download_session=synthetic") || !strings.HasSuffix(savedState, "|saved") {
 		t.Fatalf("重启后指纹或登录状态发生变化: fingerprint match=%v state=%q", reopenedFingerprint == fingerprint, savedState)
 	}
-	if err := reopened.run(ctx, chromedp.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
+	if err := reopened.run(reopenCtx, chromedp.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-reopened.Done():
-	case <-ctx.Done():
+	case <-reopenCtx.Done():
 		t.Fatal("手动关闭页面后没有通知会话结束")
 	}
 	if reopened.Alive() {

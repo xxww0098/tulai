@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ var (
 	behanceProfilePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{2,100}$`)
 	behanceProjectPattern = regexp.MustCompile(`(?:["']project["']|\bproject)\s*:\s*`)
 	behanceActivePattern  = regexp.MustCompile(`(?:["']activeSection["']|\bactiveSection)\s*:\s*`)
+	behanceModuleFile     = regexp.MustCompile(`(?i)^[a-f0-9]{6}([0-9]{1,24})\.[a-f0-9]+\.[a-z0-9]+$`)
 )
 
 type behanceImageSize struct {
@@ -201,18 +203,69 @@ func behanceProjectPage(ctx context.Context, doc *html.Node, page *url.URL, id s
 		if len(result.Items) > 0 {
 			return result, errors.Join(problems...)
 		}
+	}
+	canonicalPage, canonicalErr := crawlURL(page, canonical)
+	if canonicalErr == nil && behanceProjectID(canonicalPage) == id && (project == nil || !project.IsPrivate) {
+		behanceProjectModuleImages(ctx, &result, seen, doc, page, id)
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if len(result.Items) > 0 {
+			return result, nil
+		}
+	}
+	if project != nil && !project.IsPrivate {
 		if image := behanceCover(page, *project); image != nil {
 			behanceAddImage(&result, seen, page, image)
 		}
 	}
-	if len(result.Items) == 0 {
-		if u, err := crawlURL(page, canonical); err == nil && behanceProjectID(u) == id {
-			if image, ok := behanceImageURL(page, cover); ok {
-				behanceAddImage(&result, seen, page, image)
-			}
+	if len(result.Items) == 0 && canonicalErr == nil && behanceProjectID(canonicalPage) == id {
+		if image, ok := behanceImageURL(page, cover); ok {
+			behanceAddImage(&result, seen, page, image)
 		}
 	}
 	return result, errors.Join(append(problems, errors.New("Behance 未提供完整作品图片，可能需要登录或完成验证"))...)
+}
+
+func behanceProjectModuleImages(ctx context.Context, result *Discovery, seen map[string]bool, doc *html.Node, page *url.URL, id string) {
+	files := make(map[string]bool)
+	walkHTML(doc, func(n *html.Node) {
+		if ctx.Err() != nil || n.Type != html.ElementNode || n.Data != "img" || !behanceInsideProjectModule(n) {
+			return
+		}
+		for _, raw := range []string{
+			largestSrcset(firstNonEmpty(attribute(n, "srcset"), attribute(n, "data-srcset"))),
+			attribute(n, "src"), attribute(n, "data-src"),
+		} {
+			image, ok := behanceImageURL(page, raw)
+			if !ok || !strings.HasPrefix(image.Path, "/project_modules/") {
+				continue
+			}
+			file := path.Base(image.Path)
+			match := behanceModuleFile.FindStringSubmatch(file)
+			if len(match) != 2 || match[1] != id {
+				continue
+			}
+			if !files[file] {
+				files[file] = true
+				behanceAddImage(result, seen, page, image)
+			}
+			break
+		}
+	})
+}
+
+func behanceInsideProjectModule(image *html.Node) bool {
+	module := false
+	for ancestor := image.Parent; ancestor != nil; ancestor = ancestor.Parent {
+		if attribute(ancestor, "id") == "project-modules" {
+			return module
+		}
+		if slices.Contains(strings.Fields(attribute(ancestor, "class")), "js-project-module--image") {
+			module = true
+		}
+	}
+	return false
 }
 
 func behanceProfilePage(ctx context.Context, getter Getter, doc *html.Node, page *url.URL, owner string) (Discovery, error) {
@@ -399,7 +452,7 @@ func behanceAddImage(result *Discovery, seen map[string]bool, page, image *url.U
 		return
 	}
 	seen[image.String()] = true
-	item := Item{URL: image.String()}
+	item := Item{URL: image.String(), RequireImage: true, PublicOnly: true}
 	if ref := imageReferer(page.String(), item.URL); ref != "" {
 		item.Headers = map[string]string{"Referer": ref}
 	}

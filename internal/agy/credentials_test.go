@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xxww0098/tulai/internal/agytest"
 )
 
 type memoryCredentials struct {
@@ -99,10 +101,7 @@ func TestCLISwitchSavesRefreshedOAuthAndSerializes(t *testing.T) {
 	if err != nil || !bytes.Equal(saved, refreshed) {
 		t.Fatal("refreshed OAuth was not saved", err)
 	}
-	info, err := os.Stat(TokenPath(first))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatal("OAuth file must be private", err)
-	}
+	assertCredentialFile(t, TokenPath(first))
 	s, err = beginCLI(context.Background(), second, false)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +166,7 @@ func TestCLISwitchFailureDoesNotStartProcess(t *testing.T) {
 	writeToken(t, home)
 	keyring := useMemoryCredentials(t, []byte(testCredential))
 	keyring.writeErr = errors.New("keyring denied")
-	_, err := Run(context.Background(), Request{Bin: agyScript(t), Home: home, Prompt: "x"})
+	_, err := Run(context.Background(), Request{Bin: agytest.Executable(t), Home: home, Prompt: "x"})
 	if err == nil {
 		t.Fatal("failed switch was accepted")
 	}
@@ -188,7 +187,7 @@ func TestImportKeyringCreatesIndependentSnapshot(t *testing.T) {
 	if !found.CanImport() || !found.Keychain {
 		t.Fatal("keyring-only account was not detected")
 	}
-	res, err := Import(context.Background(), ImportRequest{SourceHome: src, AccountRoot: t.TempDir(), Bin: agyScript(t), AllowMissingToken: true})
+	res, err := Import(context.Background(), ImportRequest{SourceHome: src, AccountRoot: t.TempDir(), Bin: agytest.Executable(t), AllowMissingToken: true})
 	if err != nil {
 		t.Fatal(err)
 	}

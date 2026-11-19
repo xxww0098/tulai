@@ -120,15 +120,29 @@ func hostOf(raw string) string {
 }
 
 func (c *Client) NewSession(rawURL string, onLog func(string)) (*Session, error) {
+	return c.newSession(rawURL, onLog, false)
+}
+
+func (c *Client) NewIsolatedSession(rawURL string, onLog func(string)) (*Session, error) {
+	return c.newSession(rawURL, onLog, true)
+}
+
+func (c *Client) newSession(rawURL string, onLog func(string), isolated bool) (*Session, error) {
 	ctx, cancel := context.WithCancel(c.alloc)
 	var page struct {
 		TargetID string `json:"targetId"`
 	}
-	if err := c.proc.Call(ctx, "", "Target.createTarget", map[string]any{"url": rawURL}, &page); err != nil {
+	if err := c.proc.Call(ctx, "", "Target.createTarget", map[string]any{"url": rawURL, "isolated": isolated}, &page); err != nil {
 		cancel()
 		return nil, err
 	}
-	return c.finishSession(ctx, cancel, page.TargetID, onLog)
+	session, err := c.finishSession(ctx, cancel, page.TargetID, onLog)
+	if err != nil && isolated {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		_ = c.proc.Call(closeCtx, "", "Target.closeTarget", map[string]any{"targetId": page.TargetID}, nil)
+	}
+	return session, err
 }
 
 // consoleMessage 把控制台参数收成一行。没有值的对象，以及 null / undefined，不再记成「null」。

@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
 	"image"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,6 +17,9 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
+
+	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/camoufoxtest"
 )
 
 const imdbTitleURL = "https://www.imdb.com/title/tt0111161/"
@@ -156,15 +157,13 @@ func TestIMDbRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
 		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<html></html>") }))
-	defer server.Close()
-	session, err := OpenRendered(ctx, filepath.Join(t.TempDir(), "profile"), server.URL, "", true)
+	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
 	const target = imdbIndex + "?fixture=synthetic"
 	const root = imdbTitleURL + "?token=synthetic"
 	var calls atomic.Int32

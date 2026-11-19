@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -48,8 +49,8 @@ func (a *App) downloadBrowserEnvironment(c *ui.Context) {
 					ui.Text(c, "网页图片下载专用环境").FontSize(tok.body).FontWeight(600).TextColor(tok.text).SingleLine()
 					uiBadge(c, "download-browser-badge", status, tone, tok)
 				})
-				ui.Text(c, "独立保存指纹和登录状态；下载浏览器暂不支持代理。").
-					FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip("独立保存指纹和登录状态；下载浏览器暂不支持代理。")
+				ui.Text(c, "使用直连网络，独立保存指纹和登录状态。").
+					FontSize(tok.caption).TextColor(tok.muted).SingleLine().Tooltip("使用直连网络，独立保存指纹和登录状态。")
 			})
 			uiBtn(ui.Button(c.Key("download-browser-use"), "使用下载环境"), tok).Shrink(0).OnClick(func() {
 				a.tab = pageDownload
@@ -88,19 +89,8 @@ func (a *App) openDownloadBrowserURL(target string) {
 		a.dlBrowserErr = "QQ 相册网址包含登录令牌，请移除令牌后再打开"
 		return
 	}
-	for _, task := range a.dlTasks {
-		if task.Rendered && (task.Phase == dlActive || task.Phase == dlQueued) {
-			a.dlBrowserErr = "请等当前浏览器下载结束或暂停后再打开其他网址"
-			return
-		}
-	}
-	proxy, err := browser.ResolveCurrentProxy()
-	if err != nil {
-		a.dlBrowserErr = err.Error()
-		return
-	}
-	if proxy != "" {
-		a.dlBrowserErr = "下载浏览器暂不支持代理，请先关闭全局或系统代理后重试"
+	if a.downloadBrowserInUse() {
+		a.dlBrowserErr = "请等当前浏览器下载结束或暂停后再打开其他网址"
 		return
 	}
 	if session := a.dlBrowser; session != nil && session.Alive() {
@@ -142,7 +132,7 @@ func (a *App) openDownloadBrowserURL(target string) {
 		if old != nil {
 			old.Close()
 		}
-		session, err := download.OpenRenderedAssisted(ctx, filepath.Join(root, "DownloadBrowser"), target, proxy, false,
+		session, err := download.OpenRenderedAssisted(ctx, filepath.Join(root, "DownloadBrowser"), target, false,
 			func(ctx context.Context, session *download.RenderedSession, rawURL, marker string) error {
 				return a.downloadBrowserRequest(ctx, session, rawURL, marker)
 			})
@@ -189,6 +179,66 @@ func (a *App) openDownloadBrowserURL(target string) {
 	}()
 }
 
+func (a *App) downloadBrowserInUse() bool {
+	if a.dlBrowserTask != nil {
+		return true
+	}
+	for _, task := range a.dlTasks {
+		if task.Rendered && (task.Phase == dlActive || task.Phase == dlQueued) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) submitDownloadBrowserURL(rawURL string) {
+	session := a.dlBrowser
+	if a.dlBrowserBusy {
+		a.dlComposerErr = "下载浏览器正在处理网址，请稍后重试"
+		return
+	}
+	if session == nil || !session.Alive() {
+		a.dlComposerErr = "请先打开下载浏览器并访问目标网页"
+		return
+	}
+	if a.downloadBrowserInUse() {
+		a.dlComposerErr = "请等待当前浏览器下载结束或暂停"
+		return
+	}
+	draft, opened := a.dlURLs, a.dlComposerOn
+	a.dlBrowserBusy, a.dlComposerErr = true, ""
+	bind := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := session.BindOpenPage(ctx, rawURL)
+		a.dlRun(func() {
+			if a.dlBrowser != session {
+				return
+			}
+			a.dlBrowserBusy = false
+			if err == nil && !session.Alive() {
+				err = errors.New("下载浏览器已关闭，请重新打开")
+			}
+			if err == nil {
+				a.dlBrowserURL, a.dlBrowserErr = rawURL, ""
+			}
+			if a.dlURLs != draft || a.dlComposerOn != opened || !a.dlBrowserMode || a.dlGuideOn {
+				return
+			}
+			if err != nil {
+				a.dlComposerErr = err.Error()
+				return
+			}
+			a.enqueueDownloadComposer(rawURL)
+		})
+	}
+	if a.window == nil {
+		bind()
+	} else {
+		go bind()
+	}
+}
+
 func (a *App) downloadBrowserRequest(ctx context.Context, session downloadBrowser, rawURL, marker string) error {
 	result := make(chan error, 1)
 	a.postUI(func() {
@@ -200,12 +250,12 @@ func (a *App) downloadBrowserRequest(ctx context.Context, session downloadBrowse
 			result <- errors.New("下载浏览器尚未就绪，请稍后重试")
 			return
 		}
+		if a.downloadBrowserInUse() {
+			result <- errors.New("请等待当前浏览器下载结束或暂停")
+			return
+		}
 		var existing *downloadTask
 		for _, task := range a.dlTasks {
-			if task.Rendered && (task.Phase == dlActive || task.Phase == dlQueued) {
-				result <- errors.New("请等待当前浏览器下载结束或暂停")
-				return
-			}
 			if task.URL == rawURL {
 				if !task.Rendered || (!task.Phase.terminal() && task.Phase != dlPaused) {
 					result <- errors.New("该页面已有下载任务，请在 tulai 中查看")

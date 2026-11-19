@@ -43,7 +43,11 @@ type Manager struct {
 	taskVisible bool
 }
 
-func NewManager() *Manager { return &Manager{procs: map[int64]*camoufox.Process{}} }
+func NewManager() *Manager { return NewManagerWithConfig("") }
+
+func NewManagerWithConfig(configDir string) *Manager {
+	return &Manager{procs: map[int64]*camoufox.Process{}, configDir: configDir}
+}
 
 // SetTaskVisible 切换任务浏览器是否显示窗口；已开的浏览器形态不符时，下一次任务会重开。
 func (m *Manager) SetTaskVisible(on bool) {

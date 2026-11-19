@@ -86,6 +86,35 @@ func TestBehanceProjectImages(t *testing.T) {
 	}
 }
 
+func TestBehanceProjectModuleImages(t *testing.T) {
+	const target = "https://www.behance.net/gallery/123/Work"
+	const cdn = "https://mir-s3-cdn-cf.behance.net/project_modules/"
+	const display = cdn + "1400/abcdef123.123abc.jpg"
+	const original = cdn + "source/abcdef123.123abc.jpg"
+	const body = `<div id="project-modules"><div class="js-project-module--image">` +
+		`<img src="` + display + `" srcset="` + display + ` 1x, ` + original + ` 2x">` +
+		`<img src="` + display + `"><img src="` + cdn + `source/abcdef9123.abc123.jpg">` +
+		`<img src="https://private.invalid/project_modules/source/abcdef123.abc123.jpg"></div>` +
+		`<img src="` + cdn + `source/abcdef123.abc123.jpg"></div>` +
+		`<div class="js-project-module--image"><img src="` + cdn + `source/bcdefa123.abc123.jpg"></div>`
+	root, _ := url.Parse(target)
+	for _, canonical := range []string{target, "https://www.behance.net/gallery/9123/Other"} {
+		getter := GetterFunc(func(_ context.Context, raw string, _ func(*http.Request)) (*Response, error) {
+			return behanceTestResponse(raw, `<meta property="og:url" content="`+canonical+`">`+body), nil
+		})
+		got, err := discoverBehance(t.Context(), getter, root)
+		if canonical != target {
+			if err == nil || len(got.Items) != 0 {
+				t.Fatalf("unrelated canonical page: %+v, %v", got.Items, err)
+			}
+			continue
+		}
+		if err != nil || len(got.Items) != 1 || got.Items[0].URL != original || !got.Items[0].RequireImage || !got.Items[0].PublicOnly {
+			t.Fatalf("rendered project modules: %+v, %v", got.Items, err)
+		}
+	}
+}
+
 func TestBehanceProfilePartialAndRestricted(t *testing.T) {
 	root, _ := url.Parse("https://www.behance.net/designowner")
 	var calls []string

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"io"
 	"net"
 	"net/http"
@@ -233,8 +234,7 @@ func TestRenderedBrowserIntegration(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
 		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
-	defer cancel()
+	runtimeDir := camoufoxtest.ConfigDir(t)
 	var crossCookie, redirectCookie, sourceCookie, privateCookie, rangeHeader, ifRangeHeader, crossReferer string
 	var mu sync.Mutex
 	var privateHits atomic.Int32
@@ -292,14 +292,16 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 	}))
 	defer source.Close()
 	profile := filepath.Join(t.TempDir(), "profile")
-	session, err := OpenRendered(ctx, profile, source.URL+"/?token=private", "", true)
+	session, err := openDedicatedFixture(t, runtimeDir, profile, source.URL+"/?token=private", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if _, err := OpenRendered(ctx, profile, source.URL, "", true); err == nil {
+	if _, err := openDedicatedFixture(t, runtimeDir, profile, source.URL, nil); err == nil {
 		t.Fatal("second browser acquired an active profile")
 	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
 	page, err := session.Capture(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -384,10 +386,17 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 	transport := session.getter.client.Transport.(*http.Transport)
 	oldDial := transport.DialContext
 	var publicDials atomic.Int32
+	const publicHost = "image.example.com"
 	transport.DialContext = func(ctx context.Context, networkName, address string) (net.Conn, error) {
 		lookup := func(ctx context.Context, networkName, host string) ([]netip.Addr, error) {
-			if host == "public.test" {
-				return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+			if host == publicHost {
+				return lookupImageIPsWith(ctx, networkName, host,
+					func(context.Context, string, string) ([]netip.Addr, error) {
+						return []netip.Addr{netip.MustParseAddr("198.18.1.18")}, nil
+					},
+					func(context.Context, string) ([]netip.Addr, error) {
+						return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+					})
 			}
 			return net.DefaultResolver.LookupNetIP(ctx, networkName, host)
 		}
@@ -400,7 +409,7 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 		}
 		return safeDownloadDialWith(ctx, networkName, address, lookup, dial)
 	}
-	redirectURL := "http://public.test:" + sourceAddr.Port() + "/public-redirect-local"
+	redirectURL := "http://" + publicHost + ":" + sourceAddr.Port() + "/public-redirect-local"
 	got, redirectErr := get.Get(ctx, redirectURL, nil)
 	transport.DialContext = oldDial
 	if redirectErr == nil {
@@ -464,12 +473,14 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 	if _, err := session.Capture(ctx); err != nil {
 		t.Fatal(err)
 	}
-	independent, err := OpenRendered(ctx, filepath.Join(t.TempDir(), "independent"), source.URL, "", true)
+	independent, err := openDedicatedFixture(t, runtimeDir, filepath.Join(t.TempDir(), "independent"), source.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer independent.Close()
-	downloadCtx, cancelDownload := context.WithCancel(ctx)
+	transferCtx, cancelTransfer := context.WithTimeout(t.Context(), time.Minute)
+	defer cancelTransfer()
+	downloadCtx, cancelDownload := context.WithCancel(transferCtx)
 	resp, err = get.Get(downloadCtx, source.URL+"/stream", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -483,11 +494,11 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 		if err == nil {
 			t.Fatal("canceling the task did not interrupt the transfer")
 		}
-	case <-ctx.Done():
+	case <-transferCtx.Done():
 		t.Fatal("transfer remained blocked after task cancellation")
 	}
 	_ = resp.Body.Close()
-	resp, err = get.Get(ctx, source.URL+"/stream", nil)
+	resp, err = get.Get(transferCtx, source.URL+"/stream", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,25 +511,27 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 		if err == nil {
 			t.Fatal("closing browser did not cancel active transfer")
 		}
-	case <-ctx.Done():
+	case <-transferCtx.Done():
 		t.Fatal("active transfer remained blocked after browser close")
 	}
 	_ = resp.Body.Close()
 	if _, err := os.Stat(profile); err != nil {
 		t.Fatalf("browser profile was removed: %v", err)
 	}
-	if _, err := independent.Capture(ctx); err != nil {
+	if _, err := independent.Capture(transferCtx); err != nil {
 		t.Fatalf("closing one browser affected another: %v", err)
 	}
-	reopened, err := OpenRendered(ctx, profile, source.URL+"/public/image", "", true)
+	reopened, err := openDedicatedFixture(t, runtimeDir, profile, source.URL+"/public/image", nil)
 	if err != nil {
 		t.Fatalf("reopening profile failed: %v", err)
 	}
 	defer reopened.Close()
-	if _, err := reopened.Capture(ctx); err != nil {
+	reopenCtx, cancelReopen := context.WithTimeout(t.Context(), time.Minute)
+	defer cancelReopen()
+	if _, err := reopened.Capture(reopenCtx); err != nil {
 		t.Fatal(err)
 	}
-	resp, err = reopened.Get(ctx, source.URL+"/private/image", nil)
+	resp, err = reopened.Get(reopenCtx, source.URL+"/private/image", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,16 +542,16 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 	if !strings.Contains(gotSourceCookie, "session=synthetic") {
 		t.Fatalf("persistent sign-in cookie was not retained: %q", gotSourceCookie)
 	}
-	if err := reopened.run(ctx, chromedp.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
+	if err := reopened.run(reopenCtx, chromedp.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
 		t.Fatal(err)
 	}
-	manualCtx, manualCancel := context.WithTimeout(ctx, 5*time.Second)
+	manualCtx, manualCancel := context.WithTimeout(reopenCtx, 5*time.Second)
 	defer manualCancel()
 	if _, err := reopened.Capture(manualCtx); err == nil {
 		t.Fatal("manual browser close was not detected")
 	}
 	reopened.Close()
-	again, err := OpenRendered(ctx, profile, source.URL+"/public/image", "", true)
+	again, err := openDedicatedFixture(t, runtimeDir, profile, source.URL+"/public/image", nil)
 	if err != nil {
 		t.Fatalf("reopening profile after a manual close failed: %v", err)
 	}

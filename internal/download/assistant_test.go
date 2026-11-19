@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,12 +69,7 @@ func TestDownloadAssistantRequiresTokenAndValidPage(t *testing.T) {
 }
 
 func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
-	runtimeDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")
-	if runtimeDir == "" {
-		t.Skip("set TULAI_CAMOUFOX_TEST_DATA to an isolated Camoufox runtime")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	runtimeDir := dedicatedFixtureData(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ready") }))
 	defer server.Close()
 	result := make(chan struct {
@@ -92,11 +88,13 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 		}{found, err}
 		return err
 	}
-	session, err := openRenderedWithAssistant(ctx, filepath.Join(t.TempDir(), "profile"), server.URL, "", true, runtimeDir, handler)
+	session, err := openDedicatedFixture(t, runtimeDir, filepath.Join(t.TempDir(), "profile"), server.URL, handler)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
 	const page = "https://www.temu.com/search_result.html?search_key=fixture"
 	const login = "https://www.temu.com/login.html"
 	const returned = "https://www.temu.com/search_result.html?search_key=fixture&is_back=1"
@@ -216,12 +214,18 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 }
 
 func TestDownloadAssistantBrowserButton(t *testing.T) {
-	runtimeDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")
-	if runtimeDir == "" {
-		t.Skip("set TULAI_CAMOUFOX_TEST_DATA to an isolated Camoufox runtime")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	runtimeDir := dedicatedFixtureData(t)
+	var proxyRequests atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxyRequests.Add(1)
+		http.Error(w, "unexpected proxy request", http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("ALL_PROXY", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
 	var imageData bytes.Buffer
 	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 4, 4))); err != nil {
 		t.Fatal(err)
@@ -256,6 +260,19 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 	var sequence atomic.Int32
 	dir := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "profile")
+	if err := os.Mkdir(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	proxyAddress := proxy.Listener.Addr().(*net.TCPAddr)
+	prefs := fmt.Sprintf(`user_pref("network.proxy.type", 1);
+user_pref("network.proxy.http", %q);
+user_pref("network.proxy.http_port", %d);
+user_pref("network.proxy.no_proxies_on", "");
+user_pref("network.proxy.allow_hijacking_localhost", true);
+`, proxyAddress.IP.String(), proxyAddress.Port)
+	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(prefs), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	handler := func(ctx context.Context, session *RenderedSession, rawURL, marker string) error {
 		err := session.BindCurrent(ctx, rawURL, marker)
 		if err == nil {
@@ -273,18 +290,20 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		result <- err
 		return err
 	}
-	session, err := openRenderedWithAssistant(ctx, profile, server.URL+"/empty", "", true, runtimeDir, handler)
+	session, err := openDedicatedFixture(t, runtimeDir, profile, server.URL+"/empty", handler)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
 
 	type buttonState struct {
 		Found, Visible bool
 		X, Y           float64
 		Position       string
 	}
-	readButton := func(tab context.Context, s *RenderedSession) buttonState {
+	readButton := func(ctx, tab context.Context, s *RenderedSession) buttonState {
 		var state buttonState
 		markers := s.downloadMarkers()
 		script := fmt.Sprintf(`(() => { const host=document.querySelector(%q); if(!host)return {found:false}; const r=host.getBoundingClientRect(); return {found:true,visible:r.width>0&&r.height>0,position:getComputedStyle(host).position,x:r.x+r.width/2,y:r.y+r.height/2}; })()`, "["+markers.HostAttr+"]")
@@ -294,10 +313,10 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		}
 		return state
 	}
-	waitButtonFor := func(tab context.Context, s *RenderedSession, visible bool) buttonState {
+	waitButtonFor := func(ctx, tab context.Context, s *RenderedSession, visible bool) buttonState {
 		deadline := time.Now().Add(20 * time.Second)
 		for time.Now().Before(deadline) {
-			state := readButton(tab, s)
+			state := readButton(ctx, tab, s)
 			if state.Found && state.Visible == visible {
 				return state
 			}
@@ -306,10 +325,10 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		t.Fatalf("下载按钮未进入预期状态 visible=%v", visible)
 		return buttonState{}
 	}
-	waitButton := func(tab context.Context, visible bool) buttonState {
-		return waitButtonFor(tab, session, visible)
+	waitButton := func(ctx, tab context.Context, visible bool) buttonState {
+		return waitButtonFor(ctx, tab, session, visible)
 	}
-	click := func(tab context.Context, state buttonState) {
+	click := func(ctx, tab context.Context, state buttonState) {
 		if state.Position != "fixed" {
 			t.Fatalf("下载按钮位置不正确: %q", state.Position)
 		}
@@ -321,39 +340,39 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 			}
 		}
 	}
-	waitButton(session.tab, false)
+	waitButton(ctx, session.tab, false)
 	if err := session.run(ctx, chromedp.Evaluate(`document.cookie='session=synthetic; path=/'; const img=document.createElement('img'); img.id='dynamic'; img.src='/image.png'; document.body.append(img)`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, true)
+	waitButton(ctx, session.tab, true)
 	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('dynamic').remove()`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, false)
+	waitButton(ctx, session.tab, false)
 	if err := session.run(ctx, chromedp.Evaluate(`const tile=document.createElement('div'); tile.id='tile'; tile.className='tile'; document.body.append(tile)`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, true)
+	waitButton(ctx, session.tab, true)
 	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('tile').remove()`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, false)
+	waitButton(ctx, session.tab, false)
 	if err := session.run(ctx, chromedp.Evaluate(`const link=document.createElement('a'); link.id='direct'; link.textContent='image'; document.body.append(link)`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, false)
+	waitButton(ctx, session.tab, false)
 	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('direct').href='/image.png'`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, true)
+	waitButton(ctx, session.tab, true)
 	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('direct').remove()`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, false)
+	waitButton(ctx, session.tab, false)
 	if err := session.run(ctx, camoufox.Navigate(server.URL+"/gallery")); err != nil {
 		t.Fatal(err)
 	}
-	waitButton(session.tab, true)
+	waitButton(ctx, session.tab, true)
 
 	second, closePage, err := camoufox.NewPage(ctx, session.tab, false)
 	if err != nil {
@@ -363,8 +382,8 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 	if err := runRendered(ctx, second, camoufox.Navigate(server.URL+"/gallery")); err != nil {
 		t.Fatal(err)
 	}
-	state := waitButton(second, true)
-	click(second, state)
+	state := waitButton(ctx, second, true)
+	click(ctx, second, state)
 	select {
 	case err := <-result:
 		if err != nil {
@@ -386,19 +405,25 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		t.Fatalf("页面切换后不应采集其他内容: %v", err)
 	}
 	session.Close()
-	reopened, err := openRenderedWithAssistant(ctx, profile, server.URL+"/gallery", "", true, runtimeDir, handler)
+	cancel()
+	reopened, err := openDedicatedFixture(t, runtimeDir, profile, server.URL+"/gallery", handler)
 	if err != nil {
 		t.Fatalf("重新打开下载浏览器: %v", err)
 	}
 	defer reopened.Close()
-	click(reopened.tab, waitButtonFor(reopened.tab, reopened, true))
+	reopenCtx, cancelReopen := context.WithTimeout(t.Context(), time.Minute)
+	defer cancelReopen()
+	click(reopenCtx, reopened.tab, waitButtonFor(reopenCtx, reopened.tab, reopened, true))
 	select {
 	case err := <-result:
 		if err != nil {
 			t.Fatalf("重启后按钮无法发送: %v", err)
 		}
-	case <-ctx.Done():
+	case <-reopenCtx.Done():
 		t.Fatal("重启后按钮没有发送请求")
+	}
+	if got := proxyRequests.Load(); got != 0 {
+		t.Fatalf("下载专用环境经过了代理：%d 次请求", got)
 	}
 }
 

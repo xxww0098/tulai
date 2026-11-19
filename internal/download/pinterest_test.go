@@ -70,6 +70,58 @@ func TestPinterestURLs(t *testing.T) {
 	}
 }
 
+func TestPinterestSearchURLMatches(t *testing.T) {
+	const requested = "https://www.pinterest.com/search/pins/?q=Wallpaper%20aesthetic&rs=trending&b_id=example&source_id=source&top_pin_ids=12345"
+	for _, test := range []struct {
+		observed string
+		matches  bool
+	}{
+		{"https://www.pinterest.com/search/pins/?rs=typed&q=Wallpaper+aesthetic", true},
+		{"https://www.pinterest.com/search/pins?q=Wallpaper%20aesthetic", true},
+		{"https://www.pinterest.com/search/pins/?q=other", false},
+		{"https://www.pinterest.com/search/pins/?q=&rs=trending", false},
+		{"https://www.pinterest.com/search/pins/?q=Wallpaper+aesthetic&q=other", false},
+		{"https://www.pinterest.com/search/pins/?q=Wallpaper+aesthetic&scope=videos", false},
+		{"https://www.pinterest.com/search/pins/?q=Wallpaper+aesthetic#other", false},
+		{"https://www.pinterest.com/search/boards/?q=Wallpaper+aesthetic", false},
+		{"https://www.pinterest.com/?q=Wallpaper+aesthetic", false},
+		{"https://www.pinterest.com/search%2Fpins/?q=Wallpaper+aesthetic", false},
+		{"https://www.pinterest.com:8443/search/pins/?q=Wallpaper+aesthetic", false},
+		{"https://www.pinterest.com.example.test/search/pins/?q=Wallpaper+aesthetic", false},
+		{"http://www.pinterest.com/search/pins/?q=Wallpaper+aesthetic", false},
+	} {
+		if got := pinterestSearchURLMatches(requested, test.observed); got != test.matches {
+			t.Errorf("匹配 %q = %v, want %v", test.observed, got, test.matches)
+		}
+	}
+}
+
+func TestPinterestSearchSnapshotDownloadsPinImagesOnly(t *testing.T) {
+	page, err := url.Parse("https://www.pinterest.com/search/pins/?q=wallpaper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Discovery{IsPage: true}
+	seen := map[string]bool{}
+	snapshot := renderedSnapshot{
+		HTML: []string{`<img src="https://i.pinimg.com/75x75/11/22/33/avatar.jpg">
+<a href="/pin/12345/"><div><img src="` + pinterestThumb + `"></div></a>
+<a href="/pin/12345/"><img src="` + strings.Replace(pinterestThumb, "/736x/", "/236x/", 1) + `"></a>
+<a href="/pin/23456/"><img src="https://other.test/736x/unrelated.jpg"></a>
+<a href="https://other.test/pin/34567/"><img src="https://i.pinimg.com/736x/11/22/33/unrelated.jpg"></a>
+<a href="/owner/board/"><img src="https://i.pinimg.com/736x/11/22/33/board.jpg"></a>`},
+		Current: []string{"https://i.pinimg.com/736x/11/22/33/ignored.jpg"},
+	}
+	if err := addRenderedSnapshot(&result, seen, page, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].URL != pinterestOriginal ||
+		strings.Join(result.Items[0].AlternateURLs, ",") != pinterestThumb ||
+		result.Items[0].Headers["Referer"] != "https://www.pinterest.com/" {
+		t.Fatalf("Pinterest 搜索图片 = %+v", result.Items)
+	}
+}
+
 func TestPinterestPinIdentityAndOriginal(t *testing.T) {
 	root, _ := url.Parse("https://www.pinterest.com/pin/" + pinterestSampleID + "/?token=private")
 	getter := GetterFunc(func(_ context.Context, raw string, _ func(*http.Request)) (*Response, error) {

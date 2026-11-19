@@ -1,6 +1,8 @@
 import {createHash, randomBytes} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
+import {isDeepStrictEqual} from 'node:util';
 
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
@@ -138,6 +140,28 @@ export async function createIdentity(profile, generate, options = {}) {
     }
   }
   throw new Error('无法生成与现有环境不同的浏览器指纹，请重试');
+}
+
+export async function refreshIdentity(identityPath, saved, identity) {
+  if (isDeepStrictEqual(saved, identity)) return;
+  const temporary = `${identityPath}.${process.pid}-${randomBytes(8).toString('hex')}.tmp`;
+  const file = fs.openSync(temporary, 'wx', 0o600);
+  try {
+    try { fs.writeFileSync(file, JSON.stringify(identity)); }
+    finally { fs.closeSync(file); }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(temporary, identityPath);
+        return;
+      } catch (error) {
+        const busy = ['EPERM', 'EACCES', 'EBUSY'].includes(error.code);
+        if (process.platform !== 'win32' || !busy || attempt >= 7) throw error;
+        await delay(50);
+      }
+    }
+  } finally {
+    fs.rmSync(temporary, {force: true});
+  }
 }
 
 function voiceLocale(identity) {

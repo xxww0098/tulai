@@ -743,7 +743,7 @@ func WindowsScript() string {
 		"    Start-Sleep -Milliseconds 200",
 		"    $waitTries = $waitTries + 1",
 		"  }",
-		"  if (-not $ok -and -not $proc.HasExited) { $ok = $true }",
+		"  if (-not $ok) { $ok = (-not $proc.HasExited) -or (Test-Path -LiteralPath $stamp) }",
 		"}",
 		"if (-not $ok) {",
 		"  if (Test-Path -LiteralPath $backup) {",

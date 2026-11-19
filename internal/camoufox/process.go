@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ func stripANSI(s string) string {
 type Options struct {
 	Profile        string   `json:"profile"`
 	Proxy          string   `json:"proxy,omitempty"`
+	DirectNetwork  bool     `json:"directNetwork,omitempty"`
 	Headless       bool     `json:"headless"`
 	Executable     string   `json:"executable,omitempty"`
 	Addons         []string `json:"addons,omitempty"`
@@ -67,6 +69,9 @@ type Process struct {
 
 // Start uses an already installed, version-pinned runtime. It never searches for a system browser.
 func Start(ctx context.Context, dataDir string, options Options, stderr io.Writer) (*Process, error) {
+	if options.DirectNetwork && options.Proxy != "" {
+		return nil, errors.New("Camoufox 直连模式不能同时指定代理")
+	}
 	installMu.Lock()
 	runtime, ok := Installed(dataDir)
 	var driverErr error
@@ -99,7 +104,7 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 	options.Executable = runtime.Executable
 	cmd := exec.Command(runtime.Node, filepath.Join(runtime.Dir, "bridge.mjs"))
 	cmd.Dir = runtime.Dir
-	cmd.Env = runtimeEnv("", runtime.Dir)
+	cmd.Env = browserRuntimeEnv(runtime.Dir, options.DirectNetwork)
 	cmd.Stderr = stderr
 	configureCommand(cmd)
 	in, err := cmd.StdinPipe()
@@ -266,6 +271,22 @@ func Find(endpoint string) (*Process, error) {
 		return nil, errors.New("Camoufox 账号窗口已关闭")
 	}
 	return p, nil
+}
+
+func browserRuntimeEnv(dir string, direct bool) []string {
+	env := runtimeEnv("", dir)
+	if !direct {
+		return env
+	}
+	return slices.DeleteFunc(env, func(item string) bool {
+		key, _, _ := strings.Cut(item, "=")
+		switch strings.ToUpper(key) {
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NPM_CONFIG_PROXY", "NPM_CONFIG_HTTP_PROXY", "NPM_CONFIG_HTTPS_PROXY":
+			return true
+		default:
+			return false
+		}
+	})
 }
 
 func runtimeEnv(proxy, dir string) []string {
