@@ -559,10 +559,13 @@ async function confirmSend(env, payload, button, rec) {
   return TULAI.fail(env, TULAI.errors.E_SEND_UNCERTAIN, rec.message)
 }
 
-async function resultAck(env, payload, images) {
+async function resultAck(env, payload, images, recovered) {
   const conversation = doubaoConversation()
   let indices = null
-  if (Array.isArray(payload.expectedAttachments) && payload.expectedAttachments.length > 1 && images.length >= 1 && images.length <= payload.expectedAttachments.length && globalThis.TULAIDoubaoSourceMap) {
+  if (recovered) {
+    images = recovered.images
+    indices = recovered.indices
+  } else if (Array.isArray(payload.expectedAttachments) && payload.expectedAttachments.length > 1 && images.length >= 1 && images.length <= payload.expectedAttachments.length && globalThis.TULAIDoubaoSourceMap) {
     if (typeof TULAIDoubaoSourceMap.resolveFromConversation === 'function') {
       const resolved = await TULAIDoubaoSourceMap.resolveFromConversation(conversation, payload.expectedAttachments, images)
       if (resolved && Array.isArray(resolved.images) && Array.isArray(resolved.indices)) {
@@ -577,6 +580,7 @@ async function resultAck(env, payload, images) {
     name: payload.name,
     ok: true,
     conversation,
+    recoveredFromConversation: recovered ? true : undefined,
     images: images.map(function (item, i) { return { url: item.url, rawUrl: item.rawUrl || undefined, sourceIndex: indices ? indices[i] : undefined } }),
   })
 }
@@ -584,6 +588,8 @@ async function resultAck(env, payload, images) {
 const MIN_RESULT_SIDE = 128
 const PIXEL_STABLE_MS = 400
 const URL_STABLE_MS = 3000
+const CONVERSATION_PROBE_MS = 60000
+const CONVERSATION_PROBE_INTERVAL_MS = 15000
 
 // 豆包 cthumb、千问 x-oss-process 都是先出现的缩略图。像素够大也不代表原图已经换上。
 function resultIsThumbnail(item) {
@@ -618,70 +624,99 @@ function resultStableWait(images, expectedCount) {
   return URL_STABLE_MS
 }
 
+function resultStreamBusy(env) {
+  return networkStreaming && (!env.taskId || !networkTask || networkTask === String(env.taskId)) && Date.now() - networkStreamAt < 45000
+}
+
+function resultInterruption(env, mark) {
+  if (cancelRequested || pageMark !== mark) return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待结果已取消')
+  const captcha = Page.detectCaptcha(document)
+  return captcha.blocked ? captchaAck(env, captcha) : accountBlocked(env)
+}
+
 async function waitResult(env, payload) {
-  if (!pageMark) return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '还没有本轮发送标记，不能收集结果')
+  const mark = pageMark
+  if (!mark) return TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '还没有本轮发送标记，不能收集结果')
   const timeout = Number(payload.timeoutMs) || 120000
-  const deadline = Date.now() + timeout
+  const startedAt = Date.now()
+  const deadline = startedAt + timeout
+  const expected = Array.isArray(payload.expectedAttachments) ? payload.expectedAttachments : []
+  const sourceMap = globalThis.TULAIDoubaoSourceMap
+  const canRecover = expected.length > 1 && networkAccepted && networkTask === String(env.taskId || '') &&
+    typeof sourceMap?.recoverFromConversation === 'function'
+  let conversation = doubaoConversation()
+  let nextProbe = startedAt + CONVERSATION_PROBE_MS
   let stable = 0
   let lastURLs = ''
+  async function recoverReply(allowPartial) {
+    const target = doubaoConversation()
+    if (!conversation) conversation = target
+    if (!target || target !== conversation || mark.followedByUser) return null
+    const recovered = await sourceMap.recoverFromConversation(target, expected)
+    const interrupted = resultInterruption(env, mark)
+    if (interrupted) return interrupted
+    if (!recovered || doubaoConversation() !== target) return null
+    if (typeof Page.newAssistants === 'function') Page.newAssistants(document, mark)
+    if (mark.followedByUser) return null
+    const refused = moderationBlocked(env)
+    if (refused) return refused
+    if (!allowPartial && (resultStreamBusy(env) || recovered.images.length !== expected.length)) return null
+    return resultAck(env, payload, [], recovered)
+  }
   while (Date.now() < deadline) {
-    if (cancelRequested) return TULAI.fail(env, TULAI.errors.E_CANCELLED, '等待结果已取消')
-    const captcha = Page.detectCaptcha(document)
-    if (captcha.blocked) return captchaAck(env, captcha)
-    const blockedWait = accountBlocked(env)
-    if (blockedWait) return blockedWait
+    const interrupted = resultInterruption(env, mark)
+    if (interrupted) return interrupted
     // 千问 / 豆包生成卡在视口外往往只是灰占位或 lazy 壳。有 revealResults 时先滚进画面再取样。
     if (typeof Page.revealResults === 'function') {
-      try { Page.revealResults(document, pageMark) } catch (e) {}
+      try { Page.revealResults(document, mark) } catch (e) {}
     }
-    const images = Page.resultImages(document, pageMark).filter(function (item) {
+    const images = Page.resultImages(document, mark).filter(function (item) {
       return item && item.url && !(typeof Page.isPlaceholderURL === 'function' && Page.isPlaceholderURL(item.url))
     })
-    const streamBusy = networkStreaming && (!env.taskId || !networkTask || networkTask === String(env.taskId)) && (Date.now() - networkStreamAt < 45000)
-    const busy = Page.resultsBusy(document, pageMark) || streamBusy
+    const busy = Page.resultsBusy(document, mark) || resultStreamBusy(env)
     if (!images.length) {
       if (!busy && /(^|\.)doubao\.com$/i.test(location.hostname) && globalThis.TULAIQuota && typeof Page.assistantText === 'function') {
-        const quota = TULAIQuota.imageReplyBlock(Page.assistantText(document, pageMark))
+        const quota = TULAIQuota.imageReplyBlock(Page.assistantText(document, mark))
         if (quota) return TULAI.fail(env, TULAI.errors.E_QUOTA, quota.message)
       }
       const refused = moderationBlocked(env)
       if (refused) return refused
     }
     const urls = resultStableKey(images)
-    const expectedCount = Array.isArray(payload.expectedAttachments) ? payload.expectedAttachments.length : 0
+    const expectedCount = expected.length
     // 豆包：实图还在、生成指示没了。像素已经解码就只再确认一拍；没有尺寸时同一组地址再稳约 3 秒。
     // 多图批量未齐时先循环滚动唤醒虚拟列表，并放宽等待窗口。
     if (typeof Page.replyDone === 'function') {
       const now = Date.now()
       if (expectedCount > 1 && images.length < expectedCount && !busy && typeof Page.newAssistants === 'function') {
-        if (!pageMark.tailScrollAt || now - pageMark.tailScrollAt >= 1200) {
-          pageMark.tailScrollAt = now
-          const msgs = Page.newAssistants(document, pageMark)
+        if (!mark.tailScrollAt || now - mark.tailScrollAt >= 1200) {
+          mark.tailScrollAt = now
+          const msgs = Page.newAssistants(document, mark)
           const tail = msgs && msgs.length ? msgs[msgs.length - 1] : null
           if (tail && typeof tail.scrollIntoView === 'function') {
             const blocks = ['end', 'start', 'center']
-            const step = pageMark.tailScrollStep || 0
-            pageMark.tailScrollStep = step + 1
+            const step = mark.tailScrollStep || 0
+            mark.tailScrollStep = step + 1
             try { tail.scrollIntoView({ block: blocks[step % blocks.length] }) } catch (_) {}
           }
         }
       }
-      const signal = Page.replyDone(document, pageMark)
+      const signal = Page.replyDone(document, mark)
       if (signal && signal.done && images.length && !busy) {
-        if (urls !== lastURLs || !pageMark.stableAt) {
+        if (urls !== lastURLs || !mark.stableAt) {
           lastURLs = urls
-          pageMark.stableAt = now
+          mark.stableAt = now
         }
         let needStableMs = resultStableWait(images, expectedCount)
         if (!needStableMs) {
           const remain = typeof deadline === 'number' ? deadline - now - 1500 : 15000
           needStableMs = Math.min(15000, Math.max(URL_STABLE_MS, remain))
         }
-        if (now - pageMark.stableAt >= needStableMs) {
+        if (now - mark.stableAt >= needStableMs) {
           return resultAck(env, payload, images)
         }
       } else {
-        pageMark.stableAt = 0
+        mark.stableAt = 0
         lastURLs = urls
       }
     } else if (!busy && images.length) {
@@ -694,7 +729,19 @@ async function waitResult(env, payload) {
       stable = 0
       lastURLs = urls
     }
+    const now = Date.now()
+    if (canRecover && now >= nextProbe && deadline - now > 5000 && (images.length < expectedCount || busy)) {
+      nextProbe = now + CONVERSATION_PROBE_INTERVAL_MS
+      const recovered = await recoverReply(false)
+      if (recovered) return recovered
+    }
     await delay(400)
+  }
+  if (canRecover) {
+    const interrupted = resultInterruption(env, mark)
+    if (interrupted) return interrupted
+    const recovered = await recoverReply(true)
+    if (recovered) return recovered
   }
   return TULAI.fail(env, TULAI.errors.E_TIMEOUT, '等待生成结果超时')
 }

@@ -3,7 +3,9 @@
   function imageKey(raw) {
     try {
       const u = new URL(raw)
-      if (u.protocol === 'https:' && /(^|\.)byteimg\.com$/i.test(u.hostname)) return u.pathname.split('~tplv-')[0]
+      if (u.protocol === 'https:' && !u.username && !u.password && !u.port && /(^|\.)byteimg\.com$/i.test(u.hostname)) {
+        return u.pathname.split('~tplv-')[0]
+      }
     } catch (e) {}
     return ''
   }
@@ -40,17 +42,19 @@
             const index = image && names.indexOf(image.name)
             if (index >= 0 && typeof image.uri === 'string' && image.uri) group.set(image.uri, (group.get(image.uri) || []).concat(index + 1))
           }
-          const candidate = attachments.length === names.length && group.size === names.length && [...group.values()].every(indices => indices.length === 1) ? group : null
+          const sourceIndices = [...group.values()].flat()
+          const candidate = attachments.length === names.length && group.size === names.length &&
+            sourceIndices.length === names.length && new Set(sourceIndices).size === names.length ? group : null
           if (!latest || msgSeq > latest.order) { latest = { order: msgSeq, group: candidate }; ambiguous = false }
           else if (msgSeq === latest.order) ambiguous = true
         }
         const creations = content.creation_block && content.creation_block.creations
         for (const creation of Array.isArray(creations) ? creations : []) {
           const image = creation && creation.image, params = image && image.gen_params
-          const rawUrl = (image && image.image_ori_raw && image.image_ori_raw.url) || ''
-          const oriUrl = (image && image.image_ori && image.image_ori.url) || ''
-          const previewUrl = (image && image.image_preview && image.image_preview.url) || ''
-          const imageKeys = new Set([rawUrl, oriUrl, previewUrl].map(imageKey).filter(Boolean))
+          const raw = image && image.image_ori_raw && image.image_ori_raw.url
+          const urls = [raw, image && image.image_ori && image.image_ori.url, image && image.image_preview && image.image_preview.url].filter(imageKey)
+          const rawUrl = imageKey(raw) ? raw : ''
+          const imageKeys = new Set(urls.map(imageKey))
           const valid = imageKeys.size === 1 && params && Array.isArray(params.img_uris) && params.img_uris.length === 1 &&
             typeof params.img_uris[0] === 'string' && params.img_uris[0] && (!params.img_uri || params.img_uri === params.img_uris[0])
           for (const key of imageKeys) {
@@ -74,8 +78,7 @@
           }
           if (valid && msgSeq !== null) {
             const key = [...imageKeys][0]
-            const bestUrl = rawUrl || oriUrl || previewUrl
-            if (bestUrl) items.push({ seq: msgSeq, key, url: bestUrl, rawUrl })
+            items.push({ seq: msgSeq, key, url: urls[0], rawUrl })
           }
         }
       }
@@ -83,29 +86,26 @@
     return { latest, ambiguous, invalidSequence, refs, keySeqs, uriOwners, items }
   }
 
+  function sourceIndex(analysis, key) {
+    const { latest, refs, keySeqs, uriOwners } = analysis
+    if (!keySeqs.get(key)?.some(seq => seq > latest.order)) return 0
+    const uris = refs.get(key)
+    if (!uris || uris.size !== 1) return 0
+    const uri = [...uris][0]
+    const entries = uriOwners.get(uri) || []
+    const activeOwners = new Set(entries.filter(entry => entry.seq === null || entry.seq > latest.order).map(entry => entry.key))
+    if (activeOwners.size !== 1) return 0
+    return latest.group.get(uri)?.[0] || 0
+  }
+
   function matchLists(lists, names, keys) {
     let matched = null
     let winning = null
     for (const list of lists) {
       const analysis = analyzeList(list, names)
-      const { latest, ambiguous, invalidSequence, refs, keySeqs, uriOwners } = analysis
+      const { latest, ambiguous, invalidSequence } = analysis
       if (latest && latest.group && !ambiguous && !invalidSequence) {
-        const group = latest.group
-        const indices = keys.map(key => {
-          const seqs = keySeqs.get(key)
-          if (!seqs || !seqs.some(seq => seq > latest.order)) return 0
-          const uris = refs.get(key)
-          if (!uris || uris.size !== 1) return 0
-          const uri = [...uris][0]
-          const entries = uriOwners.get(uri) || []
-          const activeOwners = new Set()
-          for (const entry of entries) {
-            if (entry.seq === null || entry.seq > latest.order) activeOwners.add(entry.key)
-          }
-          if (activeOwners.size !== 1) return 0
-          const found = group.get(uri)
-          return found && found.length === 1 ? found[0] : 0
-        })
+        const indices = keys.map(key => sourceIndex(analysis, key))
         if (!indices.includes(0) && new Set(indices).size === keys.length) {
           if (matched && matched.some((index, i) => index !== indices[i])) return null
           matched = indices
@@ -157,6 +157,30 @@
     return { images, indices: base.indices }
   }
 
+  // 没有页面上的图卡时，只从会话里唯一对应本批附件的消息列表恢复。
+  function recover(state, names) {
+    if (!Array.isArray(names) || names.length < 2 || new Set(names).size !== names.length) return null
+    const lists = collectLists(state)
+    if (!lists) return null
+    const matched = lists.map(list => analyzeList(list, names)).filter(analysis =>
+      analysis.latest?.group && !analysis.ambiguous && !analysis.invalidSequence)
+    if (matched.length !== 1) return null
+    const analysis = matched[0]
+    const bySource = new Map()
+    for (const item of analysis.items) {
+      if (item.seq <= analysis.latest.order) continue
+      const index = sourceIndex(analysis, item.key)
+      if (index && (!bySource.has(index) || item.rawUrl)) bySource.set(index, item)
+    }
+    const indices = [...bySource.keys()].sort((a, b) => a - b)
+    if (!indices.length) return null
+    const images = indices.map(index => {
+      const item = bySource.get(index)
+      return { url: item.url, rawUrl: item.rawUrl || undefined }
+    })
+    return { images, indices }
+  }
+
   function parse(html) {
     if (typeof html !== 'string' || html.length > 8 * 1024 * 1024) return null
     const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -168,11 +192,30 @@
   function validConversationURL(conversation) {
     try {
       const url = new URL(conversation)
-      if (url.protocol !== 'https:' || !/(^|\.)doubao\.com$/i.test(url.hostname) || !/^\/chat\/[^/]+$/.test(url.pathname) || url.search || url.hash) return null
+      if (url.protocol !== 'https:' || url.username || url.password || url.port || !/(^|\.)doubao\.com$/i.test(url.hostname) ||
+          !/^\/chat\/[^/]+$/.test(url.pathname) || url.search || url.hash) return null
       return url.href
     } catch (e) {
       return null
     }
+  }
+
+  async function readConversation(href) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 4000)
+    try {
+      const response = await fetch(href, { credentials: 'include', cache: 'no-store', redirect: 'error', signal: controller.signal })
+      return response.ok ? parse(await response.text()) : null
+    } catch (e) {
+      return null
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  async function recoverFromConversation(conversation, names) {
+    const href = validConversationURL(conversation)
+    return href ? recover(await readConversation(href), names) : null
   }
 
   async function resolveFromConversation(conversation, names, images) {
@@ -180,18 +223,11 @@
     if (!href) return null
     let best = null
     for (let attempt = 0; attempt < 3; attempt++) {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 4000)
-      try {
-        const response = await fetch(href, { credentials: 'include', cache: 'no-store', redirect: 'error', signal: controller.signal })
-        if (response.ok) {
-          const resolved = resolve(parse(await response.text()), names, images)
-          if (resolved) {
-            best = resolved
-            if (resolved.images.length === names.length) return resolved
-          }
-        }
-      } catch (e) {} finally { clearTimeout(timer) }
+      const resolved = resolve(await readConversation(href), names, images)
+      if (resolved) {
+        best = resolved
+        if (resolved.images.length === names.length) return resolved
+      }
       if (attempt < 2) await new Promise(resolveDelay => setTimeout(resolveDelay, 600))
     }
     return best
@@ -201,19 +237,12 @@
     const href = validConversationURL(conversation)
     if (!href) return null
     for (let attempt = 0; attempt < 3; attempt++) {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 4000)
-      try {
-        const response = await fetch(href, { credentials: 'include', cache: 'no-store', redirect: 'error', signal: controller.signal })
-        if (response.ok) {
-          const indices = match(parse(await response.text()), names, images)
-          if (indices) return indices
-        }
-      } catch (e) {} finally { clearTimeout(timer) }
+      const indices = match(await readConversation(href), names, images)
+      if (indices) return indices
       if (attempt < 2) await new Promise(resolveDelay => setTimeout(resolveDelay, 600))
     }
     return null
   }
 
-  globalThis.TULAIDoubaoSourceMap = { match, resolve, parse, fromConversation, resolveFromConversation }
+  globalThis.TULAIDoubaoSourceMap = { match, resolve, recover, parse, fromConversation, resolveFromConversation, recoverFromConversation }
 })()

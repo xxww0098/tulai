@@ -325,6 +325,7 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 	splitSaves := 0
 	switchAfter := 0
 	completedByAccount := map[int64]int{}
+	washBatchLimits := map[int64]int{}
 	if e.opts.TaskSwitching {
 		switchAfter = max(1, e.opts.TaskSwitchingCount)
 	}
@@ -444,6 +445,9 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				task.avoidBrowser = 0
 				pending[i] = task
 				maxImages := washChatTasks
+				if limit := washBatchLimits[task.BrowserID]; limit > 0 {
+					maxImages = limit
+				}
 				if remaining := switchAfter - completedByAccount[task.BrowserID]; switchAfter > 0 && remaining > 0 {
 					maxImages = min(maxImages, remaining)
 				}
@@ -510,6 +514,18 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			used := t.ranOn
 			if used == 0 {
 				used = resource
+			}
+			if used > 0 && t.washWaitTimedOut {
+				limit := max(1, len(t.batch)/2)
+				washBatchLimits[used] = limit
+				logging.Log.Warning("豆包「%s」本批 %d 张等待超时，后续新批次最多 %d 张", t.AccountName, len(t.batch), limit)
+			} else if limit := washBatchLimits[used]; limit > 0 && t.submitted &&
+				t.Status == StatusSuccess && len(t.Images) == limit && len(t.Results) == limit {
+				if limit+1 == washChatTasks {
+					delete(washBatchLimits, used)
+				} else {
+					washBatchLimits[used] = limit + 1
+				}
 			}
 			if switchAfter > 0 && t.slot != 0 && t.Attempts > 0 && used > 0 && !(t.rotated && t.Status == StatusPending) {
 				lastAccount = used

@@ -6,7 +6,7 @@ const vm = require('vm')
 
 const GRAY = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
-function load(page, where) {
+function load(page, where, virtualTime = false) {
   const listeners = []
   const context = vm.createContext({
     console,
@@ -27,10 +27,19 @@ function load(page, where) {
     },
     TULAIPage: page,
   })
-  if (page.resolveSources || page.resolveConversation) {
+  if (virtualTime) {
+    let now = 100000
+    context.Date = class extends Date { static now() { return now } }
+    context.setTimeout = (callback, ms = 0) => setTimeout(() => {
+      now += ms
+      callback()
+    }, 0)
+  }
+  if (page.resolveSources || page.resolveConversation || page.recoverConversation) {
     context.TULAIDoubaoSourceMap = {
       fromConversation: page.resolveSources,
       resolveFromConversation: page.resolveConversation,
+      recoverFromConversation: page.recoverConversation,
     }
   }
   context.globalThis = context
@@ -59,6 +68,7 @@ function load(page, where) {
     })
   }
   command.locateFileInput = function () { return vm.runInContext('locateFileInput()', context) }
+  command.now = function () { return vm.runInContext('Date.now()', context) }
   command.stableWait = function (images, expectedCount) {
     context.__images = images
     context.__expected = expectedCount
@@ -534,7 +544,55 @@ async function main() {
     assert.deepStrictEqual(ack.payload.images.map((x) => x.sourceIndex), [3, 1, 2])
   }
 
-  await Promise.all([streamHoldTest(), partialScrollTest(), resolveSupplementTest()])
+  async function recoverInvisibleBatchTest(partial) {
+    const where = { href: 'https://www.doubao.com/chat/recover-wait', hostname: 'www.doubao.com' }
+    const expected = ['a.png', 'b.png']
+    const probes = []
+    const page = composerPage({
+      resultImages() { return [] },
+      resultsBusy() { return true },
+      replyDone() { return { done: false } },
+      async recoverConversation(conversation, names) {
+        probes.push(conversation)
+        assert.deepStrictEqual(names, expected)
+        const indices = partial ? [2] : [1, 2]
+        return { indices, images: indices.map(i => ({ url: 'https://p3.byteimg.com/result-' + i })) }
+      },
+    })
+    const call = load(page, where, true)
+    assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+    const start = call.now()
+    const timeoutMs = 72000
+    const ack = await call({ name: 'waitResult', timeoutMs, expectedAttachments: expected })
+    assert.strictEqual(ack.payload.ok, true)
+    assert.strictEqual(ack.payload.recoveredFromConversation, true)
+    assert.deepStrictEqual(Array.from(ack.payload.images, item => item.sourceIndex), partial ? [2] : [1, 2])
+    assert.deepStrictEqual(probes, partial ? [where.href, where.href] : [where.href])
+    const elapsed = call.now() - start
+    assert.ok(partial ? elapsed >= timeoutMs : elapsed >= 60000 && elapsed < timeoutMs)
+  }
+
+  async function changedConversationTest() {
+    const where = { href: 'https://www.doubao.com/chat/original', hostname: 'www.doubao.com' }
+    const probes = []
+    const call = load(composerPage({
+      resultImages() { return [] },
+      resultsBusy() { return false },
+      replyDone() { return { done: false } },
+      async recoverConversation(conversation) {
+        probes.push(conversation)
+        where.href = 'https://www.doubao.com/chat/other'
+        return { images: [{ url: 'https://p3.byteimg.com/one' }, { url: 'https://p3.byteimg.com/two' }], indices: [1, 2] }
+      },
+    }), where, true)
+    assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+    const ack = await call({ name: 'waitResult', timeoutMs: 72000, expectedAttachments: ['a.png', 'b.png'] })
+    assert.strictEqual(ack.payload.code, 'E_TIMEOUT')
+    assert.deepStrictEqual(probes, ['https://www.doubao.com/chat/original'])
+  }
+
+  await Promise.all([streamHoldTest(), partialScrollTest(), resolveSupplementTest(),
+    recoverInvisibleBatchTest(false), recoverInvisibleBatchTest(true), changedConversationTest()])
 
   console.log('content wait ok')
 }

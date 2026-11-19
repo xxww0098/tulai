@@ -52,6 +52,7 @@ type Task struct {
 	sentWrap           string    // data-chat-question-wrap
 	savedHashes        map[string]bool
 	matchedSavedResult bool   // 本轮是否再次获取到本任务已成功落盘的原图
+	washWaitTimedOut   bool   // 豆包已确认接收多图批次，等待结果超时
 	slot               int64  // 这次派发时占用的浏览器，完成后用来释放并发名额
 	ranOn              int64  // 实际打到的账号。轮换后 BrowserID 会改成下一个
 	avoidBrowser       int64  // 刚因普通失败换出的账号，避免目标账号忙时立刻弹回原账号

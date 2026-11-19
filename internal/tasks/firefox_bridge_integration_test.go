@@ -31,6 +31,7 @@ func TestFirefoxBridgeObservesStreamAndDownloadsRaw(t *testing.T) {
 	data := resultPNG(t, 29)
 	var rawDownloads atomic.Int32
 	var activeDownloads, peakDownloads atomic.Int32
+	var recoveryReads, sendRequests atomic.Int32
 	eventJSON, _ := json.Marshal(map[string]any{"event_data": fmt.Sprintf(`{"image":{"image_preview":{"url":%q},"image_ori_raw":{"url":%q}}}`, preview, raw)})
 	body := "event: message\nid: 42\ndata: " + string(eventJSON) + "\n\n"
 	page := `<!doctype html><html><body>
@@ -38,15 +39,26 @@ func TestFirefoxBridgeObservesStreamAndDownloadsRaw(t *testing.T) {
 <script>
 document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()=>{
   const box=document.querySelector('textarea'), prompt=box.value; box.value='';
-  history.pushState({}, '', '/chat/fixture');
+  const recover=prompt==='测试无图卡';
+  history.pushState({}, '', recover ? '/chat/recover' : '/chat/fixture');
   const user=document.createElement('div'); user.setAttribute('data-role','user'); user.textContent=prompt; document.body.append(user);
   const res=await fetch('/samantha/chat/completion',{method:'POST'}); window.fixtureBody=await res.text();
+  if (recover) return;
   const reply=document.createElement('div'); reply.setAttribute('data-role','assistant');
   const card=document.createElement('div'); card.setAttribute('data-testid','mdbox_image');
   const img=document.createElement('img'); img.src=` + fmt.Sprintf("%q", preview) + `; img.width=256; img.height=256;
   card.append(img); reply.append(card); document.body.append(reply);
 };
 </script></body></html>`
+	const recoveryPage = `<!doctype html><script>window._ROUTER_DATA = {"message_list":[
+	  {"index":"10","content_block":[{"content":{"attachment_block":{"attachments":[
+	    {"image":{"name":"fixture-a.png","uri":"source/a"}},{"image":{"name":"fixture-b.png","uri":"source/b"}}
+	  ]}}}]},
+	  {"index":"11","content_block":[{"content":{"creation_block":{"creations":[
+	    {"image":{"image_ori_raw":{"url":"https://p3.byteimg.com/recovery/b~tplv-image_raw.png"},"gen_params":{"img_uris":["source/b"]}}},
+	    {"image":{"image_ori_raw":{"url":"https://p3.byteimg.com/recovery/a~tplv-image_raw.png"},"gen_params":{"img_uris":["source/a"]}}}
+	  ]}}}]}
+	]};</script>`
 	fixture := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.Host, "byteimg.com"):
@@ -65,6 +77,7 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 			w.Header().Set("Content-Type", "image/png")
 			_, _ = w.Write(data)
 		case r.URL.Path == "/samantha/chat/completion":
+			sendRequests.Add(1)
 			w.Header().Set("Content-Type", "text/event-stream")
 			for i := 0; i < len(body); i += 23 {
 				end := min(i+23, len(body))
@@ -73,6 +86,10 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 					f.Flush()
 				}
 			}
+		case r.URL.Path == "/chat/recover" && r.Method == http.MethodGet:
+			recoveryReads.Add(1)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(w, recoveryPage)
 		default:
 			if r.URL.Path == "/chat/" {
 				time.Sleep(400 * time.Millisecond)
@@ -258,4 +275,29 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 		t.Fatalf("Firefox download concurrency = %d, want 2 or 3", n)
 	}
 	t.Logf("six parallel Firefox bridge downloads: %v, peak concurrent requests: %d", time.Since(started), peakDownloads.Load())
+
+	const taskID = "recover"
+	const prompt = "测试无图卡"
+	if _, err := extCall(ctx, session, extbridge.CmdSetPrompt, taskID, "", map[string]any{"prompt": prompt}, 5*time.Second, "豆包"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := extCall(ctx, session, extbridge.CmdSend, taskID, "", map[string]any{"prompt": prompt}, 5*time.Second, "豆包"); err != nil {
+		t.Fatal(err)
+	}
+	ack, err := extCall(ctx, session, extbridge.CmdWaitResult, taskID, "", map[string]any{
+		"timeoutMs": 800, "expectedAttachments": []string{"fixture-a.png", "fixture-b.png"},
+	}, 8*time.Second, "豆包")
+	if err != nil || !ack.Recovered || len(ack.Images) != 2 || recoveryReads.Load() != 1 || sendRequests.Load() != 2 {
+		t.Fatalf("conversation recovery: recovered=%v images=%d reads=%d sends=%d err=%v",
+			ack.Recovered, len(ack.Images), recoveryReads.Load(), sendRequests.Load(), err)
+	}
+	results, indices, err = downloadExtensionResults(ctx, session, taskID, "豆包", ack.Images, 3)
+	if err != nil || len(results) != 2 || len(indices) != 2 || indices[0] != 1 || indices[1] != 2 {
+		t.Fatalf("recovered downloads lost their source association: results=%d indices=%v err=%v", len(results), indices, err)
+	}
+	for i, result := range results {
+		if !bytes.Equal(result.Data, data) {
+			t.Fatalf("recovered image %d did not download", i+1)
+		}
+	}
 }

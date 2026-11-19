@@ -62,6 +62,50 @@ func TestBoundWashDispatchesTenThenOneAndKeepsSources(t *testing.T) {
 	}
 }
 
+func TestBoundWashAdaptsFreshBatchSizeAfterWaitTimeout(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	addNamed(t, st, "豆包", "甲")
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+
+	sources := make([]string, 24)
+	for i := range sources {
+		sources[i] = fmt.Sprintf("%02d.png", i+1)
+	}
+	var sizes []int
+	err := e.RunObserved(t.Context(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources,
+		Wash: true, Concurrency: 1, WaitResult: true, RetryCount: 3,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		sizes = append(sizes, len(task.Images))
+		task.submitted = true
+		if len(sizes) <= 2 {
+			task.washWaitTimedOut = true
+			return &extbridge.ProtoError{Code: extbridge.ETimeout, Message: "等待生成结果超时"}
+		}
+		for i := range task.batch {
+			saved := task.batch[i].Images[0] + ".out"
+			task.batch[i].Results = []string{saved}
+			task.Results = append(task.Results, saved)
+		}
+		return nil
+	})
+	if err != nil || !slices.Equal(sizes, []int{10, 5, 2, 3, 4}) {
+		t.Fatalf("batch sizes = %v, err = %v", sizes, err)
+	}
+	for i, task := range e.View().Snapshot() {
+		if i < 15 {
+			if task.Status != StatusFailed || task.Attempts != 1 || !strings.Contains(task.Error, "原对话核对") {
+				t.Fatalf("timed-out image %d should wait for review: %+v", i+1, task)
+			}
+		} else if task.Status != StatusSuccess || !slices.Equal(task.Results, []string{sources[i] + ".out"}) {
+			t.Fatalf("fresh image %d lost its result: %+v", i+1, task)
+		}
+	}
+}
+
 func TestBoundWashUsesBothIdleAccountsConcurrently(t *testing.T) {
 	st := openRotateStore(t)
 	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")

@@ -96,6 +96,7 @@ type extAck struct {
 	Reusable       bool       `json:"reusable"`
 	Attachments    []string   `json:"attachments"`
 	Applied        bool       `json:"applied"`
+	Recovered      bool       `json:"recoveredFromConversation"`
 }
 
 func (e *Engine) useExtension(platform string) bool {
@@ -756,10 +757,18 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		VerifyAttachments: boundWash,
 	}, label)
 	if out.sawSubmit {
-		e.tracePhase(t, "submit", "上传并发送", out.Submit, len(t.Images), err)
+		var submitErr error
+		if !out.Submitted {
+			submitErr = err
+		}
+		e.tracePhase(t, "submit", "上传并发送", out.Submit, len(t.Images), submitErr)
 	}
 	if out.sawWait {
-		e.tracePhase(t, "generate", "等待生成", out.Generate, len(out.Results), err)
+		var waitErr error
+		if !out.sawDownload {
+			waitErr = err
+		}
+		e.tracePhase(t, "generate", "等待生成", out.Generate, len(out.Results), waitErr)
 	}
 	if out.sawDownload {
 		e.tracePhase(t, "download", "下载结果", out.Download, len(out.Results), err)
@@ -779,9 +788,11 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		t.sendSeq++
 	}
 	if boundWash {
+		t.washWaitTimedOut = t.submitted && len(t.batch) > 1 && out.sawWait && !out.sawDownload &&
+			ctx.Err() == nil && extbridge.CodeOf(err) == extbridge.ETimeout
 		saveAt := time.Now()
 		resultErr := e.saveExtensionWash(ctx, t, out.Results, out.sourceIndices, err)
-		if len(out.Results) > 0 || resultErr != nil {
+		if len(out.Results) > 0 {
 			e.tracePhase(t, "save", "保存结果", time.Since(saveAt), len(t.Results), resultErr)
 		}
 		if t.submitted {
@@ -1013,6 +1024,9 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 	}
 	if platform == "豆包" && job.VerifyAttachments {
 		logging.Log.Info("扩展任务 %s 等待豆包生成及匹配用时 %.1f 秒", job.TaskID, out.Generate.Seconds())
+		if body.Recovered {
+			logging.Log.Info("扩展任务 %s 已从豆包原对话核对 %d/%d 张结果", job.TaskID, len(body.Images), len(job.Images))
+		}
 	}
 	if len(body.Images) == 0 {
 		return out, fmt.Errorf("等待生成结果超时：未得到有效的新图片")

@@ -933,7 +933,10 @@ globalThis.TULAIPage = (function () {
     state.anchorConfirmed = true
     let following = messages.slice(messages.indexOf(anchor) + 1)
     const nextUser = following.findIndex(function (node) { return matchesQuery(node, q.user) })
-    if (nextUser !== -1) following = following.slice(0, nextUser)
+    if (nextUser !== -1) {
+      state.followedByUser = true
+      following = following.slice(0, nextUser)
+    }
     return following.filter(function (node) { return matchesQuery(node, q.assistant) })
   }
 

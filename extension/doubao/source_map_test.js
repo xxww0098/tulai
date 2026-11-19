@@ -42,6 +42,21 @@ const resolved = TULAIDoubaoSourceMap.resolve(state(attachments, creations), nam
 assert.ok(resolved && resolved.images.length === 3, 'resolve 应从会话状态补全屏外漏采的生成图')
 assert.deepStrictEqual(resolved.indices, [3, 1, 2], 'resolve 补全后应返回完整源图索引')
 
+const recovered = TULAIDoubaoSourceMap.recover(state(attachments, [creations[2], creations[0], creations[1]]), names)
+assert.deepStrictEqual(recovered.indices, [1, 2, 3], '没有图卡时以会话附件名和引用 URI 恢复')
+assert.deepStrictEqual(recovered.images.map(item => item.rawUrl), [raw(1), raw(2), raw(3)])
+const recoverPartial = TULAIDoubaoSourceMap.recover(state(attachments, [creations[0], output(2, ['tos-input/1']), creations[2]]), names)
+assert.deepStrictEqual(recoverPartial.indices, [3], '冲突的源图不能妨碍其他唯一关联')
+assert.strictEqual(TULAIDoubaoSourceMap.recover(stale, names), null, '不能从后续附件消息之前恢复')
+assert.strictEqual(TULAIDoubaoSourceMap.recover(unknownOrder, names), null, '不能恢复无法确定先后的批次')
+assert.strictEqual(TULAIDoubaoSourceMap.recover(state([attachments[0], input(names[0], 'tos-input/2'), attachments[2]], creations), names), null, '重复附件名不能当成完整批次')
+assert.strictEqual(TULAIDoubaoSourceMap.recover({ first: state(attachments, creations), second: state(attachments, creations) }, names), null, '多个消息列表命中时不能选其中一个')
+const unsafeURL = output(1, ['tos-input/1'])
+unsafeURL.image.image_ori_raw.url = 'https://other.example/output-1.png'
+unsafeURL.image.image_ori = { url: preview(1) }
+const safe = TULAIDoubaoSourceMap.recover(state(attachments, [unsafeURL]), names)
+assert.deepStrictEqual(safe.images, [{ url: preview(1), rawUrl: undefined }], '仅返回已核对的图片域名')
+
 const reusedState = {
   loaderData: {
     page: {

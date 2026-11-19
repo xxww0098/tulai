@@ -537,6 +537,10 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 				e.announceAccount(id, kind)
 			}
 			t.Status = StatusFailed
+			if t.washWaitTimedOut {
+				t.Error = "豆包已确认接收本批，等待生成结果超时，请在原对话核对结果后再重试"
+				return t
+			}
 			msg := err.Error()
 			if strings.Contains(msg, "未按源图保存") || strings.Contains(msg, "已按源图关联保存") || strings.Contains(msg, "未匹配结果保存在 ") || isModeration(err) || classifyFault(err) != faultNone || errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, strategy.ErrPlatformReply) {
 				t.Error = msg
