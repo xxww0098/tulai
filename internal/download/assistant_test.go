@@ -165,10 +165,13 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 			}
 		}
 	}
-	click(b.X+b.W-50, b.Y+b.H-32)
+	// The Temu panel can have a right margin, and the status below the
+	// buttons can change its height. Anchor both clicks to the panel's top left.
+	buttonOffset := b.H - 32
+	click(b.X+194, b.Y+buttonOffset)
 	deadline = time.Now().Add(20 * time.Second)
+	var loaded bool
 	for time.Now().Before(deadline) {
-		var loaded bool
 		if err := session.run(ctx, chromedp.Evaluate(`!!document.getElementById('new')`, &loaded)); err != nil {
 			t.Fatal(err)
 		}
@@ -177,9 +180,12 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if !loaded {
+		t.Fatal("自动加载未取得第二张商品卡")
+	}
 	time.Sleep(500 * time.Millisecond)
 	b = readBounds()
-	click(b.X+70, b.Y+b.H-58)
+	click(b.X+70, b.Y+buttonOffset)
 	select {
 	case got := <-result:
 		if got.err != nil || len(got.found.Items) != 2 || got.found.Items[0].Metadata["album_title"] != "First" || got.found.Items[1].Metadata["album_title"] != "Second" {
@@ -202,7 +208,7 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 	if !b.Ready || b.W == 0 {
 		t.Fatal("登录返回后未显示 TEMU 下载面板")
 	}
-	click(b.X+70, b.Y+b.H-32)
+	click(b.X+70, b.Y+buttonOffset)
 	select {
 	case got := <-result:
 		if got.err != nil || len(got.found.Items) != 2 {
