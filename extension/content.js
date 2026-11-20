@@ -99,6 +99,13 @@ function doubaoConversation() {
   return ''
 }
 
+function isDoubaoConversationHandoff(previous, current) {
+  if (!previous || !current) return false
+  const from = new URL(previous)
+  const to = new URL(current)
+  return from.origin === to.origin && /^\/chat\/local_\d+$/.test(from.pathname) && /^\/chat\/\d+$/.test(to.pathname)
+}
+
 function washChat(env, payload) {
   const captcha = Page.detectCaptcha(document)
   if (captcha.blocked) return captchaAck(env, captcha)
@@ -649,17 +656,27 @@ async function waitResult(env, payload) {
   let stable = 0
   let lastURLs = ''
   async function recoverReply(allowPartial) {
-    const target = doubaoConversation()
+    let target = doubaoConversation()
+    if (!target || mark.followedByUser) return null
     if (!conversation) conversation = target
-    if (!target || target !== conversation || mark.followedByUser) return null
-    const recovered = await sourceMap.recoverFromConversation(target, expected)
-    const interrupted = resultInterruption(env, mark)
-    if (interrupted) return interrupted
-    if (!recovered || doubaoConversation() !== target) return null
+    if (target !== conversation && !isDoubaoConversationHandoff(conversation, target)) return null
+    let recovered
+    for (;;) {
+      recovered = await sourceMap.recoverFromConversation(target, expected)
+      const interrupted = resultInterruption(env, mark)
+      if (interrupted) return interrupted
+      const current = doubaoConversation()
+      if (current === target) break
+      if (!isDoubaoConversationHandoff(target, current)) return null
+      target = current
+    }
+    if (!recovered) return null
     if (typeof Page.newAssistants === 'function') Page.newAssistants(document, mark)
     if (mark.followedByUser) return null
     const refused = moderationBlocked(env)
     if (refused) return refused
+    // 正式地址通过本轮附件校验后才接管后续补取。
+    conversation = target
     if (!allowPartial && (resultStreamBusy(env) || recovered.images.length !== expected.length)) return null
     return resultAck(env, payload, [], recovered)
   }

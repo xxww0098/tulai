@@ -572,8 +572,46 @@ async function main() {
     assert.ok(partial ? elapsed >= timeoutMs : elapsed >= 60000 && elapsed < timeoutMs)
   }
 
+  async function localConversationHandoffTest(duringProbe) {
+    const local = 'https://www.doubao.com/chat/local_1795075047826000'
+    const formal = 'https://www.doubao.com/chat/12345678901234567'
+    const where = { href: local, hostname: 'www.doubao.com' }
+    const expected = ['a.png', 'b.png']
+    const probes = []
+    const call = load(composerPage({
+      resultImages() {
+        if (!duringProbe) where.href = formal
+        return []
+      },
+      resultsBusy() { return false },
+      replyDone() { return { done: false } },
+      async recoverConversation(conversation, names) {
+        probes.push(conversation)
+        assert.deepStrictEqual(names, expected)
+        if (conversation === local) where.href = formal
+        const prefix = conversation === local ? 'obsolete' : 'formal'
+        return {
+          images: [1, 2].map(index => ({ url: 'https://p3.byteimg.com/' + prefix + '-' + index })),
+          indices: [1, 2],
+        }
+      },
+    }), where, true)
+    assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
+    const ack = await call({
+      name: 'waitResult', timeoutMs: duringProbe ? 400 : 72000, expectedAttachments: expected,
+    })
+    assert.strictEqual(ack.payload.recoveredFromConversation, true)
+    assert.strictEqual(ack.payload.conversation, formal)
+    assert.deepStrictEqual(Array.from(ack.payload.images, item => [item.sourceIndex, item.url]), [
+      [1, 'https://p3.byteimg.com/formal-1'],
+      [2, 'https://p3.byteimg.com/formal-2'],
+    ])
+    assert.deepStrictEqual(probes, duringProbe ? [local, formal] : [formal])
+  }
+
   async function changedConversationTest() {
-    const where = { href: 'https://www.doubao.com/chat/original', hostname: 'www.doubao.com' }
+    const original = 'https://www.doubao.com/chat/12345678901234567'
+    const where = { href: original, hostname: 'www.doubao.com' }
     const probes = []
     const call = load(composerPage({
       resultImages() { return [] },
@@ -581,18 +619,19 @@ async function main() {
       replyDone() { return { done: false } },
       async recoverConversation(conversation) {
         probes.push(conversation)
-        where.href = 'https://www.doubao.com/chat/other'
+        where.href = 'https://www.doubao.com/chat/22345678901234567'
         return { images: [{ url: 'https://p3.byteimg.com/one' }, { url: 'https://p3.byteimg.com/two' }], indices: [1, 2] }
       },
     }), where, true)
     assert.strictEqual((await call({ name: 'send', prompt: '水彩风格' })).payload.ok, true)
     const ack = await call({ name: 'waitResult', timeoutMs: 72000, expectedAttachments: ['a.png', 'b.png'] })
     assert.strictEqual(ack.payload.code, 'E_TIMEOUT')
-    assert.deepStrictEqual(probes, ['https://www.doubao.com/chat/original'])
+    assert.deepStrictEqual(probes, [original])
   }
 
   await Promise.all([streamHoldTest(), partialScrollTest(), resolveSupplementTest(),
-    recoverInvisibleBatchTest(false), recoverInvisibleBatchTest(true), changedConversationTest()])
+    recoverInvisibleBatchTest(false), recoverInvisibleBatchTest(true),
+    localConversationHandoffTest(false), localConversationHandoffTest(true), changedConversationTest()])
 
   console.log('content wait ok')
 }
