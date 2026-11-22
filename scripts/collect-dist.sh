@@ -44,7 +44,7 @@ windows)
     arch=${arch_pair%%:*}
     nsgo_arch=${arch_pair##*:}
     dir="build/tulai-${version}-windows_${nsgo_arch}"
-    setup="$dir/tulai-${version}-windows-${nsgo_arch}-setup.exe"
+    setup="build/releases/tulai-${version}-windows-${nsgo_arch}-setup.exe"
     exe="$dir/tulai.exe"
     require "$setup"
     require "$exe"

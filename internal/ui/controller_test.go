@@ -276,6 +276,7 @@ func TestBridgeLazySerializationAndFlushCoalescing(t *testing.T) {
 	a.postUI(func() {
 		a.emit("workbench")
 	})
+	a.flushUIUpdates()
 	var got []string
 	for {
 		select {

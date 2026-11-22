@@ -620,6 +620,17 @@ func wizardActionBridge(ctx context.Context, action, value string) error {
 	if a == nil {
 		return nil
 	}
+	if action == "pickAgyBin" {
+		paths, err := a.pickFilesAsync(ctx, "选择 agy 可执行文件", false, nil, "可执行文件")
+		if err != nil || len(paths) == 0 {
+			return nil
+		}
+		value = paths[0]
+	}
+	return a.onScope(ctx, func() { a.applyWizardAction(action, value) })
+}
+
+func (a *App) applyWizardAction(action, value string) {
 	switch action {
 	case "choose":
 		a.wizardChoice = value
@@ -665,13 +676,8 @@ func wizardActionBridge(ctx context.Context, action, value string) error {
 		a.copyText(agy.InstallCommand(runtime.GOOS))
 		a.wizardAgy.copied = true
 	case "pickAgyBin":
-		paths, err := a.pickFilesAsync(ctx, "选择 agy 可执行文件", false, nil, "可执行文件")
-		if err == nil && len(paths) > 0 {
-			_ = a.onScope(ctx, func() {
-				a.agyBin = paths[0]
-				a.checkAgyInstall()
-			})
-		}
+		a.agyBin = value
+		a.checkAgyInstall()
 	case "enterAgyAccount":
 		a.wizardEnterAgyAccount(false)
 	case "skip":
@@ -682,13 +688,12 @@ func wizardActionBridge(ctx context.Context, action, value string) error {
 			a.store.Set(wizard.KeyComplete, wizard.CompleteYes)
 		}
 		a.emit("wizard", "shell")
-		return nil
+		return
 	case "finish":
 		a.wizardFinish()
-		return nil
+		return
 	}
 	a.emit("wizard", "shell", "browsers")
-	return nil
 }
 
 func updateActionBridge(action string) {

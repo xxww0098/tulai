@@ -18,6 +18,7 @@ import (
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/ui"
+	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 func TestMain(m *testing.M) { nsgotest.Main(m) }
@@ -59,7 +60,10 @@ func startTestUIWithSetup(t *testing.T, withBrowser bool, width, height core.Poi
 	ui.SetTestApp(ctrl)
 	t.Cleanup(func() { ui.SetTestApp(nil) })
 
-	app := nsgotest.Start(t, Root, nsgotest.Size(width, height), nsgotest.Idiom(core.IdiomDesktop))
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		ctrl.BindScope(cx)
+		return Root(cx)
+	}, nsgotest.Size(width, height), nsgotest.Idiom(core.IdiomDesktop))
 	return app, st
 }
 
@@ -295,7 +299,7 @@ func TestWorkbenchShowsCompletedRun(t *testing.T) {
 	assertHasTexts(t, app, "今日 1 次（成 1）", "100%")
 }
 
-func TestThemeLogDrawerSettingsAndWizard(t *testing.T) {
+func TestThemeLogDrawerAndSettings(t *testing.T) {
 	app, _ := startTestUI(t, true)
 
 	// Verify topbar no longer exposes theme toggle or manual wizard trigger once initialized
@@ -325,14 +329,20 @@ func TestThemeLogDrawerSettingsAndWizard(t *testing.T) {
 	assertHasTexts(t, app, "启用自定义代理")
 	app.Press("text:关于与更新")
 	assertHasTexts(t, app, "检查更新")
+}
 
-	// Fresh initialization shows Setup Wizard automatically on first start
-	initApp, _ := startTestUI(t, false)
-	initApp.Find("id:wizard-dialog")
-	assertHasTexts(t, initApp, "快速配置向导")
-	initApp.Press("text:跳过配置")
-	if initApp.Exists("id:wizard-dialog") {
-		t.Fatal("wizard dialog remained open after skip")
+func TestFirstRunWizardCanBeSkipped(t *testing.T) {
+	app, st := startTestUI(t, false)
+	app.Find("id:wizard-dialog")
+	assertHasTexts(t, app, "快速配置向导")
+	app.Press("text:跳过配置")
+	// The async action starts a dialog exit animation on the test clock.
+	app.WaitUntil(3*time.Second, func() bool {
+		app.Advance(200 * time.Millisecond)
+		return !app.Exists("id:wizard-dialog")
+	})
+	if st.Get(wizard.KeyComplete) != wizard.CompleteYes {
+		t.Fatal("skipping the wizard did not persist completion")
 	}
 }
 

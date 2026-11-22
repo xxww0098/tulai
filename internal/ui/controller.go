@@ -641,22 +641,23 @@ func (a *App) pushToast(level, msg string) {
 	a.emit("toast")
 }
 
-// postUI schedules fn on NSGo's engine goroutine (or runs inline in headless tests).
+// postUI queues callbacks for the engine goroutine. Tests without a scope
+// drive the same queue by calling flushUIUpdates on their owning goroutine.
 func (a *App) postUI(fn func()) {
-	if a == nil || fn == nil || a.isQuitting() {
+	if a == nil || fn == nil {
 		return
 	}
 	a.mu.Lock()
+	if a.quitting {
+		a.mu.Unlock()
+		return
+	}
 	a.uiUpdates = append(a.uiUpdates, fn)
 	sc := a.scope
 	a.mu.Unlock()
-	if sc == nil {
-		a.flushUIUpdates()
-		return
+	if sc != nil {
+		sc.Post(a.flushUIUpdates)
 	}
-	sc.Post(func() {
-		a.flushUIUpdates()
-	})
 }
 
 func (a *App) onUI(fn func()) {
