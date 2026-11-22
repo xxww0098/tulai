@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo"
+	"github.com/nsgo-dev/nsgo/core"
 
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/update"
@@ -43,7 +43,11 @@ func handleCommand(args []string) bool {
 }
 
 func runningVersion() string {
-	if version := mygo.App.Version(); version != "" {
+	return runningVersionFrom(core.App().Version)
+}
+
+func runningVersionFrom(packaged string) string {
+	if version := strings.TrimSpace(packaged); version != "" {
 		return version
 	}
 	return ProductVersion
@@ -131,32 +135,6 @@ func runUpdateWith(args []string, run updateRun) int {
 	}
 	if !newer {
 		return printRelease(run.Stdout, current, rel)
-	}
-	if update.MyGoInstall(run.GOOS, run.Executable) && !mygo.IsDev() {
-		signed, err := run.Client.CheckSigned(ctx, rel)
-		if err != nil {
-			if !update.ShouldFallbackUnsigned(run.GOOS, mode, err) {
-				fmt.Fprintf(run.Stderr, "检查签名更新失败: %v\n", err)
-				return 1
-			}
-			fmt.Fprintf(run.Stderr, "签名原地更新不可用，改用安装器更新: %v\n", err)
-			signed = nil
-		}
-		if signed != nil {
-			if checkOnly {
-				return printRelease(run.Stdout, current, rel)
-			}
-			fmt.Fprintf(run.Stdout, "正在安装签名更新 %s\n", signed.Version)
-			if err := signed.Install(ctx, nil); err != nil {
-				fmt.Fprintf(run.Stderr, "安装签名更新失败: %v\n", err)
-				return 1
-			}
-			if err := update.SyncWindowsInstalledVersion(run.Executable, signed.Version); err != nil {
-				fmt.Fprintf(run.Stderr, "更新已安装，但同步 Windows 应用列表版本失败: %v\n", err)
-			}
-			fmt.Fprintln(run.Stdout, "更新已安装，重新打开应用后生效。")
-			return 0
-		}
 	}
 	if checkOnly {
 		return printRelease(run.Stdout, current, rel)

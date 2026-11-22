@@ -1,4 +1,4 @@
-// Package camoufox controls the official Camoufox launcher through a private pipe.
+// Package camoufox manages the dedicated Camoufox and Chrome runtimes through private pipes.
 package camoufox
 
 import (
@@ -27,6 +27,7 @@ func stripANSI(s string) string {
 }
 
 type Options struct {
+	ChromeCDP      bool     `json:"-"`
 	Profile        string   `json:"profile"`
 	Proxy          string   `json:"proxy,omitempty"`
 	DirectNetwork  bool     `json:"directNetwork,omitempty"`
@@ -53,6 +54,7 @@ type reply struct {
 }
 
 type Process struct {
+	chromeCDP bool
 	cmd       *exec.Cmd
 	in        io.WriteCloser
 	ctx       context.Context
@@ -70,26 +72,38 @@ type Process struct {
 // Start uses an already installed, version-pinned runtime. It never searches for a system browser.
 func Start(ctx context.Context, dataDir string, options Options, stderr io.Writer) (*Process, error) {
 	if options.DirectNetwork && options.Proxy != "" {
-		return nil, errors.New("Camoufox 直连模式不能同时指定代理")
+		return nil, errors.New("浏览器直连模式不能同时指定代理")
 	}
 	installMu.Lock()
-	runtime, ok := Installed(dataDir)
+	var runtime Runtime
+	var ok bool
 	var driverErr error
-	if ok {
-		driverErr = ensureNodeRuntimeSupport(runtime.Dir)
-		if driverErr == nil {
-			driverErr = writeDriver(runtime.Dir)
+	if options.ChromeCDP {
+		runtime, ok = InstalledChrome(dataDir)
+		if ok {
+			driverErr = writeDriverFiles(runtime.Dir, bridgeScripts)
+		}
+	} else {
+		runtime, ok = Installed(dataDir)
+		if ok {
+			driverErr = ensureNodeRuntimeSupport(runtime.Dir)
+			if driverErr == nil {
+				driverErr = writeDriver(runtime.Dir)
+			}
 		}
 	}
 	installMu.Unlock()
 	if !ok {
+		if options.ChromeCDP {
+			return nil, errors.New("Chrome CDP 尚未准备好，请先在账号页安装 Chrome CDP")
+		}
 		return nil, errors.New("Camoufox 尚未准备好，请先在账号页安装 Camoufox")
 	}
 	if driverErr != nil {
 		return nil, driverErr
 	}
 	if options.Profile == "" {
-		return nil, errors.New("缺少 Camoufox 账号资料目录")
+		return nil, errors.New("缺少浏览器账号资料目录")
 	}
 	profile, err := filepath.Abs(options.Profile)
 	if err != nil {
@@ -102,9 +116,16 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 	}
 	options.CollisionRoots = roots
 	options.Executable = runtime.Executable
-	cmd := exec.Command(runtime.Node, filepath.Join(runtime.Dir, "bridge.mjs"))
+	args := []string{filepath.Join(runtime.Dir, "bridge.mjs")}
+	if options.ChromeCDP {
+		args = append(args, "chrome-cdp")
+	}
+	cmd := exec.Command(runtime.Node, args...)
 	cmd.Dir = runtime.Dir
 	cmd.Env = browserRuntimeEnv(runtime.Dir, options.DirectNetwork)
+	if options.ChromeCDP {
+		cmd.Env = append(cmd.Env, "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(runtime.Dir, "browsers"))
+	}
 	cmd.Stderr = stderr
 	configureCommand(cmd)
 	in, err := cmd.StdinPipe()
@@ -122,7 +143,7 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 		return nil, err
 	}
 	life, cancel := context.WithCancel(context.Background())
-	p := &Process{cmd: cmd, in: in, ctx: life, cancel: cancel, done: make(chan struct{}), pending: map[int64]chan reply{}, listeners: map[int64]func(Event){}}
+	p := &Process{chromeCDP: options.ChromeCDP, cmd: cmd, in: in, ctx: life, cancel: cancel, done: make(chan struct{}), pending: map[int64]chan reply{}, listeners: map[int64]func(Event){}}
 	go func() {
 		p.read(out)
 		_ = cmd.Wait()
@@ -134,6 +155,14 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 	}
 	if err := p.Call(ctx, "", "start", options, &result); err != nil {
 		p.Close()
+		if options.ChromeCDP {
+			return nil, fmt.Errorf("启动 Chrome CDP: %w", err)
+		}
+		if ctx.Err() == nil {
+			if loadErr := checkWindowsLauncher(ctx, runtime.Dir); loadErr != nil {
+				return nil, loadErr
+			}
+		}
 		return nil, fmt.Errorf("启动 Camoufox: %w", err)
 	}
 	p.Page = result.TargetID
@@ -154,7 +183,7 @@ func (p *Process) Call(ctx context.Context, target, method string, params, out a
 		return err
 	}
 	if !p.Alive() {
-		return errors.New("Camoufox 已关闭")
+		return errors.New("账号浏览器已关闭")
 	}
 	id := p.next.Add(1)
 	ch := make(chan reply, 1)
@@ -174,7 +203,7 @@ func (p *Process) Call(ctx context.Context, target, method string, params, out a
 		_ = p.write(map[string]any{"id": id, "method": "cancel"})
 		return ctx.Err()
 	case <-p.ctx.Done():
-		return errors.New("Camoufox 已关闭")
+		return errors.New("账号浏览器已关闭")
 	case result := <-ch:
 		if result.Error != "" {
 			return fmt.Errorf("%s: %s", method, strings.TrimSpace(stripANSI(result.Error)))
@@ -236,7 +265,7 @@ func (p *Process) Subscribe(listener func(Event)) func() {
 	return func() { p.mu.Lock(); delete(p.listeners, id); p.mu.Unlock() }
 }
 
-// Close lets Firefox flush cookies before the private launcher process exits.
+// Close lets the browser flush its profile before the private launcher exits.
 func (p *Process) Close() {
 	if p == nil {
 		return
@@ -257,18 +286,27 @@ func (p *Process) Close() {
 
 var registry sync.Map
 
-func Endpoint(port int) string              { return "camoufox://" + strconv.Itoa(port) }
-func Register(port int, process *Process)   { registry.Store(Endpoint(port), process) }
-func Unregister(port int, process *Process) { registry.CompareAndDelete(Endpoint(port), process) }
+func Endpoint(port int) string       { return "camoufox://" + strconv.Itoa(port) }
+func ChromeEndpoint(port int) string { return "chrome-cdp://" + strconv.Itoa(port) }
+func (p *Process) endpoint(port int) string {
+	if p.chromeCDP {
+		return ChromeEndpoint(port)
+	}
+	return Endpoint(port)
+}
+func Register(port int, process *Process) { registry.Store(process.endpoint(port), process) }
+func Unregister(port int, process *Process) {
+	registry.CompareAndDelete(process.endpoint(port), process)
+}
 
 func Find(endpoint string) (*Process, error) {
 	value, ok := registry.Load(strings.TrimSpace(endpoint))
 	if !ok {
-		return nil, errors.New("Camoufox 账号窗口尚未打开")
+		return nil, errors.New("账号窗口尚未打开")
 	}
 	p := value.(*Process)
 	if !p.Alive() {
-		return nil, errors.New("Camoufox 账号窗口已关闭")
+		return nil, errors.New("账号窗口已关闭")
 	}
 	return p, nil
 }

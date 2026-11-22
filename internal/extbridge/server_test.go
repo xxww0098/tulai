@@ -18,7 +18,7 @@ import (
 )
 
 func TestListenRejectsNonLoopbackAndEmptyToken(t *testing.T) {
-	if _, err := Listen(Config{Addr: "0.0.0.0:18765", Token: "t"}); err == nil {
+	if _, err := Listen(Config{Addr: "0.0.0.0:18765", Token: "t", AllowPortFallback: true}); err == nil {
 		t.Fatal("accepted 0.0.0.0")
 	}
 	if _, err := Listen(Config{Addr: "localhost:18765", Token: "t"}); err == nil {
@@ -26,6 +26,18 @@ func TestListenRejectsNonLoopbackAndEmptyToken(t *testing.T) {
 	}
 	if _, err := Listen(Config{Addr: "127.0.0.1:0"}); err == nil {
 		t.Fatal("accepted empty token")
+	}
+	if srv, err := Listen(Config{Addr: "127.0.0.1:65536", Token: "t", AllowPortFallback: true}); err == nil {
+		srv.Close()
+		t.Fatal("fell back from an invalid port")
+	}
+}
+
+func TestListenRequiresConfiguredPortByDefault(t *testing.T) {
+	occupied := startServer(t, Config{})
+	if srv, err := Listen(Config{Addr: occupied.Addr(), Token: "second-token"}); err == nil {
+		srv.Close()
+		t.Fatal("a fixed-port caller must see the bind error")
 	}
 }
 

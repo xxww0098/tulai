@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -193,7 +194,7 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	context.AfterFunc(tab, unsubscribe)
 	context.AfterFunc(process.Context(), s.markClosed)
 	if start != nil {
-		if err := s.run(ctx, camoufox.Navigate(tuchongBrowserEntry(start))); err != nil {
+		if err := s.run(ctx, navigateDownloadPage(start)); err != nil {
 			s.Close()
 			return nil, fmt.Errorf("打开下载浏览器: %w", err)
 		}
@@ -206,6 +207,31 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	s.frozen = true
 	s.mu.Unlock()
 	return s, nil
+}
+
+func navigateDownloadPage(target *url.URL) camoufox.Action {
+	params := map[string]any{"url": tuchongBrowserEntry(target), "recoverInterrupted": true}
+	if pinterestHost(target) && (target.EscapedPath() == "" || target.EscapedPath() == "/") {
+		// The guide opens this landing page for the user to browse or sign in.
+		params["wait"] = "commit"
+		if target.Scheme == "https" && strings.EqualFold(target.Host, "pinterest.com") {
+			home := *target
+			home.Host, home.Path = "www.pinterest.com", "/"
+			params["url"] = home.String()
+		}
+	}
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		var result struct{ ReplacementURL string }
+		err := cdp.Execute(ctx, "Page.navigate", params, &result)
+		if err != nil || result.ReplacementURL == "" {
+			return err
+		}
+		landed, err := crawlURL(nil, result.ReplacementURL)
+		if err != nil || landed.User != nil || !sameRenderedSite(target, landed) {
+			return errors.New("网页导航被中断，浏览器未打开目标站点，请重试")
+		}
+		return nil
+	})
 }
 
 // OpenTarget changes the target while no capture or download is running.
@@ -225,7 +251,7 @@ func (s *RenderedSession) OpenTarget(ctx context.Context, rawURL string) error {
 		s.startIP = literal.Unmap()
 	}
 	s.mu.Unlock()
-	err = s.run(ctx, page.BringToFront(), camoufox.Navigate(tuchongBrowserEntry(start)))
+	err = s.run(ctx, page.BringToFront(), navigateDownloadPage(start))
 	s.mu.Lock()
 	s.frozen = true
 	if err != nil {

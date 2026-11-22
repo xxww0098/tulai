@@ -113,6 +113,13 @@ func (l *Logger) Entries() []Entry {
 	return out
 }
 
+// Counts 返回当前缓冲区的级别统计，供顶栏读取。
+func (l *Logger) Counts() Counts {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return CountLevels(l.buf)
+}
+
 // VisibleTail 是界面上要留下的最近几条。调试行会在出图时刷满尾部，不能把它们算进这几条。
 func VisibleTail(entries []Entry, limit int) []Entry {
 	if limit < 1 {

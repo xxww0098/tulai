@@ -26,6 +26,9 @@ import (
 
 func TestFirefoxBridgeObservesStreamAndDownloadsRaw(t *testing.T) {
 	config := camoufoxtest.ConfigDir(t)
+	if err := camoufox.CheckLauncher(t.Context(), config); err != nil {
+		t.Fatal(err)
+	}
 	preview := "https://p3.byteimg.com/test/image.jpeg~tplv-preview.png"
 	raw := "https://p3.byteimg.com/test/image.jpeg~tplv-image_raw.png"
 	data := resultPNG(t, 29)
@@ -122,13 +125,17 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 	}))
 	defer proxy.Close()
 	events := make(chan extbridge.Envelope, 20)
-	srv, err := extbridge.Listen(extbridge.Config{Addr: "127.0.0.1:0", Token: "fixture-token", OnEvent: func(_ *extbridge.Session, env extbridge.Envelope) { events <- env }})
+	// The fixture already owns the preferred port. Firefox must complete the job on the assigned port.
+	srv, err := extbridge.Listen(extbridge.Config{
+		Addr: fixture.Listener.Addr().String(), AllowPortFallback: true, Token: "fixture-token",
+		OnEvent: func(_ *extbridge.Session, env extbridge.Envelope) { events <- env },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer srv.Close()
-	_, port, _ := net.SplitHostPort(srv.Addr())
-	addon, err := extbundle.InstallFirefoxBridge(filepath.Join(t.TempDir(), "addon"), port, "fixture-token", "tulai-bound-1")
+	info := srv.PairInfo()
+	addon, err := extbundle.InstallFirefoxBridge(filepath.Join(t.TempDir(), "addon"), info.Port, info.Token, "tulai-bound-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +256,7 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 	started = time.Now()
 	for i := 0; i < 6; i++ {
 		url := fmt.Sprintf("https://p3.byteimg.com/performance/serial-%d.png", i)
-		got, err := extDownloadURL(ctx, session, "performance", url, "豆包")
+		got, err := extDownloadURL(ctx, session, "performance", url, "豆包", 0)
 		if err != nil || !bytes.Equal(got, data) {
 			t.Fatalf("serial result %d: %v", i, err)
 		}
@@ -262,7 +269,7 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 		items[i] = extImage{URL: url, RawURL: url, SourceIndex: len(items) - i}
 	}
 	started = time.Now()
-	results, indices, err := downloadExtensionResults(ctx, session, "performance", "豆包", items, 3)
+	results, indices, err := downloadExtensionResults(ctx, session, "performance", "豆包", 0, items, 3)
 	if err != nil || len(results) != len(items) || len(indices) != len(items) {
 		t.Fatalf("parallel Firefox downloads: results=%d indices=%v err=%v", len(results), indices, err)
 	}
@@ -291,7 +298,7 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 		t.Fatalf("conversation recovery: recovered=%v images=%d reads=%d sends=%d err=%v",
 			ack.Recovered, len(ack.Images), recoveryReads.Load(), sendRequests.Load(), err)
 	}
-	results, indices, err = downloadExtensionResults(ctx, session, taskID, "豆包", ack.Images, 3)
+	results, indices, err = downloadExtensionResults(ctx, session, taskID, "豆包", ack.TabID, ack.Images, 3)
 	if err != nil || len(results) != 2 || len(indices) != 2 || indices[0] != 1 || indices[1] != 2 {
 		t.Fatalf("recovered downloads lost their source association: results=%d indices=%v err=%v", len(results), indices, err)
 	}

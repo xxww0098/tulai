@@ -322,7 +322,7 @@ test('GPU probe never opens a visible window before the account browser', async 
   }
 });
 
-function setupBridgeSandbox(t, {candidates = []}) {
+function setupBridgeSandbox(t, {candidates = [], configurePage}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-bridge-rpc-'));
   t.after(() => fs.rmSync(root, {recursive:true, force:true}));
   for (const file of ['bridge.mjs', 'identity.mjs', 'download-watch.mjs', 'kernel-repair.mjs', 'windows-compat.mjs']) {
@@ -364,6 +364,7 @@ function setupBridgeSandbox(t, {candidates = []}) {
         if (idx >= 0) owner.pagesList.splice(idx, 1);
         page.emit('close');
       };
+      ${configurePage ? `(${configurePage})(page, owner);` : ''}
       return page;
     }
 
@@ -484,6 +485,66 @@ const sampleDevice = {
   'webGl:renderer':'Apple M1',
   'webGl:parameters':{7937:'Apple M1'},
 };
+
+test('download navigation follows a committed replacement and only retries a transient interruption once', async t => {
+  const fixture = 'https://fixture.test/';
+  function configurePage(page, owner) {
+    let current = 'about:blank', documentURI = current, requested = '';
+    const frame = {};
+    page.url = () => current;
+    page.mainFrame = () => frame;
+    function response(url, status, attachment = false) {
+      page.emit('response', {
+        request: () => ({isNavigationRequest: () => true, resourceType: () => 'document'}),
+        frame: () => frame, url: () => url, status: () => status,
+        headers: () => attachment ? {'content-disposition':'attachment'} : {},
+        serverAddr: async () => null, fromServiceWorker: () => false,
+      });
+    }
+    page.goto = async url => {
+      owner.visited.push(url);
+      requested = new URL(url).pathname;
+      if (requested === '/transient' && owner.visited.filter(x => x === url).length === 2) {
+        current = documentURI = url;
+        return;
+      }
+      if (requested === '/offline') throw new Error('page.goto: NS_ERROR_UNKNOWN_HOST');
+      if (requested === '/empty') response(url, 204);
+      if (requested === '/file') page.emit('download', {});
+      throw new Error('page.goto: NS_BINDING_ABORTED');
+    };
+    page.waitForURL = async matches => {
+      if (['/replaced', '/error-page', '/history'].includes(requested)) {
+        current = new URL(requested + '/landing', 'https://fixture.test/').href;
+        if (requested !== '/history') response(current, 200);
+        documentURI = requested === '/error-page' ? 'about:neterror' : current;
+      }
+      if (!matches(new URL(current))) {
+        throw Object.assign(new Error('No replacement navigation'), {name:'TimeoutError'});
+      }
+    };
+    const evaluate = page.evaluate;
+    page.evaluate = fn => typeof fn === 'function' ? documentURI : evaluate(fn);
+  }
+  const {root, runRpc} = setupBridgeSandbox(t, {candidates:[sampleDevice], configurePage});
+  const paths = ['replaced', 'transient', 'unchanged', 'error-page', 'history', 'offline', 'empty', 'file', 'ordinary'];
+  const {responses, trace} = await runRpc([
+    {id:1, method:'start', params:{profile:path.join(root, 'profile'), executable:'fixture', headless:true}},
+    ...paths.map((p, i) => ({id:i+2, target:'1', method:'Page.navigate', params:{url:fixture+p, recoverInterrupted:p !== 'ordinary'}})),
+    {id:paths.length+2, method:'Browser.close'},
+  ]);
+  const reply = name => responses.find(r => r.id === paths.indexOf(name)+2);
+  assert.deepEqual(reply('replaced').result, {replacementURL:fixture+'replaced/landing'});
+  assert.deepEqual(reply('transient').result, {});
+  assert.match(reply('unchanged').error, /连续两次打开中断/);
+  for (const name of ['error-page', 'history', 'empty', 'file', 'ordinary']) {
+    assert.match(reply(name).error, /NS_BINDING_ABORTED/, name);
+  }
+  assert.match(reply('offline').error, /NS_ERROR_UNKNOWN_HOST/);
+  assert.deepEqual(trace.contexts[0].visited, [
+    'replaced', 'transient', 'transient', 'unchanged', 'unchanged', 'error-page', 'history', 'offline', 'empty', 'file', 'ordinary',
+  ].map(p => fixture+p));
+});
 
 test('start keeps Canvas images readable and preserves WebGL while stripping legacy keys', async t => {
   const firstCandidate = {...sampleDevice};

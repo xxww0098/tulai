@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -10,6 +11,28 @@ import (
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/extbridge"
 )
+
+func TestWebLauncherFailureLeavesTasksUndispatched(t *testing.T) {
+	st := openTaskStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	addNamed(t, st, "豆包", "测试")
+	e := NewEngine(st, browser.NewManagerWithConfig(t.TempDir()), nil, "")
+	t.Cleanup(e.CloseSessions)
+	opts := Options{Platforms: []string{"豆包"}, Prompts: []string{"测试一", "测试二"}, RetryCount: 3}
+	err := e.Run(t.Context(), opts, nil, func(Progress) {})
+	if err == nil || !strings.Contains(err.Error(), "Camoufox 尚未准备好") {
+		t.Fatalf("missing startup diagnosis: %v", err)
+	}
+	queue := e.View().Snapshot()
+	if len(queue) != len(opts.Prompts) {
+		t.Fatalf("queue length %d", len(queue))
+	}
+	for _, job := range queue {
+		if !job.Undispatched || job.Status != StatusSkipped || job.Error != err.Error() || job.Attempts != 0 || !job.StartedAt.IsZero() {
+			t.Fatalf("startup failure dispatched a job or lost its reason: %+v", job)
+		}
+	}
+}
 
 func TestBoundAddonDirCreatedOnceAndReused(t *testing.T) {
 	st := openTaskStore(t)
@@ -60,7 +83,7 @@ func TestCloseRunBrowsersKeepsHeadlessBoundBrowserUntilIdle(t *testing.T) {
 		e.keepAlive = func(id int64) bool { return id == bound.ID }
 		keepDir := t.TempDir()
 		dropDir := t.TempDir()
-		e.runBrowsers = map[int64]struct{}{bound.ID: {}, plain.ID: {}}
+		e.runBrowsers = map[int64]string{bound.ID: keepDir, plain.ID: dropDir}
 		e.firefoxAddons = map[int64]string{bound.ID: keepDir, plain.ID: dropDir}
 		e.mu.Lock()
 		e.running = true
@@ -103,7 +126,7 @@ func TestCloseRunBrowsersKeepsHeadlessBoundBrowserUntilIdle(t *testing.T) {
 	})
 }
 
-func TestIdleCloseDefersToRunningEngineAndViewer(t *testing.T) {
+func TestIdleCloseDefersToViewer(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		st := openTaskStore(t)
 		bound := addNamed(t, st, "豆包", "甲")
@@ -132,6 +155,64 @@ func TestIdleCloseDefersToRunningEngineAndViewer(t *testing.T) {
 		synctest.Wait()
 		if _, err := os.Stat(keepDir); !os.IsNotExist(err) {
 			t.Fatal("unviewed idle browser must be closed")
+		}
+	})
+}
+
+func TestIdleBrowserExpiresDuringUnrelatedBatch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		prev, current := t.TempDir(), t.TempDir()
+		e := &Engine{
+			running: true, firefoxAddons: map[int64]string{1: prev, 2: current},
+			runBrowsers: map[int64]string{2: current}, active: map[int64]bool{2: true},
+			idleAfter: time.Minute,
+		}
+		e.armIdleClose(1)
+		e.armIdleClose(2)
+		time.Sleep(time.Minute + time.Second)
+		synctest.Wait()
+		if _, err := os.Stat(prev); !os.IsNotExist(err) {
+			t.Fatalf("previous batch's idle browser survived: %v", err)
+		}
+		if _, err := os.Stat(current); err != nil || e.idleClose[2] == nil {
+			t.Fatalf("active browser was lost: %v", err)
+		}
+		e.setActive(2, false)
+		time.Sleep(time.Minute + time.Second)
+		synctest.Wait()
+		if _, err := os.Stat(current); !os.IsNotExist(err) {
+			t.Fatalf("released account never expired: %v", err)
+		}
+	})
+}
+
+func TestBoundBrowserBudgetProtectsRenewedViewingAndActiveAccounts(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := &Engine{
+			opts: Options{Platforms: []string{"豆包"}}, firefoxAddons: map[int64]string{},
+			active: map[int64]bool{3: true}, idleGuard: func(id int64) bool { return id == 1 },
+		}
+		defer e.CloseSessions()
+		for id := int64(1); id <= 4; id++ {
+			e.firefoxAddons[id] = t.TempDir()
+			e.armIdleClose(id)
+			time.Sleep(time.Second)
+		}
+		stale := e.idleClose[4]
+		e.armIdleClose(4)
+		e.closeIdleBrowser(stale, false)
+		if e.firefoxAddons[4] == "" {
+			t.Fatal("stale timer closed a renewed browser")
+		}
+		e.trimIdleBrowsers()
+		if len(e.firefoxAddons) != 2 || e.firefoxAddons[1] == "" || e.firefoxAddons[3] == "" {
+			t.Fatalf("auto budget removed a viewed/active browser: %v", e.firefoxAddons)
+		}
+		e.opts.Concurrency = 1
+		e.SetIdleGuard(nil)
+		e.trimIdleBrowsers()
+		if len(e.firefoxAddons) != 1 || e.firefoxAddons[3] == "" {
+			t.Fatalf("manual concurrency cap: %v", e.firefoxAddons)
 		}
 	})
 }

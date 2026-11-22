@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"image/jpeg"
 	"math"
 	"os"
@@ -13,8 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/egoist/mygo/ui"
 
 	"github.com/xxww0098/tulai/internal/imageedit"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -46,13 +45,11 @@ type editFeatureSet struct {
 
 // editFile 是胶片条里的一张图。
 type editFile struct {
-	Path        string
-	Name        string
-	Status      string // pending / ok / failed
-	Err         string
-	Output      string
-	Thumb       *ui.Bitmap
-	ThumbQueued bool
+	Path   string
+	Name   string
+	Status string // pending / ok / failed
+	Err    string
+	Output string
 }
 
 // editRecipe 是「我的配方」里的一个。
@@ -117,12 +114,7 @@ type imageEditState struct {
 	ratios  []string
 	sizes   []editSize
 
-	flowScroll  ui.ScrollState
-	stripScroll ui.ScrollState
-	stripViewW  float32
-	stripRect   ui.Rect
-
-	// 滑杆每帧绑定数值，拖动时由 SliderBase 写入。
+	// 滑杆每帧绑定数值
 	fBrightness, fContrast, fSaturation, fBlur float64
 
 	running         bool
@@ -142,13 +134,15 @@ type imageEditState struct {
 	recipeErr  string
 
 	// 预览与缩放
-	orig     *ui.Bitmap
-	out      *ui.Bitmap
-	origPath string
-	srcW     int
-	srcH     int
-	outW     int
-	outH     int
+	origPixels  *image.RGBA
+	outPixels   *image.RGBA
+	origVersion uint64
+	outVersion  uint64
+	origPath    string
+	srcW        int
+	srcH        int
+	outW        int
+	outH        int
 
 	zoom       float64
 	panX, panY float64
@@ -170,18 +164,10 @@ type imageEditState struct {
 	previewPending bool
 	previewTimer   *time.Timer
 
-	// 最近一帧的舞台几何。stageRect/imageRect 是窗口坐标，绘制用；
-	// imageLocal 是图片相对舞台的位置，指针事件给的是元素内坐标，换算用。
-	stageRect  ui.Rect
-	imageRect  ui.Rect
-	imageLocal ui.Rect
-	baseW      float32
-	baseH      float32
-	previewW   float32
-	previewH   float32
-
-	thumbSem chan struct{}
-	thumbGen int
+	baseW    float32
+	baseH    float32
+	previewW float32
+	previewH float32
 }
 
 func (s *imageEditState) selectedFile() *editFile {
@@ -243,7 +229,6 @@ func (a *App) loadImageEditSettings() {
 	st.enabled = editFeatureSet{}
 	st.expanded = map[string]bool{}
 	st.fileOps = map[string]imageedit.Options{}
-	st.thumbSem = make(chan struct{}, 4)
 	st.zoom = 1
 	st.panX, st.panY = 0, 0
 	st.split = 50
@@ -299,9 +284,6 @@ func (a *App) editEnsureMaps() {
 	}
 	if st.picks == nil {
 		st.picks = map[string]bool{}
-	}
-	if st.thumbSem == nil {
-		st.thumbSem = make(chan struct{}, 4)
 	}
 	if st.zoom <= 0 {
 		st.zoom = 1
@@ -989,9 +971,8 @@ func (a *App) editSelect(i int) {
 	a.editResetView()
 }
 
-// editThumbClick 处理胶片条上的点击：普通点选预览，Cmd 切换勾选，
-// Shift 从上一张连选。勾选只影响「保存」处理哪些图，不改变预览。
-func (a *App) editThumbClick(i int, mods ui.Modifiers) {
+// editThumbToggle toggles multi-select pick state for batch export.
+func (a *App) editThumbToggle(i int, shift, cmd bool) {
 	st := &a.edit
 	if i < 0 || i >= len(st.files) {
 		return
@@ -1001,7 +982,7 @@ func (a *App) editThumbClick(i int, mods ui.Modifiers) {
 	}
 	path := st.files[i].Path
 	switch {
-	case mods&ui.Shift != 0 && st.pickAnchor >= 0 && st.pickAnchor < len(st.files):
+	case shift && st.pickAnchor >= 0 && st.pickAnchor < len(st.files):
 		lo, hi := st.pickAnchor, i
 		if lo > hi {
 			lo, hi = hi, lo
@@ -1009,7 +990,7 @@ func (a *App) editThumbClick(i int, mods ui.Modifiers) {
 		for j := lo; j <= hi; j++ {
 			st.picks[st.files[j].Path] = true
 		}
-	case mods&ui.Cmd != 0:
+	case cmd:
 		if st.picks[path] {
 			delete(st.picks, path)
 		} else {
@@ -1020,7 +1001,6 @@ func (a *App) editThumbClick(i int, mods ui.Modifiers) {
 		st.pickAnchor = i
 	}
 	a.editSelect(i)
-	a.editScrollSelected()
 }
 
 // editPickedIndices 返回勾选的图片下标，按胶片条顺序。
@@ -1104,7 +1084,9 @@ func (a *App) editEnsurePreview() {
 			st.previewSig = ""
 			st.previewGen++
 			st.previewPending = false
-			st.orig, st.out = nil, nil
+			st.origPixels, st.outPixels = nil, nil
+			st.origVersion++
+			st.outVersion++
 			st.origPath = ""
 			st.srcW, st.srcH, st.outW, st.outH = 0, 0, 0, 0
 			if st.previewTimer != nil {
@@ -1150,8 +1132,10 @@ func (a *App) editLoadOriginal(path string) {
 		if st.origPath != path {
 			return
 		}
-		st.orig = ui.NewBitmap(img)
+		st.origPixels = toRGBA(img)
+		st.origVersion++
 		st.srcW, st.srcH = img.Bounds().Dx(), img.Bounds().Dy()
+		a.emit("imageedit")
 	})
 }
 
@@ -1161,6 +1145,7 @@ func (a *App) editRenderPreview(path string, opts imageedit.Options, gen int) {
 		a.postUI(func() {
 			if a.edit.previewGen == gen {
 				a.edit.previewPending = false
+				a.emit("imageedit")
 			}
 		})
 		return
@@ -1173,8 +1158,10 @@ func (a *App) editRenderPreview(path string, opts imageedit.Options, gen int) {
 			if st.previewGen != gen {
 				return
 			}
-			st.out = nil
+			st.outPixels = nil
+			st.outVersion++
 			st.previewPending = false
+			a.emit("imageedit")
 		})
 		return
 	}
@@ -1183,6 +1170,7 @@ func (a *App) editRenderPreview(path string, opts imageedit.Options, gen int) {
 		a.postUI(func() {
 			if a.edit.previewGen == gen {
 				a.edit.previewPending = false
+				a.emit("imageedit")
 			}
 		})
 		return
@@ -1192,43 +1180,16 @@ func (a *App) editRenderPreview(path string, opts imageedit.Options, gen int) {
 		if st.previewGen != gen {
 			return
 		}
-		st.out = ui.NewBitmap(img)
+		st.outPixels = toRGBA(img)
+		st.outVersion++
 		st.outW, st.outH = img.Bounds().Dx(), img.Bounds().Dy()
 		st.previewPending = false
+		a.emit("imageedit")
 	})
 }
 
 func (a *App) editEnsureThumbs() {
-	st := &a.edit
-	if st.thumbSem == nil {
-		st.thumbSem = make(chan struct{}, 4)
-	}
-	for _, f := range st.files {
-		if f.Thumb != nil || f.ThumbQueued {
-			continue
-		}
-		f.ThumbQueued = true
-		path := f.Path
-		go func() {
-			st.thumbSem <- struct{}{}
-			defer func() { <-st.thumbSem }()
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return
-			}
-			img, err := imageedit.Thumbnail(data, 128)
-			if err != nil {
-				return
-			}
-			a.postUI(func() {
-				for _, x := range a.edit.files {
-					if x.Path == path && x.Thumb == nil {
-						x.Thumb = ui.NewBitmap(img)
-					}
-				}
-			})
-		}()
-	}
+	// NSGo's <Image source={{ uri }} /> decodes thumbnail files asynchronously on demand.
 }
 
 // editZoomBy 以舞台中心为原点、光标处为锚点缩放。
@@ -1257,5 +1218,5 @@ func (a *App) editClampPan() {
 // editShowCropUI 是裁切框该不该出现。
 func (a *App) editShowCropUI() bool {
 	st := &a.edit
-	return st.enabled.Crop && st.expanded["crop"] && st.mode == "crop" && st.orig != nil && st.srcW > 0
+	return st.enabled.Crop && st.expanded["crop"] && st.mode == "crop" && st.origPixels != nil && st.srcW > 0
 }

@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.33
+# 发布 tulai 0.1.34
 
-当前桌面端版本是 **0.1.33**，标签 **`v0.1.33`**。页面桥扩展是 **0.3.23**。扩展版本独立编号。
+当前桌面端版本是 **0.1.34**，标签 **`v0.1.34`**，随附页面桥 **0.3.24**。扩展版本独立编号。
+
+## 0.1.34
+
+桌面界面迁移到 NSGo。网页账号可在创建时选择受管 Camoufox 或 Chrome CDP。旧 MyGo 安装版用户请退出 tulai，下载对应架构的 Windows 安装器并安装到原目录。便携版可使用应用内更新。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.33
 
@@ -156,27 +160,25 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.33` | `mygo.json` 的 `version`，以及 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、macOS / Windows 版本信息、`mygo.App.Version()`。两边必须相同，`TestProductVersionMatchesConfig` 会检查。 |
-| Go 模块 | `v0.1.33` | git 标签；模块路径是 `github.com/xxww0098/tulai` | 推送标签 `v0.1.33` 之后，模块版本就是这个标签。 |
-| 页面桥扩展 | `0.3.23` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
+| 桌面端 | `0.1.34` | `cmd/tulai/nsgo.yaml` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.34` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
+| 页面桥扩展 | `0.3.24` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载。当前源码是 0.3.23，修复豆包对话地址切换后的结果补取。0.3.22 新增从豆包原对话补取洗图结果。此前 0.3.15 新增 setRatio 页面命令，0.3.16 放宽多图批次的收工窗口并扩大「图像生成」入口识别，0.3.17 支持部分返回的源图关联、网络流状态和更宽的额度提示，0.3.18 缩短已解码且稳定的结果的等待，0.3.19 改进页面桥隔离、豆包原图捕获和千问文件选择，0.3.20 适配豆包新版技能栏并改进审核拒绝识别，0.3.21 支持绑定页面桥在显示窗口模式下不抢焦点。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
+扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载。0.3.24 在桌面端确认图片传输后释放下载缓存。0.3.23 修复豆包对话地址切换后的结果补取。0.3.22 新增从豆包原对话补取洗图结果。此前 0.3.15 新增 setRatio 页面命令，0.3.16 放宽多图批次的收工窗口并扩大「图像生成」入口识别，0.3.17 支持部分返回的源图关联、网络流状态和更宽的额度提示，0.3.18 缩短已解码且稳定的结果的等待，0.3.19 改进页面桥隔离、豆包原图捕获和千问文件选择，0.3.20 适配豆包新版技能栏并改进审核拒绝识别，0.3.21 支持绑定页面桥在显示窗口模式下不抢焦点。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
 
 ## 流水线
 
 `.github/workflows/ci.yml`：
 
 - pull request 和 `main`：在 Linux 运行全部 Go 短测试，在 Windows 原生测试下载、ChatGPT 和后台命令，另跑扩展及 Camoufox 浏览器测试，并打出 Windows 安装包。浏览器基础测试（含 ChatGPT 传输）与策略测试分开并行；`main` 测试 Windows 浏览器，pull request 额外测试 macOS。产物在 Actions 的 artifacts 里保留 14 天。
-- 标签 `v*`：版本必须与 `mygo.json` 一致，且标签指向的提交必须有通过的 `main` CI。标签流水线复用这次测试结果，只重新打包并签名，再上传 Windows 安装包、Windows 更新清单、扩展 zip 和 `SHA256SUMS`。缺少签名密钥或必需附件时发布失败。
+- 标签 `v*` 必须匹配 `cmd/tulai/nsgo.yaml` 的版本，且标签指向的提交必须有通过的 `main` CI。标签流水线重新打包并上传 Windows 安装器、便携版、扩展 zip 和 `SHA256SUMS`。
 
-`mygo.json` 的 `updates.github` 指向 `xxww0098/tulai`，`updates.publicKey` 是更新验签公钥。私钥只放在安全备份和 GitHub Actions secret `MYGO_UPDATER_PRIVATE_KEY`，不能提交到仓库或写入日志。更换或丢失私钥会使已安装版本无法验证新更新，应先安全备份。签名更新不等于 Apple 公证或 Windows 代码签名。Release 仍由现有的 `gh release create` 上传，以兼容旧版附件名。
-
-Windows 安装器在 Ubuntu 上用 NSIS 交叉制作，同时提供 amd64 和 arm64。构建使用 `CGO_ENABLED=0 go tool mygo build`。macOS 和 Linux 源码仍可自行构建，但新 Release 不再提供对应安装包。
+Windows 安装器在 Ubuntu 上用 NSIS 交叉制作，同时提供 amd64 和 arm64。构建使用 `CGO_ENABLED=0 go tool nsgo build -target windows_x64,windows_arm64 ./cmd/tulai`。发布仓库由 `cmd/tulai/nsgo.yaml` 的 `release.github` 指定。macOS 和 Linux 用户可自行构建源码或使用历史发布包。
 
 ## 发布新版本
 
-等要发布的提交在 `main` 上通过 CI，并确认 `mygo.json` 与 `ProductVersion` 的版本一致、`CHANGELOG.md` 有对应说明，再推送标签。若提前推送标签，等 `main` 通过后重新运行标签流水线。MyGo 更新清单和 GitHub Release 共用这段说明：
+在 `cmd/tulai/nsgo.yaml` 和 `ProductVersion` 中填入相同版本，并在 `CHANGELOG.md` 添加对应的 `## X.Y.Z` 段落。推送 `main` 后，等该提交的 CI 通过再推送标签。GitHub Release 正文从这一段读取。
 
 ```sh
 git checkout main
@@ -185,20 +187,21 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-推送标签会跑 CI。完成后 Release 页面出现对应版本。安装包文件名以 `tulai` 开头。标签和 `mygo.json` 不一致时，构建不会开始。这个标签在版本号合并进 `main` 之后再推，不放在版本号的 pull request 里。已发布的 0.1.8 没有 MyGo 签名更新清单，新流程从包含本次修改的新版本开始。
+推送标签后，标签流水线会核对版本和提交、构建附件并发布。完成后在 GitHub Release 页面可以下载该版本。
 
 再跑一次同一个标签的 workflow 会覆盖同名附件，不会另开一个 Release。
 
 ## 附件
 
-新流水线只发布 Windows。以下以桌面版本 `0.1.15` 为例展示命名；此前发布的 0.1.10 仍保留原有的 macOS 和 Linux 附件。
+本版提供以下附件。安装器上传后，GitHub 会将文件名中的空格转换成点。
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows | `tulai Setup 0.1.15 amd64.exe`、`tulai Setup 0.1.15 arm64.exe` | 当前用户安装，不需要管理员。也有免安装的 `tulai-0.1.15-windows-amd64.exe` 和 `tulai-0.1.15-windows-arm64.exe`。 |
-| 扩展 | `tulai-extension-0.3.14.zip` | 解压后用 Chrome「加载已解压的扩展程序」选择里面的 `tulai-extension` 目录。 |
+| Windows 安装器 | `tulai.Setup.0.1.34.amd64.exe`、`tulai.Setup.0.1.34.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.34-windows-amd64.exe`、`tulai-0.1.34-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
+| 页面桥 | `tulai-extension-0.3.24.zip` | 独立扩展包。绑定的 Camoufox 账号由 tulai 加载内置页面桥。 |
 
-新版本还包含 `update-windows-<架构>.json` 和对应的 MyGo 签名更新压缩包。`SHA256SUMS` 覆盖所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`；汇总时只保留总校验文件。缺少必需附件就不发布。
+`SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。
 
 `dpkg` 把程序装到 `/opt/tulai`，并在 `/usr/bin/tulai` 放命令。配置库位置见[使用指南](USAGE.md#本地数据与迁移)。
 
@@ -210,7 +213,7 @@ git push origin vX.Y.Z
 
 ## 从 GitHub 更新
 
-桌面端通过 GitHub Releases 检查正式版。使用本次修改构建的安装版通过 `mygo.Updater` 检查清单、下载更新并验证 `updates.publicKey` 对应的签名。公开仓库不需要 token，程序也不会读取 `GITHUB_TOKEN` 或 `GH_TOKEN`。
+桌面端通过 GitHub Releases 检查正式版。从 0.1.34 起，Windows 安装版和便携版使用 Release 的 `SHA256SUMS` 和 GitHub 附件摘要校验下载。旧 MyGo 安装版需要签名更新清单，升级到 0.1.34 请手动运行本版安装器。
 
 Windows 专版成为最新正式版后，旧 macOS 和 Linux 客户端仍会检查该版本；它们可能提示发现更新或检查失败，但无法安装其中的 Windows 包。可在设置中关闭自动检查，并继续使用历史版本。
 
@@ -232,17 +235,11 @@ GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 | 侧栏「检查更新」、设置页、设置向导 | 手动检查。已是最新或失败时才弹窗。设置页和向导显示当前版本。 |
 | `tulai update` | 终端里检查并安装。GitHub 连不上时同样走镜像。 |
 | `tulai update --check` | 只打印当前版本和最新版本。 |
-| `tulai version` | 打印桌面端版本（`ProductVersion`，打包后与 `mygo.App.Version()` 相同）。 |
+| `tulai version` | 打印桌面端版本。 |
 
-下载先请求 GitHub。请求失败或可用的 SHA256 摘要对不上时，再试镜像；MyGo 签名不符会终止安装。镜像是 ghproxy 那种前缀：`前缀 + 原来的 https 地址`。设置里的「更新镜像」留空时用内置的两个前缀；填 `off` 则只用 GitHub；填自己的前缀时先用它，再试内置的。没下完的文件会接着传，失败则删掉临时文件。
+下载先请求 GitHub。请求失败或可用的 SHA256 摘要对不上时，再试镜像。设置里的「更新镜像」留空时使用内置前缀，填 `off` 则只用 GitHub。
 
-MyGo 在安装时验证 Ed25519 签名；验证失败或缺少签名清单会报错，不会退回未签名安装。macOS `.app`、Windows 安装版和 `~/.local/tulai.app` 使用这条流程。MyGo 在安装失败时尝试恢复已替换文件，但不提供新程序启动失败后的自动回滚。
-
-旧版、Windows 免安装 exe、Linux AppImage / 单个二进制、deb 和开发运行仍走原有的 SHA256SUMS 流程。Windows 免安装 exe 通过退出后的 PowerShell 替换；deb 打开下载好的包并显示 `sudo dpkg -i`。这些路径没有 MyGo 开发者签名验证。
-
-发布附件里的 `SHA256SUMS` 由标签流水线在上传前生成（每个系统的 artifact 里另有 `SHA256SUMS.txt`）。旧更新器没有这份校验文件会拒绝安装；MyGo 更新验证清单里的开发者签名。
-
-版本号只比较桌面端的 `x.y.z`。扩展 zip（现在是 `tulai-extension-0.3.19.zip`）不会被选成桌面安装包，也不会被装进 Chrome。
+Windows 安装版使用安装器更新，便携版通过退出后的 PowerShell 替换 exe。发布流水线在上传前生成 `SHA256SUMS`。桌面更新器只比较桌面端的 `x.y.z` 版本。扩展 zip 独立编号和更新。
 
 以下是各平台旧更新器选择附件的规则；新发布仅包含 Windows 附件。GitHub 会把上传名里的空格改成点，`SHA256SUMS` 里仍是原来的带空格名字；两边都认。
 
@@ -256,7 +253,7 @@ MyGo 在安装时验证 Ed25519 签名；验证失败或缺少签名清单会报
 | macOS，正在跑 `.app` | `….app/Contents/MacOS/tulai` | `tulai.<版本>.dmg`（通用二进制；收集发布附件时转换为带空格的旧名称） | 换掉当前的 `tulai.app`，并去掉隔离属性。 |
 | macOS，其他 | 开发运行 | 同一个 dmg | 复制到 `~/Applications/tulai.app`。 |
 
-应用内更新和 `tulai update` 装到 `~/.local` 时，桌面项文件名是 `tulai.desktop`，启动命令是 `tulai`。`install.sh`、deb、NSIS 和 macOS 包名跟 `mygo.json` 的 `name` 走，也是 tulai。
+历史 Linux 包装到 `~/.local` 时，桌面项文件名是 `tulai.desktop`，启动命令是 `tulai`。
 
 旧更新器下载后核对两处摘要，对不上就删除文件、不安装：
 
@@ -277,6 +274,6 @@ Release 说明里的「检查更新」一段由 `.github/workflows/ci.yml` 写�
 
 ## 下一次版本
 
-桌面端要升版本时，同时改 `mygo.json` 的 `version` 和 `ProductVersion`，提交后再打 `vX.Y.Z`。只改一边的话测试过不了；标签对不上的话发布任务不会开始。
+桌面端要升版本时，同时改 `cmd/tulai/nsgo.yaml` 的 `version` 和 `ProductVersion`，在 `CHANGELOG.md` 记录用户可见的变化。等发布提交通过 `main` CI，再推送 `vX.Y.Z` 标签。
 
-扩展继续单独改 `extension/manifest.json` 和 `extension/protocol.js` 的 hello 版本。它可以停在 0.3.x，也可以往后走，不必等于桌面端版本。
+扩展的版本记录在 `extension/manifest.json`、`extension/firefox/manifest.json` 和 `extension/protocol.js` 的 hello 消息里。发布扩展时同步更新三处。

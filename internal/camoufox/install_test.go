@@ -40,6 +40,18 @@ func TestParseProgressLine(t *testing.T) {
 	}
 }
 
+func TestNativeLauncherErrorDistinguishesPolicyAndMissingModule(t *testing.T) {
+	for _, msg := range []string{"An Application Control policy has blocked this file.", "应用程序控制策略已阻止此文件。"} {
+		if err := launcherComponentError("impit-win32-x64-msvc", errors.New(msg)); !errors.Is(err, errApplicationControl) || !strings.Contains(err.Error(), "impit") {
+			t.Fatalf("policy reason lost: %v", err)
+		}
+	}
+	err := launcherComponentError("impit-win32-x64-msvc", errors.New("Cannot find module"))
+	if errors.Is(err, errApplicationControl) || !strings.Contains(err.Error(), "Cannot find module") {
+		t.Fatalf("missing module reported as policy: %v", err)
+	}
+}
+
 func TestProgressReaderReportsBytes(t *testing.T) {
 	var calls [][2]int64
 	reader := &progressReader{

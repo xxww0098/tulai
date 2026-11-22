@@ -169,6 +169,12 @@ func TestTaskStartCancellationAndProcessLifetime(t *testing.T) {
 			if err := proc.Call(context.Background(), proc.Page, "fixture-ping", nil, nil); err != nil {
 				t.Fatalf("process did not survive task cancellation: %v", err)
 			}
+			if manager.StopWithAddon(account.ID, "previous-addon") || manager.StopWithAddon(account.ID, "") || !proc.Alive() {
+				t.Fatal("cleanup for another bridge stopped the current browser")
+			}
+			if !manager.StopWithAddon(account.ID, "fixture-addon") || manager.IsRunning(account.ID) {
+				t.Fatal("the matching bridge did not release its browser")
+			}
 		})
 	}
 }

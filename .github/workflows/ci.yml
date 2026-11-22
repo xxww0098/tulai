@@ -43,8 +43,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk libpango-1.0-0 libpangocairo-1.0-0 libcairo2
       - name: Test
         run: go test ./... -short -race -timeout 20m
-      - name: Vet
-        run: go tool mygo vet
+      - name: Check
+        run: go tool nsgo check ./cmd/tulai
       - name: Install fingerprint test dependencies
         run: npm ci --prefix internal/camoufox/driver --ignore-scripts --omit=dev --no-audit --no-fund
       - name: Fingerprint policy tests
@@ -80,8 +80,8 @@ jobs:
         run: go test ./internal/download ./internal/chatgpt ./internal/update ./cmd/tulai -short
       - name: Test Windows background commands
         run: go test ./internal/agy -short -run '^TestWindowsBackgroundCommand'
-      - name: Vet
-        run: go tool mygo vet
+      - name: Check
+        run: go tool nsgo check ./cmd/tulai
 
   extension:
     needs: guard
@@ -196,16 +196,8 @@ jobs:
         env:
           CGO_ENABLED: "0"
           GOFLAGS: "-tags=tulai_camoufox_bundle"
-          MYGO_UPDATER_PRIVATE_KEY: ${{ github.ref_type == 'tag' && secrets.MYGO_UPDATER_PRIVATE_KEY || '' }}
-        run: |
-          if [[ "$GITHUB_REF_TYPE" == tag && -z "$MYGO_UPDATER_PRIVATE_KEY" ]]; then
-            echo "MYGO_UPDATER_PRIVATE_KEY is required for a release" >&2
-            exit 1
-          fi
-          go tool mygo build -platform windows/amd64,windows/arm64
+        run: go tool nsgo build -target windows_x64,windows_arm64 ./cmd/tulai
       - name: Collect distributable files
-        env:
-          REQUIRE_SIGNED_UPDATES: ${{ github.ref_type == 'tag' && '1' || '0' }}
         run: scripts/collect-dist.sh windows
       - uses: actions/upload-artifact@v7
         with:
@@ -222,6 +214,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
         with:
           pattern: tulai-*
@@ -265,10 +258,6 @@ jobs:
               "tulai Setup ${version} arm64.exe"
               "tulai-${version}-windows-amd64.exe"
               "tulai-${version}-windows-arm64.exe"
-              "tulai-${version}-windows-amd64.tar.gz"
-              "tulai-${version}-windows-arm64.tar.gz"
-              "update-windows-amd64.json"
-              "update-windows-arm64.json"
             )
             shopt -s nullglob
             extzips=(tulai-extension-*.zip)
@@ -290,17 +279,21 @@ jobs:
         run: |
           version=${GITHUB_REF_NAME#v}
           ext=$(unzip -p release/tulai-extension-*.zip tulai-extension/manifest.json | jq -r .version)
+          changes=$(awk -v heading="## $version" '/^## / { if (found) exit; found = ($0 == heading); next } found { print }' CHANGELOG.md)
+          if [[ -z "${changes//[[:space:]]/}" ]]; then
+            echo "missing release notes for $version in CHANGELOG.md" >&2
+            exit 1
+          fi
           notes=$(mktemp)
           {
             echo "# tulai ${version}"
             echo
-            echo "桌面端 ${version}（mygo.json，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（tulai-extension-${ext}.zip），编号独立，不跟着桌面端走。"
-            echo
-            jq -er '.notes | select(length > 0)' release/update-windows-amd64.json
+            echo "桌面端 ${version}（cmd/tulai/nsgo.yaml，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（tulai-extension-${ext}.zip），编号独立，不跟着桌面端走。"
+            printf '%s\n' "$changes"
             echo
             echo "- 本版本只提供 Windows 安装包；macOS 和 Linux 可继续使用历史版本。"
             echo "- Windows 安装器和 exe 没有代码签名，SmartScreen 可能报警。"
-            echo "- 桌面端启动后自动检查（设置里可关闭），也可用侧栏「检查更新」、设置页或 \`tulai update\`。Windows 安装版使用 MyGo 验证更新签名，便携版及旧版使用 SHA256SUMS。任务结束后才安装。页面桥扩展单独更新。"
+            echo "- 桌面端启动后自动检查（设置里可关闭），也可用侧栏「检查更新」、设置页或 \`tulai update\`。更新包通过 GitHub Releases 和 SHA256SUMS 校验，任务结束后安装。页面桥扩展单独更新。"
             echo
             echo "说明见 docs/RELEASING.md。"
           } >"$notes"
@@ -311,10 +304,7 @@ jobs:
           files=()
           while IFS= read -r -d '' file; do
             files+=("$file")
-          done < <(find release -maxdepth 1 -type f ! -name 'update-*.json' -print0)
-          while IFS= read -r -d '' file; do
-            files+=("$file")
-          done < <(find release -maxdepth 1 -type f -name 'update-*.json' -print0)
+          done < <(find release -maxdepth 1 -type f -print0)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${args[@]}"

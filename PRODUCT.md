@@ -9,7 +9,7 @@ adaptive
 
 ## Product Overview
 
-`tulai` is a cross-platform desktop multi-provider, multi-account AI batch image SaaS workbench built with Go and [MyGo](https://github.com/egoist/mygo) for Windows, macOS, and Linux, with full Light and Dark theme parity.
+`tulai` is a cross-platform desktop multi-provider, multi-account AI batch image SaaS workbench built with Go and [NSGo](https://nsgo.dev) (TSX + Tailwind) for Windows, macOS, and Linux, with full Light and Dark theme parity.
 
 All account credentials, Camoufox browser profiles, prompt templates, task history, and generated outputs stay local to the user's machine while connecting to remote AI providers and target webpages:
 

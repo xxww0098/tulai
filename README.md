@@ -2,7 +2,7 @@
 
 tulai 是一款本地运行的 AI 批量生图与图片处理桌面应用。它支持豆包、千问、ChatGPT 和 Antigravity，可以根据提示词生成图片，也可以使用参考图批量改图。
 
-项目使用 Go 和 [MyGo](https://github.com/egoist/mygo) 构建，支持 Windows、macOS 和 Linux。账号配置和生成结果保存在本机；生图和网页下载需要连接相应服务。
+项目使用 Go 和 [NSGo](https://nsgo.dev)（TSX + Tailwind）构建，支持 Windows、macOS 和 Linux。账号配置和生成结果保存在本机；生图和网页下载需要连接相应服务。
 
 ## 功能
 
@@ -23,7 +23,7 @@ Windows 程序没有代码签名，安装时 SmartScreen 可能提示未知发�
 ## 快速开始
 
 1. 启动 tulai，在设置向导中选择豆包、千问、ChatGPT 或 Antigravity。
-2. 豆包、千问和 ChatGPT 按向导安装应用管理的 Camoufox，并在账号浏览器中登录。Windows x64 发布包内含 Node 和启动库；浏览器内核及指纹数据首次使用时仍需联网下载。Antigravity 按向导安装 `agy` 命令行工具，再登录或导入已有账号；网页授权也需要 Camoufox。
+2. 豆包、千问和 ChatGPT 可在向导的「准备浏览器」或「浏览器」页选择账号环境。默认使用 Camoufox，也可选「Chrome CDP 账号环境」，点击「安装 Chrome CDP」后添加账号，在 tulai 打开的专用 Chrome 窗口登录。每个账号固定使用创建时的浏览器，两种环境可同时用于任务。Windows x64 发布包内含 Node 和启动库，首次使用需下载所选内核。Antigravity 按向导安装 `agy`，网页授权使用 Camoufox。
 3. 打开「图片生成」，选择「自由生图」「批量洗图」或「裂变图片」，填写提示词并按需添加图片。
 4. 点击开始按钮，在界面查看任务进度和结果。输出目录可以在设置中更改。
 

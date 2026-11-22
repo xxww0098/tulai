@@ -423,14 +423,16 @@ async function dispatchCommand(link, env) {
   }
   const taskKey = env.taskId ? link.platform + ':' + env.taskId : ''
   let tab = null
-  const pinned = taskKey && taskTabs.get(taskKey)
+  const isDownload = name === TULAI.commands.download
+  const downloadTab = isDownload && Number.isInteger(env.payload.tabId) && env.payload.tabId > 0
+  const pinned = downloadTab ? env.payload.tabId : taskKey && taskTabs.get(taskKey)
   if (pinned != null) {
     try {
       const candidate = await chrome.tabs.get(pinned)
       if (siteOf(candidate.url || '') === link.platform) tab = candidate
     } catch (err) {}
   }
-  if (!tab) tab = await pickTab(link.platform)
+  if (!tab && !downloadTab) tab = await pickTab(link.platform)
   if (!tab) {
     sendToHost(link, TULAI.fail(env, TULAI.errors.E_NO_TAB, SITES[link.platform].noTab))
     return
@@ -441,8 +443,9 @@ async function dispatchCommand(link, env) {
   }
   // 豆包在后台标签时，合成 pointer/click 常常点了也不发送（E_SEND_UNCERTAIN）。
   // 下发页内命令前先把标签页拉到前台。
-  await focusTab(tab)
-  markTab(tab.id, 'busy', env.taskId || '', tab.url || '')
+  const release = isDownload && env.payload.release
+  if (!isDownload) await focusTab(tab)
+  if (!release) markTab(tab.id, 'busy', env.taskId || '', tab.url || '')
   let keepNetwork = false
   try {
     if (name === TULAI.commands.washChat && env.payload.mode === 'fresh') {
@@ -485,7 +488,7 @@ async function dispatchCommand(link, env) {
       sendToHost(link, TULAI.fail(env, TULAI.errors.E_SELECTOR_MISS, '内容脚本没有返回结果'))
       return
     }
-    if ((name === TULAI.commands.washChat || name === TULAI.commands.waitResult) && response.payload) response.payload.tabId = tab.id
+    if ([TULAI.commands.washChat, TULAI.commands.waitResult, TULAI.commands.download].includes(name) && response.payload) response.payload.tabId = tab.id
     keepNetwork = name === TULAI.commands.send && !!(response.payload && response.payload.ok)
     sendToHost(link, response)
   } catch (err) {
@@ -495,7 +498,7 @@ async function dispatchCommand(link, env) {
       await TULAINetwork.stop(tab.id, env.taskId || '')
     }
     if (taskKey && (name === TULAI.commands.waitResult || name === TULAI.commands.cancel || (name === TULAI.commands.send && !keepNetwork))) taskTabs.delete(taskKey)
-    markTab(tab.id, 'idle', '', tab.url || '')
+    if (!release) markTab(tab.id, 'idle', '', tab.url || '')
   }
 }
 
@@ -588,7 +591,8 @@ async function fetchOrDownload(url) {
   try {
     const res = await fetch(url, { credentials: 'include' })
     if (res.ok) {
-      const bytes = new Uint8Array(await res.arrayBuffer())
+      const bytes = await TULAI.readImageBytes(res)
+      if (!bytes) return { error: '结果图超过 64 MiB 上限' }
       if (!TULAI.looksLikeRaster(bytes)) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF' }
       if (bytes.length <= 3 * 1024 * 1024) return { bytesBase64: bytesToBase64(bytes) }
     }

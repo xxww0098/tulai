@@ -1,12 +1,20 @@
 # Camoufox 账号环境
 
-服务商账号只使用官方 Camoufox。Windows x64、macOS Intel / Apple Silicon 均有安装入口；不再发现或启动本机 Chrome、Edge 或内置 Chromium。Go 桌面程序与受管 Node 子进程通过 stdin/stdout 私有管道通信，Node 调用 Playwright Firefox / Juggler，不开 CDP TCP 端口。
+网页账号默认使用官方 Camoufox。Go 桌面程序与受管 Node 子进程通过 stdin/stdout 私有管道通信，Node 通过 Playwright Firefox / Juggler 控制账号浏览器。
+
+## 可选的 Chrome CDP 账号
+
+在「浏览器」页或首次设置向导中，将「Camoufox 账号环境」切换为「Chrome CDP 账号环境」，安装后添加豆包、千问或 ChatGPT 账号。选择只影响新建账号。已有账号保留原浏览器和登录资料。
+
+Chrome CDP 支持 Windows x64、macOS Intel / Apple Silicon 和 Linux x64。
+
+Chrome 版由 tulai 根据锁定的 Playwright 版本安装到应用数据目录的 `runtime/chrome-cdp/`，每个账号的资料位于 `BrowserData/Chrome-CDP/`。登录、任务和查看账号都由 tulai 启动该实例，Chrome 通过私有 CDP 管道接受操作，无需配置调试端口。豆包和千问的 Chrome 账号直接通过 CDP 操作页面，豆包洗图逐张提交。Firefox 页面桥的批量洗图用于 Camoufox 账号。网页图片下载专用环境和 Antigravity 网页授权使用 Camoufox。
 
 ## 安装与资料
 
 `internal/camoufox/driver/package-lock.json` 固定 Camoufox 0.5.9、Playwright Core 1.62.0 和传递依赖。Windows x64 的安装包和免安装程序内置 Node v24.22.2、启动库和对应的 `impit` 原生模块；首次准备时从程序中解压，不再下载 Node 或执行 npm。Windows x64 还内置微软签名的 VC 运行库，放在原生模块旁边，首次安装和使用已有运行环境时都会自动补齐，无须系统预装该运行库。浏览器内核和指纹模型仍在首次安装时单独联网下载。其他平台及未开启打包标签的开发构建继续按当前系统和架构下载 Node，并校验 SHA-256。浏览器与模型的下载和版本配对交给官方启动库，缓存按系统和架构隔离。旧版安装没有平台标记，升级后需要重新安装一次；账号资料和旧缓存保留。安装用临时目录完成，准备好浏览器和指纹数据后再替换已安装运行环境。实际浏览器版本写在其缓存目录的 `version.json`。
 
-Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文件执行 `npm ci`，验证原生模块后生成内置资源；发布流水线在 Windows 上测试资源加载，再把它嵌入应用。资源记录平台、Node、Camoufox 和依赖锁摘要，解压时拒绝路径越界、非常规文件和版本不匹配。源码开发构建的启动库安装后也会先加载 Camoufox 和 `impit`；若校验失败，会按锁文件重新执行 `npm ci` 后再验证。
+Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文件执行 `npm ci`，验证原生模块后生成内置资源。发布流水线在 Windows 上测试资源加载，再把它嵌入应用。资源记录平台、Node、Camoufox 和依赖锁摘要，解压时拒绝路径越界、非常规文件和版本不匹配。源码开发构建安装后会加载 Camoufox 和 `impit` 校验依赖。豆包、千问的本地网页任务在分配账号前也会检查启动组件。若 Windows 应用控制阻止加载，任务显示组件名，系统的原始错误写入 `runtime/camoufox/install-error.log`。
 
 安装进度按字节报告：开发构建的 Node 启动环境由 Go 直接下载并读 `Content-Length`；浏览器内核由官方启动库调度下载，`bridge.mjs install` 通过多源测速与并发分段下载替换单流下载，把已下载字节数写成 `{"event":"progress"}` 行。Go 读这些行并推给界面，界面显示百分比、速度和剩余时间；内置资源解压等无法按字节计量的阶段只显示状态文字。
 
@@ -14,7 +22,11 @@ Windows x64 发布构建在独立临时目录里校验 Node 下载并按锁文�
 
 运行环境在应用配置目录的 `runtime/camoufox/0.5.9/`，浏览器和模型缓存位于 `runtime/camoufox/cache/<系统>-<架构>/`。账号资料在 `BrowserData/Camoufox/account-*`。每个账号一个独立 Firefox 进程和持久化 profile，Cookie、LocalStorage 和指纹文件彼此分离。同一账号的并发启动串行，已启动时复用本应用记录的进程，不凭一个开放端口判断归属。Firefox 自己的 profile 锁阻止其他进程同时打开资料。
 
-默认在原账号 profile 中加载临时 Firefox 页面桥，通过本机连接绑定到同一账号记录；可在「设置 → 账号与并发」关闭。豆包洗图按账号和标签页隔离会话，每个完成的对话最多用于 10 张；重试、页面变化或未确认结果时从新对话开始。发送请求的响应由 Firefox `webRequest` 流式观察并原样转发；只把状态和受限信号写入日志，豆包原图地址只用于匹配和下载。批次结束后关闭本批浏览器并清理临时扩展，账号登录资料保留。
+默认在原账号 profile 中加载临时 Firefox 页面桥，通过本机连接绑定到同一账号记录，可在「设置 → 账号与并发」关闭。豆包洗图按账号和标签页隔离会话，每个完成的对话最多用于 10 张。重试、页面变化或未确认结果时，新一轮任务从新对话开始。已提交的结果可以从原对话补取。Firefox `webRequest` 流式观察并原样转发发送请求的响应，日志记录状态和受限信号，豆包原图地址用于匹配和下载。
+
+任务释放账号后，绑定浏览器最多空闲保留 15 分钟。超过当前并发额度时优先关闭空闲最久的账号，正在执行任务、人工接管或正在查看的账号受保护。关闭时清理临时页面桥，账号登录资料保存在原 profile。
+
+结果图在返回生成结果的标签页中按分片下载。桌面端确认后，页面立即释放该图的字节。每个页面最多缓存 3 个传输，单图上限为 64 MiB。未确认的传输空闲 90 秒后释放，补取过期分片时只重新下载该图。
 
 多个应用进程安装同一运行环境时使用跨进程锁，等待前一项安装完成后复用结果，避免重复下载和同时写入内核缓存。内核下载连续 12 秒没有进度或低速时会自动切换或重试下载源；持续有进度的下载不设总时限。安装界面会分别提示指纹数据准备和浏览器图形环境验证。
 
@@ -66,6 +78,14 @@ node --test internal/camoufox/driver/*.test.mjs
 go test -short -race ./internal/camoufox ./internal/browser ./internal/cdp ./internal/captcha ./internal/store ./internal/strategy ./internal/download
 go test -count=1 ./internal/browser ./internal/cdp ./internal/captcha ./internal/strategy
 TULAI_RENDERED_E2E=1 go test -count=1 ./internal/download
+```
+
+在独立的测试数据目录中可以验证 Chrome 的首次安装、持久化和账号页面操作。
+
+```sh
+export TULAI_CHROME_TEST_DATA="$(mktemp -d)"
+TULAI_CHROME_TEST_INSTALL=1 go test -count=1 -run TestManagedChromeCDPLifecycle ./internal/camoufox
+go test -count=1 -run TestManagedChromeAccountSessions ./internal/browser
 ```
 
 本地浏览器测试使用隔离 profile 和 HTTP 夹具，不登录真实服务商、不提交真实生成任务。可将 `TULAI_CAMOUFOX_TEST_DATA` 指向独立运行环境，避免并发测试覆盖应用的启动脚本。未安装运行环境时浏览器测试会跳过，先执行冒烟命令。CI 在 Windows x64、macOS ARM64 和 macOS Intel runner 上执行安装与浏览器集成测试；本地交叉编译不代替 Windows 实机运行。

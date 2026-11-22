@@ -20,18 +20,15 @@ func (a *App) wireHealing() {
 	a.engine.SetLoginProbe(a.probeAccount)
 	a.engine.SetSlider(a.solveSlider)
 	a.engine.SetHealNotify(func() {
-		if a.window == nil {
-			return
-		}
-		a.window.Update(func() {})
+		a.emit("workbench", "browsers")
 	})
 }
 
 func (a *App) probeAccount(ctx context.Context, b store.Browser) (string, error) {
-	if b.ExtAccount != "" || b.Port <= 0 || !debugPortOpen(b.Port) {
+	if b.ExtAccount != "" || !accountWindowOpen(b) {
 		return "unknown", nil
 	}
-	return cdp.ProbeLogin(ctx, camoufox.Endpoint(b.Port))
+	return cdp.ProbeLogin(ctx, browser.AccountEndpoint(b))
 }
 
 // ensureAccountPage 在应用内打开后台账号，或显示用户手动启动的登录窗口。
@@ -130,13 +127,19 @@ func accountLabel(b store.Browser) string {
 }
 
 func (a *App) solveSlider(ctx context.Context, b store.Browser) error {
+	if b.Engine == browser.KindChromeCDP {
+		return captcha.ErrVerificationRequired
+	}
 	if b.Platform != "千问" || b.Port <= 0 {
 		return errors.New("没有滑块处理")
 	}
 	return captcha.SolveQianwenSliderAt(ctx, camoufox.Endpoint(b.Port))
 }
 
-func debugPortOpen(port int) bool {
-	_, err := camoufox.Find(camoufox.Endpoint(port))
+func accountWindowOpen(b store.Browser) bool {
+	if b.Port <= 0 {
+		return false
+	}
+	_, err := camoufox.Find(browser.AccountEndpoint(b))
 	return err == nil
 }

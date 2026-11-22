@@ -31,15 +31,25 @@ func TestCamoufoxMigrationPreservesAccountsAndOldProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
+	chromeDir := filepath.Join(root, "Chrome-CDP", "account-new")
+	chrome, err := s.AddManagedBrowser("豆包", "专用 Chrome", chromeDir, EngineChromeCDP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.UpdateBrowser(chrome.ID, false, true)
 	if err := s.PrepareCamoufoxProfiles(root); err != nil {
 		t.Fatal(err)
 	}
 	rows := s.Browsers()
-	if len(rows) != 3 {
+	if len(rows) != 4 {
 		t.Fatal(rows)
 	}
 	for _, b := range rows {
 		switch b.ID {
+		case chrome.ID:
+			if b.Engine != EngineChromeCDP || b.UserDataDir != chromeDir || !b.IsLoggedIn {
+				t.Fatalf("Chrome account changed: %+v", b)
+			}
 		case local.ID:
 			if b.UserDataDir == old || b.IsRunning || b.IsLoggedIn || b.Name != local.Name || b.Port != local.Port {
 				t.Fatalf("bad migration: %+v", b)

@@ -3,6 +3,7 @@ package tasks
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,70 @@ import (
 	"github.com/gobwas/ws"
 	"github.com/xxww0098/tulai/internal/extbridge"
 )
+
+func TestDownloadExpiresRestartsAndAcknowledgesSameTab(t *testing.T) {
+	data := resultPNG(t, 88)
+	var steps atomic.Int32
+	var transfer string
+	var mu sync.Mutex
+	sess := dialConcurrentWashExt(t, func(env extbridge.Envelope) extbridge.Envelope {
+		mu.Lock()
+		defer mu.Unlock()
+		var req struct {
+			TransferID string `json:"transferId"`
+			TabID      int    `json:"tabId"`
+			Offset     int    `json:"offset"`
+			Release    bool   `json:"release"`
+		}
+		if err := json.Unmarshal(env.Payload, &req); err != nil {
+			t.Error(err)
+			return ackFail(env, extbridge.EProtocol, "bad request")
+		}
+		step := steps.Add(1)
+		if step == 1 {
+			transfer = req.TransferID
+		}
+		if transfer == "" || transfer != req.TransferID || (step != 1 && req.TabID != 7) {
+			t.Errorf("step %d: transfer/tab changed: %+v", step, req)
+		}
+		if step == 2 {
+			if req.Offset != 8 {
+				t.Errorf("second chunk offset %d", req.Offset)
+			}
+			return ackOK(env, map[string]any{"ok": false, "code": extbridge.EDownloadFail, "downloadExpired": true})
+		}
+		if step == 5 {
+			if !req.Release {
+				t.Error("missing final acknowledgement")
+			}
+			return ackOK(env, nil)
+		}
+		var part []byte
+		switch step {
+		case 1, 3:
+			if req.Offset != 0 {
+				t.Errorf("expected restart from zero, got %d", req.Offset)
+			}
+			part = data[:8]
+		case 4:
+			if req.Offset != 8 {
+				t.Errorf("invalid resumed offset: %d", req.Offset)
+			}
+			part = data[8:]
+		default:
+			t.Errorf("unexpected step %d", step)
+			return ackFail(env, extbridge.EProtocol, "unexpected step")
+		}
+		return ackOK(env, map[string]any{
+			"transferId": transfer, "tabId": 7, "offset": req.Offset,
+			"total": len(data), "done": step == 4, "dataBase64": base64.StdEncoding.EncodeToString(part),
+		})
+	})
+	got, err := extDownloadURL(t.Context(), sess, "local", "https://example.test/result.png", "豆包", 0)
+	if err != nil || !bytes.Equal(got, data) || steps.Load() != 5 {
+		t.Fatalf("got %d bytes, %d steps, error %v", len(got), steps.Load(), err)
+	}
+}
 
 // Unlike serveFakeExt, this peer can answer independent download commands out of order,
 // as the Firefox extension does while multiple fetches are in flight.
@@ -87,12 +152,16 @@ func TestDoubaoWashDownloadsKeepResultOrder(t *testing.T) {
 		case extbridge.CmdCaptchaAssist:
 			return ackOK(env, nil)
 		case extbridge.CmdWaitResult:
-			return ackOK(env, map[string]any{"images": images})
+			return ackOK(env, map[string]any{"images": images, "tabId": 37})
 		case extbridge.CmdDownload:
 			var request struct {
-				URL string `json:"url"`
+				URL   string `json:"url"`
+				TabID int    `json:"tabId"`
 			}
 			_ = json.Unmarshal(env.Payload, &request)
+			if request.TabID != 37 {
+				t.Errorf("download left the result tab: %d", request.TabID)
+			}
 			n := active.Add(1)
 			for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
 			}
@@ -148,7 +217,7 @@ func TestDoubaoWashDownloadFailureKeepsOtherAssociations(t *testing.T) {
 		}
 		return ackFail(env, extbridge.EDownloadFail, "unexpected URL")
 	})
-	results, indices, err := downloadExtensionResults(context.Background(), sess, "wash", "豆包", items, 3)
+	results, indices, err := downloadExtensionResults(context.Background(), sess, "wash", "豆包", 0, items, 3)
 	if err == nil || len(results) != 3 || len(indices) != 3 {
 		t.Fatalf("results=%d indices=%v err=%v", len(results), indices, err)
 	}
@@ -172,7 +241,7 @@ func TestDoubaoWashDownloadCancellationStopsWaiting(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := downloadExtensionResults(ctx, sess, "wash", "豆包", []extImage{{URL: "https://cdn.example/1.png"}, {URL: "https://cdn.example/2.png"}}, 3)
+		_, _, err := downloadExtensionResults(ctx, sess, "wash", "豆包", 0, []extImage{{URL: "https://cdn.example/1.png"}, {URL: "https://cdn.example/2.png"}}, 3)
 		done <- err
 	}()
 	select {

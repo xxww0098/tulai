@@ -62,7 +62,7 @@ func stageText(stage string) string {
 	case StageWaiting:
 		return "正在等待另一项 Camoufox 安装完成…"
 	case StageRuntime:
-		return "正在下载 Camoufox 启动环境…"
+		return "正在下载浏览器启动环境…"
 	case StagePackages:
 		return "正在安装 Camoufox 官方启动库…"
 	case StageBrowser:
@@ -316,6 +316,9 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 		if err := ensureNodeRuntimeSupport(ready.Dir); err != nil {
 			return Runtime{}, err
 		}
+		if err := checkWindowsLauncher(ctx, ready.Dir); err != nil {
+			return Runtime{}, err
+		}
 		if err := writeDriver(ready.Dir); err != nil {
 			return Runtime{}, err
 		}
@@ -393,24 +396,31 @@ func Ensure(ctx context.Context, dataDir, proxy string, progress func(Progress))
 		return Runtime{}, err
 	}
 	final := filepath.Join(root, Version)
-	backup := final + ".old"
-	if _, err := os.Stat(final); err == nil {
-		if err := os.RemoveAll(backup); err != nil {
-			return Runtime{}, err
-		}
-		if err := os.Rename(final, backup); err != nil {
-			return Runtime{}, err
-		}
-	}
-	if err := os.Rename(stage, final); err != nil {
-		_ = os.Rename(backup, final)
+	if err := publishRuntime(stage, final); err != nil {
 		return Runtime{}, err
 	}
-	_ = os.RemoveAll(backup)
 	if progress != nil {
 		progress(Progress{Stage: StageDone, Text: stageText(StageDone), Done: 1, Total: 1})
 	}
 	return Runtime{Dir: final, Node: nodePath(final), Executable: marker.Executable}, nil
+}
+
+func publishRuntime(stage, final string) error {
+	backup := final + ".old"
+	if _, err := os.Stat(final); err == nil {
+		if err := os.RemoveAll(backup); err != nil {
+			return err
+		}
+		if err := os.Rename(final, backup); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(stage, final); err != nil {
+		_ = os.Rename(backup, final)
+		return err
+	}
+	_ = os.RemoveAll(backup)
+	return nil
 }
 
 func prepareRuntime(ctx context.Context, stage, proxy string, artifact nodeArtifact, progress func(Progress)) error {
@@ -438,14 +448,7 @@ func prepareRuntime(ctx context.Context, stage, proxy string, artifact nodeArtif
 	if progress != nil {
 		progress(Progress{Stage: StageRuntime, Text: stageText(StageRuntime)})
 	}
-	archive := filepath.Join(stage, artifact.File)
-	if err := downloadNode(ctx, archive, artifact, proxy, progress); err != nil {
-		return err
-	}
-	if err := extractNode(archive, filepath.Join(stage, "node")); err != nil {
-		return err
-	}
-	if err := os.Remove(archive); err != nil {
+	if err := installNode(ctx, stage, proxy, artifact, progress); err != nil {
 		return err
 	}
 	if err := writeDriver(stage); err != nil {
@@ -455,6 +458,17 @@ func prepareRuntime(ctx context.Context, stage, proxy string, artifact nodeArtif
 		progress(Progress{Stage: StagePackages, Text: stageText(StagePackages)})
 	}
 	return installPackages(ctx, stage, proxy, progress)
+}
+
+func installNode(ctx context.Context, dir, proxy string, artifact nodeArtifact, progress func(Progress)) error {
+	archive := filepath.Join(dir, artifact.File)
+	if err := downloadNode(ctx, archive, artifact, proxy, progress); err != nil {
+		return err
+	}
+	if err := extractNode(archive, filepath.Join(dir, "node")); err != nil {
+		return err
+	}
+	return os.Remove(archive)
 }
 
 func installPackages(ctx context.Context, dir, proxy string, progress func(Progress)) error {
@@ -475,6 +489,9 @@ func installPackages(ctx context.Context, dir, proxy string, progress func(Progr
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if errors.Is(verifyErr, errApplicationControl) {
+		return verifyErr
+	}
 	if progress != nil {
 		progress(Progress{Stage: StagePackages, Text: "启动库校验未通过，正在按锁定版本重新安装…"})
 	}
@@ -485,6 +502,9 @@ func installPackages(ctx context.Context, dir, proxy string, progress func(Progr
 		return err
 	}
 	if err := verifyNodePackages(ctx, dir, proxy); err != nil {
+		if errors.Is(err, errApplicationControl) {
+			return err
+		}
 		writeInstallDiagnostic(dir, err)
 		if strings.Contains(strings.ToLower(err.Error()), "impit couldn't load native bindings") {
 			return errors.New("Camoufox 启动库的原生组件无法加载，已按锁定版本重新安装仍失败；详细原因已写入 runtime/camoufox/install-error.log")
@@ -514,6 +534,60 @@ func installLockedPackages(ctx context.Context, dir, proxy string, progress func
 	return nil
 }
 
+var errApplicationControl = errors.New("Windows 应用控制策略阻止加载 Camoufox 启动组件")
+
+// CheckLauncher checks the installed driver before assigning work to a browser account.
+func CheckLauncher(ctx context.Context, dataDir string) error {
+	rt, ok := Installed(dataDir)
+	if !ok {
+		return errors.New("Camoufox 尚未准备好，请先在账号页安装 Camoufox")
+	}
+	if err := ensureNodeRuntimeSupport(rt.Dir); err != nil {
+		return err
+	}
+	return checkWindowsLauncher(ctx, rt.Dir)
+}
+
+func checkWindowsLauncher(ctx context.Context, dir string) error {
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return importLauncher(ctx, dir, "")
+}
+
+func importLauncher(ctx context.Context, dir, proxy string) error {
+	_, err := runInstall(ctx, dir, proxy, []string{"IMPIT_VERBOSE=1"}, nil, "--input-type=module", "-e", "await import('camoufox')")
+	if err == nil || ctx.Err() != nil || runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+		return err
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		writeInstallDiagnostic(dir, err)
+		return launcherComponentError("Node", err)
+	}
+	// The launcher is authoritative. Probe the native module only to explain
+	// an actual import failure, since the wrapper can hide the Windows error.
+	const probe = "try { require('impit-win32-x64-msvc') } catch (err) { console.error(err.code, err.message); process.exitCode = 1 }"
+	_, nativeErr := runInstall(ctx, dir, proxy, nil, nil, "-e", probe)
+	writeInstallDiagnostic(dir, errors.Join(err, nativeErr))
+	if nativeErr != nil && ctx.Err() == nil {
+		return launcherComponentError("impit-win32-x64-msvc", nativeErr)
+	}
+	return err
+}
+
+func launcherComponentError(component string, err error) error {
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{"application control policy", "blocked by group policy", "应用程序控制策略", "应用控制策略", "组策略阻止"} {
+		if strings.Contains(message, marker) {
+			return fmt.Errorf("%w %s。请联系设备管理员核准该组件", errApplicationControl, component)
+		}
+	}
+	return fmt.Errorf("Camoufox 启动组件 %s 无法加载: %w", component, err)
+}
+
 func verifyNodePackages(ctx context.Context, dir, proxy string) error {
 	var err error
 	for _, wait := range []time.Duration{250 * time.Millisecond, 750 * time.Millisecond, 2 * time.Second} {
@@ -524,8 +598,8 @@ func verifyNodePackages(ctx context.Context, dir, proxy string) error {
 			return ctx.Err()
 		case <-timer.C:
 		}
-		if _, err = runInstall(ctx, dir, proxy, []string{"IMPIT_VERBOSE=1"}, nil, "--input-type=module", "-e", "await import('camoufox')"); err == nil {
-			return nil
+		if err = importLauncher(ctx, dir, proxy); err == nil || errors.Is(err, errApplicationControl) {
+			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -559,8 +633,14 @@ func clearInstallDiagnostic(dir string) {
 	_ = os.Remove(filepath.Join(filepath.Dir(dir), "install-error.log"))
 }
 
+var bridgeScripts = []string{"bridge.mjs", "identity.mjs", "download-watch.mjs", "kernel-repair.mjs", "windows-compat.mjs"}
+
 func writeDriver(dir string) error {
-	for _, name := range []string{"bridge.mjs", "identity.mjs", "download-watch.mjs", "kernel-repair.mjs", "windows-compat.mjs", "package.json", "package-lock.json"} {
+	return writeDriverFiles(dir, append([]string{"package.json", "package-lock.json"}, bridgeScripts...))
+}
+
+func writeDriverFiles(dir string, files []string) error {
+	for _, name := range files {
 		data, err := driver.ReadFile("driver/" + name)
 		if err != nil {
 			return err
@@ -619,7 +699,7 @@ func runInstall(ctx context.Context, dir, proxy string, extraEnv []string, onPro
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("准备 Camoufox 失败: %w\n%s", err, stderr.String())
+		return nil, fmt.Errorf("准备浏览器组件失败: %w\n%s", err, stderr.String())
 	}
 	return out, nil
 }

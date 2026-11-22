@@ -41,7 +41,7 @@ func TestBatchClosesOnlyUsedBrowsers(t *testing.T) {
 			err = e.run(context.Background(), Options{Platforms: []string{"豆包"}, Prompts: []string{"test"}},
 				func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
 					e.mu.Lock()
-					e.runBrowsers[task.BrowserID] = struct{}{}
+					e.runBrowsers[task.BrowserID] = ""
 					e.mu.Unlock()
 					switch outcome {
 					case "failure":

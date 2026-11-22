@@ -256,10 +256,8 @@ func windowsSetupDir(executable string) bool {
 		return false
 	}
 	dir := filepath.Dir(executable)
-	for _, marker := range []string{"Uninstall.exe", ".mygo-files"} {
-		if info, err := os.Stat(filepath.Join(dir, marker)); err == nil && !info.IsDir() {
-			return true
-		}
+	if info, err := os.Stat(filepath.Join(dir, "Uninstall.exe")); err == nil && !info.IsDir() {
+		return true
 	}
 	return false
 }

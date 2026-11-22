@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -46,8 +47,10 @@ func TestEnsureRepairsExistingWindowsRuntimeSupport(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := Ensure(context.Background(), root, "", nil); err != nil {
-			t.Fatal(err)
+		// The placeholder node.exe cannot execute. Repair must finish before
+		// the launcher check reports that this installation is unusable.
+		if _, err := Ensure(context.Background(), root, "", nil); err == nil || !strings.Contains(err.Error(), "Node") {
+			t.Fatalf("invalid placeholder launcher was not diagnosed: %v", err)
 		}
 		got, err := os.ReadFile(dll)
 		if err != nil || !bytes.Equal(got, vcruntime140) {

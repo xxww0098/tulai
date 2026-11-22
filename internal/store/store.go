@@ -28,13 +28,16 @@ const (
 )
 
 // Browser 一行 browsers 表。一行是一个账号：Chrome / Edge 的独立 profile，或一条扩展会话。
+const EngineChromeCDP = "Chrome CDP"
+
 type Browser struct {
 	ID          int64
 	Platform    string
 	Name        string
 	Port        int
 	UserDataDir string
-	Proxy       string // 空值继承全局代理；非空时只用于这个 Camoufox 账号。
+	Engine      string // Empty on existing Camoufox and non-browser accounts.
+	Proxy       string // 空值继承全局代理，非空时只用于这个网页账号。
 	IsRunning   bool
 	IsLoggedIn  bool
 	Disabled    bool
@@ -491,7 +494,7 @@ func (s *Store) Browsers() []Browser {
 func (s *Store) browsersLocked() ([]Browser, error) {
 	rows, err := s.db.Query(`SELECT id, platform, name, port, COALESCE(user_data_dir,''), is_running, is_logged_in,
 		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''), COALESCE(ext_account,''),
-		COALESCE(day_key,''), COALESCE(day_count,0), COALESCE(day_success,0), COALESCE(day_failed,0), COALESCE(proxy,''), COALESCE(disabled,0)
+		COALESCE(day_key,''), COALESCE(day_count,0), COALESCE(day_success,0), COALESCE(day_failed,0), COALESCE(proxy,''), COALESCE(disabled,0), COALESCE(browser_engine,'')
 		FROM browsers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -501,7 +504,7 @@ func (s *Store) browsersLocked() ([]Browser, error) {
 	for rows.Next() {
 		var b Browser
 		var run, login, disabled int
-		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled); err != nil {
+		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled, &b.Engine); err != nil {
 			return nil, err
 		}
 		b.IsRunning = run != 0
@@ -545,10 +548,16 @@ func (b Browser) Usable(now time.Time) bool {
 
 // AddBrowser 新增浏览器（端口从 9333 起自动分配）。
 func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
-	return s.addBrowser(platform, name, dataDir, "", false)
+	return s.AddManagedBrowser(platform, name, dataDir, "")
 }
 
-func (s *Store) addBrowser(platform, name, dataDir, extAccount string, loggedIn bool) (Browser, error) {
+func (s *Store) AddManagedBrowser(platform, name, dataDir, engine string) (Browser, error) {
+	if engine == "Camoufox" {
+		engine = ""
+	}
+	if engine != "" && (engine != EngineChromeCDP || (platform != "千问" && platform != "豆包" && platform != "ChatGPT")) {
+		return Browser{}, fmt.Errorf("服务商 %s 不支持浏览器 %s", platform, engine)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
@@ -556,7 +565,7 @@ func (s *Store) addBrowser(platform, name, dataDir, extAccount string, loggedIn 
 		return Browser{}, err
 	}
 	defer tx.Rollback()
-	b, err := addBrowserTx(tx, platform, name, dataDir, extAccount, loggedIn)
+	b, err := addBrowserTx(tx, platform, name, dataDir, "", false, engine)
 	if err != nil {
 		return Browser{}, err
 	}
@@ -567,7 +576,7 @@ func (s *Store) addBrowser(platform, name, dataDir, extAccount string, loggedIn 
 }
 
 // addBrowserTx allocates the port and inserts the account under one writer lock.
-func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, loggedIn bool) (Browser, error) {
+func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, loggedIn bool, engine string) (Browser, error) {
 	var maxPort int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(port), 9332) FROM browsers`).Scan(&maxPort); err != nil {
 		return Browser{}, err
@@ -580,8 +589,8 @@ func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, logged
 	if loggedIn {
 		login = 1
 	}
-	res, err := tx.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, ext_account) VALUES(?,?,?,?,?,?,?)`,
-		platform, name, port, dataDir, login, login, extAccount)
+	res, err := tx.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, ext_account, browser_engine) VALUES(?,?,?,?,?,?,?,?)`,
+		platform, name, port, dataDir, login, login, extAccount, engine)
 	if err != nil {
 		return Browser{}, err
 	}
@@ -590,7 +599,7 @@ func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, logged
 		return Browser{}, err
 	}
 	return Browser{
-		ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir,
+		ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir, Engine: engine,
 		IsRunning: loggedIn, IsLoggedIn: loggedIn, ExtAccount: extAccount, Health: HealthReady,
 	}, nil
 }
@@ -904,7 +913,7 @@ func (s *Store) upsertExtension(platform, account, name string, loggedIn bool) (
 				return 0, err
 			}
 		case errors.Is(err, sql.ErrNoRows):
-			b, err := addBrowserTx(tx, platform, name, "", account, loggedIn)
+			b, err := addBrowserTx(tx, platform, name, "", account, loggedIn, "")
 			if err != nil {
 				return 0, err
 			}
@@ -942,6 +951,7 @@ func migrateBrowsers(db *sql.DB) error {
 		`ALTER TABLE browsers ADD COLUMN proxy TEXT DEFAULT ''`,
 		`ALTER TABLE browsers ADD COLUMN legacy_user_data_dir TEXT DEFAULT ''`,
 		`ALTER TABLE browsers ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN browser_engine TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alters {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

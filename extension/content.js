@@ -8,6 +8,9 @@ const uploadParts = new Map()
 const uploadApplied = new Map()
 const sendState = new Map()
 const downloadCache = new Map()
+// The host downloads at most three images per tab, allowing 64 MiB per image.
+const MAX_CACHED_DOWNLOADS = 3
+const DOWNLOAD_IDLE_MS = 90_000
 let pageMark = null
 let cancelRequested = false
 let networkTask = ''
@@ -58,10 +61,14 @@ async function handleCommand(env) {
   const name = env.payload && env.payload.name
   if (name === TULAI.commands.cancel) {
     cancelRequested = true
+    for (const [key, entry] of downloadCache) {
+      if (!env.taskId || entry.taskId === env.taskId) releaseDownload(key)
+    }
     return TULAI.ack(env, { name, ok: true, message: '已请求取消页面内等待' })
   }
-  cancelRequested = false
   const payload = env.payload || {}
+  if (name === TULAI.commands.download) return download(env, payload)
+  cancelRequested = false
   switch (name) {
     case TULAI.commands.upload:
       return upload(env, payload)
@@ -78,8 +85,6 @@ async function handleCommand(env) {
       return sendPrompt(env, payload)
     case TULAI.commands.waitResult:
       return waitResult(env, payload)
-    case TULAI.commands.download:
-      return download(env, payload)
     case TULAI.commands.captchaAssist:
       return captchaAssist(env)
     case TULAI.commands.washChat:
@@ -763,33 +768,62 @@ async function waitResult(env, payload) {
   return TULAI.fail(env, TULAI.errors.E_TIMEOUT, '等待生成结果超时')
 }
 
+function releaseDownload(key) {
+  const entry = downloadCache.get(key)
+  if (!entry) return
+  downloadCache.delete(key)
+  clearTimeout(entry.timer)
+  entry.controller.abort()
+}
+
 async function download(env, payload) {
   const url = String(payload.url || '')
   if (!url) return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, '缺少图片地址')
-  const offset = Number(payload.offset) || 0
-  const limit = Number(payload.limit) || (3 * 1024 * 1024)
-  let cached = downloadCache.get(url)
-  if (cached && !TULAI.looksLikeRaster(cached)) {
-    downloadCache.delete(url)
-    cached = null
+  const transferId = payload.transferId || ''
+  const key = JSON.stringify([env.taskId || '', transferId, url])
+  if (payload.release) {
+    releaseDownload(key)
+    return TULAI.ack(env, { name: payload.name, ok: true })
   }
-  if (!cached) {
-    const fetched = await fetchImage(url)
-    if (fetched.error) return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, fetched.error)
+  const offset = Number(payload.offset ?? 0)
+  const chunkSize = 3 * 1024 * 1024
+  const limit = Math.min(Number(payload.limit || chunkSize), chunkSize)
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit <= 0) {
+    return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, '下载分片范围无效')
+  }
+  let entry = downloadCache.get(key)
+  if (!entry) {
+    if (transferId && offset > 0) {
+      return TULAI.ack(env, { name: payload.name, ok: false, code: TULAI.errors.E_DOWNLOAD_FAIL,
+        message: '结果图的分片缓存已过期', downloadExpired: true })
+    }
+    if (downloadCache.size >= MAX_CACHED_DOWNLOADS) releaseDownload(downloadCache.keys().next().value)
+    const controller = new AbortController()
+    entry = { taskId: env.taskId, controller, load: fetchImage(url, controller.signal) }
+  }
+  // Refresh both the idle deadline and the eviction order on every offset/retry.
+  downloadCache.delete(key)
+  downloadCache.set(key, entry)
+  clearTimeout(entry.timer)
+  entry.timer = setTimeout(() => {
+    if (downloadCache.get(key) === entry) releaseDownload(key)
+  }, DOWNLOAD_IDLE_MS)
+  const fetched = await entry.load
+  if (downloadCache.get(key) !== entry) return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, '图片传输已结束')
+  if (!fetched.bytes || !TULAI.looksLikeRaster(fetched.bytes)) {
+    releaseDownload(key)
     if (fetched.path) {
       return TULAI.ack(env, { name: payload.name, ok: true, path: fetched.path, done: true, total: 0 })
     }
-    if (!TULAI.looksLikeRaster(fetched.bytes)) {
-      return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, '下载内容不是 PNG、JPEG、WebP 或 GIF')
-    }
-    cached = fetched.bytes
-    downloadCache.set(url, cached)
+    return TULAI.fail(env, TULAI.errors.E_DOWNLOAD_FAIL, fetched.error || '下载内容不是 PNG、JPEG、WebP 或 GIF')
   }
+  const cached = fetched.bytes
   const end = Math.min(cached.length, offset + limit)
   const slice = cached.subarray(offset, end)
   return TULAI.ack(env, {
     name: payload.name,
     ok: true,
+    transferId,
     dataBase64: Page.bytesToBase64(slice),
     offset,
     total: cached.length,
@@ -797,17 +831,20 @@ async function download(env, payload) {
   })
 }
 
-async function fetchImage(url) {
+async function fetchImage(url, signal) {
   let rejectedBody = false
   const modes = ['include', 'omit']
   for (let i = 0; i < modes.length; i++) {
     try {
-      const res = await fetch(url, { credentials: modes[i], cache: 'no-store' })
+      const res = await fetch(url, { credentials: modes[i], cache: 'no-store', signal })
       if (!res.ok) continue
-      const bytes = new Uint8Array(await res.arrayBuffer())
+      const bytes = await TULAI.readImageBytes(res)
+      if (!bytes) return { error: '结果图超过 64 MiB 上限' }
       if (TULAI.looksLikeRaster(bytes)) return { bytes }
       rejectedBody = true
-    } catch (e) {}
+    } catch (e) {
+      if (signal.aborted) return { error: '图片传输已结束' }
+    }
   }
   if (rejectedBody) return { error: '下载内容不是 PNG、JPEG、WebP 或 GIF: ' + safeURL(url) }
   try {

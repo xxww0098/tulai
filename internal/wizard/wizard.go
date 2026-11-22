@@ -105,6 +105,7 @@ func Prev(platform string, s Step) (Step, bool) {
 type Account struct {
 	Platform  string
 	Name      string
+	Engine    string
 	LoggedIn  bool
 	Extension bool
 	Health    string
@@ -158,15 +159,24 @@ type BrowserPlan struct {
 	Blocked       string
 }
 
-// PlanBrowser only offers Camoufox. The official browser and launcher are installed together.
+// PlanBrowser keeps the default for callers without an explicit account engine.
 func PlanBrowser(goos, goarch string, found []Found, ready, supported bool) BrowserPlan {
+	return PlanAccountBrowser(browser.KindCamoufox, ready, supported)
+}
+
+func PlanAccountBrowser(engine string, ready, supported bool) BrowserPlan {
+	kind := browser.CanonicalBackend(engine)
 	if ready {
-		return readyPlan(browser.KindCamoufox, browser.KindCamoufox, "Camoufox 已就绪", "每个账号使用独立的登录资料和固定指纹")
+		detail := "每个账号使用独立的登录资料和固定指纹"
+		if kind == browser.KindChromeCDP {
+			detail = "tulai 通过 CDP 控制专用 Chrome，每个账号独立保存登录资料"
+		}
+		return readyPlan(kind, kind, kind+" 已就绪", detail)
 	}
 	if supported {
-		return BrowserPlan{Backend: browser.KindCamoufox, Kind: browser.KindCamoufox, Title: "安装 Camoufox", Detail: "首次使用需要下载浏览器和运行环境。安装完成后即可登录服务商账号。", NeedsDownload: true}
+		return BrowserPlan{Backend: kind, Kind: kind, Title: "安装 " + kind, Detail: "首次使用需要下载浏览器和运行环境。安装完成后即可登录服务商账号。", NeedsDownload: true}
 	}
-	return BrowserPlan{Title: "当前架构不支持 Camoufox", Blocked: "Windows 请使用 x64 版本；macOS 支持 Intel 和 Apple Silicon。"}
+	return BrowserPlan{Title: "当前架构不支持 " + kind, Blocked: "Windows 请使用 x64 版本；macOS 支持 Intel 和 Apple Silicon。"}
 }
 
 func readyPlan(backend, kind, title, detail string) BrowserPlan {

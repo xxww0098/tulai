@@ -9,9 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
-
 	"github.com/xxww0098/tulai/internal/imageedit"
 	"github.com/xxww0098/tulai/internal/logging"
 )
@@ -247,20 +244,14 @@ func (a *App) editOpenOutDir() {
 	if dir == "" {
 		return
 	}
-	if err := mygo.Shell.OpenPath(dir); err != nil {
+	if err := a.openPath(dir); err != nil {
 		logging.Log.Errorf("打开输出目录失败: %v", err)
 	}
 }
 
-// editPickOutDir 选输出目录，选完执行 then。
 func (a *App) editPickOutDir(then func()) {
-	window := a.window
 	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-			Parent:    window,
-			Title:     "选择输出目录",
-			Directory: true,
-		})
+		paths, err := a.pickDirsAsync(context.Background(), "选择输出目录", false)
 		if err != nil {
 			logging.Log.Errorf("选择输出目录失败: %v", err)
 			return
@@ -271,6 +262,7 @@ func (a *App) editPickOutDir(then func()) {
 		a.postUI(func() {
 			a.edit.outDir = paths[0]
 			a.saveImageEditSettings()
+			a.emit("imageedit")
 			if then != nil {
 				then()
 			}
@@ -278,15 +270,9 @@ func (a *App) editPickOutDir(then func()) {
 	}()
 }
 
-// editPickFolder 把整个文件夹里的图片加进来。
 func (a *App) editPickFolder() {
-	window := a.window
 	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-			Parent:    window,
-			Title:     "选择图片文件夹",
-			Directory: true,
-		})
+		paths, err := a.pickDirsAsync(context.Background(), "选择图片文件夹", false)
 		if err != nil {
 			logging.Log.Errorf("选择图片文件夹失败: %v", err)
 			return
@@ -294,23 +280,16 @@ func (a *App) editPickFolder() {
 		if len(paths) == 0 {
 			return
 		}
-		a.postUI(func() { a.editAddPaths(paths) })
+		a.postUI(func() {
+			a.editAddPaths(paths)
+			a.emit("imageedit")
+		})
 	}()
 }
 
-// editPickFiles 弹图片多选。
 func (a *App) editPickFiles() {
-	window := a.window
 	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-			Parent:   window,
-			Title:    "打开图片",
-			Multiple: true,
-			Filters: []mygo.FileFilter{{
-				Name:       "图片",
-				Extensions: []string{"jpg", "jpeg", "png", "gif", "webp", "bmp", "avif"},
-			}},
-		})
+		paths, err := a.pickFilesAsync(context.Background(), "打开图片", true, []string{"jpg", "jpeg", "png", "gif", "webp", "bmp", "avif"}, "图片")
 		if err != nil {
 			logging.Log.Errorf("打开图片失败: %v", err)
 			return
@@ -318,10 +297,9 @@ func (a *App) editPickFiles() {
 		if len(paths) == 0 {
 			return
 		}
-		a.postUI(func() { a.editAddPaths(paths) })
+		a.postUI(func() {
+			a.editAddPaths(paths)
+			a.emit("imageedit")
+		})
 	}()
-}
-
-func editIcon(c *ui.Context, icon *ui.SVG, size float32) ui.Element {
-	return ui.Icon(c, icon).FontSize(size).Shrink(0)
 }

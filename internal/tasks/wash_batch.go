@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
@@ -50,6 +51,9 @@ func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImage
 		maxImages = min(maxImages, first.maxBatch)
 	}
 	if row, ok := e.browserByID(first.BrowserID); ok {
+		if row.Engine == store.EngineChromeCDP {
+			return first, indices
+		}
 		if cap := e.capFor(first.Platform); cap > 0 {
 			maxImages = min(maxImages, max(1, cap-row.UsedToday(now)))
 		}

@@ -15,27 +15,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/egoist/mygo"
+	"github.com/nsgo-dev/nsgo/core"
 
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/update"
 )
 
 func TestRunningVersionLeavesSourceBuildUnpackaged(t *testing.T) {
-	original := mygo.App.Version()
-	mygo.App.SetVersion("")
-	t.Cleanup(func() { mygo.App.SetVersion(original) })
-
+	if got := core.App().Version; got != "" {
+		t.Fatalf("source build became eligible for release updates with version %q", got)
+	}
 	if got := runningVersion(); got != ProductVersion {
 		t.Fatalf("source version = %q, want %q", got, ProductVersion)
 	}
-	if got := mygo.App.Version(); got != "" {
-		t.Fatalf("source build became eligible for release updates with version %q", got)
-	}
 
 	const packaged = "1.2.3"
-	mygo.App.SetVersion(packaged)
-	if got := runningVersion(); got != packaged {
+	if got := runningVersionFrom(packaged); got != packaged {
 		t.Fatalf("packaged version = %q, want %q", got, packaged)
 	}
 }

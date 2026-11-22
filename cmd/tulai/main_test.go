@@ -1,39 +1,37 @@
 package main
 
 import (
-	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
 func TestProductVersionMatchesConfig(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "mygo.json"))
+	data, err := os.ReadFile(filepath.Join("nsgo.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var cfg struct {
-		Version string `json:"version"`
-		Updates struct {
-			GitHub    string `json:"github"`
-			PublicKey string `json:"publicKey"`
-		} `json:"updates"`
+		Version string `yaml:"version"`
+		Release struct {
+			GitHub string `yaml:"github"`
+		} `yaml:"release"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Version != ProductVersion {
-		t.Fatalf("mygo.json version = %q, ProductVersion = %q", cfg.Version, ProductVersion)
+		t.Fatalf("cmd/tulai/nsgo.yaml version = %q, ProductVersion = %q", cfg.Version, ProductVersion)
 	}
-	key, err := base64.StdEncoding.DecodeString(cfg.Updates.PublicKey)
-	if err != nil || len(key) != ed25519.PublicKeySize || cfg.Updates.GitHub != "xxww0098/tulai" {
-		t.Fatalf("invalid MyGo update configuration: %+v", cfg.Updates)
+	if cfg.Release.GitHub != "xxww0098/tulai" {
+		t.Fatalf("invalid release configuration: %+v", cfg.Release)
 	}
 }
 

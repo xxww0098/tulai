@@ -22,6 +22,68 @@ import (
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
+func TestManagedChromeUsesDirectWashBesideBoundCamoufox(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	fox := addNamed(t, st, "豆包", "指纹")
+	chrome, err := st.AddManagedBrowser("豆包", "Chrome", "", store.EngineChromeCDP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+	e.opts = Options{Wash: true, WaitResult: true}
+	items := []Task{{Platform: "豆包", BrowserID: chrome.ID, Prompt: "图", Images: []string{"a.png"}}, {Platform: "豆包", Prompt: "图", Images: []string{"b.png"}}}
+	if !e.chromeAccount(chrome.ID) || e.chromeAccount(fox.ID) {
+		t.Fatal("wrong task engine")
+	}
+	if _, indices := e.bundleWashTasks(items, 0, items[0], 10, time.Now()); len(indices) != 1 {
+		t.Fatal("grouped direct-CDP wash", indices)
+	}
+	items[0].BrowserID = fox.ID
+	if _, indices := e.bundleWashTasks(items, 0, items[0], 10, time.Now()); len(indices) != 2 {
+		t.Fatal("lost bound Firefox batch", indices)
+	}
+}
+
+func TestUnsentFirefoxBatchKeepsEachSourceOnChrome(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	fox := addNamed(t, st, "豆包", "Firefox")
+	chrome, err := st.AddManagedBrowser("豆包", "Chrome", "", store.EngineChromeCDP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+	images := []string{"a.png", "b.png", "c.png"}
+	var calls []string
+	err = e.RunObserved(t.Context(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: images,
+		Wash: true, WaitResult: true, Concurrency: 1,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		if task.BrowserID == fox.ID && slices.Equal(task.Images, images) {
+			calls = append(calls, "batch")
+			return errDoubaoLogin
+		}
+		if task.BrowserID != chrome.ID || len(task.Images) != 1 || len(task.batch) != 0 {
+			return fmt.Errorf("unexpected account or source images: %d, %v", task.BrowserID, task.Images)
+		}
+		calls = append(calls, task.Images[0])
+		task.Results = []string{task.Images[0] + ".out"}
+		return nil
+	})
+	if err != nil || !slices.Equal(calls, []string{"batch", "a.png", "b.png", "c.png"}) {
+		t.Fatalf("attempts = %v, err = %v", calls, err)
+	}
+	for i, item := range e.View().Snapshot() {
+		if item.Status != StatusSuccess || item.BrowserID != chrome.ID || !slices.Equal(item.Results, []string{images[i] + ".out"}) {
+			t.Fatalf("lost source after switching browsers: %+v", item)
+		}
+	}
+}
+
 func TestBoundWashDispatchesTenThenOneAndKeepsSources(t *testing.T) {
 	st := openRotateStore(t)
 	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
@@ -1052,15 +1114,15 @@ func TestDoubaoExtensionCopyrightBatchSplitsWithoutSendCacheCollision(t *testing
 
 	var progress Progress
 	err := e.RunObserved(context.Background(), Options{
-		Platforms:  []string{"豆包"},
-		Prompts:    []string{"数字油画洗图"},
-		Images:     sources,
-		Wash:       true,
+		Platforms:   []string{"豆包"},
+		Prompts:     []string{"数字油画洗图"},
+		Images:      sources,
+		Wash:        true,
 		Concurrency: 1,
-		RetryCount: 2,
-		WaitResult: true,
-		DailyCap:   100,
-		OutputPath: filepath.Join(dir, "out"),
+		RetryCount:  2,
+		WaitResult:  true,
+		DailyCap:    100,
+		OutputPath:  filepath.Join(dir, "out"),
 	}, func(Task) {}, func(p Progress) { progress = p }, func(ctx context.Context, task *Task) error {
 		var wash extensionWashChat
 		var err error

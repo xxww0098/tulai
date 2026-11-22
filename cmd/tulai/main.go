@@ -80,7 +80,7 @@ func main() {
 
 	engine := tasks.NewEngine(db, bm, nil, dataRoot)
 	defer engine.Shutdown()
-	// mygo build 会把 mygo.json 的版本链进二进制；go run 没有这段链接信息。
+	// nsgo build 会把 nsgo.yaml 的版本链进二进制；go run 没有这段链接信息。
 	if dataDir == "" {
 		dataDir, err = os.Getwd()
 		if err != nil {
@@ -88,7 +88,7 @@ func main() {
 		}
 	}
 	logging.Log.Info("tulai %s 启动（数据目录: %s）", runningVersion(), dataDir)
-	ui.Run(db, bm, engine, dataRoot)
+	ui.Run(db, bm, engine, dataRoot, Root)
 }
 
 func packagedDataDir(goos, executable string) (string, error) {

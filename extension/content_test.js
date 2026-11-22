@@ -6,7 +6,7 @@ const vm = require('vm')
 
 const GRAY = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
-function load(page, where, virtualTime = false) {
+function load(page, where, virtualTime = false, globals = {}) {
   const listeners = []
   const context = vm.createContext({
     console,
@@ -15,6 +15,7 @@ function load(page, where, virtualTime = false) {
     URL,
     File: class File { constructor(parts, name) { this.name = name } },
     Uint8Array,
+    AbortController,
     atob,
     btoa,
     location: where || { href: 'https://www.example.test/chat', hostname: 'www.example.test' },
@@ -26,6 +27,7 @@ function load(page, where, virtualTime = false) {
       },
     },
     TULAIPage: page,
+    ...globals,
   })
   if (virtualTime) {
     let now = 100000
@@ -69,6 +71,7 @@ function load(page, where, virtualTime = false) {
   }
   command.locateFileInput = function () { return vm.runInContext('locateFileInput()', context) }
   command.now = function () { return vm.runInContext('Date.now()', context) }
+  command.cacheSize = () => vm.runInContext('downloadCache.size', context)
   command.stableWait = function (images, expectedCount) {
     context.__images = images
     context.__expected = expectedCount
@@ -102,6 +105,69 @@ async function sendThenWait(page) {
 }
 
 async function main() {
+  {
+    let fetched = 0
+    const bytes = Buffer.alloc(4 * 1024 * 1024, 17)
+    bytes.set([137, 80, 78, 71, 13, 10, 26, 10])
+    const timers = new Map()
+    let sequence = 0
+    const call = load({ bytesToBase64: b => Buffer.from(b).toString('base64') }, undefined, false, {
+      fetch: async () => { fetched++; return new Response(bytes) },
+      setTimeout(fn, ms) { const id = ++sequence; timers.set(id, fn); return id },
+      clearTimeout(id) { timers.delete(id) },
+    })
+    for (let i = 0; i < 10; i++) {
+      const transfer = { name: 'download', url: 'https://example.test/result/' + i, transferId: 'transfer-' + i }
+      const first = (await call(transfer)).payload
+      assert(first.ok && !first.done && first.transferId === transfer.transferId)
+      const last = (await call({ ...transfer, offset: 3 * 1024 * 1024 })).payload
+      const replay = (await call({ ...transfer, offset: 3 * 1024 * 1024 })).payload
+      assert(last.ok && last.done && last.dataBase64 === replay.dataBase64)
+      assert.equal(call.cacheSize(), 1)
+      assert((await call({ ...transfer, release: true })).payload.ok)
+      assert((await call({ ...transfer, release: true })).payload.ok)
+      assert.equal(call.cacheSize(), 0)
+    }
+    assert.equal(fetched, 10, 'replaying an unacknowledged chunk must use the same bytes')
+    assert.equal(timers.size, 0)
+    const pending = { name: 'download', url: 'https://example.test/pending', limit: 8 }
+    for (let i = 0; i < 4; i++) await call({ ...pending, transferId: 'lost-' + i })
+    assert.equal(call.cacheSize(), 3)
+    assert((await call({ ...pending, transferId: 'lost-0', offset: 8 })).payload.downloadExpired)
+    await call({ name: 'cancel' }, { taskId: 'another-task' })
+    assert.equal(call.cacheSize(), 3)
+    for (const expire of [...timers.values()]) expire()
+    assert.equal(call.cacheSize(), 0, 'expired transfers must be freed even without another request')
+    await call(pending)
+    assert((await call({ ...pending, offset: 8 })).payload.ok, 'legacy host can read successive offsets')
+    await call({ name: 'cancel' })
+    assert.equal(call.cacheSize(), 0)
+  }
+  for (const headers of [{}, { 'content-length': String(65 * 1024 * 1024) }]) {
+    let cancelled = false
+    const chunk = new Uint8Array(1024 * 1024)
+    const response = new Response(new ReadableStream({
+      pull(controller) { controller.enqueue(chunk) },
+      cancel() { cancelled = true },
+    }), { headers })
+    const call = load({}, undefined, false, { fetch: async () => response })
+    const result = await call({ name: 'download', url: 'https://example.test/oversize', transferId: 'large' })
+    assert(!result.payload.ok && result.payload.message.includes('64 MiB'))
+    assert(cancelled)
+    assert.equal(call.cacheSize(), 0)
+  }
+  {
+    let signal
+    const call = load({}, undefined, false, { fetch: (_url, opts) => {
+      signal = opts.signal
+      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }))
+    } })
+    const pending = call({ name: 'download', url: 'https://example.test/slow', transferId: 'slow' })
+    await call({ name: 'cancel' })
+    assert(signal.aborted)
+    assert.equal((await pending).payload.ok, false)
+    assert.equal(call.cacheSize(), 0)
+  }
   {
     // setRatio：设上与否都回 ok，区别在 applied；页面脚本不支持时也算未设上。
     const ok = load(composerPage({

@@ -63,7 +63,7 @@ globalThis.TULAI.envelope = function envelope(type, fields) {
 // account 是这个浏览器配置文件的稳定 id，旧扩展可以不传。
 // loggedIn 只有布尔值才写上。没探测到登录时不要传，桌面端不会因此建账号。
 globalThis.TULAI.hello = function hello(token, platform, account, loggedIn) {
-  const payload = { token: token || '', version: '0.3.23' }
+  const payload = { token: token || '', version: '0.3.24' }
   if (account) payload.account = String(account)
   if (typeof loggedIn === 'boolean') payload.loggedIn = loggedIn
   const env = globalThis.TULAI.envelope('hello', { payload })
@@ -107,4 +107,40 @@ globalThis.TULAI.looksLikeRaster = function looksLikeRaster(bytes) {
   if (bytes.length >= 3 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return true
   if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return true
   return false
+}
+
+// The host accepts images of up to 64 MiB. Count decoded bytes as well as the
+// advertised length so chunked or compressed responses obey the same limit.
+globalThis.TULAI.readImageBytes = async function readImageBytes(response) {
+  const limit = 64 * 1024 * 1024
+  if (!response.body) return new Uint8Array()
+  if (Number(response.headers.get('content-length')) > limit) {
+    await response.body.cancel()
+    return null
+  }
+  const reader = response.body.getReader()
+  const chunks = []
+  let length = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      length += value.byteLength
+      if (length > limit) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  if (chunks.length === 1) return chunks[0]
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
 }

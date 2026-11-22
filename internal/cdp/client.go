@@ -1,4 +1,4 @@
-// Package cdp retains tulai's page API, implemented by Camoufox and Playwright:
+// Package cdp provides tulai's page API for managed Camoufox and Chrome CDP sessions.
 // 标签页管理、DOM 查询、JS 执行、文件上传、截图、状态探测与 Go↔页面桥。
 package cdp
 
@@ -26,7 +26,7 @@ import (
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
-// Client 对应一个已启动的 Camoufox 私有进程。
+// Client 对应一个已启动的受管浏览器进程。
 type Client struct {
 	proc     *camoufox.Process
 	alloc    context.Context
@@ -34,7 +34,7 @@ type Client struct {
 	wsURL    string
 }
 
-// NewClient 按账号标识连接应用管理的 Camoufox。
+// NewClient 按账号标识查找应用管理的浏览器。
 func NewClient(endpoint string) (*Client, error) {
 	proc, err := camoufox.Find(endpoint)
 	if err != nil {
@@ -47,7 +47,7 @@ func NewClient(endpoint string) (*Client, error) {
 // Close 释放分配器。
 func (c *Client) Close() { c.allocCan() }
 
-// WSURL 保留调用接口，返回 camoufox:// 账号标识，不是监听地址。
+// WSURL 返回当前进程的私有账号标识。
 func (c *Client) WSURL() string { return c.wsURL }
 
 // Session 一个页面标签页会话，含注入脚本与桥接处理。

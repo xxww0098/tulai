@@ -11,7 +11,7 @@ import (
 // Long-lived page requests must provide their own AbortController.
 func (s *Session) EvaluateContext(ctx context.Context, expression string, out any) error {
 	if s == nil || s.client == nil || s.client.proc == nil {
-		return errors.New("没有可控制的 Camoufox 页面")
+		return errors.New("没有可控制的账号浏览器页面")
 	}
 	work, cancel := context.WithTimeout(ctx, 60*time.Second)
 	stop := context.AfterFunc(s.ctx, cancel)

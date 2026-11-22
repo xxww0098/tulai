@@ -25,7 +25,7 @@ func (s *Store) PrepareCamoufoxProfiles(dataRoot string) error {
 	if done == "1" {
 		return nil
 	}
-	rows, err := tx.Query(`SELECT id FROM browsers WHERE COALESCE(ext_account,'')='' AND platform IN ('豆包','千问')`)
+	rows, err := tx.Query(`SELECT id FROM browsers WHERE COALESCE(ext_account,'')='' AND COALESCE(browser_engine,'')='' AND platform IN ('豆包','千问')`)
 	if err != nil {
 		return err
 	}

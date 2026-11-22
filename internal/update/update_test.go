@@ -118,10 +118,6 @@ func TestDetectMode(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(uninstallDir, "Uninstall.exe"), []byte("uninst"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mygoFilesDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(mygoFilesDir, ".mygo-files"), []byte("tulai.exe\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	portableDir := t.TempDir()
 
 	cases := []struct {
@@ -134,7 +130,6 @@ func TestDetectMode(t *testing.T) {
 		{"windows", `C:\Program Files\tulai\tulai.exe`, ModeWindowsSetup},
 		{"windows", `C:\Users\a\AppData\Local\Temp\go-build\tulai.exe`, ModeWindowsSetup},
 		{"windows", filepath.Join(uninstallDir, "tulai.exe"), ModeWindowsSetup},
-		{"windows", filepath.Join(mygoFilesDir, "tulai.exe"), ModeWindowsSetup},
 		{"windows", filepath.Join(portableDir, "tulai.exe"), ModeWindowsExe},
 		{"windows", `D:\Portable\tulai.exe`, ModeWindowsExe},
 		{"linux", "/usr/bin/tulai", ModeLinuxDeb},

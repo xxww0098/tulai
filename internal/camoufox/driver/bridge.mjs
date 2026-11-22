@@ -11,11 +11,14 @@ import { prepareWindowsExecutable } from './windows-compat.mjs';
 // Camoufox resolves its cache at import time; restore the real environment before launching Firefox.
 const cacheKey = { darwin: 'HOME', win32: 'LOCALAPPDATA', linux: 'XDG_CACHE_HOME' }[process.platform];
 const originalCache = process.env[cacheKey];
-let launcher, utils;
+const chromeCDP = process.argv[2] === 'chrome-cdp';
+let launcher = {}, utils = {};
 try {
-  if (cacheKey && process.env.TULAI_CAMOUFOX_CACHE) process.env[cacheKey] = process.env.TULAI_CAMOUFOX_CACHE;
-  launcher = await import('camoufox');
-  utils = await import('camoufox/dist/utils.js');
+  if (!chromeCDP) {
+    if (cacheKey && process.env.TULAI_CAMOUFOX_CACHE) process.env[cacheKey] = process.env.TULAI_CAMOUFOX_CACHE;
+    launcher = await import('camoufox');
+    utils = await import('camoufox/dist/utils.js');
+  }
 } finally {
   if (cacheKey && originalCache === undefined) delete process.env[cacheKey];
   else if (cacheKey) process.env[cacheKey] = originalCache;
@@ -89,11 +92,13 @@ const scopeBootstrap = `(()=>{
   });
 })()`;
 function scoped(source) {
+  if (chromeCDP) return source;
   return `(()=>{const event=new CustomEvent(${JSON.stringify(scopeEvent)},{detail:${JSON.stringify(source)}});
     window.dispatchEvent(event);if(!event.done){${scopeBootstrap};window.dispatchEvent(event)}
     if(!event.done)throw Error('页面脚本环境不可用');if(event.failed)throw event.error;return event.value})()`;
 }
 function scopedInit(source) {
+  if (chromeCDP) return source;
   // New-document scripts must run without dynamic eval under strict CSP.
   return `(()=>{const event=new CustomEvent(${JSON.stringify(scopeEvent)});
     event.run=function(${scopePrefix}arg){with(${scopePrefix}arg){${source}\n}};
@@ -101,7 +106,7 @@ function scopedInit(source) {
     if(!event.done)throw Error('页面脚本环境不可用');if(event.failed)throw event.error})()`;
 }
 
-if (process.platform === 'darwin' || process.platform === 'win32') {
+if (!chromeCDP && (process.platform === 'darwin' || process.platform === 'win32')) {
   // shortcut: matching headed/headless GPUs are verified on macOS and Windows; the
   // probe must always run headless or a fresh identity flashes a visible window
   // before the account browser opens. Validate before extending to other platforms.
@@ -419,7 +424,7 @@ function pageID(page) {
 
 function pageFor(id) {
   const page = pages.get(String(id));
-  if (!page || page.isClosed()) throw new Error('Camoufox 页面已关闭');
+  if (!page || page.isClosed()) throw new Error('账号浏览器页面已关闭');
   return page;
 }
 
@@ -438,15 +443,44 @@ function proxyOptions(raw) {
   if (!raw) return undefined;
   const url = new URL(raw);
   const proxy = { server: `${url.protocol}//${url.host}` };
-  if (url.protocol === 'socks5:' && (url.username || url.password)) throw new Error('Camoufox 不支持带认证的 SOCKS5 代理，请使用 HTTP 代理');
+  if (url.protocol === 'socks5:' && (url.username || url.password)) throw new Error('账号浏览器不支持带认证的 SOCKS5 代理，请使用 HTTP 代理');
   if (url.username) proxy.username = decodeURIComponent(url.username);
   if (url.password) proxy.password = decodeURIComponent(url.password);
   return proxy;
 }
 
 async function start(params) {
-  if (context) throw new Error('Camoufox 已经启动');
+  if (context) throw new Error('账号浏览器已经启动');
   fs.mkdirSync(params.profile, { recursive: true, mode: 0o700 });
+  launchProxy = params.proxy;
+  const startProxy = proxyOptions(params.proxy);
+  contextOptions = {
+    viewport: null,
+    serviceWorkers: 'block',
+    ignoreHTTPSErrors: Boolean(params.ignoreHTTPSErrors),
+    ...(startProxy ? { proxy: startProxy } : {}),
+  };
+  requestOptions = {proxy:startProxy, ignoreHTTPSErrors:contextOptions.ignoreHTTPSErrors};
+  if (chromeCDP) {
+    const { chromium } = await import('playwright-core');
+    // Playwright starts this exact executable and owns its private CDP pipe.
+    context = await chromium.launchPersistentContext(params.profile, {
+      ...contextOptions, executablePath: params.executable, headless: Boolean(params.headless),
+      chromiumSandbox: true, acceptDownloads: true,
+      args: params.directNetwork ? ['--no-proxy-server'] : [],
+    });
+  } else {
+    await startFirefox(params);
+  }
+  context.setDefaultTimeout(25000);
+  context.on('page', pageID);
+  context.on('close', () => { if (!closing) process.exit(0); });
+  for (const page of context.pages()) pageID(page);
+  const page = context.pages()[0] || await context.newPage();
+  return { targetId: pageID(page) };
+}
+
+async function startFirefox(params) {
   const identityPath = path.join(params.profile, '.tulai-identity.json');
   let saved;
   try { saved = JSON.parse(fs.readFileSync(identityPath, 'utf8')); }
@@ -485,27 +519,12 @@ async function start(params) {
     : await createIdentity(params.profile, generate, { collisionRoots: params.collisionRoots });
   options.user_data_dir = params.profile;
   options.acceptDownloads = true;
-  launchProxy = params.proxy;
-  const startProxy = proxyOptions(params.proxy);
-  contextOptions = {
-    ...STOCK_MEDIA_DEFAULTS,
-    viewport: null,
-    serviceWorkers: 'block',
-    ignoreHTTPSErrors: Boolean(params.ignoreHTTPSErrors),
-    ...(startProxy ? { proxy: startProxy } : {}),
-  };
-  requestOptions = {proxy:startProxy,ignoreHTTPSErrors:contextOptions.ignoreHTTPSErrors};
+  contextOptions = { ...STOCK_MEDIA_DEFAULTS, ...contextOptions };
   options.ignoreHTTPSErrors = contextOptions.ignoreHTTPSErrors;
   context = await Camoufox({ persistent_context: true, from_options: options });
   await context.addInitScript({content: mainWorld(scopeBootstrap)});
   for (const current of context.pages()) await current.evaluate(mainWorld(scopeBootstrap));
   if (saved) await refreshIdentity(identityPath, saved, identity);
-  context.setDefaultTimeout(25000);
-  context.on('page', pageID);
-  context.on('close', () => { if (!closing) process.exit(0); });
-  for (const page of context.pages()) pageID(page);
-  const page = context.pages()[0] || await context.newPage();
-  return { targetId: pageID(page) };
 }
 
 function close() {
@@ -536,6 +555,7 @@ async function installBinding(targetContext, bindingName, applyExisting = true) 
   await targetContext.exposeBinding(bindingName, ({ page: source }, data) => {
     emit({ event: 'binding', target: pageID(source), data });
   });
+  if (chromeCDP) return;
   // Camoufox exposes Playwright bindings in its isolated world.
   const name = JSON.stringify(bindingName);
   const forward = `window.addEventListener(${JSON.stringify(pipeEvent)}, event => globalThis[${name}](event.detail))`;
@@ -561,7 +581,7 @@ async function closeTargetPage(id, targetPage) {
   }
 }
 
-function mainWorld(expression) { return `mw:${expression}`; }
+function mainWorld(expression) { return chromeCDP ? expression : `mw:${expression}`; }
 
 async function insertText(page, text, signal) {
   if (text === '') { await page.keyboard.press('Backspace'); return; }
@@ -611,8 +631,56 @@ async function continueRequest(page, target, route, signal) {
   }
 }
 
+// Firefox can cancel goto when a page starts its own navigation. Only the
+// interactive download browser may adopt a replacement or repeat the initial GET.
+async function gotoDownloadPage(page, goto, signal) {
+  const previous = page.url().split('#')[0];
+  const documents = new Set();
+  let noDocument = false;
+  const onDownload = () => { noDocument = true; };
+  const onResponse = response => {
+    if (!response.request().isNavigationRequest() || response.frame() !== page.mainFrame()) return;
+    if ([204, 205].includes(response.status()) || /^attachment\b/i.test(response.headers()['content-disposition'] || '')) {
+      noDocument = true;
+    } else if (response.status() < 300 || response.status() >= 400) {
+      documents.add(response.url().split('#')[0]);
+    }
+  };
+  page.on('download', onDownload);
+  page.on('response', onResponse);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return { response: await goto() };
+      } catch (error) {
+        signal.throwIfAborted();
+        const reason = error.message.split('\n', 1)[0].replace(/^page\.goto: /, '');
+        const interrupted = /^(?:NS_BINDING_ABORTED\b|Navigation to ".*" is interrupted by another navigation to ")/.test(reason);
+        if (!interrupted || page.isClosed() || noDocument) throw error;
+        try {
+          await page.waitForURL(url => /^https?:$/.test(url.protocol) && url.href.split('#')[0] !== previous,
+            { waitUntil: 'commit', timeout: 1500 });
+        } catch (waitError) {
+          signal.throwIfAborted();
+          if (waitError.name !== 'TimeoutError' || noDocument || page.isClosed()) throw error;
+          if (attempt === 1) throw new Error('网页连续两次打开中断，请检查网络连接后重试', {cause:error});
+          continue;
+        }
+        signal.throwIfAborted();
+        const replacementURL = await page.evaluate(() => document.documentURI);
+        if (noDocument || !/^https?:\/\//i.test(replacementURL) || !documents.has(replacementURL.split('#')[0]) ||
+            replacementURL.split('#')[0] === previous) throw error;
+        return { replacementURL };
+      }
+    }
+  } finally {
+    page.off('response', onResponse);
+    page.off('download', onDownload);
+  }
+}
+
 // These names preserve tulai's existing page API. Every operation uses Playwright's
-// Firefox transport over a pipe; no Chromium executable or CDP listener is used.
+// private pipe to the selected managed browser.
 async function dispatch(method, params, target, signal) {
   signal.throwIfAborted();
   switch (method) {
@@ -627,13 +695,13 @@ async function dispatch(method, params, target, signal) {
       let page;
       if (params.isolated) {
         const isolatedProxy = proxyOptions(params.proxy || launchProxy);
-        const isolatedOptions = { ...STOCK_MEDIA_DEFAULTS, ...contextOptions };
+        const isolatedOptions = { ...contextOptions };
         if (isolatedProxy) isolatedOptions.proxy = isolatedProxy;
         else delete isolatedOptions.proxy;
         isolatedContext = await context.browser().newContext(isolatedOptions);
         try {
           isolatedContext.setDefaultTimeout?.(25000);
-          await isolatedContext.addInitScript({ content: mainWorld(scopeBootstrap) });
+          if (!chromeCDP) await isolatedContext.addInitScript({ content: mainWorld(scopeBootstrap) });
           for (const name of bindings) await ensureBinding(isolatedContext, name, false);
           page = await isolatedContext.newPage();
         } catch (error) {
@@ -709,7 +777,7 @@ async function dispatch(method, params, target, signal) {
       return {success:true};
     case 'Runtime.evaluate': {
       const frame = params.contextId ? frames.get(params.contextId) : page.mainFrame();
-      if (!frame) throw new Error('Camoufox 页面框架已关闭');
+      if (!frame) throw new Error('账号浏览器页面框架已关闭');
       try {
         const value = await frame.evaluate(mainWorld(scoped(params.expression)));
         return { result: { type: value === null ? 'object' : typeof value, value: value ?? null } };
@@ -730,7 +798,10 @@ async function dispatch(method, params, target, signal) {
       await page.addInitScript({ content: mainWorld(scopedInit(params.source)) }); return { identifier: 'tulai' };
     case 'Page.navigate': {
       const deadline = Date.now() + 60000;
-      const response = await page.goto(params.url, {waitUntil: 'commit', timeout: 60000});
+      const goto = () => page.goto(params.url, {waitUntil: 'commit', timeout: Math.max(1, deadline - Date.now())});
+      const { response, replacementURL } = params.recoverInterrupted
+        ? await gotoDownloadPage(page, goto, signal) : { response: await goto() };
+      if (replacementURL) return { replacementURL };
       const contentType = response?.headers()['content-type']?.toLowerCase();
       if (params.wait !== 'commit' && response && !contentType?.startsWith('image/')) {
         signal.throwIfAborted();
@@ -810,7 +881,7 @@ async function dispatch(method, params, target, signal) {
       else if (params.type === 'mouseWheel') await page.mouse.wheel(params.deltaX || 0, params.deltaY || 0);
       return {};
     }
-    default: throw new Error(`不支持的 Camoufox 操作：${method}`);
+    default: throw new Error(`不支持的浏览器操作：${method}`);
   }
 }
 

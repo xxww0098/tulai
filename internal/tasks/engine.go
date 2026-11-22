@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,37 +39,37 @@ type Progress struct {
 
 // Engine 批量执行引擎。
 type Engine struct {
-	mu            sync.Mutex
-	store         *store.Store
-	browsers      *browser.Manager
-	solver        captcha.Solver
-	opts          Options
-	view          *QueueView
-	cancel        context.CancelFunc
-	running       bool
-	runDone       chan struct{}
-	closing       bool
-	sessions      map[string]*cdp.Session // key: backend:platform:browserID
-	washChats     map[*cdp.Session]washChat
-	extWashChats  map[int64]extensionWashChat
-	firefoxAddons map[int64]string
-	runBrowsers   map[int64]struct{}
-	idleClose     map[int64]*time.Timer // 保活浏览器到点关闭
-	idleGuard     func(id int64) bool   // 界面还在用的账号不做空闲关闭
-	idleAfter     time.Duration         // 测试把空闲窗口缩短；空则用 browserIdleClose
-	keepAlive     func(id int64) bool   // 测试替换的保活判定；空则查浏览器管理器
-	srcHashes     map[string]string     // 源图路径 → SHA256（当前任务的回声过滤）
-	dataRoot      string
-	active        map[int64]bool
-	manual        map[int64]bool
-	dlFetch       *download.Fetcher // 结果图改用直接下载时共用：站点并发和限速按这一次运行算
+	mu                 sync.Mutex
+	store              *store.Store
+	browsers           *browser.Manager
+	solver             captcha.Solver
+	opts               Options
+	view               *QueueView
+	cancel             context.CancelFunc
+	running            bool
+	runDone            chan struct{}
+	closing            bool
+	sessions           map[string]*cdp.Session // key: backend:platform:browserID
+	washChats          map[*cdp.Session]washChat
+	extWashChats       map[int64]extensionWashChat
+	firefoxAddons      map[int64]string
+	runBrowsers        map[int64]string       // 本批实际使用的页面桥目录，空串表示普通浏览器
+	unavailableEngines sync.Map               // account engines that failed this run's local preflight
+	idleClose          map[int64]*idleBrowser // 保活浏览器到点关闭
+	idleGuard          func(id int64) bool    // 界面还在用的账号不做空闲关闭
+	idleAfter          time.Duration          // 测试把空闲窗口缩短；空则用 browserIdleClose
+	keepAlive          func(id int64) bool    // 测试替换的保活判定；空则查浏览器管理器
+	srcHashes          map[string]string      // 源图路径 → SHA256（当前任务的回声过滤）
+	dataRoot           string
+	active             map[int64]bool
+	manual             map[int64]bool
+	dlFetch            *download.Fetcher // 结果图改用直接下载时共用：站点并发和限速按这一次运行算
 
 	extStartMu  sync.Mutex
 	extMu       sync.Mutex
 	extSrv      *extbridge.Server
 	extBatch    string
-	extToken    string
-	extListen   string
+	extConfig   extbridge.PairInfo // 配置中的首选端口和令牌，用于判断是否需要重新监听
 	extErr      string
 	extOnChange func()
 	pair        *extbridge.PairServer
@@ -159,7 +160,7 @@ func (e *Engine) View() *QueueView {
 // Run 构建队列并执行（阻塞直至完成或停止；应在 goroutine 中调用）。
 // onTask/onProgress 在任务状态变化时回调（用于 UI 刷新）。
 func (e *Engine) Run(ctx context.Context, opts Options, onTask func(Task), onProgress func(Progress)) error {
-	return e.run(ctx, opts, onTask, onProgress, e.attempt)
+	return e.run(ctx, opts, onTask, onProgress, nil)
 }
 
 // RunObserved 和 Run 走同一条调度。attempt 换成测试里的页面操作，用来看任务落到哪个账号。
@@ -169,7 +170,7 @@ func (e *Engine) RunObserved(ctx context.Context, opts Options, onTask func(Task
 
 // Retry 只重跑失败、跳过或待验证的任务。提示词沿用已经拼好的正文。
 func (e *Engine) Retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress)) error {
-	return e.retry(ctx, opts, failed, onTask, onProgress, e.attempt)
+	return e.retry(ctx, opts, failed, onTask, onProgress, nil)
 }
 
 func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
@@ -228,7 +229,7 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 		e.mu.Unlock()
 		return err
 	}
-	// 浏览器映射：平台 → 可用的 Camoufox 账号 ID。
+	// 按平台列出已配置的账号。
 	browsersOf := e.browsersOfPlatforms()
 	for _, p := range opts.Platforms {
 		if len(browsersOf[p]) == 0 {
@@ -285,7 +286,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	e.cancel = cancel
 	e.running = true
 	e.runDone = done
-	e.runBrowsers = make(map[int64]struct{})
+	e.runBrowsers = make(map[int64]string)
 	e.wake = nudge
 	e.mu.Unlock()
 	started := time.Now()
@@ -677,7 +678,7 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	if t != nil && t.Platform == agy.Platform {
 		return e.attemptAntigravity(ctx, t)
 	}
-	if e.useExtension(t.Platform) {
+	if e.useExtension(t.Platform) && !e.chromeAccount(t.BrowserID) {
 		if t.Platform == "豆包" {
 			return e.attemptDoubaoExtension(ctx, t)
 		}
@@ -853,6 +854,7 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 		}
 	}
 	// 发送提示词
+	t.noUse = false
 	if err := strat.SendPrompt(sess, prompt); err != nil {
 		if adoptSentChat(t, sess) {
 			t.submitted = true
@@ -1060,12 +1062,13 @@ func (e *Engine) pageBackend() string {
 
 // session 取/建平台会话（同一浏览器+平台复用一个标签页，SharedSession 语义）。
 func (e *Engine) session(ctx context.Context, platform string, browserID int64, strat strategy.Strategy) (*cdp.Session, error) {
-	backend := e.pageBackend()
+	b, found := e.browserByID(browserID)
+	backend := browser.CanonicalBackend(b.Engine)
 	key := fmt.Sprintf("%s:%s:%d", backend, platform, browserID)
 	e.mu.Lock()
 	if s, ok := e.sessions[key]; ok {
 		if e.runBrowsers != nil {
-			e.runBrowsers[browserID] = struct{}{}
+			e.runBrowsers[browserID] = ""
 		}
 		e.mu.Unlock()
 		return s, nil
@@ -1075,14 +1078,6 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 
 	if e.store == nil || e.browsers == nil {
 		return nil, fmt.Errorf("浏览器 %d 不存在", browserID)
-	}
-	var b store.Browser
-	found := false
-	for _, cand := range e.store.Browsers() {
-		if cand.ID == browserID {
-			b, found = cand, true
-			break
-		}
 	}
 	if !found {
 		return nil, fmt.Errorf("浏览器 %d 不存在", browserID)
@@ -1102,7 +1097,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	}
 	e.mu.Lock()
 	if e.runBrowsers != nil {
-		e.runBrowsers[browserID] = struct{}{}
+		e.runBrowsers[browserID] = ""
 	}
 	e.mu.Unlock()
 	client, clientErr := cdp.NewClient(ws)
@@ -1152,46 +1147,50 @@ func (e *Engine) closeRunBrowsers() {
 		browsers := e.browsers
 		alive = func(id int64) bool { dir := e.firefoxAddons[id]; return dir != "" && browsers.LoadedAddon(id) == dir }
 	}
-	var kept []int64
-	for id := range ids {
-		if alive != nil && alive(id) && e.firefoxAddons[id] != "" {
-			kept = append(kept, id)
+	for id, dir := range ids {
+		if dir == "" || e.firefoxAddons[id] != dir {
+			continue
+		}
+		if alive != nil && alive(id) {
+			if e.idleClose[id] == nil {
+				e.armIdleCloseLocked(id)
+			}
 			delete(ids, id)
+			continue
 		}
-	}
-	var dirs []string
-	for id := range ids {
-		if dir := e.firefoxAddons[id]; dir != "" {
-			dirs = append(dirs, dir)
-			delete(e.firefoxAddons, id)
-		}
+		e.cancelIdleCloseLocked(id)
+		delete(e.firefoxAddons, id)
 	}
 	e.mu.Unlock()
 	var wg sync.WaitGroup
-	for id := range ids {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			e.dropSessions(id)
+	for id, dir := range ids {
+		wg.Go(func() {
+			if dir == "" {
+				e.dropSessions(id)
+			}
 			if e.browsers != nil {
-				e.browsers.Stop(id)
+				e.browsers.StopWithAddon(id, dir)
 				if e.store != nil {
 					e.store.SetRunning(id, e.browsers.IsRunning(id))
 				}
 			}
-		}()
+			if dir != "" {
+				_ = os.RemoveAll(dir)
+			}
+		})
 	}
 	wg.Wait()
-	for _, dir := range dirs {
-		_ = os.RemoveAll(dir)
-	}
-	for _, id := range kept {
-		e.armIdleClose(id)
-	}
+	e.trimIdleBrowsers()
 }
 
 // browserIdleClose 是保活浏览器的空闲关闭窗口。
 const browserIdleClose = 15 * time.Minute
+
+type idleBrowser struct {
+	id    int64
+	since time.Time
+	timer *time.Timer
+}
 
 // SetIdleGuard 注册「账号正被界面使用」的判断；查看面板盯着时不做空闲关闭。
 func (e *Engine) SetIdleGuard(fn func(id int64) bool) {
@@ -1206,7 +1205,11 @@ func (e *Engine) SetIdleGuard(fn func(id int64) bool) {
 func (e *Engine) armIdleClose(id int64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.closing {
+	e.armIdleCloseLocked(id)
+}
+
+func (e *Engine) armIdleCloseLocked(id int64) {
+	if e.closing || e.firefoxAddons[id] == "" {
 		return
 	}
 	delay := e.idleAfter
@@ -1215,44 +1218,82 @@ func (e *Engine) armIdleClose(id int64) {
 	}
 	e.cancelIdleCloseLocked(id)
 	if e.idleClose == nil {
-		e.idleClose = map[int64]*time.Timer{}
+		e.idleClose = map[int64]*idleBrowser{}
 	}
-	e.idleClose[id] = time.AfterFunc(delay, func() { e.idleExpired(id) })
+	idle := &idleBrowser{id: id, since: time.Now()}
+	e.idleClose[id] = idle
+	idle.timer = time.AfterFunc(delay, func() { e.closeIdleBrowser(idle, false) })
 }
 
 func (e *Engine) cancelIdleCloseLocked(id int64) {
 	if t := e.idleClose[id]; t != nil {
-		t.Stop()
+		t.timer.Stop()
 		delete(e.idleClose, id)
 	}
 }
 
-// idleExpired 关掉保活超时的浏览器；引擎在跑或界面还在看就顺延。
-func (e *Engine) idleExpired(id int64) {
+// Only bound web browsers share this budget. Manual viewers and running tasks retain ownership.
+func (e *Engine) boundBrowserLimitLocked() int {
+	platforms := 0
+	for _, name := range []string{"豆包", "千问"} {
+		if slices.Contains(e.opts.Platforms, name) {
+			platforms++
+		}
+	}
+	limit := PlatformInFlight * max(1, platforms)
+	if e.opts.Concurrency > 0 {
+		return min(limit, e.opts.Concurrency)
+	}
+	return limit
+}
+
+func (e *Engine) trimIdleBrowsers() {
 	e.mu.Lock()
-	if e.running || e.closing {
+	if len(e.firefoxAddons) <= e.boundBrowserLimitLocked() || e.closing {
 		e.mu.Unlock()
 		return
 	}
+	idle := make([]*idleBrowser, 0, len(e.idleClose))
+	for _, b := range e.idleClose {
+		idle = append(idle, b)
+	}
+	e.mu.Unlock()
+	slices.SortFunc(idle, func(a, b *idleBrowser) int { return a.since.Compare(b.since) })
+	for _, b := range idle {
+		e.closeIdleBrowser(b, true)
+	}
+}
+
+func (e *Engine) closeIdleBrowser(idle *idleBrowser, overBudget bool) {
+	id := idle.id
+	e.mu.Lock()
 	guard := e.idleGuard
 	e.mu.Unlock()
-	if guard != nil && guard(id) {
-		e.armIdleClose(id)
+	// The viewer takes the UI lock. Recheck the lease after releasing that lock.
+	viewed := guard != nil && guard(id)
+	e.mu.Lock()
+	if e.closing || e.idleClose[id] != idle || (overBudget && len(e.firefoxAddons) <= e.boundBrowserLimitLocked()) {
+		e.mu.Unlock()
 		return
 	}
-	e.mu.Lock()
-	if e.running || e.closing {
+	if e.active[id] || e.manual[id] || viewed {
+		if !overBudget {
+			e.armIdleCloseLocked(id)
+		}
 		e.mu.Unlock()
 		return
 	}
 	e.cancelIdleCloseLocked(id)
 	dir := e.firefoxAddons[id]
 	delete(e.firefoxAddons, id)
+	if e.runBrowsers[id] == dir {
+		delete(e.runBrowsers, id)
+	}
 	e.mu.Unlock()
-	e.dropSessions(id)
-	// 用户之后自己开的窗口（没装这个页面桥）不归空闲关闭管。
-	if e.browsers != nil && (!e.browsers.IsRunning(id) || e.browsers.LoadedAddon(id) == dir) {
-		e.browsers.Stop(id)
+	// The bound page bridge does not own direct-driver sessions. A later start may
+	// already have installed a new bridge for this account while we were unlocked.
+	if e.browsers != nil {
+		e.browsers.StopWithAddon(id, dir)
 		if e.store != nil {
 			e.store.SetRunning(id, e.browsers.IsRunning(id))
 		}
@@ -1269,7 +1310,7 @@ func (e *Engine) idleExpired(id int64) {
 			}
 		}
 	}
-	logging.Log.Info("账号[%s] 空闲超时，已关闭浏览器", name)
+	logging.Log.Info("已回收账号[%s] 的空闲页面桥", name)
 }
 
 type failedSession interface {
@@ -1326,7 +1367,6 @@ func (e *Engine) setActive(id int64, on bool) {
 		return
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.active == nil {
 		e.active = map[int64]bool{}
 	}
@@ -1334,6 +1374,13 @@ func (e *Engine) setActive(id int64, on bool) {
 		e.active[id] = true
 	} else {
 		delete(e.active, id)
+		if dir := e.runBrowsers[id]; dir != "" && dir == e.firefoxAddons[id] {
+			e.armIdleCloseLocked(id)
+		}
+	}
+	e.mu.Unlock()
+	if !on {
+		e.trimIdleBrowsers()
 	}
 }
 
@@ -1402,13 +1449,12 @@ func (e *Engine) ServeLocal() error {
 }
 
 func (e *Engine) pairInfo() extbridge.PairInfo {
-	token := extbridge.DefaultExtToken
-	port := extbridge.DefaultExtPort
-	if e != nil && e.store != nil {
-		token = extbridge.NormalizeExtToken(e.store.Get(extbridge.SettingExtToken))
-		port = extbridge.NormalizeExtPort(e.store.Get(extbridge.SettingExtPort))
+	e.extMu.Lock()
+	defer e.extMu.Unlock()
+	if e.extSrv == nil {
+		return extbridge.PairInfo{}
 	}
-	return extbridge.PairInfo{Token: token, Port: port}
+	return e.extSrv.PairInfo()
 }
 
 func (e *Engine) forgetSession(sess *cdp.Session) {
@@ -1922,7 +1968,7 @@ func (e *Engine) CloseSessions() {
 	}
 	for id, timer := range e.idleClose {
 		if timer != nil {
-			timer.Stop()
+			timer.timer.Stop()
 		}
 		delete(e.idleClose, id)
 	}

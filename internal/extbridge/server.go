@@ -33,6 +33,8 @@ type Config struct {
 	IdempotencyLimit int
 	HelloTimeout     time.Duration
 	IdleTimeout      time.Duration
+	// AllowPortFallback 允许在首选端口绑定失败时，由系统在同一回环地址分配端口。
+	AllowPortFallback bool
 	// Heartbeat 为 0 时每 15s 发一次协议 ping。负数表示不主动心跳，读超时仍然生效。
 	Heartbeat time.Duration
 	// OnEvent 收到与在途 RPC 无关的 event。可以为空。
@@ -100,7 +102,16 @@ func Listen(cfg Config) (*Server, error) {
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, err
+		host, port, _ := net.SplitHostPort(addr)
+		var bindErr *os.SyscallError
+		if !cfg.AllowPortFallback || port == "0" || !errors.As(err, &bindErr) || bindErr.Syscall != "bind" {
+			return nil, err
+		}
+		var fallbackErr error
+		ln, fallbackErr = net.Listen("tcp", net.JoinHostPort(host, "0"))
+		if fallbackErr != nil {
+			return nil, fmt.Errorf("%w；分配本机空闲端口失败：%w", err, fallbackErr)
+		}
 	}
 	if cfg.IdempotencyLimit <= 0 {
 		cfg.IdempotencyLimit = defaultCacheLimit
@@ -134,6 +145,12 @@ func Listen(cfg Config) (*Server, error) {
 
 // Addr 返回实际监听地址。
 func (s *Server) Addr() string { return s.addr }
+
+// PairInfo 返回这个监听器接受的令牌和实际端口。
+func (s *Server) PairInfo() PairInfo {
+	_, port, _ := net.SplitHostPort(s.addr)
+	return PairInfo{Token: s.cfg.Token, Port: port}
+}
 
 // Close 关闭监听和全部会话。
 func (s *Server) Close() error {

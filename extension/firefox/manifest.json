@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Page Bridge",
-  "version": "0.3.23",
+  "version": "0.3.24",
   "description": "在绑定的 Camoufox 账号中执行豆包和千问任务。",
   "browser_specific_settings": { "gecko": { "id": "{00000000-0000-4000-8000-000000000001}" } },
   "icons": {

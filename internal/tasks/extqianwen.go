@@ -3,6 +3,7 @@ package tasks
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -76,27 +77,29 @@ type extImage struct {
 }
 
 type extAck struct {
-	Name           string     `json:"name"`
-	OK             *bool      `json:"ok"`
-	Code           string     `json:"code"`
-	Message        string     `json:"message"`
-	CaptchaBlocked bool       `json:"captchaBlocked"`
-	Kind           string     `json:"kind"`
-	Baxia          bool       `json:"baxia"`
-	Crop           string     `json:"crop"`
-	Images         []extImage `json:"images"`
-	DataBase64     string     `json:"dataBase64"`
-	Total          int        `json:"total"`
-	Offset         int        `json:"offset"`
-	Done           bool       `json:"done"`
-	Path           string     `json:"path"`
-	Conversation   string     `json:"conversation"`
-	TabID          int        `json:"tabId"`
-	Ready          bool       `json:"ready"`
-	Reusable       bool       `json:"reusable"`
-	Attachments    []string   `json:"attachments"`
-	Applied        bool       `json:"applied"`
-	Recovered      bool       `json:"recoveredFromConversation"`
+	Name            string     `json:"name"`
+	OK              *bool      `json:"ok"`
+	Code            string     `json:"code"`
+	Message         string     `json:"message"`
+	CaptchaBlocked  bool       `json:"captchaBlocked"`
+	Kind            string     `json:"kind"`
+	Baxia           bool       `json:"baxia"`
+	Crop            string     `json:"crop"`
+	Images          []extImage `json:"images"`
+	DataBase64      string     `json:"dataBase64"`
+	TransferID      string     `json:"transferId"`
+	DownloadExpired bool       `json:"downloadExpired"`
+	Total           int        `json:"total"`
+	Offset          int        `json:"offset"`
+	Done            bool       `json:"done"`
+	Path            string     `json:"path"`
+	Conversation    string     `json:"conversation"`
+	TabID           int        `json:"tabId"`
+	Ready           bool       `json:"ready"`
+	Reusable        bool       `json:"reusable"`
+	Attachments     []string   `json:"attachments"`
+	Applied         bool       `json:"applied"`
+	Recovered       bool       `json:"recoveredFromConversation"`
 }
 
 func (e *Engine) useExtension(platform string) bool {
@@ -108,6 +111,11 @@ func (e *Engine) useExtension(platform string) bool {
 
 func (e *Engine) useBoundExtension(platform string) bool {
 	return e != nil && e.store != nil && (platform == "豆包" || platform == "千问") && e.store.Get(extbridge.SettingBrowserBackend) == "camoufox_extension"
+}
+
+func (e *Engine) chromeAccount(id int64) bool {
+	row, ok := e.browserByID(id)
+	return ok && row.Engine == store.EngineChromeCDP
 }
 
 func (e *Engine) rotateExtBatch() {
@@ -141,8 +149,8 @@ func (e *Engine) closeExtensionBridge() {
 	pair := e.pair
 	e.extSrv = nil
 	e.pair = nil
-	e.extToken = ""
-	e.extListen = ""
+	e.extConfig = extbridge.PairInfo{}
+	e.extErr = ""
 	e.extMu.Unlock()
 	if srv != nil {
 		_ = srv.Close()
@@ -210,69 +218,55 @@ func (e *Engine) BridgeStatus() BridgeStatus {
 	}
 	e.extMu.Lock()
 	defer e.extMu.Unlock()
-	st := BridgeStatus{Addr: e.extListen, Err: e.extErr}
+	st := BridgeStatus{Err: e.extErr}
 	if e.extSrv == nil {
 		return st
 	}
 	st.Listening = true
-	qianwen, doubao, detail, addr := e.extSrv.Snapshot()
-	st.Qianwen = qianwen
-	st.Doubao = doubao
-	st.Detail = detail
-	if addr != "" {
-		st.Addr = addr
-	}
+	st.Qianwen, st.Doubao, st.Detail, st.Addr = e.extSrv.Snapshot()
 	return st
 }
 
 func (e *Engine) extensionServer() (*extbridge.Server, error) {
 	e.extStartMu.Lock()
 	defer e.extStartMu.Unlock()
-	token := extbridge.DefaultExtToken
-	port := extbridge.DefaultExtPort
+	preferred := extbridge.PairInfo{Token: extbridge.DefaultExtToken, Port: extbridge.DefaultExtPort}
 	if e.store != nil {
-		token = extbridge.NormalizeExtToken(e.store.Get(extbridge.SettingExtToken))
-		port = extbridge.NormalizeExtPort(e.store.Get(extbridge.SettingExtPort))
+		preferred.Token = extbridge.NormalizeExtToken(e.store.Get(extbridge.SettingExtToken))
+		preferred.Port = extbridge.NormalizeExtPort(e.store.Get(extbridge.SettingExtPort))
 	}
-	addr := net.JoinHostPort("127.0.0.1", port)
 	e.extMu.Lock()
-	if e.extSrv != nil && e.extToken == token && e.extListen == addr {
+	if e.extSrv != nil && e.extConfig == preferred {
 		srv := e.extSrv
 		e.extMu.Unlock()
 		return srv, nil
 	}
 	old := e.extSrv
 	e.extSrv = nil
-	e.extToken = ""
-	e.extListen = ""
 	e.extMu.Unlock()
 	if old != nil {
 		_ = old.Close()
 	}
+	addr := net.JoinHostPort("127.0.0.1", preferred.Port)
 	srv, err := extbridge.Listen(extbridge.Config{
-		Addr:    addr,
-		Token:   token,
-		OnHello: e.noteHello,
-		OnEvent: e.noteExtensionEvent,
-		OnChange: func() {
-			e.fireBridgeChange()
-		},
+		Addr:              addr,
+		Token:             preferred.Token,
+		AllowPortFallback: true,
+		OnHello:           e.noteHello,
+		OnEvent:           e.noteExtensionEvent,
+		OnChange:          e.fireBridgeChange,
 	})
 	e.extMu.Lock()
 	defer e.extMu.Unlock()
 	if err != nil {
-		e.extErr = fmt.Sprintf("页面桥没有在听 %s：%v。若端口被占用，关掉另一个 tulai，或修改 extBridgePort 后重新打开。", addr, err)
-		return nil, errors.New(e.extErr)
-	}
-	if e.extSrv != nil {
-		go srv.Close()
-		return e.extSrv, nil
+		err = fmt.Errorf("页面桥监听 %s 失败：%w", addr, err)
+		e.extErr = err.Error()
+		return nil, err
 	}
 	e.extSrv = srv
 	e.extErr = ""
-	e.extToken = token
-	e.extListen = addr
-	logging.Log.Info("扩展桥监听 %s", srv.Addr())
+	e.extConfig = preferred
+	logging.Log.Info("扩展桥监听 %s（首选端口 %s）", srv.Addr(), preferred.Port)
 	return srv, nil
 }
 
@@ -569,7 +563,7 @@ func (e *Engine) extensionAccountKey(id int64) string {
 	}
 	for _, b := range e.store.Browsers() {
 		if b.ID == id {
-			if b.ExtAccount == "" && e.useBoundExtension(b.Platform) {
+			if b.ExtAccount == "" && b.Engine != store.EngineChromeCDP && e.useBoundExtension(b.Platform) {
 				return "tulai-bound-" + strconv.FormatInt(id, 10)
 			}
 			return b.ExtAccount
@@ -841,50 +835,55 @@ func waitBoundPage(ctx context.Context, sess *extbridge.Session, taskID, platfor
 
 // boundAddonDir 取或建该绑定账号的 Firefox 页面桥目录。目录串同时是浏览器复用的键：
 // 查看面板用同一目录预装页面桥后，任务开始即可复用已打开的浏览器。
-func (e *Engine) boundAddonDir(row store.Browser) (string, error) {
-	if _, err := e.extensionServer(); err != nil {
+func (e *Engine) boundAddonDir(row store.Browser, task bool) (string, error) {
+	srv, err := e.extensionServer()
+	if err != nil {
 		return "", err
 	}
+	info := srv.PairInfo()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.cancelIdleCloseLocked(row.ID)
 	account := "tulai-bound-" + strconv.FormatInt(row.ID, 10)
-	if dir := e.firefoxAddons[row.ID]; dir != "" {
+	dir := e.firefoxAddons[row.ID]
+	if dir != "" {
 		// 切换「显示浏览器窗口」后浏览器会按新形态重开，届时读到新的配置。
-		info := e.pairInfo()
 		if err := extbundle.WriteFirefoxBridgeSettings(dir, info.Port, info.Token, account, e.browsers.TaskVisible()); err != nil {
 			return "", fmt.Errorf("准备 Firefox 页面桥: %w", err)
 		}
-		return dir, nil
-	}
-	dir, err := os.MkdirTemp("", "tulai-firefox-bridge-")
-	if err == nil {
-		info := e.pairInfo()
-		_, err = extbundle.InstallFirefoxBridge(dir, info.Port, info.Token, account)
-		if err == nil && e.browsers.TaskVisible() {
-			err = extbundle.WriteFirefoxBridgeSettings(dir, info.Port, info.Token, account, true)
+	} else {
+		dir, err = os.MkdirTemp("", "tulai-firefox-bridge-")
+		if err == nil {
+			_, err = extbundle.InstallFirefoxBridge(dir, info.Port, info.Token, account)
+			if err == nil && e.browsers.TaskVisible() {
+				err = extbundle.WriteFirefoxBridgeSettings(dir, info.Port, info.Token, account, true)
+			}
 		}
-	}
-	if err != nil {
-		if dir != "" {
-			_ = os.RemoveAll(dir)
+		if err != nil {
+			if dir != "" {
+				_ = os.RemoveAll(dir)
+			}
+			return "", fmt.Errorf("准备 Firefox 页面桥: %w", err)
 		}
-		return "", fmt.Errorf("准备 Firefox 页面桥: %w", err)
+		if e.firefoxAddons == nil {
+			e.firefoxAddons = map[int64]string{}
+		}
+		e.firefoxAddons[row.ID] = dir
 	}
-	if e.firefoxAddons == nil {
-		e.firefoxAddons = map[int64]string{}
+	if task {
+		e.cancelIdleCloseLocked(row.ID)
+	} else {
+		e.armIdleCloseLocked(row.ID)
 	}
-	e.firefoxAddons[row.ID] = dir
 	return dir, nil
 }
 
 // BoundAddonDir 给界面预装页面桥：绑定模式下的账号用它打开，任务随后直接复用。
 // 不适用绑定模式时返回空串；失败返回错误，调用方回退普通打开。
 func (e *Engine) BoundAddonDir(row store.Browser) (string, error) {
-	if e == nil || e.browsers == nil || e.store == nil || row.ExtAccount != "" || !e.useBoundExtension(row.Platform) {
+	if e == nil || e.browsers == nil || e.store == nil || row.Engine == store.EngineChromeCDP || row.ExtAccount != "" || !e.useBoundExtension(row.Platform) {
 		return "", nil
 	}
-	return e.boundAddonDir(row)
+	return e.boundAddonDir(row, false)
 }
 
 func (e *Engine) startBoundExtension(ctx context.Context, t *Task) error {
@@ -895,20 +894,22 @@ func (e *Engine) startBoundExtension(ctx context.Context, t *Task) error {
 	if !ok || row.ExtAccount != "" {
 		return fmt.Errorf("绑定账号不存在")
 	}
-	dir, err := e.boundAddonDir(row)
-	if err != nil {
-		return err
-	}
 	strat := strategy.Factory(t.Platform)
 	if strat == nil {
 		return fmt.Errorf("不支持的平台 %s", t.Platform)
 	}
+	dir, err := e.boundAddonDir(row, true)
+	if err != nil {
+		return err
+	}
+	e.trimIdleBrowsers()
 	if _, err := e.browsers.StartTaskWithAddon(ctx, row, e.dataRoot, strat.HomeURL(), dir); err != nil {
+		e.armIdleClose(row.ID)
 		return fmt.Errorf("启动浏览器[%s]: %w", row.Name, err)
 	}
 	e.mu.Lock()
 	if e.runBrowsers != nil {
-		e.runBrowsers[row.ID] = struct{}{}
+		e.runBrowsers[row.ID] = dir
 	}
 	e.mu.Unlock()
 	e.store.SetRunning(row.ID, true)
@@ -1039,7 +1040,7 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 	}
 	out.sawDownload = true
 	downloadStart := time.Now()
-	out.Results, out.sourceIndices, err = downloadExtensionResults(ctx, sess, job.TaskID, platform, body.Images, workers)
+	out.Results, out.sourceIndices, err = downloadExtensionResults(ctx, sess, job.TaskID, platform, body.TabID, body.Images, workers)
 	out.Download = time.Since(downloadStart)
 	if platform == "豆包" && job.VerifyAttachments {
 		logging.Log.Info("扩展任务 %s 下载 %d/%d 张结果用时 %.1f 秒", job.TaskID, len(out.Results), len(body.Images), out.Download.Seconds())
@@ -1055,7 +1056,7 @@ type extensionDownloadResult struct {
 // Downloads are independent, but the result and source index must stay paired even
 // when the browser finishes requests out of order. Partial failures remain available
 // to the caller for quarantine rather than being assigned to the wrong source.
-func downloadExtensionResults(ctx context.Context, sess *extbridge.Session, taskID, platform string, items []extImage, workers int) ([]strategy.Result, []int, error) {
+func downloadExtensionResults(ctx context.Context, sess *extbridge.Session, taskID, platform string, tabID int, items []extImage, workers int) ([]strategy.Result, []int, error) {
 	values := make([]extensionDownloadResult, len(items))
 	jobs := make(chan int, len(items))
 	for i := range items {
@@ -1069,7 +1070,7 @@ func downloadExtensionResults(ctx context.Context, sess *extbridge.Session, task
 				if ctx.Err() != nil {
 					return
 				}
-				values[i].result, values[i].err = downloadExtensionImage(ctx, sess, taskID, platform, items[i])
+				values[i].result, values[i].err = downloadExtensionImage(ctx, sess, taskID, platform, tabID, items[i])
 			}
 		})
 	}
@@ -1094,13 +1095,13 @@ func downloadExtensionResults(ctx context.Context, sess *extbridge.Session, task
 	return results, indices, resultErr
 }
 
-func downloadExtensionImage(ctx context.Context, sess *extbridge.Session, taskID, platform string, item extImage) (strategy.Result, error) {
+func downloadExtensionImage(ctx context.Context, sess *extbridge.Session, taskID, platform string, tabID int, item extImage) (strategy.Result, error) {
 	var data []byte
 	var usedURL string
 	var removed bool
 	var err error
 	if platform == "豆包" && item.RawURL != "" {
-		data, err = extDownloadURL(ctx, sess, taskID, item.RawURL, platform)
+		data, err = extDownloadURL(ctx, sess, taskID, item.RawURL, platform, tabID)
 		if err == nil && validRawResult(data) {
 			usedURL, removed = item.RawURL, true
 			logging.Log.Info("扩展任务 %s 已取得豆包原图", taskID)
@@ -1109,7 +1110,7 @@ func downloadExtensionImage(ctx context.Context, sess *extbridge.Session, taskID
 		}
 	}
 	if data == nil && ctx.Err() == nil {
-		data, usedURL, removed, err = extDownload(ctx, sess, taskID, item.URL, platform)
+		data, usedURL, removed, err = extDownload(ctx, sess, taskID, item.URL, platform, tabID)
 	}
 	if ctx.Err() != nil {
 		return strategy.Result{}, ctx.Err()
@@ -1202,16 +1203,16 @@ func extUpload(ctx context.Context, sess *extbridge.Session, job QianwenJob, pla
 
 // extDownload 先按豆包 CDN 规则去掉水印查询（失败再退回页面原地址），
 // 字节校验通过后对豆包和千问跑 images.RemoveWatermark。匹配时返回的是去水印 PNG。
-func extDownload(ctx context.Context, sess *extbridge.Session, taskID, rawURL, platform string) ([]byte, string, bool, error) {
+func extDownload(ctx context.Context, sess *extbridge.Session, taskID, rawURL, platform string, tabID int) ([]byte, string, bool, error) {
 	if strings.TrimSpace(rawURL) == "" {
 		return nil, "", false, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "缺少图片地址"}
 	}
 	clean := strategy.PreferUnwatermarkedURL(rawURL)
-	data, err := extDownloadURL(ctx, sess, taskID, clean, platform)
+	data, err := extDownloadURL(ctx, sess, taskID, clean, platform, tabID)
 	used := clean
 	if err != nil && clean != rawURL && ctx.Err() == nil {
 		logging.Log.Warning("扩展结果去掉水印参数后下载失败，改用页面原地址")
-		data, err = extDownloadURL(ctx, sess, taskID, rawURL, platform)
+		data, err = extDownloadURL(ctx, sess, taskID, rawURL, platform, tabID)
 		used = rawURL
 	}
 	if err != nil {
@@ -1227,17 +1228,44 @@ func extDownload(ctx context.Context, sess *extbridge.Session, taskID, rawURL, p
 	return data, used, removed, nil
 }
 
-func extDownloadURL(ctx context.Context, sess *extbridge.Session, taskID, rawURL, platform string) ([]byte, error) {
+func extDownloadURL(ctx context.Context, sess *extbridge.Session, taskID, rawURL, platform string, tabID int) ([]byte, error) {
+	transferID := rand.Text()
+	retained := false
+	defer func() {
+		// Older bridges do not echo transferId and would interpret this as another download.
+		if retained {
+			_, _ = extCall(context.WithoutCancel(ctx), sess, extbridge.CmdDownload, taskID, "", map[string]any{
+				"url": rawURL, "transferId": transferID, "tabId": tabID, "release": true,
+			}, 2*time.Second, platform)
+		}
+	}()
 	var buf []byte
-	offset := 0
+	total := 0
+	restarted := false
 	for {
+		offset := len(buf)
 		body, err := extCall(ctx, sess, extbridge.CmdDownload, taskID, "", map[string]any{
-			"url":    rawURL,
-			"offset": offset,
-			"limit":  extChunkRaw,
+			"url": rawURL, "offset": offset, "limit": extChunkRaw, "transferId": transferID, "tabId": tabID,
 		}, 45*time.Second, platform)
 		if err != nil {
+			if body.DownloadExpired && retained && offset > 0 && !restarted && ctx.Err() == nil {
+				restarted = true
+				buf, total = nil, 0
+				continue
+			}
 			return nil, err
+		}
+		if body.TransferID != "" {
+			if body.TransferID != transferID || (tabID > 0 && body.TabID != 0 && body.TabID != tabID) {
+				return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载分片与请求不符"}
+			}
+			retained = true
+			if body.TabID > 0 {
+				tabID = body.TabID
+			}
+			if body.Offset != offset {
+				return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载分片位置不符"}
+			}
 		}
 		if body.Path != "" && len(body.DataBase64) == 0 {
 			data, err := readExtDownload(body.Path)
@@ -1246,19 +1274,34 @@ func extDownloadURL(ctx context.Context, sess *extbridge.Session, taskID, rawURL
 			}
 			return validateExtImage(data)
 		}
+		if body.Total < 0 || body.Total > extMaxDownload {
+			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "结果图大小超出允许范围"}
+		}
+		if body.Total > 0 {
+			if total != 0 && body.Total != total {
+				return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载期间图片大小发生变化"}
+			}
+			total = body.Total
+		}
 		chunk, err := base64.StdEncoding.DecodeString(body.DataBase64)
 		if err != nil {
 			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载数据不是 base64"}
 		}
-		buf = append(buf, chunk...)
-		offset += len(chunk)
-		if body.Done || (body.Total > 0 && offset >= body.Total) {
-			if body.Total > 0 && offset != body.Total {
+		if len(chunk) > extMaxDownload-offset {
+			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "结果图超过 64 MiB 上限"}
+		}
+		if offset == 0 {
+			buf = chunk
+		} else {
+			buf = append(buf, chunk...)
+		}
+		if body.Done || (total > 0 && len(buf) >= total) {
+			if total > 0 && len(buf) != total {
 				return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载分片长度不符"}
 			}
 			return validateExtImage(buf)
 		}
-		if len(chunk) == 0 || offset > extMaxDownload {
+		if len(chunk) == 0 {
 			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载没有推进"}
 		}
 	}

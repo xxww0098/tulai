@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -11,7 +12,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/xxww0098/tulai/internal/agy"
+	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
@@ -116,17 +119,60 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 	}
 	events := make(chan runEvent, 32)
 	sched := &slotSched{notify: make(chan struct{})}
-	g, _ := errgroup.WithContext(ctx)
+	var checkLauncher func(string) error
+	if attempt == nil {
+		attempt = e.attempt
+		if e.browsers != nil && e.store != nil && extbridge.NormalizeBrowserBackend(e.store.Get(extbridge.SettingBrowserBackend)) != "extension" {
+			rows, fallback := e.store.Browsers(), e.pageBackend()
+			checks := map[string]func() error{}
+			defer e.unavailableEngines.Clear()
+			for _, kind := range []string{browser.KindCamoufox, browser.KindChromeCDP} {
+				checks[kind] = sync.OnceValue(func() error {
+					err := e.browsers.CheckLauncher(ctx, kind)
+					if err != nil {
+						e.unavailableEngines.Store(kind, true)
+					}
+					return err
+				})
+			}
+			checkLauncher = func(platform string) error {
+				var errs []error
+				kinds := browser.AccountEngines(rows, platform, fallback)
+				for _, kind := range kinds {
+					if err := checks[kind](); err != nil {
+						errs = append(errs, err)
+					}
+				}
+				if len(errs) < len(kinds) {
+					return nil
+				}
+				return errors.Join(errs...)
+			}
+		}
+	}
+	var g errgroup.Group
 	for _, name := range order {
 		tasks := groups[name]
 		platform := name
 		g.Go(func() error {
+			if checkLauncher != nil && (platform == "豆包" || platform == "千问" || platform == "ChatGPT") {
+				if err := checkLauncher(platform); err != nil {
+					if ctx.Err() != nil {
+						e.stopQueued(tasks, events)
+						return nil
+					}
+					e.stopQueuedWithReason(tasks, events, err.Error())
+					logging.Log.Errorf("%s网页浏览器启动检查失败: %v", platform, err)
+					return err
+				}
+			}
 			e.drivePlatform(ctx, platform, tasks, sched, events, onTask, attempt)
 			return nil
 		})
 	}
+	var groupErr error
 	go func() {
-		_ = g.Wait()
+		groupErr = g.Wait()
 		close(events)
 	}()
 	done := 0
@@ -150,7 +196,9 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 			onProgress(Progress{Done: done, Total: total})
 		}
 		if ev.task.Status == StatusSkipped {
-			skipped[ev.task.Platform]++
+			if ev.task.Error == "已停止" {
+				skipped[ev.task.Platform]++
+			}
 			continue
 		}
 		line := logging.Line{
@@ -179,7 +227,10 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 			Msg: fmt.Sprintf("已停止：%s %d 个任务跳过", name, n),
 		})
 	}
-	return runErr
+	if runErr != nil {
+		return runErr
+	}
+	return groupErr
 }
 
 func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Task, sched *slotSched, events chan<- runEvent, onTask func(Task), attempt func(context.Context, *Task) error) {
@@ -444,6 +495,18 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				claimed = resource
 				task.avoidBrowser = 0
 				pending[i] = task
+				// A Firefox batch can rotate before submission. Direct CDP saves
+				// one result per source, so put each original task back in the queue.
+				if len(task.batch) > 1 && !task.submitted && e.chromeAccount(task.BrowserID) {
+					members := batchMembers(task)
+					for j := range members {
+						members[j].sendSeq, members[j].maxBatch = task.sendSeq, 1
+						members[j].ranOn, members[j].slot = 0, 0
+						members[j].Prompt = task.Prompt
+					}
+					pending = slices.Replace(pending, i, i+1, members...)
+					task = pending[i]
+				}
 				maxImages := washChatTasks
 				if limit := washBatchLimits[task.BrowserID]; limit > 0 {
 					maxImages = limit

@@ -507,7 +507,7 @@ func (a *App) startDownloadTask(t *downloadTask) {
 		}
 		a.dlRun(func() { a.finishDownloadTask(t, err) })
 	}
-	if a.window == nil {
+	if !a.hasWindow() {
 		run()
 	} else {
 		go run()
@@ -602,12 +602,14 @@ func downloadTaskDir(t *downloadTask) string {
 
 // dlRun 让状态改动落到界面线程；测试里没有窗口时直接执行。
 func (a *App) dlRun(fn func()) {
-	win := a.window
-	if win == nil {
+	if !a.hasWindow() {
 		fn()
 		return
 	}
-	win.Update(fn)
+	a.postUI(func() {
+		fn()
+		a.emit("download")
+	})
 }
 
 func (a *App) applyTaskProgress(t *downloadTask, p download.Progress) {

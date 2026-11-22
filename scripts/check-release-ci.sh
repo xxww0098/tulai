@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version=$(jq -r .version mygo.json)
-if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+version=$(awk '/^version:[[:space:]]*/ {sub(/^version:[[:space:]]*/, ""); gsub(/["\047[:space:]]/, ""); print; exit}' cmd/tulai/nsgo.yaml)
+if [[ -z "$version" || "$GITHUB_REF_NAME" != "v$version" ]]; then
   echo "tag $GITHUB_REF_NAME does not match version $version" >&2
   exit 1
 fi

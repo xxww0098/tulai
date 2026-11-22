@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/extbridge"
 )
 
@@ -216,5 +221,61 @@ func TestConcurrentBoundAccountsShareBridgeListener(t *testing.T) {
 			t.Fatalf("bridge listener=%v err=%v", got.srv, got.err)
 		}
 		first = got.srv
+	}
+}
+
+func TestBoundFirefoxBridgeWithOccupiedPort(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	_, preferred, _ := net.SplitHostPort(occupied.Addr().String())
+	st := openTaskStore(t)
+	st.Set(extbridge.SettingExtPort, preferred)
+	st.Set(extbridge.SettingExtToken, "bound-fixture-token")
+	row := addNamed(t, st, "豆包", "测试")
+	e := NewEngine(st, browser.NewManager(), nil, t.TempDir())
+	t.Cleanup(e.CloseSessions)
+
+	dir, err := e.BoundAddonDir(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := e.BridgeStatus()
+	host, port, err := net.SplitHostPort(status.Addr)
+	if err != nil || !status.Listening || status.Err != "" || host != "127.0.0.1" || port == preferred || port == "0" {
+		t.Fatalf("expected a private loopback listener, got %+v", status)
+	}
+	info := e.pairInfo()
+	if info.Port != port || info.Token != "bound-fixture-token" {
+		t.Fatal("pairing did not return the active bridge's port and token")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "firefox", "settings.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct{ Port, Token, ProfileID string }
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(string(raw), "globalThis.TULAI_FIREFOX_CONFIG = ")), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.Port != port || settings.Token != info.Token || settings.ProfileID != e.extensionAccountKey(row.ID) {
+		t.Fatal("the installed Firefox bridge does not match the active listener and account")
+	}
+	if ack := helloBridge(t, net.JoinHostPort(host, settings.Port), settings.Token); ack.Type != extbridge.TypeAck {
+		t.Fatalf("bound hello: %s", ack.Type)
+	}
+	if err := occupied.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.boundAddonDir(row, true); err != nil {
+		t.Fatal(err)
+	}
+	if e.BridgeStatus().Addr != status.Addr || st.Get(extbridge.SettingExtPort) != preferred {
+		t.Fatal("starting a task changed the live port or overwrote the saved preference")
+	}
+	e.CloseSessions()
+	if info := e.pairInfo(); info != (extbridge.PairInfo{}) {
+		t.Fatal("pairing still advertises a closed bridge")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/agy"
+	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -176,6 +177,9 @@ func (e *Engine) accountsFor(platform string) []store.Browser {
 	var out []store.Browser
 	for _, b := range e.store.Browsers() {
 		if b.Platform != platform {
+			continue
+		}
+		if _, unavailable := e.unavailableEngines.Load(browser.CanonicalBackend(b.Engine)); unavailable && b.ExtAccount == "" && platform != agy.Platform {
 			continue
 		}
 		if extension && b.ExtAccount == "" {
