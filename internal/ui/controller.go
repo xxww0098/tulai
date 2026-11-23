@@ -1280,7 +1280,7 @@ func (a *App) numberingFor(page int) tasks.Numbering {
 }
 
 func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
-	return tasks.Options{
+	opts := tasks.Options{
 		Platforms:           platforms,
 		Prompts:             promptList,
 		PromptSuffix:        a.promptSuffix,
@@ -1297,6 +1297,7 @@ func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
 		TaskSwitchingCount:  int(a.switchCount),
 		StartBrowserIndex:   int(a.startBrowserIdx),
 		OutputPath:          a.outputPath,
+		Numbering:           a.numberingFor(a.statePage),
 		OutputSize:          a.doubaoOutputSize(),
 		RemoveWatermark:     a.removeWatermark,
 		DownloadConcurrency: int(a.downloadConc),
@@ -1311,6 +1312,19 @@ func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
 		AgyHomeRoot:         a.agyHomeRoot,
 		AgyTimeoutSec:       a.agyTimeoutSec(),
 	}
+	switch a.statePage {
+	case pageWash:
+		opts.Wash = true
+		opts.UseSuffix = false
+		opts.SoloImages = a.washSoloPaths()
+	case pageFission:
+		opts.Fission = true
+		opts.UseSuffix = false
+		opts.StructuredPrompt = ""
+		opts.WaitResult = true
+		opts.RemoveWatermark = false
+	}
+	return opts
 }
 
 func (a *App) resolvedOutputDir() string {

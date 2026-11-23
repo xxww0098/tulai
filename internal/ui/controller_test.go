@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -28,6 +29,49 @@ func TestFocusedBrowserDrawerKeyboard(t *testing.T) {
 	}
 	if !a.handleBrowserDrawerKey(core.KeyEvent{Key: "Escape"}) || a.browserDrawer != nil || len(drawer.inputs) != 0 {
 		t.Fatal("Escape should close the focused drawer without forwarding a key to the webpage")
+	}
+}
+
+func TestWashWorkbenchBatchesFreshSourcesAndIsolatesModerationRetries(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	account, err := st.AddBrowser("豆包", "测试", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.UpdateBrowser(account.ID, false, true)
+	engine := tasks.NewEngine(st, nil, nil, dir)
+	defer engine.Shutdown()
+	a := &App{tab: pageWash, statePage: pageWash, dailyCap: 50, dailyCapSet: true}
+	for i := 1; i <= 23; i++ {
+		a.sources = append(a.sources, sourceImage{Path: fmt.Sprintf("source-%02d.png", i)})
+	}
+	options := func() tasks.Options {
+		return a.taskOptions([]string{"豆包"}, a.taskPromptList(), a.washPendingPaths())
+	}
+	var batches [][]string
+	err = engine.RunObserved(t.Context(), options(), func(tasks.Task) {}, func(tasks.Progress) {}, func(_ context.Context, task *tasks.Task) error {
+		batches = append(batches, slices.Clone(task.Images))
+		return nil
+	})
+	want := slices.Collect(slices.Chunk(a.washPendingPaths(), 10))
+	if err != nil || !slices.EqualFunc(batches, want, slices.Equal[[]string]) {
+		t.Fatalf("dispatched %v, want 10 + 10 + 3 in input order, err=%v", batches, err)
+	}
+	rejection := "审核不通过"
+	a.sources[2].Washed = true
+	a.queue = []tasks.Task{
+		{Images: []string{a.sources[0].Path}, Status: tasks.StatusFailed, Error: rejection},
+		{Images: []string{a.sources[1].Path}, Status: tasks.StatusFailed, Error: rejection},
+		{Images: []string{a.sources[1].Path}, Status: tasks.StatusFailed, Error: "出图超时"},
+		{Images: []string{a.sources[2].Path}, Status: tasks.StatusFailed, Error: rejection},
+	}
+	if got := options().SoloImages; !slices.Equal(got, []string{a.sources[0].Path}) {
+		t.Fatalf("individual retries = %v, want only %s", got, a.sources[0].Path)
 	}
 }
 

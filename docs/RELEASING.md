@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.35
+# 发布 tulai 0.1.36
 
-当前桌面端版本是 **0.1.35**，标签 **`v0.1.35`**，随附页面桥 **0.3.24**。扩展版本独立编号。
+当前桌面端版本是 **0.1.36**，标签 **`v0.1.36`**，随附页面桥 **0.3.24**。扩展版本独立编号。
+
+## 0.1.36
+
+修复桌面端「开始洗图」把所有豆包原图都标为单独发送的问题。Camoufox 实站验证中，11 张原图按 10 张和 1 张发送并全部保存。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.35
 
@@ -164,8 +168,8 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.35` | `cmd/tulai/nsgo.yaml` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
-| Go 模块 | `v0.1.35` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
+| 桌面端 | `0.1.36` | `cmd/tulai/nsgo.yaml` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.36` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
 | 页面桥扩展 | `0.3.24` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
@@ -201,8 +205,8 @@ git push origin vX.Y.Z
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows 安装器 | `tulai.Setup.0.1.35.amd64.exe`、`tulai.Setup.0.1.35.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
-| Windows 便携版 | `tulai-0.1.35-windows-amd64.exe`、`tulai-0.1.35-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
+| Windows 安装器 | `tulai.Setup.0.1.36.amd64.exe`、`tulai.Setup.0.1.36.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.36-windows-amd64.exe`、`tulai-0.1.36-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
 | 页面桥 | `tulai-extension-0.3.24.zip` | 独立扩展包。绑定的 Camoufox 账号由 tulai 加载内置页面桥。 |
 
 `SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。

@@ -708,9 +708,16 @@ func (a *App) fissionPrompt() string {
 }
 
 func (a *App) washSoloPaths() []string {
+	st := a.stateOf(pageWash)
+	lastModeration := make(map[string]bool, len(st.queue))
+	for _, item := range st.queue {
+		if len(item.Images) == 1 {
+			lastModeration[filepath.Clean(item.Images[0])] = tasks.ClassifyFailure(item.Status, item.Error).Class == tasks.FailModeration
+		}
+	}
 	var paths []string
-	for _, si := range a.sources {
-		if si.Path != "" {
+	for _, si := range st.sources {
+		if !si.Washed && si.Path != "" && lastModeration[filepath.Clean(si.Path)] {
 			paths = append(paths, si.Path)
 		}
 	}
@@ -1069,18 +1076,6 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	opts := a.taskOptions(platforms, promptList, paths)
 	opts.OutputPath = dir
 	page := a.statePage
-	opts.Numbering = a.numberingFor(page)
-	if page == pageWash {
-		opts.Wash = true
-		opts.UseSuffix = false
-		opts.SoloImages = a.washSoloPaths()
-	} else if page == pageFission {
-		opts.Fission = true
-		opts.UseSuffix = false
-		opts.StructuredPrompt = ""
-		opts.WaitResult = true
-		opts.RemoveWatermark = false
-	}
 	previousView := a.engine.View()
 	previous := a.stateOf(page)
 	a.fissionRetryBase = nil
