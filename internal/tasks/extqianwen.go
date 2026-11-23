@@ -657,7 +657,7 @@ func (e *Engine) attemptDoubaoExtension(ctx context.Context, t *Task) error {
 }
 
 func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocolPlatform, label string) error {
-	trackUse := e.useBoundExtension(t.Platform) && t.Platform == "豆包" && (e.opts.Wash || e.opts.Fission) && e.opts.WaitResult
+	trackUse := e.useBoundExtension(t.Platform) && t.Platform == "豆包" && (e.opts.Wash || e.opts.Fission) && (e.opts.WaitResult || len(t.batch) > 1)
 	if trackUse {
 		t.noUse = !t.submitted
 	}
@@ -694,7 +694,8 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		}
 		e.tracePhase(t, "browser", "浏览器就绪", time.Since(browserAt), 0, nil)
 	}
-	boundWash := e.useBoundExtension(t.Platform) && t.Platform == "豆包" && e.opts.Wash && e.opts.WaitResult && len(t.Images) > 0 && strings.TrimSpace(t.Prompt) != ""
+	boundWash := boundBrowser && t.Platform == "豆包" && e.opts.Wash && len(t.Images) > 0 &&
+		(len(t.batch) > 1 || (e.opts.WaitResult && strings.TrimSpace(t.Prompt) != ""))
 	var wash extensionWashChat
 	if boundWash {
 		if t.submitted {
@@ -736,9 +737,6 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		// 原生比例交给豆包「比例」菜单，提示词里不再重复；设不上时 runExtension 会补回比例行。
 		prompt = strings.TrimSpace(t.Prompt)
 		nativeRatio = ratio
-	}
-	if len(t.batch) > 1 {
-		prompt += fmt.Sprintf("\n请将以上 %d 张图片分别进行洗图，严格按照附件顺序依次生成 %d 张独立结果图，每张结果只对应同位置的原图。不要拼图、合并或遗漏。", len(t.batch), len(t.batch))
 	}
 	out, err := runExtension(ctx, sess, QianwenJob{
 		TaskID:            strconv.Itoa(t.Index),
@@ -782,10 +780,14 @@ func (e *Engine) attemptPlatformExtension(ctx context.Context, t *Task, protocol
 		t.sendSeq++
 	}
 	if boundWash {
+		if !e.opts.WaitResult {
+			e.clearExtensionWash(t.BrowserID)
+			return err
+		}
 		t.washWaitTimedOut = t.submitted && len(t.batch) > 1 && out.sawWait && !out.sawDownload &&
 			ctx.Err() == nil && extbridge.CodeOf(err) == extbridge.ETimeout
 		saveAt := time.Now()
-		resultErr := e.saveExtensionWash(ctx, t, out.Results, out.sourceIndices, err)
+		resultErr := e.saveWashResults(ctx, nil, t, out.Results, out.sourceIndices, err)
 		if len(out.Results) > 0 {
 			e.tracePhase(t, "save", "保存结果", time.Since(saveAt), len(t.Results), resultErr)
 		}
@@ -943,7 +945,7 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		job.IdempotencyPrefix = job.TaskID
 	}
 	if platform == "豆包" && job.VerifyAttachments && len(job.Images) > 1 {
-		job.Prompt = doubaoBatchPrompt(job)
+		job.Prompt = strategy.DoubaoWashPrompt(job.Prompt, job.uploadNames())
 	}
 	if _, err := extCall(ctx, sess, extbridge.CmdCaptchaAssist, job.TaskID, "", nil, 10*time.Second, platform); err != nil {
 		return out, err
@@ -1010,11 +1012,7 @@ func runExtension(ctx context.Context, sess *extbridge.Session, job QianwenJob, 
 		"timeoutMs": job.Wait.Milliseconds(),
 	}
 	if platform == "豆包" && job.VerifyAttachments && len(job.Images) > 1 {
-		names := make([]string, len(job.Images))
-		for i := range job.Images {
-			names[i] = extUploadName(job, i)
-		}
-		waitPayload["expectedAttachments"] = names
+		waitPayload["expectedAttachments"] = job.uploadNames()
 	}
 	out.sawWait = true
 	waitStart := time.Now()
@@ -1124,15 +1122,12 @@ func downloadExtensionImage(ctx context.Context, sess *extbridge.Session, taskID
 	return strategy.Result{URL: usedURL, Src: "extension", TS: time.Now().UnixMilli(), Data: data, WatermarkRemoved: removed}, nil
 }
 
-func doubaoBatchPrompt(job QianwenJob) string {
-	// 复用对话时，相同提示词可能让豆包再次引用上一批源图。
-	var prompt strings.Builder
-	prompt.WriteString(job.Prompt)
-	prompt.WriteString("\n本批次仅使用本条消息新上传的以下附件，忽略历史消息中的图片。每张结果只能引用对应的当前附件：")
+func (job QianwenJob) uploadNames() []string {
+	names := make([]string, len(job.Images))
 	for i := range job.Images {
-		fmt.Fprintf(&prompt, "\n第 %d 张：%s", i+1, extUploadName(job, i))
+		names[i] = extUploadName(job, i)
 	}
-	return prompt.String()
+	return names
 }
 
 func extUploadName(job QianwenJob, index int) string {

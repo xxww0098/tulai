@@ -405,7 +405,7 @@ func TestFailureRotationWaitsForBusyTargetAccount(t *testing.T) {
 				Concurrency: 2, RetryCount: 1,
 			}
 			if tc.wash {
-				opts.Images = []string{"1.png", "2.png", "3.png", "4.png"}
+				opts.Images = numberedWashSources(12)
 				opts.Wash = true
 				opts.WaitResult = true
 			}

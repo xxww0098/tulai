@@ -102,27 +102,7 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 		}
 	}))
 	defer fixture.Close()
-	local, _ := url.Parse(fixture.URL)
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodConnect {
-			http.Error(w, "CONNECT only", http.StatusBadRequest)
-			return
-		}
-		upstream, err := net.Dial("tcp", local.Host)
-		if err != nil {
-			http.Error(w, "fixture unavailable", http.StatusBadGateway)
-			return
-		}
-		client, buffer, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			upstream.Close()
-			return
-		}
-		_, _ = buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
-		_ = buffer.Flush()
-		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(upstream, buffer) }()
-		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(client, upstream) }()
-	}))
+	proxy := washFixtureProxy(fixture)
 	defer proxy.Close()
 	events := make(chan extbridge.Envelope, 20)
 	// The fixture already owns the preferred port. Firefox must complete the job on the assigned port.
@@ -307,4 +287,29 @@ document.querySelector('[data-testid="chat_input_send_button"]').onclick=async()
 			t.Fatalf("recovered image %d did not download", i+1)
 		}
 	}
+}
+
+// Route every HTTPS origin, including the image CDN, to the local fixture.
+func washFixtureProxy(fixture *httptest.Server) *httptest.Server {
+	local, _ := url.Parse(fixture.URL)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "CONNECT only", http.StatusBadRequest)
+			return
+		}
+		upstream, err := net.Dial("tcp", local.Host)
+		if err != nil {
+			http.Error(w, "fixture unavailable", http.StatusBadGateway)
+			return
+		}
+		client, buffer, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			upstream.Close()
+			return
+		}
+		_, _ = buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		_ = buffer.Flush()
+		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(upstream, buffer) }()
+		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(client, upstream) }()
+	}))
 }

@@ -28,7 +28,7 @@ func TestConcurrentWashLogsProgressElapsedAndFailures(t *testing.T) {
 	// A previous run's individual task must not supply the elapsed time of
 	// an item bundled into the new run.
 	e.starts.Store(2, time.Now().Add(-24*time.Hour))
-	e.starts.Store(4, time.Now().Add(-24*time.Hour))
+	e.starts.Store(12, time.Now().Add(-24*time.Hour))
 	before := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -38,7 +38,7 @@ func TestConcurrentWashLogsProgressElapsedAndFailures(t *testing.T) {
 	go func() {
 		finished <- e.RunObserved(ctx, Options{
 			Platforms: []string{"豆包"}, Prompts: []string{"洗图"},
-			Images: []string{"a.png", "b.png", "c.png", "d.png"},
+			Images: numberedWashSources(12),
 			Wash:   true, WaitResult: true, Concurrency: 2,
 		}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
 			started <- task.BrowserID
@@ -78,7 +78,7 @@ func TestConcurrentWashLogsProgressElapsedAndFailures(t *testing.T) {
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}
-	for index := 1; index <= 4; index++ {
+	for index := 1; index <= 12; index++ {
 		value, ok := e.starts.Load(index)
 		if !ok || value.(time.Time).Before(before) {
 			t.Fatalf("第 %d 张沿用了旧的开始时间: %v", index, value)
@@ -89,13 +89,13 @@ func TestConcurrentWashLogsProgressElapsedAndFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{"任务开始：共 4 个", "[豆包/甲:", "[豆包/乙:", "已上传 2 张源图", "模拟下载错误", "任务结束", "run_id="} {
+	for _, want := range []string{"任务开始：共 12 个", "[豆包/甲:", "[豆包/乙:", "已上传 10 张源图", "已上传 2 张源图", "模拟下载错误", "任务结束", "run_id="} {
 		if !strings.Contains(text, want) {
 			t.Errorf("日志缺少 %q:\n%s", want, text)
 		}
 	}
-	for done := 1; done <= 4; done++ {
-		if want := fmt.Sprintf("进度 %d/4", done); !strings.Contains(text, want) {
+	for done := 1; done <= 12; done++ {
+		if want := fmt.Sprintf("进度 %d/12", done); !strings.Contains(text, want) {
 			t.Errorf("日志缺少 %q:\n%s", want, text)
 		}
 	}

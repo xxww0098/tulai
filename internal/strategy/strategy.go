@@ -38,13 +38,14 @@ var ErrModeration = errors.New("审核不通过")
 
 // Result 一张生成结果。
 type Result struct {
-	URL    string `json:"url"`
-	RawURL string `json:"rawUrl,omitempty"` // 豆包响应中的无水印原图地址
-	Src    string `json:"src"`              // net/dom/stream 来源
-	TS     int64  `json:"ts"`
-	Width  int    `json:"w,omitempty"` // 页面上已解码的像素宽
-	Height int    `json:"h,omitempty"` // 页面上已解码的像素高
-	Data   []byte `json:"-"`           // Ego 官方下载入口返回的原始文件
+	URL         string `json:"url"`
+	RawURL      string `json:"rawUrl,omitempty"` // 豆包响应中的无水印原图地址
+	Src         string `json:"src"`              // net/dom/stream 来源
+	TS          int64  `json:"ts"`
+	Width       int    `json:"w,omitempty"` // 页面上已解码的像素宽
+	Height      int    `json:"h,omitempty"` // 页面上已解码的像素高
+	SourceIndex int    `json:"-"`           // 豆包会话中已核对的源图序号，从 1 起。
+	Data        []byte `json:"-"`           // Ego 官方下载入口返回的原始文件
 	// WatermarkRemoved 为真表示扩展已下载无水印原图或完成局部修复。
 	WatermarkRemoved bool `json:"-"`
 }
@@ -386,10 +387,15 @@ func liveKey(images []Result) string {
 // 重新生成/复制和声明张数在真实豆包页面上经常没有，不能拿它们当门槛。
 // 到点还有实图就交回去保存；一张都没有就明确失败。
 func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
+	return waitForResult(s, timeout, nil)
+}
+
+func waitForResult(s *cdp.Session, timeout time.Duration, washAttachments []string) ([]Result, error) {
 	if s.IsEgo() {
 		return egoWaitForResult(s, timeout)
 	}
 	deadline := time.Now().Add(timeout)
+	nextProbe := time.Now().Add(time.Minute)
 	poll := 300 * time.Millisecond
 	var since time.Time
 	var key string
@@ -453,7 +459,12 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 					since = time.Now()
 				}
 				stable = time.Since(since)
-				if stable >= resultSettleFor(live.Images) {
+				if stable >= resultSettleFor(live.Images) && len(live.Images) >= len(washAttachments) {
+					if len(washAttachments) > 1 {
+						if matched := resolveDoubaoWash(s, washAttachments, live.Images); len(matched) > 0 {
+							return matched, nil
+						}
+					}
 					return live.Images, nil
 				}
 			} else {
@@ -463,6 +474,12 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 			if sig := detectKey(live); sig != lastDetect {
 				lastDetect = sig
 				logging.Log.Debugf("%s", detectLine(live, stable))
+			}
+			if len(washAttachments) > 1 && !live.Busy && time.Now().After(nextProbe) && time.Until(deadline) > 5*time.Second {
+				nextProbe = time.Now().Add(15 * time.Second)
+				if matched := resolveDoubaoWash(s, washAttachments, nil); len(matched) == len(washAttachments) {
+					return matched, nil
+				}
 			}
 		} else if err != nil {
 			if msg := err.Error(); msg != lastFail {
@@ -477,6 +494,14 @@ func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, erro
 		case <-s.Ctx().Done():
 			return nil, s.Ctx().Err()
 		case <-time.After(min(poll, time.Until(deadline))):
+		}
+	}
+	if len(washAttachments) > 1 {
+		if matched := resolveDoubaoWash(s, washAttachments, held); len(matched) > 0 {
+			return matched, nil
+		}
+		if len(held) == 0 {
+			return nil, ErrWashWaitTimeout
 		}
 	}
 	if len(held) > 0 && timeout >= imageStableFor {

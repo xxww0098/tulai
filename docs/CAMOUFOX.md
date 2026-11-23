@@ -8,7 +8,7 @@
 
 Chrome CDP 支持 Windows x64、macOS Intel / Apple Silicon 和 Linux x64。
 
-Chrome 版由 tulai 根据锁定的 Playwright 版本安装到应用数据目录的 `runtime/chrome-cdp/`，每个账号的资料位于 `BrowserData/Chrome-CDP/`。登录、任务和查看账号都由 tulai 启动该实例，Chrome 通过私有 CDP 管道接受操作，无需配置调试端口。豆包和千问的 Chrome 账号直接通过 CDP 操作页面，豆包洗图逐张提交。Firefox 页面桥的批量洗图用于 Camoufox 账号。网页图片下载专用环境和 Antigravity 网页授权使用 Camoufox。
+Chrome 版由 tulai 根据锁定的 Playwright 版本安装到应用数据目录的 `runtime/chrome-cdp/`，每个账号的资料位于 `BrowserData/Chrome-CDP/`。登录、任务和查看账号都由 tulai 启动该实例，Chrome 通过私有 CDP 管道接受操作，无需配置调试端口。豆包和千问的 Chrome 账号直接通过 CDP 操作页面。豆包批量洗图在两种浏览器上都按每条消息 10 张原图提交，尾批按剩余张数发送。网页图片下载专用环境和 Antigravity 网页授权使用 Camoufox。
 
 ## 安装与资料
 

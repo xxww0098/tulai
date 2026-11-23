@@ -7,58 +7,41 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
-
-// parallelWashBatchLimit balances one prompt across idle accounts while retaining
-// full batches when another prompt can already occupy the second account.
-func (e *Engine) parallelWashBatchLimit(pending []Task, index int, first Task, limit int) int {
-	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || !freshWashItem(first) {
-		return limit
-	}
-	if first.maxBatch == 1 {
-		return 1
-	}
-	if first.maxBatch > 1 {
-		limit = min(limit, first.maxBatch)
-	}
-	matching := 1
-	for i := index + 1; i < len(pending); i++ {
-		item := pending[i]
-		if item.Platform != first.Platform || item.maxBatch != first.maxBatch || !freshWashItem(item) {
-			continue
-		}
-		if item.Prompt != first.Prompt {
-			return limit
-		}
-		matching++
-	}
-	return min(limit, (matching+1)/2)
-}
 
 func freshWashItem(item Task) bool {
 	return item.Attempts == 0 && !item.submitted && item.Error == "" && len(item.Images) == 1 && len(item.batch) == 0
 }
 
+func (e *Engine) washBatchLimit(t Task, limit int, now time.Time) int {
+	if !e.opts.Wash || t.Platform != "豆包" || t.maxBatch == 1 {
+		return 1
+	}
+	row, ok := e.browserByID(t.BrowserID)
+	if !e.useBoundExtension(t.Platform) && (e.store == nil || !ok || row.ExtAccount != "" || e.useExtension(t.Platform)) {
+		return 1
+	}
+	if t.maxBatch > 1 {
+		limit = min(limit, t.maxBatch)
+	}
+	if cap := e.capFor(t.Platform); ok && cap > 0 {
+		limit = min(limit, max(1, cap-row.UsedToday(now)))
+	}
+	return min(limit, washChatTasks)
+}
+
 // bundleWashTasks 只合并尚未发送、提示词相同的豆包洗图。
 func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImages int, now time.Time) (Task, []int) {
 	indices := []int{index}
-	if !e.opts.Wash || !e.opts.WaitResult || first.Platform != "豆包" || !e.useBoundExtension(first.Platform) || !freshWashItem(first) || first.maxBatch == 1 {
+	if !freshWashItem(first) {
 		return first, indices
 	}
-	if first.maxBatch > 1 {
-		maxImages = min(maxImages, first.maxBatch)
+	maxImages = e.washBatchLimit(first, maxImages, now)
+	if maxImages < 2 {
+		return first, indices
 	}
-	if row, ok := e.browserByID(first.BrowserID); ok {
-		if row.Engine == store.EngineChromeCDP {
-			return first, indices
-		}
-		if cap := e.capFor(first.Platform); cap > 0 {
-			maxImages = min(maxImages, max(1, cap-row.UsedToday(now)))
-		}
-	}
-	maxImages = min(maxImages, washChatTasks)
 	batch := []Task{first}
 	for i := index + 1; i < len(pending) && len(batch) < maxImages; i++ {
 		item := pending[i]
@@ -71,6 +54,18 @@ func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImage
 	if len(batch) < 2 {
 		return first, indices
 	}
+	first.batchSendOnly = !e.opts.WaitResult
+	return washBatchOf(first, batch), indices
+}
+
+// Keep the submission state of an unsent batch when it moves to an account
+// that has room for only some of its sources.
+func washBatchOf(first Task, batch []Task) Task {
+	first.Index = batch[0].Index
+	if len(batch) == 1 {
+		first.Images, first.batch = batch[0].Images, nil
+		return first
+	}
 	first.Images = make([]string, len(batch))
 	for i := range batch {
 		first.Images[i] = batch[i].Images[0]
@@ -80,12 +75,12 @@ func (e *Engine) bundleWashTasks(pending []Task, index int, first Task, maxImage
 		first.sendSeq = max(first.sendSeq, batch[i].sendSeq)
 	}
 	first.batch = batch
-	return first, indices
+	return first
 }
 
 // saveVerifiedWashBatch 按已校验的源图关联逐张保存豆包批量结果，允许少于发送张数但禁止无关联猜测。
 // 返回尚未落盘的结果切片，供上层仅在真正未匹配或保存失败时写入「待核对」。
-func (e *Engine) saveVerifiedWashBatch(ctx context.Context, t *Task, results []strategy.Result, indices []int) ([]strategy.Result, error) {
+func (e *Engine) saveVerifiedWashBatch(ctx context.Context, sess *cdp.Session, t *Task, results []strategy.Result, indices []int) ([]strategy.Result, error) {
 	if len(results) < 1 || len(results) > len(t.batch) {
 		return results, fmt.Errorf("本批发送 %d 张，但取得 %d 张结果，未按源图保存，请检查豆包页面", len(t.batch), len(results))
 	}
@@ -102,7 +97,7 @@ func (e *Engine) saveVerifiedWashBatch(ctx context.Context, t *Task, results []s
 	for i, index := range indices {
 		item := &t.batch[index-1]
 		item.BrowserID = t.BrowserID
-		saved, err := e.saveResults(ctx, item, strategy.Factory(t.Platform), nil, results[i:i+1])
+		saved, err := e.saveResults(ctx, item, strategy.Factory(t.Platform), sess, results[i:i+1])
 		item.Results = append(item.Results, saved...)
 		t.Results = append(t.Results, saved...)
 		if err != nil {
@@ -122,21 +117,21 @@ func (e *Engine) saveVerifiedWashBatch(ctx context.Context, t *Task, results []s
 }
 
 func (e *Engine) saveWashBatch(ctx context.Context, t *Task, results []strategy.Result, indices []int) error {
-	_, err := e.saveVerifiedWashBatch(ctx, t, results, indices)
+	_, err := e.saveVerifiedWashBatch(ctx, nil, t, results, indices)
 	return err
 }
 
-func (e *Engine) saveExtensionWash(ctx context.Context, t *Task, results []strategy.Result, indices []int, resultErr error) error {
+func (e *Engine) saveWashResults(ctx context.Context, sess *cdp.Session, t *Task, results []strategy.Result, indices []int, resultErr error) error {
 	want := max(1, len(t.batch))
 	unsaved := results
 	if resultErr == nil {
 		if want > 1 {
-			unsaved, resultErr = e.saveVerifiedWashBatch(ctx, t, results, indices)
+			unsaved, resultErr = e.saveVerifiedWashBatch(ctx, sess, t, results, indices)
 		} else if len(results) != 1 {
 			resultErr = fmt.Errorf("本批发送 1 张，但取得 %d 张结果，未按源图保存，请检查豆包页面", len(results))
 		} else {
 			var saved []string
-			saved, resultErr = e.saveResults(ctx, t, strategy.Factory(t.Platform), nil, results)
+			saved, resultErr = e.saveResults(ctx, t, strategy.Factory(t.Platform), sess, results)
 			t.Results = append(t.Results, saved...)
 			if resultErr == nil && len(saved) != 1 {
 				resultErr = errors.New("未保存到有效结果图片")
@@ -146,7 +141,7 @@ func (e *Engine) saveExtensionWash(ctx context.Context, t *Task, results []strat
 		}
 	}
 	if resultErr != nil && ctx.Err() == nil && len(unsaved) > 0 {
-		count, dir, keepErr := e.saveUnmatchedWash(ctx, t, unsaved)
+		count, dir, keepErr := e.saveUnmatchedWash(ctx, sess, t, unsaved)
 		if count > 0 {
 			resultErr = fmt.Errorf("%w；%d 张未匹配结果保存在 %s", resultErr, count, dir)
 		}
@@ -158,7 +153,7 @@ func (e *Engine) saveExtensionWash(ctx context.Context, t *Task, results []strat
 }
 
 // 不能确认对应关系时保留结果，但不使用任何源图文件名。
-func (e *Engine) saveUnmatchedWash(ctx context.Context, t *Task, results []strategy.Result) (int, string, error) {
+func (e *Engine) saveUnmatchedWash(ctx context.Context, sess *cdp.Session, t *Task, results []strategy.Result) (int, string, error) {
 	backup := &Engine{opts: e.opts, srcHashes: e.srcHashes}
 	backup.opts.OutputPath = filepath.Join(e.opts.OutputPath, "待核对")
 	backup.opts.OutputSize = OutputSize{}
@@ -168,11 +163,11 @@ func (e *Engine) saveUnmatchedWash(ctx context.Context, t *Task, results []strat
 	count := 0
 	var resultErr error
 	for _, result := range results {
-		if result.Data == nil {
+		if result.Data == nil && sess == nil {
 			continue
 		}
 		item := &Task{Index: t.Index, Platform: t.Platform, Prompt: fmt.Sprintf("批次%d_未匹配", t.Index)}
-		saved, err := backup.saveResults(ctx, item, strategy.Factory(t.Platform), nil, []strategy.Result{result})
+		saved, err := backup.saveResults(ctx, item, strategy.Factory(t.Platform), sess, []strategy.Result{result})
 		count += len(saved)
 		resultErr = errors.Join(resultErr, err)
 	}
@@ -194,7 +189,7 @@ func batchMembers(t Task) []Task {
 		item.Reassigned, item.ReassignWhy, item.Rewritten = t.Reassigned, t.ReassignWhy, t.Rewritten
 		if len(item.Results) > 0 {
 			item.Status, item.Error = StatusSuccess, ""
-		} else if t.Status == StatusSuccess {
+		} else if t.Status == StatusSuccess && !t.batchSendOnly {
 			item.Status, item.Error = StatusFailed, "批量结果未保存"
 		}
 	}

@@ -688,6 +688,15 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	if strat == nil {
 		return fmt.Errorf("不支持的平台 %s", t.Platform)
 	}
+	if doubao, ok := strat.(*strategy.Doubao); ok && len(t.batch) > 1 {
+		t.noUse = !t.submitted
+		job := QianwenJob{IdempotencyPrefix: e.extIdempotencyPrefix(t), Images: t.Images, VerifyAttachments: true}
+		cleanup, err := doubao.PrepareWashBatch(t.Images, job.uploadNames())
+		if err != nil {
+			return fmt.Errorf("准备豆包洗图附件: %w", err)
+		}
+		defer cleanup()
+	}
 	if t.ranOn <= 0 {
 		t.ranOn = t.BrowserID
 	}
@@ -734,7 +743,7 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 		}
 	}()
 	if e.opts.Wash && t.Platform == "豆包" && e.opts.WaitResult && !sess.IsEgo() {
-		defer func() { e.finishWashChat(sess, attemptErr == nil && t.submitted && ctx.Err() == nil) }()
+		defer func() { e.finishWashChat(sess, len(t.Images), attemptErr == nil && t.submitted && ctx.Err() == nil) }()
 	}
 	// 发送前等待（等待页面/登录就绪）
 	if !t.submitted && e.opts.WaitBeforeSend > 0 {
@@ -861,6 +870,9 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 			t.sentAt = time.Now()
 			return nil
 		}
+		if len(t.batch) > 1 && !errors.Is(err, strategy.ErrSubmissionUncertain) {
+			t.noUse = true
+		}
 		return fmt.Errorf("发送: %w", err)
 	}
 	adoptSentChat(t, sess)
@@ -960,6 +972,7 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 			continue
 		}
 		if errors.Is(waitErr, context.Canceled) || errors.Is(waitErr, context.DeadlineExceeded) || (waitErr != nil && len(results) == 0) {
+			t.washWaitTimedOut = errors.Is(waitErr, strategy.ErrWashWaitTimeout)
 			return waitErr
 		}
 		downloads := 0
@@ -978,6 +991,16 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 			logging.Log.Debugf("#%d 截获 %d 个候选结果", t.Index, candidates)
 		}
 		saveAt := time.Now()
+		if len(t.batch) > 1 {
+			indices := make([]int, len(results))
+			for i, result := range results {
+				indices[i] = result.SourceIndex
+			}
+			saveErrSeen = e.saveWashResults(ctx, sess, t, results, indices, waitErr)
+			savedFor += time.Since(saveAt)
+			savedN = len(t.Results)
+			return saveErrSeen
+		}
 		saved, err := e.saveResults(ctx, t, strat, sess, results)
 		savedFor += time.Since(saveAt)
 		t.Results = append(t.Results, saved...)

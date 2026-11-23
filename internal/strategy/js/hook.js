@@ -739,6 +739,11 @@
     doubaoTurn = page.mark(document, prompt);
     return !!doubaoTurn;
   };
+  window.__tulaiCurrentDoubaoTurn = function () {
+    if (!doubaoTurn) return false;
+    window.__tulaiWashPage.newAssistants(document, doubaoTurn);
+    return !doubaoTurn.followedByUser;
+  };
   window.__tulaiResultsSince = function () {
     return results.filter(function (r) { return r.task === taskNumber && !ignoredURLs.has(r.url); });
   };

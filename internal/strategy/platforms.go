@@ -10,7 +10,11 @@ import (
 )
 
 // Doubao 豆包策略。
-type Doubao struct{ base }
+type Doubao struct {
+	base
+	washNames []string // 多图洗图当前消息内的唯一上传文件名，按源图顺序排列。
+	washDir   string
+}
 
 // Platform 平台名。
 func (Doubao) Platform() string { return "豆包" }
@@ -56,6 +60,15 @@ func (d Doubao) CleanComposer(s *cdp.Session) error {
 func (d Doubao) SendPrompt(s *cdp.Session, prompt string) error {
 	if !s.IsEgo() {
 		if err := ensureDoubaoImageMode(s); err != nil {
+			return err
+		}
+	}
+	if len(d.washNames) > 1 {
+		prompt = DoubaoWashPrompt(prompt, d.washNames)
+		if err := checkWashAttachments(s, d.washNames, false); err != nil {
+			return err
+		}
+		if err := MarkDoubaoTurn(s, prompt); err != nil {
 			return err
 		}
 	}

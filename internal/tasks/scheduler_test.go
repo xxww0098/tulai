@@ -132,6 +132,9 @@ func TestWashSendGapIncludesGenerationTime(t *testing.T) {
 				start := time.Now()
 				var starts []time.Duration
 				opts := Options{Platforms: []string{"豆包"}, Images: []string{"a.png", "b.png"}, Wash: tc.wash, SendWait: 10}
+				if tc.wash {
+					opts.Images = numberedWashSources(11)
+				}
 				err := e.run(context.Background(), opts, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
 					starts = append(starts, time.Since(start))
 					if task.Index == 1 {

@@ -1669,7 +1669,7 @@ func TestUnmatchedWashKeepsBatchNameWhenAutoNumber(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{Wash: true, OutputPath: t.TempDir(), Numbering: Numbering{Enabled: true, Prefix: "图", Width: 3}}
 	task := Task{Index: 3, Platform: "豆包", Images: []string{"/a/product.png"}}
-	count, dir, err := e.saveUnmatchedWash(context.Background(), &task, []strategy.Result{{Data: resultPNG(t, 9), WatermarkRemoved: true}})
+	count, dir, err := e.saveUnmatchedWash(context.Background(), nil, &task, []strategy.Result{{Data: resultPNG(t, 9), WatermarkRemoved: true}})
 	if err != nil || count != 1 {
 		t.Fatalf("待核对保存: %d %s %v", count, dir, err)
 	}
@@ -1702,6 +1702,7 @@ func TestWashConcurrentResultsMatchTheirSources(t *testing.T) {
 	defer cancel()
 	opts := Options{
 		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources, Wash: true,
+		SoloImages:  sources,
 		Concurrency: 2, WaitResult: true, WaitResultSeconds: 10, OutputPath: filepath.Join(dir, "out"),
 	}
 	for run := 1; run <= 2; run++ {
@@ -1765,7 +1766,7 @@ func TestWashSameNameSourcesKeepTaskAssociation(t *testing.T) {
 	started := 0
 	gate := make(chan struct{})
 	err := e.RunObserved(ctx, Options{
-		Platforms: []string{"豆包"}, Images: sources, Wash: true, Concurrency: 2,
+		Platforms: []string{"豆包"}, Images: sources, SoloImages: sources, Wash: true, Concurrency: 2,
 		WaitResult: true, WaitResultSeconds: 10, OutputPath: filepath.Join(dir, "out"),
 	}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
 		mu.Lock()

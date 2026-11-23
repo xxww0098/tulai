@@ -186,7 +186,8 @@
     if (!entry) throw new Error('未找到当前输入区上传入口');
     var previewScope = attachmentScope(comp, entry), initialImages = new Map();
     Array.from(document.images).forEach(function (img) { initialImages.set(img, img.currentSrc || img.src); });
-    window.__tulaiUploadState = { scope: previewScope, entry: entry, images: initialImages, files: new Map(Array.from(document.querySelectorAll('input[type=file]')).map(function(input){return [input,input.files]})) };
+    var doubaoBaseline = window.__tulaiWashPage && new Set(document.querySelectorAll('img,[data-testid="attachment-image-card"]'));
+    window.__tulaiUploadState = { scope: previewScope, entry: entry, images: initialImages, doubaoBaseline: doubaoBaseline, files: new Map(Array.from(document.querySelectorAll('input[type=file]')).map(function(input){return [input,input.files]})) };
     log.push('scope=' + (previewScope ? previewScope.tagName + '#' + (previewScope.id || '').slice(0, 40) + '.' + cls(previewScope).slice(0, 60) + '; role=' + (previewScope.getAttribute('role') || '').slice(0, 40) : 'none'));
     log.push('entry=' + entry.tagName + '; testid=' + (entry.getAttribute('data-testid') || '').slice(0, 60) + '; id=' + (entry.id || '').slice(0, 50) + '; aria=' + (entry.getAttribute('aria-label') || '').slice(0, 60));
     var oldPanels = new Set(Array.from(document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[popover]')).filter(visible));
@@ -224,6 +225,7 @@
         var src = img.currentSrc || img.src;
         return src && visible(img) && img.complete && img.naturalWidth > 0 && (!state.images.has(img) || state.images.get(img) !== src);
       }).length;
+      if (expected === 1 && !count && state.doubaoBaseline && window.__tulaiWashPage.freshAttachment(document, state.doubaoBaseline)) count = 1;
       if (!busy && count >= expected) {
         if (++stable >= 2) return JSON.stringify({ ready: true });
       } else stable = 0;

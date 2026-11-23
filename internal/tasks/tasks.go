@@ -63,6 +63,7 @@ type Task struct {
 	ReassignWhy        string // 改派前的失败原因
 	soften             int    // 审核改写已经自动重试的次数
 	batch           []Task // 豆包洗图一次发送的原始单图任务
+	batchSendOnly   bool   // 仅提交的批次按发送确认更新成员状态。
 	maxBatch        int    // 拆分审核批次或标记为需单独发送时限制单批上限（1 表示单独发）
 	splitModeration bool   // 由触发内容审核的豆包批次拆出，防止全批审核循环拆单
 	sendSeq         int    // 同一任务拆分、改写或换新对话重发时递增，区分扩展发送幂等键

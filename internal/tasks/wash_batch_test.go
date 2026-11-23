@@ -22,7 +22,15 @@ import (
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
-func TestManagedChromeUsesDirectWashBesideBoundCamoufox(t *testing.T) {
+func numberedWashSources(count int) []string {
+	sources := make([]string, count)
+	for i := range sources {
+		sources[i] = fmt.Sprintf("%02d.png", i+1)
+	}
+	return sources
+}
+
+func TestChromeAndBoundCamoufoxBothBundleWash(t *testing.T) {
 	st := openRotateStore(t)
 	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	fox := addNamed(t, st, "豆包", "指纹")
@@ -37,8 +45,8 @@ func TestManagedChromeUsesDirectWashBesideBoundCamoufox(t *testing.T) {
 	if !e.chromeAccount(chrome.ID) || e.chromeAccount(fox.ID) {
 		t.Fatal("wrong task engine")
 	}
-	if _, indices := e.bundleWashTasks(items, 0, items[0], 10, time.Now()); len(indices) != 1 {
-		t.Fatal("grouped direct-CDP wash", indices)
+	if _, indices := e.bundleWashTasks(items, 0, items[0], 10, time.Now()); len(indices) != 2 {
+		t.Fatal("lost direct-CDP batch", indices)
 	}
 	items[0].BrowserID = fox.ID
 	if _, indices := e.bundleWashTasks(items, 0, items[0], 10, time.Now()); len(indices) != 2 {
@@ -67,14 +75,16 @@ func TestUnsentFirefoxBatchKeepsEachSourceOnChrome(t *testing.T) {
 			calls = append(calls, "batch")
 			return errDoubaoLogin
 		}
-		if task.BrowserID != chrome.ID || len(task.Images) != 1 || len(task.batch) != 0 {
+		if task.BrowserID != chrome.ID || !slices.Equal(task.Images, images) || len(task.batch) != len(images) {
 			return fmt.Errorf("unexpected account or source images: %d, %v", task.BrowserID, task.Images)
 		}
-		calls = append(calls, task.Images[0])
-		task.Results = []string{task.Images[0] + ".out"}
+		calls = append(calls, "chrome batch")
+		for i := range task.batch {
+			task.batch[i].Results = []string{task.Images[i] + ".out"}
+		}
 		return nil
 	})
-	if err != nil || !slices.Equal(calls, []string{"batch", "a.png", "b.png", "c.png"}) {
+	if err != nil || !slices.Equal(calls, []string{"batch", "chrome batch"}) {
 		t.Fatalf("attempts = %v, err = %v", calls, err)
 	}
 	for i, item := range e.View().Snapshot() {
@@ -91,10 +101,7 @@ func TestBoundWashDispatchesTenThenOneAndKeepsSources(t *testing.T) {
 	account := addNamed(t, st, "豆包", "甲")
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
-	var sources []string
-	for i := 1; i <= 11; i++ {
-		sources = append(sources, fmt.Sprintf("%02d.png", i))
-	}
+	sources := numberedWashSources(11)
 	var sizes []int
 	var progress Progress
 	err := e.RunObserved(context.Background(), Options{
@@ -124,7 +131,75 @@ func TestBoundWashDispatchesTenThenOneAndKeepsSources(t *testing.T) {
 	}
 }
 
-func TestBoundWashAdaptsFreshBatchSizeAfterWaitTimeout(t *testing.T) {
+func TestWashSendOnlyKeepsTheTenImageMessage(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	addNamed(t, st, "豆包", "甲")
+	addNamed(t, st, "豆包", "乙")
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+	sources := numberedWashSources(10)
+	var calls [][]string
+	var mu sync.Mutex
+	err := e.RunObserved(t.Context(), Options{
+		Platforms: []string{"豆包"}, Images: sources, Wash: true, WaitResult: false, Concurrency: 2,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		mu.Lock()
+		calls = append(calls, task.Images)
+		mu.Unlock()
+		task.submitted = true
+		return nil
+	})
+	if err != nil || len(calls) != 1 || !slices.Equal(calls[0], sources) {
+		t.Fatalf("sent %v, err = %v", calls, err)
+	}
+	for _, item := range e.View().Snapshot() {
+		if item.Status != StatusSuccess || len(item.Results) > 0 {
+			t.Fatalf("unexpected send-only outcome: %+v", item)
+		}
+	}
+}
+
+func TestRotatedWashBatchFitsRemainingAccountQuota(t *testing.T) {
+	st := openRotateStore(t)
+	st.Set(extbridge.SettingExtPort, freePort(t))
+	first := addNamed(t, st, "豆包", "甲")
+	second, err := st.AddManagedBrowser("豆包", "Chrome", "", store.EngineChromeCDP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+	sources := numberedWashSources(10)
+	var calls [][]string
+	err = e.RunObserved(t.Context(), Options{
+		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources,
+		Wash: true, WaitResult: true, Concurrency: 1, DailyCap: 10,
+	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+		calls = append(calls, task.Images)
+		if task.BrowserID == first.ID {
+			if err := st.RecordUse(second.ID, time.Now(), 7, 0, 0); err != nil {
+				return err
+			}
+			return strategy.ErrAccountQuota
+		}
+		for i := range task.batch {
+			task.batch[i].Results = []string{task.Images[i] + ".out"}
+		}
+		return nil
+	})
+	if err != nil || len(calls) != 2 || !slices.Equal(calls[0], sources) || !slices.Equal(calls[1], sources[:3]) {
+		t.Fatalf("sent %v, err = %v", calls, err)
+	}
+	for i, item := range e.View().Snapshot() {
+		if i < 3 && (item.Status != StatusSuccess || !slices.Equal(item.Results, []string{sources[i] + ".out"})) ||
+			i >= 3 && item.Status != StatusSkipped {
+			t.Fatalf("unexpected outcome for %s: %+v", sources[i], item)
+		}
+	}
+}
+
+func TestBoundWashKeepsTenPerFreshBatchAfterWaitTimeout(t *testing.T) {
 	st := openRotateStore(t)
 	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	st.Set(extbridge.SettingExtPort, freePort(t))
@@ -132,10 +207,7 @@ func TestBoundWashAdaptsFreshBatchSizeAfterWaitTimeout(t *testing.T) {
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
 
-	sources := make([]string, 24)
-	for i := range sources {
-		sources[i] = fmt.Sprintf("%02d.png", i+1)
-	}
+	sources := numberedWashSources(24)
 	var sizes []int
 	err := e.RunObserved(t.Context(), Options{
 		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources,
@@ -154,11 +226,11 @@ func TestBoundWashAdaptsFreshBatchSizeAfterWaitTimeout(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil || !slices.Equal(sizes, []int{10, 5, 2, 3, 4}) {
+	if err != nil || !slices.Equal(sizes, []int{10, 10, 4}) {
 		t.Fatalf("batch sizes = %v, err = %v", sizes, err)
 	}
 	for i, task := range e.View().Snapshot() {
-		if i < 15 {
+		if i < 20 {
 			if task.Status != StatusFailed || task.Attempts != 1 || !strings.Contains(task.Error, "原对话核对") {
 				t.Fatalf("timed-out image %d should wait for review: %+v", i+1, task)
 			}
@@ -181,9 +253,10 @@ func TestBoundWashUsesBothIdleAccountsConcurrently(t *testing.T) {
 	started := make(chan Task, 2)
 	release := make(chan struct{})
 	done := make(chan error, 1)
+	sources := numberedWashSources(13)
 	go func() {
 		done <- e.RunObserved(ctx, Options{
-			Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: []string{"1.png", "2.png", "3.png", "4.png"},
+			Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources,
 			Wash: true, Concurrency: 2, WaitResult: true,
 		}, func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
 			started <- *task
@@ -207,12 +280,15 @@ func TestBoundWashUsesBothIdleAccountsConcurrently(t *testing.T) {
 			t.Fatal("both accounts did not start before either batch finished")
 		}
 	}
-	if batches[0].BrowserID == batches[1].BrowserID || len(batches[0].Images) != 2 || len(batches[1].Images) != 2 {
-		t.Fatalf("expected two independent batches of two: %+v", batches)
-	}
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if batches[0].Index > batches[1].Index {
+		batches[0], batches[1] = batches[1], batches[0]
+	}
+	if batches[0].BrowserID == batches[1].BrowserID || !slices.Equal(batches[0].Images, sources[:10]) || !slices.Equal(batches[1].Images, sources[10:]) {
+		t.Fatalf("expected the first ten and remaining three on separate accounts, got %v and %v", batches[0].Images, batches[1].Images)
 	}
 	for _, task := range e.View().Snapshot() {
 		if task.Status != StatusSuccess || len(task.Results) != 1 || task.Results[0] != task.Images[0]+".out" {
@@ -221,30 +297,19 @@ func TestBoundWashUsesBothIdleAccountsConcurrently(t *testing.T) {
 	}
 }
 
-func TestParallelWashBatchBalancesOnlyMatchingWork(t *testing.T) {
+func TestWashBatchGroupsOnlyMatchingPrompts(t *testing.T) {
 	st := openRotateStore(t)
 	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	e := NewEngine(st, nil, nil, "")
 	e.opts = Options{Wash: true, WaitResult: true}
-	for _, tc := range []struct {
-		count int
-		want  int
-	}{{1, 1}, {2, 1}, {4, 2}, {11, 6}, {20, 10}, {21, 10}} {
-		var pending []Task
-		for i := 0; i < tc.count; i++ {
-			pending = append(pending, Task{Platform: "豆包", Prompt: "洗图", Images: []string{fmt.Sprint(i)}})
-		}
-		if got := e.parallelWashBatchLimit(pending, 0, pending[0], 10); got != tc.want {
-			t.Errorf("%d images: got %d, want %d", tc.count, got, tc.want)
-		}
-	}
 	pending := []Task{
 		{Platform: "豆包", Prompt: "甲", Images: []string{"1"}},
-		{Platform: "豆包", Prompt: "甲", Images: []string{"2"}},
-		{Platform: "豆包", Prompt: "乙", Images: []string{"3"}},
+		{Platform: "豆包", Prompt: "乙", Images: []string{"2"}},
+		{Platform: "豆包", Prompt: "甲", Images: []string{"3"}},
 	}
-	if got := e.parallelWashBatchLimit(pending, 0, pending[0], 10); got != 10 {
-		t.Fatalf("another prompt can fill the second lane; batch limit=%d", got)
+	batch, indices := e.bundleWashTasks(pending, 0, pending[0], 10, time.Now())
+	if !slices.Equal(batch.Images, []string{"1", "3"}) || !slices.Equal(indices, []int{0, 2}) {
+		t.Fatalf("images = %v, indices = %v", batch.Images, indices)
 	}
 }
 
@@ -339,7 +404,7 @@ func TestSaveWashBatchKeepsMappingAndRejectsMissingResults(t *testing.T) {
 	ePartial := NewEngine(nil, nil, nil, "")
 	ePartial.opts = Options{Wash: true, OutputPath: partialDir}
 	partial := Task{Index: 6, Platform: "豆包", submitted: true, batch: []Task{{Index: 1, Images: []string{"/a/first.png"}}, {Index: 2, Images: []string{"/b/second.png"}}}}
-	err := ePartial.saveExtensionWash(context.Background(), &partial, results[1:2], []int{2}, nil)
+	err := ePartial.saveWashResults(context.Background(), nil, &partial, results[1:2], []int{2}, nil)
 	if err == nil || !strings.Contains(err.Error(), "已按源图关联保存") || strings.Contains(err.Error(), "待核对") {
 		t.Fatalf("unexpected partial wash error: %v", err)
 	}
@@ -380,7 +445,7 @@ func TestUnverifiedWashAssociationsAreQuarantined(t *testing.T) {
 			e.opts = Options{Wash: true, OutputPath: t.TempDir()}
 			task := Task{Index: 7, Platform: "豆包", batch: []Task{{Images: []string{"/a/first.png"}}, {Images: []string{"/b/second.png"}}}}
 			results := []strategy.Result{{Data: resultPNG(t, 87), WatermarkRemoved: true}, {Data: resultPNG(t, 88), WatermarkRemoved: true}}
-			if err := e.saveExtensionWash(context.Background(), &task, results, indices, nil); err == nil || len(task.Results) != 0 {
+			if err := e.saveWashResults(context.Background(), nil, &task, results, indices, nil); err == nil || len(task.Results) != 0 {
 				t.Fatalf("unverified association saved against a source: results=%v err=%v", task.Results, err)
 			}
 			files, err := filepath.Glob(filepath.Join(e.opts.OutputPath, "待核对", "洗图", "*", "*.png"))
@@ -427,7 +492,7 @@ func TestUnmatchedWashResultsArePreservedWithoutSourceNames(t *testing.T) {
 	task := Task{Index: 7, Platform: "豆包", Images: []string{"/a/product.png", "/b/other.png"}}
 	data := resultPNG(t, 88)
 	results := []strategy.Result{{Data: data, WatermarkRemoved: true}, {Data: data, WatermarkRemoved: true}}
-	count, dir, err := e.saveUnmatchedWash(context.Background(), &task, results)
+	count, dir, err := e.saveUnmatchedWash(context.Background(), nil, &task, results)
 	if err != nil || count != 2 {
 		t.Fatalf("preserved=%d dir=%s err=%v", count, dir, err)
 	}
@@ -442,7 +507,7 @@ func TestSingleWashWithExtraResultDoesNotMislabelIt(t *testing.T) {
 	e.opts = Options{Wash: true, OutputPath: t.TempDir()}
 	task := Task{Index: 11, Platform: "豆包", Images: []string{"/input/phone.png"}}
 	results := []strategy.Result{{Data: resultPNG(t, 83), WatermarkRemoved: true}, {Data: resultPNG(t, 84), WatermarkRemoved: true}}
-	if err := e.saveExtensionWash(context.Background(), &task, results, nil, nil); err == nil || len(task.Results) != 0 {
+	if err := e.saveWashResults(context.Background(), nil, &task, results, nil, nil); err == nil || len(task.Results) != 0 {
 		t.Fatalf("extra result must not be assigned to source: results=%v err=%v", task.Results, err)
 	}
 	files, err := filepath.Glob(filepath.Join(e.opts.OutputPath, "待核对", "洗图", "*", "*.png"))
@@ -546,10 +611,10 @@ func TestWashUploadNamesDistinguishBatchesAndSameNamedFiles(t *testing.T) {
 
 func TestDoubaoBatchPromptDistinguishesReusedBatches(t *testing.T) {
 	job := QianwenJob{IdempotencyPrefix: "run:1", Prompt: "分别洗图", Images: []string{"/a/same.png", "/b/same.png"}, VerifyAttachments: true}
-	first := doubaoBatchPrompt(job)
+	first := strategy.DoubaoWashPrompt(job.Prompt, job.uploadNames())
 	oldName := extUploadName(job, 0)
 	job.IdempotencyPrefix = "run:2"
-	second := doubaoBatchPrompt(job)
+	second := strategy.DoubaoWashPrompt(job.Prompt, job.uploadNames())
 	if first == second || strings.Contains(second, oldName) || !strings.HasPrefix(second, job.Prompt) {
 		t.Fatalf("reused batch prompt retained old source: %q", second)
 	}
@@ -662,7 +727,7 @@ func TestSentWashBatchPreservesUnmatchedAndUncertainOutcome(t *testing.T) {
 	}
 	gotUnmatched := e.execute(context.Background(), unmatchedTask, func(ctx context.Context, task *Task) error {
 		task.submitted = true
-		return e.saveExtensionWash(ctx, task, []strategy.Result{{Data: img, WatermarkRemoved: true}}, nil, nil)
+		return e.saveWashResults(ctx, nil, task, []strategy.Result{{Data: img, WatermarkRemoved: true}}, nil, nil)
 	})
 	if gotUnmatched.Status != StatusFailed || strings.Contains(gotUnmatched.Error, "发送状态未确认") || !strings.Contains(gotUnmatched.Error, "未匹配结果保存在 ") {
 		t.Fatalf("unmatched outcome overwritten: %+v", gotUnmatched)
@@ -784,7 +849,7 @@ func TestPartialVerifiedWashBatchSavesMatchedWithoutQuarantine(t *testing.T) {
 			VerifyAttachments: true,
 		})
 		task.submitted = task.submitted || out.Submitted || out.sendAttempted
-		return e.saveExtensionWash(ctx, task, out.Results, out.sourceIndices, err)
+		return e.saveWashResults(ctx, nil, task, out.Results, out.sourceIndices, err)
 	})
 	if done.Status != StatusFailed || !strings.Contains(done.Error, "已按源图关联保存") || strings.Contains(done.Error, "发送状态未确认") {
 		t.Fatalf("unexpected batch result: %+v", done)
@@ -1151,7 +1216,7 @@ func TestDoubaoExtensionCopyrightBatchSplitsWithoutSendCacheCollision(t *testing
 			extbridge.CodeOf(err) != extbridge.ETimeout {
 			task.sendSeq++
 		}
-		saveErr := e.saveExtensionWash(ctx, task, out.Results, out.sourceIndices, err)
+		saveErr := e.saveWashResults(ctx, nil, task, out.Results, out.sourceIndices, err)
 		if task.submitted {
 			e.finishExtensionWash(task, wash, out, saveErr == nil && ctx.Err() == nil)
 		} else {

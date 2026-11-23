@@ -127,15 +127,15 @@ func (e *Engine) reuseWashChat(t *Task, sess *cdp.Session) bool {
 	return false
 }
 
-func (e *Engine) finishWashChat(sess *cdp.Session, success bool) {
+func (e *Engine) finishWashChat(sess *cdp.Session, count int, success bool) {
 	url := ""
 	if success {
 		url = strategy.ReusableDoubaoChat(sess)
 	}
-	e.recordWashChat(sess, url)
+	e.recordWashChat(sess, url, count)
 }
 
-func (e *Engine) recordWashChat(sess *cdp.Session, url string) {
+func (e *Engine) recordWashChat(sess *cdp.Session, url string, count int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if url == "" {
@@ -149,6 +149,6 @@ func (e *Engine) recordWashChat(sess *cdp.Session, url string) {
 	if chat.url != url {
 		chat = washChat{url: url}
 	}
-	chat.count++
+	chat.count += count
 	e.washChats[sess] = chat
 }
