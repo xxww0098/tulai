@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
 	"github.com/xxww0098/tulai/internal/browser"
+	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/ui"
@@ -103,6 +105,50 @@ func TestShellAndEightModulesRender(t *testing.T) {
 		if tc.navID == "id:nav-browser" {
 			assertHasTexts(t, app, "Camoufox (默认)", "Chrome CDP", "复制令牌")
 		}
+	}
+}
+
+// nsgo 0.3.0 removed the Badge variant the platform and site tags drew with,
+// so they use tulai/native's OutlineBadge. It keeps that variant's look: the
+// palette's text, no fill, and a rim halfway between the background and the
+// muted text. The colors are the palette's as the app runs it today.
+func TestOutlineBadgeKeepsItsRim(t *testing.T) {
+	const platform = "outline-probe-platform"
+	for _, tc := range []struct {
+		theme string
+		text  uint32
+		rim   uint32
+	}{
+		{"light", 0x333333FF, 0x999999C6},
+		{"dark", 0xEAEAEAFF, 0x848484C6},
+	} {
+		t.Run(tc.theme, func(t *testing.T) {
+			dir := t.TempDir()
+			app, _ := startTestUIWithSetup(t, true, 1280, 820, func(st *store.Store) {
+				if _, err := st.AddBrowser(platform, "outline-probe", filepath.Join(dir, "probe")); err != nil {
+					t.Fatal(err)
+				}
+				st.Set("ui_theme", tc.theme)
+			})
+			app.Press("id:nav-browser")
+
+			label := app.Find(platform)
+			badge := label.Parent
+			if badge == nil {
+				t.Fatalf("platform tag %q has no parent view", platform)
+			}
+			if got := uint32(label.TextStyle.Color); got != tc.text {
+				t.Fatalf("%s: outline badge text = %#08x, want %#08x", tc.theme, got, tc.text)
+			}
+			s := badge.Style
+			if got := uint32(s.BorderColor); got != tc.rim {
+				t.Fatalf("%s: outline badge rim = %#08x, want %#08x", tc.theme, got, tc.rim)
+			}
+			if s.BorderWidth != 1 || s.CornerRadius != 12 || s.Background != 0 {
+				t.Fatalf("%s: outline badge = width %v, radius %v, fill %#08x; want width 1, radius 12, no fill",
+					tc.theme, s.BorderWidth, s.CornerRadius, uint32(s.Background))
+			}
+		})
 	}
 }
 
@@ -421,6 +467,66 @@ func TestDesktopPageLayouts(t *testing.T) {
 	}
 }
 
+func TestWashLongPromptKeepsSourcesVisible(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "framed-collage.png")
+	writeTestPNG(t, source)
+	for _, size := range []struct{ w, h core.Points }{{920, 640}, {1280, 820}} {
+		for _, dark := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%gx%g/dark=%v", size.w, size.h, dark), func(t *testing.T) {
+				// A long single-line custom prompt used to push the source panel
+				// completely below the viewport, just like the built-in template.
+				requirements := strings.ReplaceAll(prompts.DoubaoWashPrompt, "\n", " ") + strings.Repeat(" 保留用户补充要求。", 80)
+				app, st := startTestUIWithSetup(t, true, size.w, size.h, func(st *store.Store) {
+					if dark {
+						st.Set("ui_theme", "dark")
+					}
+					_, err := st.SaveActive(store.Session{Page: store.PageWash, Prompts: requirements,
+						Sources: []store.SessionSource{{Path: source}}}, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+				})
+				thumb := app.Find("id:wb-source-thumb-0").Bounds()
+				if thumb.Origin.Y+thumb.Size.Height > size.h || thumb.Size.Height < 40 {
+					t.Fatalf("source is not visible with a long prompt: %+v", thumb)
+				}
+				app.Press("id:wb-prompt-toggle")
+				editor := app.Find("id:wb-prompt-editor").Bounds()
+				if editor.Size.Height > 180 || editor.Size.Height < 120 {
+					t.Fatalf("expanded prompt height must stay bounded: %+v", editor)
+				}
+				app.Press("id:wb-prompt-toggle")
+				app.Find("id:wb-prompt-summary")
+				sess, _, found, err := st.ActiveSession(store.PageWash)
+				if err != nil || !found || sess.Prompts != requirements {
+					t.Fatal("opening/closing prompt editor changed the saved requirements")
+				}
+			})
+		}
+	}
+}
+
+func TestCompletedWashResultsCanCollapse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "art.png")
+	writeTestPNG(t, path)
+	app, _ := startTestUIWithSetup(t, true, 1160, 740, func(st *store.Store) {
+		_, err := st.SaveActive(store.Session{Page: store.PageWash, Prompts: "重绘为纯画", Progress: 1,
+			Sources: []store.SessionSource{{Path: path, Washed: true, Output: path}}}, []store.SessionTask{
+			{Ord: 1, Platform: "豆包", Source: path, Status: string(tasks.StatusSuccess), Outputs: path},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	app.Find("id:result-tile-image-1")
+	app.Press("text:收起已完成")
+	if app.Exists("id:result-tile-image-1") {
+		t.Fatal("completed images stayed mounted after collapse")
+	}
+	app.Press("text:展开已完成")
+	app.Find("id:result-tile-image-1")
+}
+
 func writeTestPNG(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
@@ -486,7 +592,7 @@ func TestDialogsFitBoundsAndThumbnailsRender(t *testing.T) {
 			if thumb.Size.Width < 40 || thumb.Size.Height < 40 {
 				t.Fatalf("workbench source thumb collapsed: %+v", thumb)
 			}
-			if thumbNode.Image.Source.URI == "" || thumbNode.Image.ResizeMode != core.Cover {
+			if thumbNode.Image.Source.URI == "" || thumbNode.Image.ResizeMode != core.Contain {
 				t.Fatalf("workbench source thumb image config unexpected: %+v", thumbNode.Image)
 			}
 
@@ -655,5 +761,297 @@ func TestWorkbenchInlineAccountManagement(t *testing.T) {
 	app.Press("id:wb-stage >> text:管理")
 	if got := app.Find("id:page-title").Text; got != "浏览器" {
 		t.Fatalf("after pressing 管理: page-title = %q, want 浏览器", got)
+	}
+}
+
+func TestWorkbenchSaaSResultGalleryAndComposerLayout(t *testing.T) {
+	dir := t.TempDir()
+	var sources []store.SessionSource
+	var sessionTasks []store.SessionTask
+	for i := range 6 {
+		src := filepath.Join(dir, fmt.Sprintf("src_%02d.png", i+1))
+		out := filepath.Join(dir, fmt.Sprintf("out_%02d.png", i+1))
+		writeTestPNG(t, src)
+		writeTestPNG(t, out)
+		sources = append(sources, store.SessionSource{Path: src, Washed: true, Output: out})
+		sessionTasks = append(sessionTasks, store.SessionTask{
+			Ord:      i + 1,
+			Platform: "豆包",
+			Source:   src,
+			Status:   string(tasks.StatusSuccess),
+			Outputs:  out,
+		})
+	}
+
+	type sizeMetrics struct {
+		composerW float64
+		cardW     float64
+		cardH     float64
+	}
+	var metrics []sizeMetrics
+
+	for _, sz := range []struct {
+		w, h core.Points
+	}{
+		{920, 640},
+		{1280, 820},
+		{1600, 960},
+	} {
+		t.Run(fmt.Sprintf("%gx%g", sz.w, sz.h), func(t *testing.T) {
+			app, _ := startTestUIWithSetup(t, true, sz.w, sz.h, func(st *store.Store) {
+				if _, err := st.SaveActive(store.Session{
+					Page:     store.PageWash,
+					Prompts:  "重绘为纯画",
+					Progress: 1,
+					Sources:  sources,
+				}, sessionTasks); err != nil {
+					t.Fatal(err)
+				}
+			})
+
+			// 1. Actual Select nodes (not just wrappers) must stretch cleanly inside composer without 200pt overflow.
+			composer := app.Find("id:wb-composer").Bounds()
+			if app.Exists("id:wb-wash-style-select") {
+				styleSel := app.Find("id:wb-wash-style-select").Bounds()
+				assertInsideDialog(t, "wb-wash-style-select", composer, styleSel)
+				if styleSel.Size.Width < composer.Size.Width-56 {
+					t.Fatalf("wb-wash-style-select width=%v too narrow inside composer width=%v", styleSel.Size.Width, composer.Size.Width)
+				}
+			}
+			presetSel := app.Find("id:wb-output-preset-select").Bounds()
+			ratioSel := app.Find("id:wb-output-ratio-select").Bounds()
+			assertInsideDialog(t, "wb-output-preset-select", composer, presetSel)
+			assertInsideDialog(t, "wb-output-ratio-select", composer, ratioSel)
+			if presetSel.Origin.X+presetSel.Size.Width > ratioSel.Origin.X+0.5 {
+				t.Fatalf("output preset select (%+v) overlaps output ratio select (%+v)", presetSel, ratioSel)
+			}
+			if presetSel.Size.Width < 100 || presetSel.Size.Width > composer.Size.Width/2 || ratioSel.Size.Width < 100 || ratioSel.Size.Width > composer.Size.Width/2 {
+				t.Fatalf("expected 1fr/1fr output select widths in [100, %v], got preset=%+v ratio=%+v", composer.Size.Width/2, presetSel, ratioSel)
+			}
+
+			// 2. Gallery cards render cleanly in a fixed 3-column grid that scales with window size.
+			gallery := app.Find("id:wb-result-gallery")
+			if gallery.Bounds().Size.Width <= 0 {
+				t.Fatalf("wb-result-gallery collapsed: %+v", gallery.Bounds())
+			}
+			var cards []core.Bounds
+			for i := 1; i <= 6; i++ {
+				img := app.Find(fmt.Sprintf("id:result-tile-image-%d", i)).Bounds()
+				if img.Size.Width < 40 || img.Size.Height < 40 {
+					t.Fatalf("result tile image %d collapsed: %+v", i, img)
+				}
+				card := app.Find(fmt.Sprintf("id:result-tile-card-%d", i)).Bounds()
+				if card.Size.Width < 110 || card.Size.Height < 130 {
+					t.Fatalf("result tile card %d collapsed: %+v", i, card)
+				}
+				for j, prev := range cards {
+					overlapX := card.Origin.X < prev.Origin.X+prev.Size.Width-0.5 && card.Origin.X+card.Size.Width > prev.Origin.X+0.5
+					overlapY := card.Origin.Y < prev.Origin.Y+prev.Size.Height-0.5 && card.Origin.Y+card.Size.Height > prev.Origin.Y+0.5
+					if overlapX && overlapY {
+						t.Fatalf("result tile card %d (%+v) overlaps card %d (%+v)", i, card, j+1, prev)
+					}
+				}
+				cards = append(cards, card)
+				app.Find(fmt.Sprintf("id:result-tile-menu-%d", i))
+			}
+			// Fixed 3 columns: cards 1, 2, 3 on row 1; card 4 starts row 2 aligned under card 1.
+			if cards[1].Origin.Y != cards[0].Origin.Y || cards[2].Origin.Y != cards[0].Origin.Y ||
+				cards[1].Origin.X <= cards[0].Origin.X+cards[0].Size.Width-1 ||
+				cards[2].Origin.X <= cards[1].Origin.X+cards[1].Size.Width-1 {
+				t.Fatalf("expected fixed 3-column first row, got %+v %+v %+v", cards[0], cards[1], cards[2])
+			}
+			if cards[3].Origin.Y <= cards[0].Origin.Y || cards[3].Origin.X < cards[0].Origin.X-1 || cards[3].Origin.X > cards[0].Origin.X+1 {
+				t.Fatalf("expected card 4 on row 2 aligned with card 1, got card1=%+v card4=%+v", cards[0], cards[3])
+			}
+			metrics = append(metrics, sizeMetrics{
+				composerW: float64(composer.Size.Width),
+				cardW:     float64(cards[0].Size.Width),
+				cardH:     float64(cards[0].Size.Height),
+			})
+
+			// 3. Zero repetitive inline text buttons (定位/打开/替换) or redundant 完成 stamp on completed cards.
+			for _, unwanted := range []string{"定位", "打开", "替换", "完成"} {
+				if matches := app.Query(`id:wb-result-gallery >> text:"` + unwanted + `"`); len(matches) > 0 {
+					t.Fatalf("unexpected inline button/stamp %q mounted inside result gallery (%d found)", unwanted, len(matches))
+				}
+			}
+
+			// 4. Single quiet menu trigger opens full card actions on demand.
+			app.Press("id:result-tile-menu-1")
+			app.WaitFor("role:menuitem 大图预览", 2*time.Second)
+			assertHasTexts(t, app, "大图预览", "系统默认打开", "在文件夹中显示", "替换原图")
+			app.Key("escape")
+			app.WaitForGone("role:menuitem 大图预览", 2*time.Second)
+
+			// 5. Clicking artwork opens enhanced Lightbox with Prev/Next navigation and actions.
+			app.Press("id:result-tile-image-1")
+			app.WaitFor("id:lightbox-dialog", 2*time.Second)
+			assertHasTexts(t, app, "1 / 6", "在文件夹中显示", "系统默认打开", "替换原图")
+			app.Find("id:lightbox-replace-btn")
+
+			app.Press("label:下一张")
+			app.WaitFor("text:2 / 6", 2*time.Second)
+			app.Press("label:上一张")
+			app.WaitFor("text:1 / 6", 2*time.Second)
+
+			app.Press("id:lightbox-dialog >> text:关闭")
+			app.WaitForGone("id:lightbox-dialog", 2*time.Second)
+		})
+	}
+
+	if len(metrics) != 3 {
+		t.Fatalf("expected 3 size measurements, got %d", len(metrics))
+	}
+	if !(metrics[0].composerW < metrics[1].composerW && metrics[1].composerW < metrics[2].composerW) {
+		t.Fatalf("expected composer width to stretch smoothly with window size: %+v", metrics)
+	}
+	if !(metrics[0].cardW < metrics[1].cardW && metrics[1].cardW < metrics[2].cardW) {
+		t.Fatalf("expected gallery card width to stretch smoothly with window size: %+v", metrics)
+	}
+	if !(metrics[0].cardH < metrics[1].cardH && metrics[1].cardH < metrics[2].cardH) {
+		t.Fatalf("expected gallery card height (via aspectRatio) to stretch smoothly with window size: %+v", metrics)
+	}
+}
+
+func TestWorkbenchEngineeringPipelineActiveAndPending(t *testing.T) {
+	dir := t.TempDir()
+	srcs := make([]string, 5)
+	for i := range srcs {
+		srcs[i] = filepath.Join(dir, fmt.Sprintf("src_%02d.png", i+1))
+		writeTestPNG(t, srcs[i])
+	}
+	out1 := filepath.Join(dir, "out_01.png")
+	writeTestPNG(t, out1)
+
+	sources := []store.SessionSource{
+		{Path: srcs[0], Washed: true, Output: out1},
+		{Path: srcs[1]},
+		{Path: srcs[2]},
+		{Path: srcs[3]},
+		{Path: srcs[4]},
+	}
+	sessionTasks := []store.SessionTask{
+		{Ord: 1, Platform: "豆包", AccountName: "豆包1", Source: srcs[0], Status: string(tasks.StatusSuccess), Outputs: out1},
+		{Ord: 2, Platform: "豆包", AccountName: "豆包1", Source: srcs[1], Status: string(tasks.StatusRunning)},
+		{Ord: 3, Platform: "豆包", Source: srcs[2], Status: string(tasks.StatusPending)},
+		{Ord: 4, Platform: "豆包", Source: srcs[3], Status: string(tasks.StatusPending)},
+		{Ord: 5, Platform: "豆包", Source: srcs[4], Status: string(tasks.StatusPending)},
+	}
+
+	app, _ := startTestUIWithSetup(t, true, 1280, 820, func(st *store.Store) {
+		if _, err := st.SaveActive(store.Session{
+			Page:     store.PageWash,
+			Prompts:  "重绘为纯画",
+			Progress: 0.2,
+			Sources:  sources,
+		}, sessionTasks); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	app.WaitFor("id:wb-active-pipeline", 2*time.Second)
+	app.WaitFor("id:wb-pending-queue", 2*time.Second)
+
+	// 1. Active processing stage shows conveyor track, scan overlay, station and #02 order badge.
+	conveyor := app.Find("id:wb-conveyor-track").Bounds()
+	if conveyor.Size.Width <= 100 || conveyor.Size.Height < 16 {
+		t.Fatalf("wb-conveyor-track collapsed: %+v", conveyor)
+	}
+	activePipe := app.Find("id:wb-active-pipeline")
+	activeCard := app.Find("id:result-tile-card-2")
+	assertInsideDialog(t, "result-tile-card-2", activePipe.Bounds(), activeCard.Bounds())
+	scanOverlay := app.Find("id:active-scan-overlay-2").Bounds()
+	assertInsideDialog(t, "active-scan-overlay-2", activeCard.Bounds(), scanOverlay)
+	assertHasTexts(t, app, "正在洗图", "工位 · 豆包1")
+	hasOrder02 := false
+	for _, txt := range app.Texts() {
+		if strings.Contains(txt, "#02") {
+			hasOrder02 = true
+			break
+		}
+	}
+	if !hasOrder02 {
+		t.Fatalf("expected active work-order badge containing #02 in texts: %v", app.Texts())
+	}
+
+	// 2. Waiting queue renders pending items #03, #04, #05 cleanly on the same horizontal row.
+	pendingPipe := app.Find("id:wb-pending-queue").Bounds()
+	var pendingBounds []core.Bounds
+	for _, ord := range []int{3, 4, 5} {
+		b := app.Find(fmt.Sprintf("id:pending-tile-%d", ord)).Bounds()
+		if b.Size.Width < 40 || b.Size.Height < 50 {
+			t.Fatalf("pending-tile-%d collapsed: %+v", ord, b)
+		}
+		assertInsideDialog(t, fmt.Sprintf("pending-tile-%d", ord), pendingPipe, b)
+		pendingBounds = append(pendingBounds, b)
+	}
+	if pendingBounds[1].Origin.Y != pendingBounds[0].Origin.Y ||
+		pendingBounds[2].Origin.Y != pendingBounds[0].Origin.Y ||
+		pendingBounds[1].Origin.X <= pendingBounds[0].Origin.X+pendingBounds[0].Size.Width-1 ||
+		pendingBounds[2].Origin.X <= pendingBounds[1].Origin.X+pendingBounds[1].Size.Width-1 {
+		t.Fatalf("expected pending tickets #03..#05 on one non-overlapping horizontal row, got %+v", pendingBounds)
+	}
+	assertHasTexts(t, app, "#03", "#04", "#05")
+	if matches := app.Query(`id:wb-pending-queue >> text:"等待"`); len(matches) < 3 {
+		t.Fatalf("expected 3 等待 tags in wb-pending-queue, got %d", len(matches))
+	}
+
+	// 3. Left material pool reflects synced live statuses: 已洗 / 洗图中 / 等待.
+	if matches := app.Query(`id:wb-composer >> text:"已洗"`); len(matches) == 0 {
+		t.Fatal("expected 已洗 badge inside left source pool")
+	}
+	if matches := app.Query(`id:wb-composer >> text:"洗图中"`); len(matches) == 0 {
+		t.Fatal("expected 洗图中 badge inside left source pool")
+	}
+	if matches := app.Query(`id:wb-composer >> text:"等待"`); len(matches) == 0 {
+		t.Fatal("expected 等待 badge inside left source pool")
+	}
+
+	// 4. Zero repetitive inline text buttons or redundant 完成 stamp inside gallery.
+	for _, unwanted := range []string{"定位", "打开", "替换", "完成"} {
+		if matches := app.Query(`id:wb-result-gallery >> text:"` + unwanted + `"`); len(matches) > 0 {
+			t.Fatalf("unexpected inline button/stamp %q mounted inside result gallery (%d found)", unwanted, len(matches))
+		}
+	}
+}
+
+func TestWorkbenchClearWashedSourcesButton(t *testing.T) {
+	dir := t.TempDir()
+	srcs := make([]string, 4)
+	for i := range srcs {
+		srcs[i] = filepath.Join(dir, fmt.Sprintf("wash_%02d.png", i+1))
+		writeTestPNG(t, srcs[i])
+	}
+	sources := []store.SessionSource{
+		{Path: srcs[0], Washed: true, Output: srcs[0]},
+		{Path: srcs[1], Washed: true, Output: srcs[1]},
+		{Path: srcs[2]},
+		{Path: srcs[3]},
+	}
+
+	app, st := startTestUIWithSetup(t, true, 1280, 820, func(st *store.Store) {
+		if _, err := st.SaveActive(store.Session{
+			Page:    store.PageWash,
+			Prompts: "重绘为纯画",
+			Sources: sources,
+		}, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	app.WaitFor("id:wb-washed-bar", 2*time.Second)
+	app.Find("id:wb-clear-washed-btn")
+	assertHasTexts(t, app, "已洗 2 / 4", "参考素材 (4)")
+
+	app.Press("id:wb-clear-washed-btn")
+	app.WaitForGone("id:wb-washed-bar", 2*time.Second)
+	assertHasTexts(t, app, "参考素材 (2)")
+
+	sess, _, found, err := st.ActiveSession(store.PageWash)
+	if err != nil || !found {
+		t.Fatalf("expected active wash session persisted: found=%v err=%v", found, err)
+	}
+	if len(sess.Sources) != 2 || sess.Sources[0].Path != srcs[2] || sess.Sources[1].Path != srcs[3] {
+		t.Fatalf("unexpected persisted sources after clear washed: %+v", sess.Sources)
 	}
 }

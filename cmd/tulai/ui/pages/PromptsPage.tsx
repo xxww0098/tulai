@@ -1,5 +1,5 @@
 import { effect, List, signal, Text, View } from "nsgo";
-import { Badge, Button, Checkbox, Dialog, Input, Select } from "nsgo/ui";
+import { Button, Checkbox, Dialog, Input, Select } from "nsgo/ui";
 import {
   createNewPrompt,
   deleteUserPrompt,
@@ -9,6 +9,7 @@ import {
   setPromptFilter,
   setPromptSuffix,
 } from "tulai/backend";
+import { OutlineBadge } from "tulai/native";
 import { EmptyNotice, PageToolbar, SectionCard } from "../components/primitives";
 import { goTab, promptsState, showToast, TAB_GEN, updateWorkbenchField } from "../store";
 
@@ -70,9 +71,13 @@ export function PromptsPage() {
       />
 
       {/* 左右分栏 */}
-      <View class="min-h-0 flex-1 gap-3 p-3 md:flex-row">
+      <View class="min-h-0 flex-1 flex-row gap-2 p-2">
         {/* 左侧列表（顶部固定搜索） */}
-        <View testID="prompts-list" class="w-full min-h-0 md:w-[272px]">
+        <View
+          testID="prompts-list"
+          class="h-full min-h-0 shrink-0"
+          style={{ width: "25%", minWidth: 240, maxWidth: 340 }}
+        >
           <SectionCard class="flex-1 min-h-0" compact title={`模板列表 (${(st().items ?? []).length})`}>
             <View class="min-h-0 flex-1 gap-2">
               <Input
@@ -103,7 +108,7 @@ export function PromptsPage() {
                       <Text class="flex-1 truncate text-xs font-medium text-slate-900 dark:text-slate-100">
                         {item().name || item().label}
                       </Text>
-                      <Badge text={item().kindLbl || item().kind || "通用"} variant="outline" />
+                      <OutlineBadge text={item().kindLbl || item().kind || "通用"} />
                     </View>
                     <Text class="truncate text-[11px] text-slate-500 dark:text-slate-400">
                       {item().text || ""}
@@ -179,6 +184,7 @@ export function PromptsPage() {
                     <Select
                       options={KIND_OPTIONS}
                       value={draftKind()}
+                      style={{ width: "100%", alignSelf: "stretch" }}
                       onChange={({ value }) => draftKind.set(value)}
                     />
                   </View>
@@ -214,7 +220,12 @@ export function PromptsPage() {
               class="flex-1"
             />
             <View class="w-[120px]">
-              <Select options={KIND_OPTIONS} value={newKind()} onChange={({ value }) => newKind.set(value)} />
+              <Select
+                options={KIND_OPTIONS}
+                value={newKind()}
+                style={{ width: "100%", alignSelf: "stretch" }}
+                onChange={({ value }) => newKind.set(value)}
+              />
             </View>
           </View>
           <Input

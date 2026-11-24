@@ -13,6 +13,7 @@ import {
   dedupStart,
   revealPath,
 } from "tulai/backend";
+import { OutlineBadge } from "tulai/native";
 import { EmptyNotice, PageToolbar, SectionCard } from "../components/primitives";
 import { dedup } from "../store";
 
@@ -106,8 +107,12 @@ export function DedupPage() {
       />
 
       {/* 左：待对比图片池 / 右：相似组报告 */}
-      <View class="min-h-0 flex-1 gap-3 p-3 md:flex-row">
-        <View testID="dedup-queue" class="w-full min-h-0 md:w-[288px]">
+      <View class="min-h-0 flex-1 flex-row gap-2 p-2">
+        <View
+          testID="dedup-queue"
+          class="h-full min-h-0 shrink-0"
+          style={{ width: "26%", minWidth: 250, maxWidth: 340 }}
+        >
           <SectionCard
             class="flex-1 min-h-0"
             compact
@@ -198,7 +203,7 @@ export function DedupPage() {
                           <Text class="text-xs font-semibold text-slate-800 dark:text-slate-100">
                             {`相似组 #${grp().index + 1}`}
                           </Text>
-                          <Badge text={`汉明距离 ${grp().distance}`} variant="outline" />
+                          <OutlineBadge text={`汉明距离 ${grp().distance}`} />
                         </View>
                         <View class="flex-row flex-wrap gap-2.5">
                           <View class="w-[152px] gap-1 rounded-lg border-2 border-emerald-500/80 bg-emerald-50/50 p-1.5 dark:bg-emerald-500/10">
@@ -208,7 +213,7 @@ export function DedupPage() {
                               </If>
                             </View>
                             <View class="flex-row items-center justify-between gap-1">
-                              <Badge text="保留" variant="up" />
+                              <Badge text="保留" variant="success" />
                               <Text class="text-[10px] text-slate-500">{`${grp().keep.width}x${grp().keep.height}`}</Text>
                             </View>
                             <Text class="truncate text-[11px] font-medium text-slate-800 dark:text-slate-100">

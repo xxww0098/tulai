@@ -13,8 +13,8 @@ export function WizardView() {
   const wizardAction = runWizardAction;
   const finishWizard = closeWizardModal;
 
-  const stepTone = (s?: string): "up" | "info" | "neutral" =>
-    s === "done" ? "up" : s === "current" ? "info" : "neutral";
+  const stepTone = (s?: string): "success" | "accent" | "neutral" =>
+    s === "done" ? "success" : s === "current" ? "accent" : "neutral";
 
   return (
     <Dialog
@@ -226,7 +226,7 @@ export function WizardView() {
         {/* Step: done */}
         <If when={st().step === "done"}>
           <View class="gap-3">
-            <Badge text="配置已完成" variant="up" />
+            <Badge text="配置已完成" variant="success" />
             <Text class="text-xs text-slate-700 dark:text-slate-200">
               {st().note || "您现在可以开始使用图来批量生图、洗图与裂变工作台。"}
             </Text>

@@ -7,6 +7,7 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/tsx"
+	nsgoui "github.com/nsgo-dev/nsgo/ui"
 
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/resources"
@@ -17,7 +18,34 @@ func init() {
 		"BrandLogo":      BrandLogo{},
 		"BrowserStage":   BrowserStage{},
 		"ImageEditStage": ImageEditStage{},
+		"OutlineBadge":   OutlineBadge{},
 	})
+}
+
+// OutlineBadge is nsgo/ui's Badge in its "outline" look, which 0.3.0 removed:
+// no fill, a rim halfway between the background and the muted text, and the
+// text's color.
+type OutlineBadge struct {
+	Text string
+}
+
+func (o OutlineBadge) Render(cx *core.Scope) core.Node {
+	colors := nsgoui.ColorsOf(cx)
+	return core.View{
+		Style: core.Style{
+			Padding:        core.Symmetric(2, 8),
+			AlignSelf:      core.AlignStart,
+			CornerRadius:   12,
+			JustifyContent: core.JustifyCenter,
+			BorderWidth:    1,
+		},
+		StyleFunc: func() core.Style {
+			return core.Style{BorderColor: nsgoui.Mix(colors.Background(), colors.Muted(), 0.5)}
+		},
+		Children: []core.Node{
+			nsgoui.Text(o.Text, 11, nsgoui.Medium, func() core.Color { return colors.Text() }),
+		},
+	}
 }
 
 // BrandLogo renders the application icon mark via resources.AppIcon.

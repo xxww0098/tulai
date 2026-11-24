@@ -255,7 +255,7 @@ func (a *App) applyPromptChoice() {
 	id := promptOptionID(choice, options)
 	if id == "" {
 		if page == pageWash {
-			a.prompts = DefaultWashPrompt
+			a.prompts = a.defaultWashPrompt()
 			a.washPromptChoice = choosePromptLabel
 		} else {
 			a.promptPick = ""

@@ -1,8 +1,8 @@
 ---
 version: 1
 slug: "internal-ui-app-go"
-primary_target: "internal/ui/app.go"
-related_targets: []
+primary_target: "cmd/tulai/ui/App.tsx"
+related_targets: ["cmd/tulai/ui/pages/WorkbenchPage.tsx", "cmd/tulai/ui/components/primitives.tsx", "cmd/tulai/theme.yaml"]
 ---
 
 THESIS: 图来是以深墨色导航壳层稳住重心、右侧采用 1px 结构线全高通栏分屏与纯白创作画布的多账号 AI 视觉生产工作台。

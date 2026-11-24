@@ -361,3 +361,79 @@ drained:
 		}
 	}
 }
+
+func TestClearWashedWorkbenchSourcesBridge(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	bm := browser.NewManager()
+	eng := tasks.NewEngine(st, bm, nil, dir)
+	defer eng.Shutdown()
+
+	a := NewApp(st, bm, eng, dir)
+	SetTestApp(a)
+	defer SetTestApp(nil)
+
+	a.tab = pageWash
+	a.statePage = pageWash
+	a.sources = make([]sourceImage, 8)
+	for i := range a.sources {
+		a.sources[i] = sourceImage{
+			Path:   filepath.Join(dir, fmt.Sprintf("img_%02d.png", i)),
+			Washed: i == 0 || i == 2 || i == 7,
+		}
+	}
+	a.srcSel = 3
+	a.gallerySelected = map[string]bool{
+		a.sources[0].Path: true,
+		a.sources[2].Path: true,
+		a.sources[3].Path: true,
+		a.sources[7].Path: true,
+	}
+
+	wbBefore := getWorkbenchStateBridge()
+	if wbBefore.WashedCount != 3 || wbBefore.SourcesTotal != 8 {
+		t.Fatalf("before clear: washed=%d total=%d, want 3 / 8", wbBefore.WashedCount, wbBefore.SourcesTotal)
+	}
+
+	// No-op while tasks are running.
+	a.running = true
+	clearWashedWorkbenchSourcesBridge()
+	if len(a.sources) != 8 {
+		t.Fatalf("clearWashedWorkbenchSourcesBridge modified sources while running: len=%d", len(a.sources))
+	}
+
+	a.running = false
+	clearWashedWorkbenchSourcesBridge()
+	if len(a.sources) != 5 {
+		t.Fatalf("after clear: len(sources) = %d, want 5", len(a.sources))
+	}
+	for i, s := range a.sources {
+		if s.Washed {
+			t.Fatalf("remaining source[%d] unexpectedly marked washed: %+v", i, s)
+		}
+	}
+	if a.srcSel != 1 {
+		t.Fatalf("srcSel = %d, want 1 after removing earlier washed sources", a.srcSel)
+	}
+	if len(a.gallerySelected) != 1 || !a.gallerySelected[filepath.Join(dir, "img_03.png")] {
+		t.Fatalf("gallerySelected = %+v, want only unwashed selected path", a.gallerySelected)
+	}
+
+	wbAfter := getWorkbenchStateBridge()
+	if wbAfter.WashedCount != 0 || wbAfter.SourcesTotal != 5 {
+		t.Fatalf("after clear: washed=%d total=%d, want 0 / 5", wbAfter.WashedCount, wbAfter.SourcesTotal)
+	}
+
+	sess, _, found, err := st.ActiveSession(store.PageWash)
+	if err != nil || !found {
+		t.Fatalf("expected active wash session persisted: found=%v err=%v", found, err)
+	}
+	if len(sess.Sources) != 5 {
+		t.Fatalf("persisted session sources = %d, want 5", len(sess.Sources))
+	}
+}

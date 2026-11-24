@@ -23,7 +23,7 @@ Windows 程序没有代码签名，安装时 SmartScreen 可能提示未知发�
 ## 快速开始
 
 1. 启动 tulai，在设置向导中选择豆包、千问、ChatGPT 或 Antigravity。
-2. 豆包、千问和 ChatGPT 可在向导的「准备浏览器」或「浏览器」页选择账号环境。默认使用 Camoufox，也可选「Chrome CDP 账号环境」，点击「安装 Chrome CDP」后添加账号，在 tulai 打开的专用 Chrome 窗口登录。每个账号固定使用创建时的浏览器，两种环境可同时用于任务。Windows x64 发布包内含 Node 和启动库，首次使用需下载所选内核。Antigravity 按向导安装 `agy`，网页授权使用 Camoufox。
+2. 豆包、千问和 ChatGPT 可在向导的「账号环境」一步或「浏览器」页选择账号环境。默认使用 Camoufox，也可选「Chrome CDP」，按提示下载安装后添加账号，在 tulai 打开的专用 Chrome 窗口登录。每个账号固定使用创建时的浏览器，两种环境可同时用于任务。Windows x64 发布包内含 Node 和启动库，首次使用需下载所选内核。Antigravity 按向导安装 `agy`，网页授权使用 Camoufox。
 3. 打开「图片生成」，选择「自由生图」「批量洗图」或「裂变图片」，填写提示词并按需添加图片。
 4. 点击开始按钮，在界面查看任务进度和结果。输出目录可以在设置中更改。
 
@@ -63,8 +63,9 @@ Windows 和 macOS 的源码版与安装版共用应用数据目录，包括配�
 常用开发命令：
 
 ```bash
-./build.sh           # macOS / Linux 打包
-go test -short ./... # 运行短测试
+./build.sh                            # macOS / Linux 打包
+go test -short ./...                  # 运行短测试
+go tool nsgo check ./cmd/tulai        # 检查 TSX 类型；go test 不做这项检查
 ```
 
 Windows x64 可运行 `build-windows.cmd` 构建两个架构；构建时会联网准备并打包 x64 的 Camoufox 启动环境。浏览器相关测试和安装步骤见 [Camoufox 接入说明](docs/CAMOUFOX.md)。
@@ -79,3 +80,5 @@ Windows x64 可运行 `build-windows.cmd` 构建两个架构；构建时会联�
 ## 许可证
 
 [MIT License](LICENSE)
+
+安装目录中的 `THIRD_PARTY_NOTICES.txt` 列出程序包含的第三方组件及其许可证。

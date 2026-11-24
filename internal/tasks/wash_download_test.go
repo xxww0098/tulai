@@ -17,6 +17,41 @@ import (
 	"github.com/xxww0098/tulai/internal/extbridge"
 )
 
+func BenchmarkDownloadChunkAssembly(b *testing.B) {
+	data := bytes.Repeat([]byte{0x89, 0x50, 0x4e, 0x47}, 5<<18)
+	var chunks []string
+	for start := 0; start < len(data); start += extChunkRaw {
+		chunks = append(chunks, base64.StdEncoding.EncodeToString(data[start:min(start+extChunkRaw, len(data))]))
+	}
+	for _, preallocated := range []bool{false, true} {
+		b.Run(fmt.Sprintf("preallocated=%v", preallocated), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(data)))
+			for range b.N {
+				var out []byte
+				if preallocated {
+					out = make([]byte, 0, len(data))
+				}
+				for _, chunk := range chunks {
+					if preallocated {
+						out, _ = base64.StdEncoding.AppendDecode(out, []byte(chunk))
+					} else {
+						part, _ := base64.StdEncoding.DecodeString(chunk)
+						if out == nil {
+							out = part
+						} else {
+							out = append(out, part...)
+						}
+					}
+				}
+				if len(out) != len(data) {
+					b.Fatal("incomplete result")
+				}
+			}
+		})
+	}
+}
+
 func TestDownloadExpiresRestartsAndAcknowledgesSameTab(t *testing.T) {
 	data := resultPNG(t, 88)
 	var steps atomic.Int32

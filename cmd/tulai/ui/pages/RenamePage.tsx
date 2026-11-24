@@ -94,8 +94,12 @@ export function RenamePage() {
       />
 
       {/* 左：规则配置 / 右：实时对比预览表 */}
-      <View class="min-h-0 flex-1 gap-3 p-3 md:flex-row">
-        <View testID="rename-config" class="w-full min-h-0 md:w-[320px]">
+      <View class="min-h-0 flex-1 flex-row gap-2 p-2">
+        <View
+          testID="rename-config"
+          class="h-full min-h-0 shrink-0"
+          style={{ width: "28%", minWidth: 280, maxWidth: 380 }}
+        >
           <Scroll class="min-h-0 flex-1" contentClass="gap-2.5 pr-1">
             <SectionCard compact title="命名模式与规则">
               <View class="gap-3">
@@ -119,6 +123,7 @@ export function RenamePage() {
                     <Select
                       options={SORT_OPTIONS}
                       value={st().sortBy || "name"}
+                      style={{ width: "100%", alignSelf: "stretch" }}
                       onChange={({ value }) => renameSetField("sortBy", value)}
                     />
                   </View>
@@ -196,6 +201,7 @@ export function RenamePage() {
                         <Select
                           options={POSITION_OPTIONS}
                           value={st().position || "开头"}
+                          style={{ width: "100%", alignSelf: "stretch" }}
                           onChange={({ value }) => renameSetField("position", value)}
                         />
                       </View>
@@ -390,7 +396,7 @@ export function RenamePage() {
                       </If>
                       <View class="w-[90px] flex-row items-center justify-end gap-0.5">
                         <If when={Boolean(row().changed)}>
-                          <Badge text="改" variant="info" />
+                          <Badge text="改" variant="accent" />
                         </If>
                         <IconButton
                           icon="arrow-up"

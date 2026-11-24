@@ -65,8 +65,8 @@ export function SettingsPage() {
         }
       />
 
-      <Scroll class="min-h-0 flex-1" contentClass="items-center p-3 pb-6">
-        <View class="w-full max-w-[780px] gap-3">
+      <Scroll class="min-h-0 flex-1" contentClass="items-center p-2.5 pb-4">
+        <View class="w-full max-w-[960px] gap-2.5">
           {/* Tab 0: 常规与输出 */}
           <If when={st().tab === 0}>
             <View class="gap-3">
@@ -214,6 +214,7 @@ export function SettingsPage() {
                         <Select
                           options={STRATEGY_OPTIONS}
                           value={st().sendStrategy || "round-robin"}
+                          style={{ width: "100%", alignSelf: "stretch" }}
                           onChange={({ value }) => setSettingField("sendStrategy", value)}
                         />
                       </View>
@@ -366,6 +367,7 @@ export function SettingsPage() {
                         <Select
                           options={CAPTCHA_BACKENDS}
                           value={st().captchaBackend || "manual"}
+                          style={{ width: "100%", alignSelf: "stretch" }}
                           onChange={({ value }) => setSettingField("captchaBackend", value)}
                         />
                       </View>
@@ -457,6 +459,7 @@ export function SettingsPage() {
                       <Select
                         options={UPDATE_MIRRORS}
                         value={st().updateMirror || ""}
+                        style={{ width: "100%", alignSelf: "stretch" }}
                         onChange={({ value }) => setSettingField("updateMirror", value)}
                       />
                     </View>
@@ -473,7 +476,7 @@ export function SettingsPage() {
                 </If>
 
                 <If when={Boolean(st().updateNotice || upd().installed)}>
-                  <Badge text={st().updateNotice || `已准备更新 ${upd().installed}`} variant="up" />
+                  <Badge text={st().updateNotice || `已准备更新 ${upd().installed}`} variant="success" />
                 </If>
                 <If when={Boolean(st().updateErr || upd().err)}>
                   <Text class="text-xs text-rose-600 dark:text-rose-400">

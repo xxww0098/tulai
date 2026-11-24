@@ -226,7 +226,7 @@ func (a *App) syncPage() {
 	if !ok {
 		next = pageState{srcSel: -1}
 		if a.tab == pageWash {
-			next.prompts = DefaultWashPrompt
+			next.prompts = a.defaultWashPrompt()
 		} else if a.tab == pageFission {
 			next.prompts = DefaultFissionPrompt
 		}
@@ -245,7 +245,7 @@ func (a *App) stateOf(page int) pageState {
 	}
 	s := pageState{srcSel: -1}
 	if page == pageWash {
-		s.prompts = DefaultWashPrompt
+		s.prompts = a.defaultWashPrompt()
 	} else if page == pageFission {
 		s.prompts = DefaultFissionPrompt
 	}
@@ -270,7 +270,7 @@ func (a *App) onPage(page int, fn func()) {
 	if !ok {
 		cur = pageState{srcSel: -1}
 		if page == pageWash {
-			cur.prompts = DefaultWashPrompt
+			cur.prompts = a.defaultWashPrompt()
 		} else if page == pageFission {
 			cur.prompts = DefaultFissionPrompt
 		}
@@ -287,7 +287,7 @@ func isWorkPage(tab int) bool {
 	return tab == pageHome || tab == pageWash || tab == pageFission
 }
 
-func (a *App) washing() bool   { return a.statePage == pageWash }
+func (a *App) washing() bool    { return a.statePage == pageWash }
 func (a *App) fissioning() bool { return a.statePage == pageFission }
 
 func pageLabel(page int) string {
@@ -350,7 +350,7 @@ func (a *App) setSessionID(page int, id int64) {
 func promptMeansContent(page int, rawPrompts string) bool {
 	p := strings.TrimSpace(rawPrompts)
 	if page == pageWash {
-		return p != "" && p != DefaultWashPrompt
+		return p != "" && p != DefaultWashPrompt && p != prompts.DoubaoWashPrompt
 	}
 	if page == pageFission {
 		return p != "" && p != DefaultFissionPrompt
@@ -482,7 +482,7 @@ func (a *App) applySession(page int, sess store.Session, items []store.SessionTa
 func (a *App) applyWashSession(sess store.Session, items []store.SessionTask) {
 	a.prompts = sess.Prompts
 	if strings.TrimSpace(a.prompts) == "" {
-		a.prompts = DefaultWashPrompt
+		a.prompts = a.defaultWashPrompt()
 	}
 	a.washPromptChoice = choosePromptLabel
 	if len(sess.Sources) > 0 {
@@ -530,7 +530,7 @@ func (a *App) clearWorkspace(page int) {
 		a.skipImages = false
 		switch page {
 		case pageWash:
-			a.prompts = DefaultWashPrompt
+			a.prompts = a.defaultWashPrompt()
 			a.washPromptChoice = choosePromptLabel
 		case pageFission:
 			a.prompts = DefaultFissionPrompt
@@ -691,10 +691,17 @@ func (a *App) dropStamps(page int) {
 
 // ---- Wash & Fission helpers ----
 
+func (a *App) defaultWashPrompt() string {
+	if a.selectedPlatform() == "豆包" {
+		return prompts.DoubaoWashPrompt
+	}
+	return DefaultWashPrompt
+}
+
 func (a *App) washPrompt() string {
 	p := strings.TrimSpace(a.prompts)
 	if p == "" {
-		return DefaultWashPrompt
+		return a.defaultWashPrompt()
 	}
 	return p
 }
@@ -848,11 +855,21 @@ func (a *App) selectedPlatform() string {
 func (a *App) setSinglePlatform(platform string) bool {
 	switch platform {
 	case "豆包", "千问", agy.Platform, "ChatGPT":
+		previousDefault := a.defaultWashPrompt()
 		a.platDoubao = platform == "豆包"
 		a.platQianwen = platform == "千问"
 		a.platAntigravity = platform == agy.Platform
 		a.platChatGPT = platform == "ChatGPT"
 		a.platformAuto = false
+		// Switch only untouched defaults; custom requirements belong to the user.
+		if a.statePage == pageWash {
+			if prompts.SameText(a.prompts, previousDefault) {
+				a.prompts = a.defaultWashPrompt()
+			}
+		} else if wash, ok := a.parked[pageWash]; ok && prompts.SameText(wash.prompts, previousDefault) {
+			wash.prompts = a.defaultWashPrompt()
+			a.parked[pageWash] = wash
+		}
 		return true
 	default:
 		return false

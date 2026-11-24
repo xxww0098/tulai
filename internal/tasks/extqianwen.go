@@ -1278,17 +1278,21 @@ func extDownloadURL(ctx context.Context, sess *extbridge.Session, taskID, rawURL
 			}
 			total = body.Total
 		}
-		chunk, err := base64.StdEncoding.DecodeString(body.DataBase64)
+		// The bridge provides a checked total. Decode directly into one result
+		// buffer instead of allocating and copying every base64 chunk again.
+		if offset == 0 && total > 0 {
+			buf = make([]byte, 0, total)
+		}
+		if base64.StdEncoding.DecodedLen(len(body.DataBase64)) > extMaxDownload-offset+2 {
+			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "结果图超过 64 MiB 上限"}
+		}
+		buf, err = base64.StdEncoding.AppendDecode(buf, []byte(body.DataBase64))
 		if err != nil {
 			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载数据不是 base64"}
 		}
-		if len(chunk) > extMaxDownload-offset {
+		chunkLen := len(buf) - offset
+		if len(buf) > extMaxDownload {
 			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "结果图超过 64 MiB 上限"}
-		}
-		if offset == 0 {
-			buf = chunk
-		} else {
-			buf = append(buf, chunk...)
 		}
 		if body.Done || (total > 0 && len(buf) >= total) {
 			if total > 0 && len(buf) != total {
@@ -1296,7 +1300,7 @@ func extDownloadURL(ctx context.Context, sess *extbridge.Session, taskID, rawURL
 			}
 			return validateExtImage(buf)
 		}
-		if len(chunk) == 0 {
+		if chunkLen == 0 {
 			return nil, &extbridge.ProtoError{Code: extbridge.EDownloadFail, Message: "下载没有推进"}
 		}
 	}

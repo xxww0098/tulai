@@ -16,6 +16,7 @@ import {
   toggleAllBrowserChecks,
   toggleBrowserCheck,
 } from "tulai/backend";
+import { OutlineBadge } from "tulai/native";
 import { AccountListFrame, AccountViewButton } from "../components/BrowserDrawer";
 import { EmptyNotice, PageToolbar, SectionCard, StatusBadge } from "../components/primitives";
 import { browser, showToast } from "../store";
@@ -75,7 +76,7 @@ function AccountRow(props: {
           <If when={!isAgy() && !isExt()}>
             <AccountViewButton accountID={r().id} name={r().name} />
           </If>
-          <Badge text={r().platform || "未知"} variant="outline" />
+          <OutlineBadge text={r().platform || "未知"} />
 
           <If
             when={draftName() !== undefined}
@@ -310,12 +311,13 @@ export function BrowserPage() {
       />
 
       {/* 添加条 + 独立滚动账号列表 */}
-      <View class="min-h-0 flex-1 gap-2.5 p-3">
+      <View class="min-h-0 flex-1 gap-2 p-2">
         <View class="flex-row flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-[#222B3C] dark:bg-[#131924]">
           <View class="w-[144px]">
             <Select
               options={PLATFORM_OPTIONS}
               value={newPlatform()}
+              style={{ width: "100%", alignSelf: "stretch" }}
               onChange={({ value }) => newPlatform.set(value)}
             />
           </View>

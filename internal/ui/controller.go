@@ -1032,7 +1032,7 @@ func (a *App) loadSettings() {
 	}
 	wash := pageState{srcSel: -1, prompts: s.Get("wash_prompt")}
 	if strings.TrimSpace(wash.prompts) == "" {
-		wash.prompts = DefaultWashPrompt
+		wash.prompts = a.defaultWashPrompt()
 	}
 	for _, p := range splitLines(s.Get("wash_images")) {
 		data, err := os.ReadFile(p)
@@ -1066,8 +1066,10 @@ func (a *App) loadSettings() {
 	})
 	a.onPage(pageWash, func() {
 		if strings.TrimSpace(a.prompts) == "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变" {
-			a.prompts = DefaultWashPrompt
-		} else if prompts.SameText(a.prompts, prompts.LegacyDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PreviousDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.ReviewedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PixelReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FrameReviewDoubaoWashPrompt) {
+			a.prompts = a.defaultWashPrompt()
+		} else if a.selectedPlatform() == "豆包" && prompts.SameText(a.prompts, DefaultWashPrompt) {
+			a.prompts = a.defaultWashPrompt()
+		} else if prompts.SameText(a.prompts, prompts.LegacyDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PreviousDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.ReviewedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PixelReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FrameReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.WindowReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FullBleedDoubaoWashPrompt) {
 			a.prompts = prompts.DoubaoWashPrompt
 		}
 		a.stageTab = s.GetInt("wash_stage")

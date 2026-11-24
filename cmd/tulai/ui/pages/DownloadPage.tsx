@@ -1,5 +1,5 @@
 import { List, Scroll, signal, Text, View } from "nsgo";
-import { Badge, Button, Checkbox, Dialog, Input, Progress, Switch, Tabs } from "nsgo/ui";
+import { Button, Checkbox, Dialog, Input, Progress, Switch, Tabs } from "nsgo/ui";
 import {
   downloadClearTrash,
   downloadImportAction,
@@ -15,6 +15,7 @@ import {
   submitDownloadURLs,
   toggleDownloadCheck,
 } from "tulai/backend";
+import { OutlineBadge } from "tulai/native";
 import { EmptyNotice, PageToolbar, SectionCard, StatusBadge } from "../components/primitives";
 import { download } from "../store";
 
@@ -66,8 +67,12 @@ export function DownloadPage() {
       />
 
       {/* 左：链接提交与筛选参数 / 右：独立滚动下载队列 */}
-      <View class="min-h-0 flex-1 gap-3 p-3 md:flex-row">
-        <View testID="dl-composer" class="w-full min-h-0 md:w-[324px]">
+      <View class="min-h-0 flex-1 flex-row gap-2 p-2">
+        <View
+          testID="dl-composer"
+          class="h-full min-h-0 shrink-0"
+          style={{ width: "28%", minWidth: 280, maxWidth: 380 }}
+        >
           <Scroll class="min-h-0 flex-1" contentClass="gap-2.5 pr-1">
             <SectionCard compact title="添加下载链接" subtitle="每行一个 HTTP/HTTPS 图片或网页地址">
               <View class="gap-2.5">
@@ -232,7 +237,7 @@ export function DownloadPage() {
                           {task().name || task().url || `任务 #${task().id}`}
                         </Text>
                         <If when={Boolean(task().site)}>
-                          <Badge text={task().site} variant="outline" />
+                          <OutlineBadge text={task().site} />
                         </If>
                       </View>
 

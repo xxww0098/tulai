@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.36
+# 发布 tulai 0.1.37
 
-当前桌面端版本是 **0.1.36**，标签 **`v0.1.36`**，随附页面桥 **0.3.24**。扩展版本独立编号。
+当前桌面端版本是 **0.1.37**，标签 **`v0.1.37`**，随附页面桥 **0.3.24**。扩展版本独立编号。
+
+## 0.1.37
+
+重整图片生成工作台，分区展示待洗、账号加工和已完成结果，支持清空已洗素材及折叠提示词。豆包默认词强化单幅主画提取、去框、二维重绘和满幅输出；改进过期账号提示及下载内存开销。桌面界面框架升级到 NSGo 0.3.0，安装包和免安装程序附带第三方许可证声明 `THIRD_PARTY_NOTICES.txt`。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.36
 
@@ -168,8 +172,8 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.36` | `cmd/tulai/nsgo.yaml` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
-| Go 模块 | `v0.1.36` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
+| 桌面端 | `0.1.37` | `cmd/tulai/nsgo.yaml` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.37` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
 | 页面桥扩展 | `0.3.24` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
 | 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
 
@@ -183,6 +187,8 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 - 标签 `v*` 必须匹配 `cmd/tulai/nsgo.yaml` 的版本，且标签指向的提交必须有通过的 `main` CI。标签流水线重新打包并上传 Windows 安装器、便携版、扩展 zip 和 `SHA256SUMS`。
 
 Windows 安装器在 Ubuntu 上用 NSIS 交叉制作，同时提供 amd64 和 arm64。构建使用 `CGO_ENABLED=0 go tool nsgo build -target windows_x64,windows_arm64 ./cmd/tulai`。发布仓库由 `cmd/tulai/nsgo.yaml` 的 `release.github` 指定。macOS 和 Linux 用户可自行构建源码或使用历史发布包。
+
+NSGo 0.3.0 起，打包前会检查依赖的许可证，并把各依赖的许可证文本写进安装目录的 `THIRD_PARTY_NOTICES.txt`。有依赖的许可证文本无法识别时构建失败，检测到 copyleft 许可证时给出警告。已人工核对过的模块列在 `cmd/tulai/nsgo.yaml` 的 `licenses.allow`；新增依赖触发检查时，先核对它的许可证，再决定是否加入该列表。`nsgo check` 和 `go test` 不做这项检查，到打包时才会发现。
 
 ## 发布新版本
 
@@ -205,8 +211,8 @@ git push origin vX.Y.Z
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows 安装器 | `tulai.Setup.0.1.36.amd64.exe`、`tulai.Setup.0.1.36.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
-| Windows 便携版 | `tulai-0.1.36-windows-amd64.exe`、`tulai-0.1.36-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
+| Windows 安装器 | `tulai.Setup.0.1.37.amd64.exe`、`tulai.Setup.0.1.37.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.37-windows-amd64.exe`、`tulai-0.1.37-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
 | 页面桥 | `tulai-extension-0.3.24.zip` | 独立扩展包。绑定的 Camoufox 账号由 tulai 加载内置页面桥。 |
 
 `SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。
@@ -237,15 +243,15 @@ GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 
 | 入口 | 行为 |
 |---|---|
-| 启动后，以及大约每 6 小时 | 静默检查。设置里的「自动检查更新」默认开着。发现新版本时只显示一条横幅，不弹窗。关掉之后不再后台检查。 |
+| 启动后，以及大约每 6 小时 | 静默检查。设置里的「启动时自动检查更新」默认开着。发现新版本时只在侧栏底部显示提示，不弹窗。关掉之后不再后台检查。 |
 | 侧栏「新版本」 | 「查看」打开更新设置，「忽略」收起提示。 |
 | 任务还在跑 | 点击「更新到」后，桌面端等任务结束再安装。 |
-| 「设置 → 关于与更新」 | 显示当前版本、检查更新、安装新版和设置更新镜像。 |
+| 「设置 → 关于与更新」 | 显示当前版本、检查更新、安装新版和选择更新策略。 |
 | `tulai update` | 终端里检查并安装。GitHub 连不上时同样走镜像。 |
 | `tulai update --check` | 只打印当前版本和最新版本。 |
 | `tulai version` | 打印桌面端版本。 |
 
-下载先请求 GitHub。请求失败或可用的 SHA256 摘要对不上时，再试镜像。设置里的「更新镜像」留空时使用内置前缀，填 `off` 则只用 GitHub。
+下载先请求 GitHub。请求失败或可用的 SHA256 摘要对不上时，再试镜像。镜像前缀保存在配置项 `update_mirror`：留空时依次使用内置的 `https://ghfast.top/` 和 `https://gh-proxy.com/`，填 `off` 时只用 GitHub，自定义前缀排在内置镜像之前。「设置 → 关于与更新」的「更新策略」下拉框提供「GitHub 直连」和「镜像加速 (gh-proxy)」两项，两者目前效果相同：都是先请求 GitHub，失败后再依次尝试内置镜像。
 
 Windows 安装版使用安装器更新，便携版通过退出后的 PowerShell 替换 exe。发布流水线在上传前生成 `SHA256SUMS`。桌面更新器只比较桌面端的 `x.y.z` 版本。扩展 zip 独立编号和更新。
 

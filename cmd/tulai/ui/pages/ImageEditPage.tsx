@@ -90,7 +90,7 @@ export function ImageEditPage() {
               <View class="flex-row flex-wrap items-center justify-between gap-2">
                 <View class="flex-row flex-wrap items-center gap-1.5">
                   <Each of={st().chips ?? []} key={(c) => c.id || c.label || ""}>
-                    {(chip) => <Badge text={chip().label || ""} variant="info" />}
+                    {(chip) => <Badge text={chip().label || ""} variant="accent" />}
                   </Each>
                   <If when={(st().chips ?? []).length > 0}>
                     <Button text="重置参数" size="small" variant="ghost" onPress={() => editClearAll()} />
@@ -114,9 +114,13 @@ export function ImageEditPage() {
       />
 
       {/* 三栏精修工作室：左素材条 / 中央大画布 / 右折叠检视栏 */}
-      <View class="min-h-0 flex-1 gap-2.5 p-2.5 md:flex-row">
+      <View class="min-h-0 flex-1 flex-row gap-2 p-2">
         {/* 左栏：素材胶片列表 */}
-        <View testID="edit-files" class="w-full min-h-0 md:w-[180px]">
+        <View
+          testID="edit-files"
+          class="h-full min-h-0 shrink-0"
+          style={{ width: "16%", minWidth: 164, maxWidth: 220 }}
+        >
           <SectionCard class="flex-1 min-h-0" compact title={`图片 (${(st().files ?? []).length})`}>
             <List
               class="min-h-0 flex-1"
@@ -212,7 +216,11 @@ export function ImageEditPage() {
         </View>
 
         {/* 右栏：可折叠参数检视面板 */}
-        <View testID="edit-inspector" class="w-full min-h-0 md:w-[276px]">
+        <View
+          testID="edit-inspector"
+          class="h-full min-h-0 shrink-0"
+          style={{ width: "24%", minWidth: 256, maxWidth: 340 }}
+        >
           <Scroll class="min-h-0 flex-1" contentClass="gap-2.5 pr-1">
             {/* 裁剪尺寸与旋转 */}
             <SectionCard
@@ -398,6 +406,7 @@ export function ImageEditPage() {
                       <Select
                         options={FORMAT_OPTIONS}
                         value={st().format || "original"}
+                        style={{ width: "100%", alignSelf: "stretch" }}
                         onChange={({ value }) => editSetField("format", value)}
                       />
                     </View>

@@ -7,7 +7,7 @@ import {
   openBrowserDrawer,
   resumeBrowserDrawer,
 } from "tulai/backend";
-import { BrowserStage } from "tulai/native";
+import { BrowserStage, OutlineBadge } from "tulai/native";
 import { browserDrawer, showToast, viewedAccountID } from "../store";
 
 const accountListLeft = signal(0);
@@ -59,7 +59,7 @@ export function BrowserDrawer() {
     const roomRight = w - listLeft - 220 - gap;
     const placeRight = roomRight >= targetWidth * 0.8 || roomRight >= roomLeft;
     const width = Math.max(1, Math.min(targetWidth, placeRight ? roomRight : roomLeft));
-    const height = Math.max(1, Math.min(700, h * 0.8));
+    const height = Math.max(1, Math.min(720, h * 0.84));
     const x = position()?.x ?? (placeRight ? w - width - gap : gap);
     const y = position()?.y ?? (h - height) / 2;
     return {
@@ -93,7 +93,7 @@ export function BrowserDrawer() {
           <View class="flex-row flex-wrap items-center gap-2">
             <Text class="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{accountName()}</Text>
             <If when={Boolean(st().platform)}>
-              <Badge text={st().platform} variant="outline" />
+              <OutlineBadge text={st().platform} />
             </If>
             <If when={Boolean(st().manual && !st().err && !st().loading)}>
               <Badge text="手动操作" variant="warn" />

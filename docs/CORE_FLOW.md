@@ -46,7 +46,7 @@ flowchart TD
 
 ## 回归依据
 
-`internal/tasks/rotate_test.go` 覆盖多平台不确定发送及复合错误。人工验证测试覆盖独立等待与出图时限的组合。`internal/browser/cancel_start_test.go` 用私有管道夹具验证取消启动和独立进程生命周期，不启动真实浏览器。`internal/chatgpt/client_test.go` 覆盖文件与附件延迟就绪、永久 404。`internal/ui/session_test.go` 通过关闭数据库和 SQLite 故障注入验证草稿保留，也覆盖生图与洗图历史重启、重复恢复、混合卡片核对入口和原生界面状态。`internal/agy/usage_test.go` 使用虚拟时钟验证等锁期间超时、取消及取得锁后的剩余预算。
+`internal/tasks/rotate_test.go` 覆盖多平台不确定发送及复合错误。人工验证测试覆盖独立等待与出图时限的组合。`internal/browser/cancel_start_test.go` 用私有管道夹具验证取消启动和独立进程生命周期，不启动真实浏览器。`internal/chatgpt/client_test.go` 覆盖文件与附件延迟就绪、永久 404。原有的 `internal/ui/session_test.go`（关闭数据库和 SQLite 故障注入下的草稿保留、历史重启与重复恢复）在 v0.1.34 界面迁移时删除，这些用例没有随之迁移。`internal/agy/usage_test.go` 使用虚拟时钟验证等锁期间超时、取消及取得锁后的剩余预算。
 
 `internal/ui/recovery_boundary_test.go` 覆盖当前会话的新编辑、激活历史失败、跨页旧快照、初始保存失败与启动失败后的记录保留。额度测试还覆盖异常退出、认证失败前的凭据刷新、身份切换后的旧响应、取消后的迟到结果，以及首单刷新与后台读取并发时的等待与去重。
 

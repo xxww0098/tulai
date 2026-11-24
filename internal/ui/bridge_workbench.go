@@ -18,33 +18,34 @@ import (
 
 func init() {
 	tsx.RegisterFunctions("tulai/backend", map[string]any{
-		"getWorkbenchState":       getWorkbenchStateBridge,
-		"setWorkbenchField":       setWorkbenchFieldBridge,
-		"setPlatformSelected":     setPlatformSelectedBridge,
-		"setOutputSize":           setOutputSizeBridge,
-		"addWorkbenchSources":     addWorkbenchSourcesBridge,
-		"pickWorkbenchFiles":      pickWorkbenchFilesBridge,
-		"pickWorkbenchFolder":     pickWorkbenchFolderBridge,
-		"removeWorkbenchSource":   removeWorkbenchSourceBridge,
-		"clearWorkbenchSources":   clearWorkbenchSourcesBridge,
-		"selectWorkbenchSource":   selectWorkbenchSourceBridge,
-		"startTasks":              startTasksBridge,
-		"stopTasks":               stopTasksBridge,
-		"retryTask":               retryTaskBridge,
-		"retryAllFailed":          retryAllFailedBridge,
-		"openOutputFolder":        openOutputFolderBridge,
-		"replaceResultImage":      replaceResultImageBridge,
-		"sessionAction":           sessionActionBridge,
-		"getPromptPartsState":     getPromptPartsBridge,
-		"setPromptPart":           setPromptPartBridge,
-		"applyWorkbenchPrompt":    applyWorkbenchPromptBridge,
-		"setResultsDoneOpen":      setResultsDoneOpenBridge,
-		"setHistoryOpen":          setHistoryOpenBridge,
-		"setPreviewPath":          setPreviewPathBridge,
-		"setGalleryOpen":          setGalleryOpenBridge,
-		"toggleGallerySelect":     toggleGallerySelectBridge,
-		"setAllGallerySelect":     setAllGallerySelectBridge,
-		"removeGallerySourceItem": removeGallerySourceBridge,
+		"getWorkbenchState":           getWorkbenchStateBridge,
+		"setWorkbenchField":           setWorkbenchFieldBridge,
+		"setPlatformSelected":         setPlatformSelectedBridge,
+		"setOutputSize":               setOutputSizeBridge,
+		"addWorkbenchSources":         addWorkbenchSourcesBridge,
+		"pickWorkbenchFiles":          pickWorkbenchFilesBridge,
+		"pickWorkbenchFolder":         pickWorkbenchFolderBridge,
+		"removeWorkbenchSource":       removeWorkbenchSourceBridge,
+		"clearWorkbenchSources":       clearWorkbenchSourcesBridge,
+		"clearWashedWorkbenchSources": clearWashedWorkbenchSourcesBridge,
+		"selectWorkbenchSource":       selectWorkbenchSourceBridge,
+		"startTasks":                  startTasksBridge,
+		"stopTasks":                   stopTasksBridge,
+		"retryTask":                   retryTaskBridge,
+		"retryAllFailed":              retryAllFailedBridge,
+		"openOutputFolder":            openOutputFolderBridge,
+		"replaceResultImage":          replaceResultImageBridge,
+		"sessionAction":               sessionActionBridge,
+		"getPromptPartsState":         getPromptPartsBridge,
+		"setPromptPart":               setPromptPartBridge,
+		"applyWorkbenchPrompt":        applyWorkbenchPromptBridge,
+		"setResultsDoneOpen":          setResultsDoneOpenBridge,
+		"setHistoryOpen":              setHistoryOpenBridge,
+		"setPreviewPath":              setPreviewPathBridge,
+		"setGalleryOpen":              setGalleryOpenBridge,
+		"toggleGallerySelect":         toggleGallerySelectBridge,
+		"setAllGallerySelect":         setAllGallerySelectBridge,
+		"removeGallerySourceItem":     removeGallerySourceBridge,
 	})
 }
 
@@ -61,20 +62,21 @@ type SourceItemDTO struct {
 }
 
 type ResultTileDTO struct {
-	Key        string
-	TaskIndex  int
-	Title      string
-	Status     string
-	Path       string
-	FileURL    string
-	SrcURL     string
-	Platform   string
-	Elapsed    string
-	Prompt     string
-	Rewritten  bool
-	Reason     string
-	ActionText string
-	CanReplace bool
+	Key         string
+	TaskIndex   int
+	Title       string
+	Status      string
+	Path        string
+	FileURL     string
+	SrcURL      string
+	Platform    string
+	AccountName string
+	Elapsed     string
+	Prompt      string
+	Rewritten   bool
+	Reason      string
+	ActionText  string
+	CanReplace  bool
 }
 
 type ResultRowDTO struct {
@@ -155,6 +157,7 @@ type WorkbenchStateDTO struct {
 	OutputCrop       bool
 	Sources          []SourceItemDTO
 	SourcesTotal     int
+	WashedCount      int
 	SelectedSource   int
 	SkipImages       bool
 	Running          bool
@@ -168,7 +171,9 @@ type WorkbenchStateDTO struct {
 	OutputNote       string
 	ActiveRows       []ResultRowDTO
 	IssueRows        []ResultRowDTO
+	PendingTiles     []ResultTileDTO
 	DoneTiles        []ResultTileDTO
+	PendingCount     int
 	DoneCount        int
 	DoneTasks        int
 	FailedCount      int
@@ -222,25 +227,41 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 	items := a.currentQueueItems()
 	tally := TallyTasks(items)
 	activeRows, issueRows, doneTiles, doneTasks := a.classifyResultRows(items, 4)
+	accounts := a.configuredBrowsers()
+	acctTitleByID := make(map[int64]string, len(accounts))
+	for _, b := range accounts {
+		title := accountLabel(b)
+		if b.Platform == agy.Platform && strings.TrimSpace(b.UserDataDir) != "" {
+			if email := strings.TrimSpace(agy.Email(b.UserDataDir)); email != "" {
+				title = email
+			}
+		}
+		acctTitleByID[b.ID] = title
+	}
 
 	mapTile := func(t resultTile) ResultTileDTO {
 		reason, act, _ := tileFailure(t.task)
 		src := taskSource(t.task)
+		acctName := strings.TrimSpace(t.task.AccountName)
+		if acctName == "" && t.task.BrowserID > 0 {
+			acctName = acctTitleByID[t.task.BrowserID]
+		}
 		return ResultTileDTO{
-			Key:        t.key,
-			TaskIndex:  t.task.Index,
-			Title:      tileTitle(t),
-			Status:     tileStatus(t.task),
-			Path:       t.path,
-			FileURL:    fileURL(t.path),
-			SrcURL:     fileURL(src),
-			Platform:   t.task.Platform,
-			Elapsed:    taskElapsedText(t.task, time.Now()),
-			Prompt:     t.task.Prompt,
-			Rewritten:  t.task.Rewritten,
-			Reason:     reason,
-			ActionText: act,
-			CanReplace: !a.running && src != "" && t.task.Status != tasks.StatusRunning,
+			Key:         t.key,
+			TaskIndex:   t.task.Index,
+			Title:       tileTitle(t),
+			Status:      tileStatus(t.task),
+			Path:        t.path,
+			FileURL:     fileURL(t.path),
+			SrcURL:      fileURL(src),
+			Platform:    t.task.Platform,
+			AccountName: acctName,
+			Elapsed:     taskElapsedText(t.task, time.Now()),
+			Prompt:      t.task.Prompt,
+			Rewritten:   t.task.Rewritten,
+			Reason:      reason,
+			ActionText:  act,
+			CanReplace:  !a.running && src != "" && t.task.Status != tasks.StatusRunning,
 		}
 	}
 	mapRows := func(in []resultRow) []ResultRowDTO {
@@ -265,6 +286,15 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 	for _, t := range doneTiles {
 		mappedDone = append(mappedDone, mapTile(t))
 	}
+	pendingTiles := make([]ResultTileDTO, 0)
+	for pos, task := range items {
+		if task.Status == tasks.StatusPending || task.Status == "" {
+			pendingTiles = append(pendingTiles, mapTile(resultTile{
+				key:  fmt.Sprintf("q-%d-%d", task.Index, pos),
+				task: task,
+			}))
+		}
+	}
 
 	srcLimit := min(len(a.sources), 6)
 	srcs := make([]SourceItemDTO, 0, srcLimit)
@@ -281,6 +311,12 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 			OutputURL:  fileURL(s.WashOutput),
 			Selected:   i == a.srcSel,
 		})
+	}
+	washedCount := 0
+	for _, s := range a.sources {
+		if s.Washed {
+			washedCount++
+		}
 	}
 
 	// Prompt options for dropdown
@@ -301,7 +337,6 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 		presetLabels = append(presetLabels, p.label)
 	}
 
-	accounts := a.configuredBrowsers()
 	plan := a.workbenchPlan(accounts)
 	startLabel := "开始生成"
 	switch {
@@ -367,6 +402,10 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 			Extension:    ln.Extension || row.ExtAccount != "",
 			Engine:       row.Engine,
 			LastError:    row.LastError,
+		}
+		// Expired quota/cooldown errors are history, not a current blocker.
+		if (row.Health == store.HealthCooling || row.Health == store.HealthExhausted) && row.CoolUntil > 0 && row.Usable(now) {
+			dto.LastError = ""
 		}
 		if ln.NextReadyAt.After(now) {
 			dto.ReadyInSec = int(ln.NextReadyAt.Sub(now).Seconds()) + 1
@@ -461,6 +500,7 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 		OutputCrop:       a.outputCrop,
 		Sources:          srcs,
 		SourcesTotal:     len(a.sources),
+		WashedCount:      washedCount,
 		SelectedSource:   a.srcSel,
 		SkipImages:       a.skipImages,
 		Running:          a.running,
@@ -474,7 +514,9 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 		OutputNote:       a.outputNote,
 		ActiveRows:       mapRows(activeRows),
 		IssueRows:        mapRows(issueRows),
+		PendingTiles:     pendingTiles,
 		DoneTiles:        mappedDone,
+		PendingCount:     len(pendingTiles),
 		DoneCount:        len(mappedDone),
 		DoneTasks:        doneTasks,
 		FailedCount:      tally.Failed,
@@ -531,7 +573,7 @@ func setWorkbenchFieldBridge(field, value string) {
 			}
 		}
 	case "resetWashPrompt":
-		a.prompts = DefaultWashPrompt
+		a.prompts = a.defaultWashPrompt()
 	case "resetFissionPrompt":
 		a.prompts = DefaultFissionPrompt
 	case "washStyle":
@@ -662,6 +704,40 @@ func clearWorkbenchSourcesBridge() {
 	a.sources = nil
 	a.srcSel = -1
 	a.persistWorkspace(a.statePage)
+	a.emit("workbench")
+}
+
+func clearWashedWorkbenchSourcesBridge() {
+	a := getApp()
+	if a == nil || a.running {
+		return
+	}
+	kept := make([]sourceImage, 0, len(a.sources))
+	removed := 0
+	newSel := -1
+	for i, s := range a.sources {
+		if s.Washed {
+			removed++
+			if a.gallerySelected != nil {
+				delete(a.gallerySelected, s.Path)
+			}
+			continue
+		}
+		if i == a.srcSel {
+			newSel = len(kept)
+		}
+		kept = append(kept, s)
+	}
+	if removed == 0 {
+		return
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	a.sources = kept
+	a.srcSel = newSel
+	a.persistWorkspace(a.statePage)
+	a.pushToast("success", fmt.Sprintf("已清空 %d 张已洗图片", removed))
 	a.emit("workbench")
 }
 
