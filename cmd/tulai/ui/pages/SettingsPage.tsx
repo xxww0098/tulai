@@ -1,4 +1,4 @@
-import { Scroll, Text, View } from "nsgo";
+import { Scroll, Text, View, windowSize } from "nsgo";
 import { Badge, Button, Checkbox, Input, Progress, Select, Switch, Tabs } from "nsgo/ui";
 import {
   pickSettingDir,
@@ -8,7 +8,7 @@ import {
   updateAction,
 } from "tulai/backend";
 import { FormRow, PageToolbar, SectionCard } from "../components/primitives";
-import { settings, shell, updateSettingField } from "../store";
+import { settings, shell, toggleDarkMode, updateSettingField } from "../store";
 
 const SETTINGS_TABS = [
   { value: "0", label: "常规与输出" },
@@ -37,19 +37,29 @@ const UPDATE_MIRRORS = [
 export function SettingsPage() {
   const st = settings;
   const upd = () => shell().update;
+  const wide = () => (windowSize().width || 1160) >= 1120;
 
   return (
     <View class="min-h-0 flex-1">
       <PageToolbar
         left={
-          <Tabs
-            testID="settings-tabs"
-            variant="segmented"
-            size="small"
-            options={SETTINGS_TABS}
-            value={String(st().tab)}
-            onChange={({ value }) => updateSettingField("tab", value)}
-          />
+          <If
+            when={!wide()}
+            else={
+              <Text class="text-xs font-medium text-slate-500 dark:text-slate-400">
+                全局输出目录、账号调度与扩展网络配置
+              </Text>
+            }
+          >
+            <Tabs
+              testID="settings-tabs"
+              variant="segmented"
+              size="small"
+              options={SETTINGS_TABS}
+              value={String(st().tab)}
+              onChange={({ value }) => updateSettingField("tab", value)}
+            />
+          </If>
         }
         right={
           <View class="flex-row items-center gap-2">
@@ -65,12 +75,63 @@ export function SettingsPage() {
         }
       />
 
-      <Scroll class="min-h-0 flex-1" contentClass="items-center p-2.5 pb-4">
-        <View class="w-full max-w-[960px] gap-2.5">
-          {/* Tab 0: 常规与输出 */}
-          <If when={st().tab === 0}>
-            <View class="gap-3">
-              <SectionCard compact title="输出目录与命名序号" subtitle={st().resolvedOutput}>
+      <View class="min-h-0 flex-1 flex-row bg-[#F8FAFC] dark:bg-[#0D1118]">
+        <If when={wide()}>
+          <View
+            testID="settings-rail"
+            class="h-full w-[176px] shrink-0 gap-1 border-r border-[#E5E9F0] bg-white p-2 dark:border-[#222B3C] dark:bg-[#131924]"
+          >
+            <Each of={SETTINGS_TABS} key={(t) => t.value}>
+              {(item) => {
+                const active = () => String(st().tab) === item().value;
+                return (
+                  <View
+                    onPress={() => updateSettingField("tab", item().value)}
+                    style={{ cursor: "pointer" }}
+                    class="rounded-[5px] border px-2.5 py-2 transition-colors duration-150"
+                    classList={{
+                      "border-[#CBD5E1] bg-[#F1F5F9] dark:border-[#334155] dark:bg-[#1A2232]": active(),
+                      "border-transparent hover:bg-[#F1F5F9]/70 dark:hover:bg-[#1A2232]/70": !active(),
+                    }}
+                  >
+                    <Text
+                      class="text-xs"
+                      classList={{
+                        "font-semibold text-blue-600 dark:text-blue-400": active(),
+                        "font-medium text-slate-700 dark:text-slate-300": !active(),
+                      }}
+                    >
+                      {item().label}
+                    </Text>
+                  </View>
+                );
+              }}
+            </Each>
+          </View>
+        </If>
+
+        <Scroll class="min-w-0 min-h-0 flex-1" contentClass="items-center p-4 pb-6">
+          <View class="w-full max-w-[780px] gap-3">
+            {/* Tab 0: 常规与输出 */}
+            <If when={st().tab === 0}>
+              <View class="gap-3">
+                <SectionCard compact title="界面外观">
+                  <FormRow label="主题模式" hint="即时切换浅色与深色工作台">
+                    <Tabs
+                      testID="settings-theme-tabs"
+                      variant="segmented"
+                      size="small"
+                      options={[
+                        { value: "light", label: "浅色模式" },
+                        { value: "dark", label: "深色模式" },
+                      ]}
+                      value={shell().dark ? "dark" : "light"}
+                      onChange={({ value }) => toggleDarkMode(value === "dark")}
+                    />
+                  </FormRow>
+                </SectionCard>
+
+                <SectionCard compact title="输出目录与命名序号" subtitle={st().resolvedOutput}>
                 <View class="gap-3">
                   <FormRow label="图片输出目录">
                     <View class="flex-row items-center gap-2">
@@ -251,31 +312,35 @@ export function SettingsPage() {
               <SectionCard compact title="平台每日出图上限与模型">
                 <View class="gap-3">
                   <FormRow label="单日账号上限">
-                    <View class="flex-row flex-wrap items-center gap-2.5">
-                      <Text class="text-xs text-slate-500">豆包</Text>
-                      <Input
-                        value={String(st().dailyCapDoubao)}
-                        onChange={({ value }) => setSettingField("dailyCapDoubao", value)}
-                        class="w-[68px]"
-                      />
-                      <Text class="text-xs text-slate-500">千问</Text>
-                      <Input
-                        value={String(st().dailyCapQianwen)}
-                        onChange={({ value }) => setSettingField("dailyCapQianwen", value)}
-                        class="w-[68px]"
-                      />
-                      <Text class="text-xs text-slate-500">Antigravity</Text>
-                      <Input
-                        value={String(st().dailyCapAgy)}
-                        onChange={({ value }) => setSettingField("dailyCapAgy", value)}
-                        class="w-[68px]"
-                      />
-                      <Text class="text-xs text-slate-500">ChatGPT</Text>
-                      <Input
-                        value={String(st().dailyCapChatGPT)}
-                        onChange={({ value }) => setSettingField("dailyCapChatGPT", value)}
-                        class="w-[68px]"
-                      />
+                    <View style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
+                      <View class="gap-1">
+                        <Text class="text-[11px] text-slate-500">豆包</Text>
+                        <Input
+                          value={String(st().dailyCapDoubao)}
+                          onChange={({ value }) => setSettingField("dailyCapDoubao", value)}
+                        />
+                      </View>
+                      <View class="gap-1">
+                        <Text class="text-[11px] text-slate-500">千问</Text>
+                        <Input
+                          value={String(st().dailyCapQianwen)}
+                          onChange={({ value }) => setSettingField("dailyCapQianwen", value)}
+                        />
+                      </View>
+                      <View class="gap-1">
+                        <Text class="text-[11px] text-slate-500">Antigravity</Text>
+                        <Input
+                          value={String(st().dailyCapAgy)}
+                          onChange={({ value }) => setSettingField("dailyCapAgy", value)}
+                        />
+                      </View>
+                      <View class="gap-1">
+                        <Text class="text-[11px] text-slate-500">ChatGPT</Text>
+                        <Input
+                          value={String(st().dailyCapChatGPT)}
+                          onChange={({ value }) => setSettingField("dailyCapChatGPT", value)}
+                        />
+                      </View>
                     </View>
                   </FormRow>
 
@@ -491,8 +556,9 @@ export function SettingsPage() {
               </View>
             </SectionCard>
           </If>
-        </View>
-      </Scroll>
+          </View>
+        </Scroll>
+      </View>
     </View>
   );
 }

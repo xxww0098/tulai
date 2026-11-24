@@ -786,7 +786,7 @@ func TestWorkbenchSaaSResultGalleryAndComposerLayout(t *testing.T) {
 	type sizeMetrics struct {
 		composerW float64
 		cardW     float64
-		cardH     float64
+		row1Count int
 	}
 	var metrics []sizeMetrics
 
@@ -829,7 +829,7 @@ func TestWorkbenchSaaSResultGalleryAndComposerLayout(t *testing.T) {
 				t.Fatalf("expected 1fr/1fr output select widths in [100, %v], got preset=%+v ratio=%+v", composer.Size.Width/2, presetSel, ratioSel)
 			}
 
-			// 2. Gallery cards render cleanly in a fixed 3-column grid that scales with window size.
+			// 2. Compact auto-fill gallery cards fit more columns as width grows and never overlap.
 			gallery := app.Find("id:wb-result-gallery")
 			if gallery.Bounds().Size.Width <= 0 {
 				t.Fatalf("wb-result-gallery collapsed: %+v", gallery.Bounds())
@@ -841,7 +841,7 @@ func TestWorkbenchSaaSResultGalleryAndComposerLayout(t *testing.T) {
 					t.Fatalf("result tile image %d collapsed: %+v", i, img)
 				}
 				card := app.Find(fmt.Sprintf("id:result-tile-card-%d", i)).Bounds()
-				if card.Size.Width < 110 || card.Size.Height < 130 {
+				if card.Size.Width < 60 || card.Size.Height < 70 {
 					t.Fatalf("result tile card %d collapsed: %+v", i, card)
 				}
 				for j, prev := range cards {
@@ -854,19 +854,28 @@ func TestWorkbenchSaaSResultGalleryAndComposerLayout(t *testing.T) {
 				cards = append(cards, card)
 				app.Find(fmt.Sprintf("id:result-tile-menu-%d", i))
 			}
-			// Fixed 3 columns: cards 1, 2, 3 on row 1; card 4 starts row 2 aligned under card 1.
-			if cards[1].Origin.Y != cards[0].Origin.Y || cards[2].Origin.Y != cards[0].Origin.Y ||
-				cards[1].Origin.X <= cards[0].Origin.X+cards[0].Size.Width-1 ||
-				cards[2].Origin.X <= cards[1].Origin.X+cards[1].Size.Width-1 {
-				t.Fatalf("expected fixed 3-column first row, got %+v %+v %+v", cards[0], cards[1], cards[2])
+			row1Count := 0
+			for _, c := range cards {
+				if c.Origin.Y == cards[0].Origin.Y {
+					row1Count++
+				}
 			}
-			if cards[3].Origin.Y <= cards[0].Origin.Y || cards[3].Origin.X < cards[0].Origin.X-1 || cards[3].Origin.X > cards[0].Origin.X+1 {
-				t.Fatalf("expected card 4 on row 2 aligned with card 1, got card1=%+v card4=%+v", cards[0], cards[3])
+			if row1Count < 4 {
+				t.Fatalf("expected compact thumbnail grid >=4 cols on row 1, got %d (%+v)", row1Count, cards)
+			}
+			if sz.w >= 1600 {
+				smW := cards[0].Size.Width
+				app.Press("id:wb-density-tabs >> text:中图")
+				mdW := app.Find("id:result-tile-card-1").Bounds().Size.Width
+				if mdW <= smW {
+					t.Fatalf("expected 中图 density width (%v) > 小图 (%v)", mdW, smW)
+				}
+				app.Press("id:wb-density-tabs >> text:小图")
 			}
 			metrics = append(metrics, sizeMetrics{
 				composerW: float64(composer.Size.Width),
 				cardW:     float64(cards[0].Size.Width),
-				cardH:     float64(cards[0].Size.Height),
+				row1Count: row1Count,
 			})
 
 			// 3. Zero repetitive inline text buttons (定位/打开/替换) or redundant 完成 stamp on completed cards.
@@ -876,17 +885,18 @@ func TestWorkbenchSaaSResultGalleryAndComposerLayout(t *testing.T) {
 				}
 			}
 
-			// 4. Single quiet menu trigger opens full card actions on demand.
+			// 4. Single quiet menu trigger opens full card actions including re-wash on demand.
 			app.Press("id:result-tile-menu-1")
 			app.WaitFor("role:menuitem 大图预览", 2*time.Second)
-			assertHasTexts(t, app, "大图预览", "系统默认打开", "在文件夹中显示", "替换原图")
+			assertHasTexts(t, app, "大图预览", "放回待洗队列（二次清洗）", "系统默认打开", "在文件夹中显示", "替换原图")
 			app.Key("escape")
 			app.WaitForGone("role:menuitem 大图预览", 2*time.Second)
 
-			// 5. Clicking artwork opens enhanced Lightbox with Prev/Next navigation and actions.
+			// 5. Clicking artwork opens enhanced Lightbox with Prev/Next navigation, re-wash, and actions.
 			app.Press("id:result-tile-image-1")
 			app.WaitFor("id:lightbox-dialog", 2*time.Second)
 			assertHasTexts(t, app, "1 / 6", "在文件夹中显示", "系统默认打开", "替换原图")
+			app.Find("id:lightbox-rewash-btn")
 			app.Find("id:lightbox-replace-btn")
 
 			app.Press("label:下一张")
@@ -905,11 +915,8 @@ func TestWorkbenchSaaSResultGalleryAndComposerLayout(t *testing.T) {
 	if !(metrics[0].composerW < metrics[1].composerW && metrics[1].composerW < metrics[2].composerW) {
 		t.Fatalf("expected composer width to stretch smoothly with window size: %+v", metrics)
 	}
-	if !(metrics[0].cardW < metrics[1].cardW && metrics[1].cardW < metrics[2].cardW) {
-		t.Fatalf("expected gallery card width to stretch smoothly with window size: %+v", metrics)
-	}
-	if !(metrics[0].cardH < metrics[1].cardH && metrics[1].cardH < metrics[2].cardH) {
-		t.Fatalf("expected gallery card height (via aspectRatio) to stretch smoothly with window size: %+v", metrics)
+	if !(metrics[2].row1Count > metrics[0].row1Count) {
+		t.Fatalf("expected more compact tiles per row at 1600px than 920px: %+v", metrics)
 	}
 }
 
@@ -952,7 +959,7 @@ func TestWorkbenchEngineeringPipelineActiveAndPending(t *testing.T) {
 	app.WaitFor("id:wb-active-pipeline", 2*time.Second)
 	app.WaitFor("id:wb-pending-queue", 2*time.Second)
 
-	// 1. Active processing stage shows conveyor track, scan overlay, station and #02 order badge.
+	// 1. Active processing stage shows conveyor track, Wash-Bot station card & canvas, and #02 badge.
 	conveyor := app.Find("id:wb-conveyor-track").Bounds()
 	if conveyor.Size.Width <= 100 || conveyor.Size.Height < 16 {
 		t.Fatalf("wb-conveyor-track collapsed: %+v", conveyor)
@@ -960,8 +967,8 @@ func TestWorkbenchEngineeringPipelineActiveAndPending(t *testing.T) {
 	activePipe := app.Find("id:wb-active-pipeline")
 	activeCard := app.Find("id:result-tile-card-2")
 	assertInsideDialog(t, "result-tile-card-2", activePipe.Bounds(), activeCard.Bounds())
-	scanOverlay := app.Find("id:active-scan-overlay-2").Bounds()
-	assertInsideDialog(t, "active-scan-overlay-2", activeCard.Bounds(), scanOverlay)
+	botCanvas := app.Find("id:washbot-canvas-2").Bounds()
+	assertInsideDialog(t, "washbot-canvas-2", activeCard.Bounds(), botCanvas)
 	assertHasTexts(t, app, "正在洗图", "工位 · 豆包1")
 	hasOrder02 := false
 	for _, txt := range app.Texts() {
@@ -974,7 +981,7 @@ func TestWorkbenchEngineeringPipelineActiveAndPending(t *testing.T) {
 		t.Fatalf("expected active work-order badge containing #02 in texts: %v", app.Texts())
 	}
 
-	// 2. Waiting queue renders pending items #03, #04, #05 cleanly on the same horizontal row.
+	// 2. Waiting queue renders compact pending items #03, #04, #05 cleanly on the same horizontal row.
 	pendingPipe := app.Find("id:wb-pending-queue").Bounds()
 	var pendingBounds []core.Bounds
 	for _, ord := range []int{3, 4, 5} {
@@ -1013,6 +1020,106 @@ func TestWorkbenchEngineeringPipelineActiveAndPending(t *testing.T) {
 			t.Fatalf("unexpected inline button/stamp %q mounted inside result gallery (%d found)", unwanted, len(matches))
 		}
 	}
+}
+
+func TestWorkbenchRewashAndUndoUI(t *testing.T) {
+	dir := t.TempDir()
+	var sources []store.SessionSource
+	var sessionTasks []store.SessionTask
+	for i := range 3 {
+		src := filepath.Join(dir, fmt.Sprintf("src_%02d.png", i+1))
+		out := filepath.Join(dir, fmt.Sprintf("out_%02d.png", i+1))
+		writeTestPNG(t, src)
+		writeTestPNG(t, out)
+		sources = append(sources, store.SessionSource{Path: src, Washed: true, Output: out})
+		sessionTasks = append(sessionTasks, store.SessionTask{
+			Ord:      i + 1,
+			Platform: "豆包",
+			Source:   src,
+			Status:   string(tasks.StatusSuccess),
+			Outputs:  out,
+		})
+	}
+
+	app, st := startTestUIWithSetup(t, true, 1280, 820, func(st *store.Store) {
+		if _, err := st.SaveActive(store.Session{
+			Page:     store.PageWash,
+			Prompts:  "重绘为纯画",
+			Progress: 1,
+			Sources:  sources,
+		}, sessionTasks); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	app.Find("id:result-tile-image-1")
+	app.Find("id:result-tile-image-2")
+	app.Find("id:result-tile-image-3")
+
+	// Single-item quick rewash button
+	app.Press("id:rewash-tile-1")
+	app.WaitFor("id:pending-tile-1", 2*time.Second)
+	app.Find("id:wb-undo-rewash-btn")
+	if matches := app.Query(`id:wb-pending-queue >> text:"二次洗"`); len(matches) == 0 {
+		t.Fatal("expected 二次洗 tag in wb-pending-queue after single rewash")
+	}
+	if app.Exists("id:result-tile-card-1") {
+		t.Fatal("tile #1 stayed in done cards after rewash")
+	}
+
+	// Undo restores all 3 done tiles
+	app.Press("id:wb-undo-rewash-btn")
+	app.WaitForGone("id:wb-pending-queue", 2*time.Second)
+	app.Find("id:result-tile-card-1")
+
+	// Multi-select batch rewash + SQLite persistence check
+	app.Press("id:wb-batch-select-toggle")
+	app.WaitFor("id:done-select-1", 2*time.Second)
+	app.Press("id:done-select-1")
+	app.Press("id:done-select-2")
+	app.Press("id:batch-rewash-btn")
+
+	app.WaitFor("id:pending-tile-1", 2*time.Second)
+	app.WaitFor("id:pending-tile-2", 2*time.Second)
+	_, items, ok, err := st.ActiveSession(store.PageWash)
+	if err != nil || !ok || len(items) != 3 {
+		t.Fatalf("expected 3 persisted session tasks, ok=%v err=%v len=%d", ok, err, len(items))
+	}
+	if items[0].Status != string(tasks.StatusPending) || items[1].Status != string(tasks.StatusPending) || items[2].Status != string(tasks.StatusSuccess) {
+		t.Fatalf("unexpected persisted task statuses after batch rewash: %+v", items)
+	}
+}
+
+func TestResponsiveRailAndSettingsLayout(t *testing.T) {
+	app, _ := startTestUIWithSize(t, true, 900, 620)
+	if w := app.Find("id:sidebar-rail").Bounds().Size.Width; w > 50 {
+		t.Fatalf("expected sidebar-rail auto-folded at 900x620, got width %v", w)
+	}
+
+	app.Resize(1280, 820)
+	if w := app.Find("id:sidebar-rail").Bounds().Size.Width; w < 128 {
+		t.Fatalf("expected sidebar-rail expanded at 1280x820, got width %v", w)
+	}
+
+	app.Press("id:nav-settings")
+	app.WaitFor("id:settings-rail", 2*time.Second)
+	if app.Exists("id:settings-tabs") {
+		t.Fatal("settings-tabs should not show at >=1120px when settings-rail is shown")
+	}
+	app.Press("id:settings-rail >> text:网络与高级")
+	assertHasTexts(t, app, "启用自定义代理")
+	app.Press("id:settings-rail >> text:关于与更新")
+	assertHasTexts(t, app, "检查更新")
+
+	app.Resize(1024, 700)
+	app.WaitFor("id:settings-tabs", 2*time.Second)
+	if app.Exists("id:settings-rail") {
+		t.Fatal("settings-rail should collapse into settings-tabs below 1120px")
+	}
+	app.Press("id:settings-tabs >> text:账号与任务")
+	assertHasTexts(t, app, "单日账号上限")
+	app.Press("id:settings-tabs >> text:常规与输出")
+	app.Find("id:settings-theme-tabs")
 }
 
 func TestWorkbenchClearWashedSourcesButton(t *testing.T) {

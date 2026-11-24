@@ -35,6 +35,8 @@ func init() {
 		"retryAllFailed":              retryAllFailedBridge,
 		"openOutputFolder":            openOutputFolderBridge,
 		"replaceResultImage":          replaceResultImageBridge,
+		"requeueDoneTasks":            requeueDoneTasksBridge,
+		"undoRequeueTasks":            undoRequeueTasksBridge,
 		"sessionAction":               sessionActionBridge,
 		"getPromptPartsState":         getPromptPartsBridge,
 		"setPromptPart":               setPromptPartBridge,
@@ -70,13 +72,17 @@ type ResultTileDTO struct {
 	FileURL     string
 	SrcURL      string
 	Platform    string
+	AccountID   int64
 	AccountName string
+	Engine      string
 	Elapsed     string
 	Prompt      string
 	Rewritten   bool
 	Reason      string
 	ActionText  string
 	CanReplace  bool
+	CanRewash   bool
+	RewashCount int
 }
 
 type ResultRowDTO struct {
@@ -196,6 +202,8 @@ type WorkbenchStateDTO struct {
 	GalleryItems     []SourceItemDTO
 	StructuredOpen   bool
 	StructuredCount  int
+	CanUndoRewash    bool
+	RewashUndoCount  int
 }
 
 type PromptPartItemDTO struct {
@@ -229,6 +237,7 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 	activeRows, issueRows, doneTiles, doneTasks := a.classifyResultRows(items, 4)
 	accounts := a.configuredBrowsers()
 	acctTitleByID := make(map[int64]string, len(accounts))
+	acctEngineByID := make(map[int64]string, len(accounts))
 	for _, b := range accounts {
 		title := accountLabel(b)
 		if b.Platform == agy.Platform && strings.TrimSpace(b.UserDataDir) != "" {
@@ -237,6 +246,13 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 			}
 		}
 		acctTitleByID[b.ID] = title
+		if b.Platform == agy.Platform {
+			acctEngineByID[b.ID] = "CLI"
+		} else if eng := strings.TrimSpace(b.Engine); eng != "" {
+			acctEngineByID[b.ID] = eng
+		} else {
+			acctEngineByID[b.ID] = "Camoufox"
+		}
 	}
 
 	mapTile := func(t resultTile) ResultTileDTO {
@@ -245,6 +261,18 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 		acctName := strings.TrimSpace(t.task.AccountName)
 		if acctName == "" && t.task.BrowserID > 0 {
 			acctName = acctTitleByID[t.task.BrowserID]
+		}
+		engine := acctEngineByID[t.task.BrowserID]
+		if engine == "" {
+			if t.task.Platform == agy.Platform {
+				engine = "CLI"
+			} else {
+				engine = "Camoufox"
+			}
+		}
+		rewashCount := 0
+		if src != "" && a.rewashCounts != nil {
+			rewashCount = a.rewashCounts[filepath.Clean(src)]
 		}
 		return ResultTileDTO{
 			Key:         t.key,
@@ -255,13 +283,17 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 			FileURL:     fileURL(t.path),
 			SrcURL:      fileURL(src),
 			Platform:    t.task.Platform,
+			AccountID:   t.task.BrowserID,
 			AccountName: acctName,
+			Engine:      engine,
 			Elapsed:     taskElapsedText(t.task, time.Now()),
 			Prompt:      t.task.Prompt,
 			Rewritten:   t.task.Rewritten,
 			Reason:      reason,
 			ActionText:  act,
 			CanReplace:  !a.running && src != "" && t.task.Status != tasks.StatusRunning,
+			CanRewash:   !a.running && t.task.Status == tasks.StatusSuccess && (src != "" || t.path != ""),
+			RewashCount: rewashCount,
 		}
 	}
 	mapRows := func(in []resultRow) []ResultRowDTO {
@@ -296,7 +328,7 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 		}
 	}
 
-	srcLimit := min(len(a.sources), 6)
+	srcLimit := min(len(a.sources), 24)
 	srcs := make([]SourceItemDTO, 0, srcLimit)
 	for i := 0; i < srcLimit; i++ {
 		s := a.sources[i]
@@ -473,6 +505,12 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 		}
 	}
 
+	rewashUndoCount := 0
+	canUndoRewash := !a.running && a.rewashUndo != nil && a.rewashUndo.page == a.statePage && a.rewashUndo.count > 0
+	if canUndoRewash {
+		rewashUndoCount = a.rewashUndo.count
+	}
+
 	return WorkbenchStateDTO{
 		Mode:             mode,
 		Page:             a.statePage,
@@ -539,6 +577,8 @@ func getWorkbenchStateBridge() WorkbenchStateDTO {
 		GalleryItems:     galleryItems,
 		StructuredOpen:   a.structuredOpen,
 		StructuredCount:  structuredCount,
+		CanUndoRewash:    canUndoRewash,
+		RewashUndoCount:  rewashUndoCount,
 	}
 }
 
@@ -992,6 +1032,137 @@ func removeGallerySourceBridge(path string) {
 			return
 		}
 	}
+}
+
+func cloneTasksForSnapshot(in []tasks.Task) []tasks.Task {
+	out := make([]tasks.Task, len(in))
+	for i, t := range in {
+		t.Images = append([]string(nil), t.Images...)
+		t.Results = append([]string(nil), t.Results...)
+		out[i] = t
+	}
+	return out
+}
+
+func requeueDoneTasksBridge(taskIndices []int) {
+	a := getApp()
+	if a == nil || a.running || len(taskIndices) == 0 {
+		return
+	}
+	a.syncPage()
+	wanted := make(map[int]bool, len(taskIndices))
+	for _, idx := range taskIndices {
+		wanted[idx] = true
+	}
+	count := 0
+	for _, t := range a.queue {
+		if wanted[t.Index] && t.Status == tasks.StatusSuccess && (taskSource(t) != "" || len(t.Results) > 0) {
+			count++
+		}
+	}
+	if count == 0 {
+		return
+	}
+
+	sourcesSnap := make([]sourceImage, len(a.sources))
+	copy(sourcesSnap, a.sources)
+	countsSnap := make(map[string]int, len(a.rewashCounts))
+	for k, v := range a.rewashCounts {
+		countsSnap[k] = v
+	}
+	a.rewashUndo = &rewashSnapshot{
+		page:         a.statePage,
+		sources:      sourcesSnap,
+		queue:        cloneTasksForSnapshot(a.queue),
+		progress:     a.progress,
+		progText:     a.progText,
+		count:        count,
+		rewashCounts: countsSnap,
+	}
+	if a.rewashCounts == nil {
+		a.rewashCounts = map[string]int{}
+	}
+
+	for i := range a.queue {
+		t := &a.queue[i]
+		if !wanted[t.Index] || t.Status != tasks.StatusSuccess || (taskSource(*t) == "" && len(t.Results) == 0) {
+			continue
+		}
+		origSrc := taskSource(*t)
+		src := origSrc
+		if src == "" || !filePresent(src) {
+			picked := ""
+			for _, r := range t.Results {
+				if r = strings.TrimSpace(r); r != "" && filePresent(r) {
+					picked = r
+					break
+				}
+			}
+			if picked != "" {
+				src = picked
+			} else if src == "" && len(t.Results) > 0 {
+				src = strings.TrimSpace(t.Results[0])
+			} else {
+				src = origSrc
+			}
+		}
+
+		t.Status = tasks.StatusPending
+		t.Results = nil
+		t.Error = ""
+		t.Elapsed = 0
+		t.StartedAt = time.Time{}
+		t.AccountName = ""
+		t.BrowserID = 0
+		t.Undispatched = false
+		t.Reassigned = ""
+		t.ReassignWhy = ""
+		if src != "" {
+			t.Images = []string{src}
+			clean := filepath.Clean(src)
+			a.rewashCounts[clean]++
+			found := false
+			for j := range a.sources {
+				if filepath.Clean(a.sources[j].Path) == clean {
+					a.sources[j].Washed = false
+					a.sources[j].Washing = false
+					a.sources[j].WashOutput = ""
+					found = true
+				}
+			}
+			if !found && filePresent(src) {
+				a.sources = append(a.sources, sourceImage{Path: src})
+			}
+		}
+	}
+
+	tally := TallyTasks(a.queue)
+	a.progress = float64(tally.Done) / float64(max(1, len(a.queue)))
+	a.progText = taskResultSummary(a.queue)
+	a.persistWorkspace(a.statePage)
+	a.pushToast("info", fmt.Sprintf("已将 %d 张图片放回待洗队列，准备二次清洗", count))
+	a.emit("workbench", "shell")
+}
+
+func undoRequeueTasksBridge() {
+	a := getApp()
+	if a == nil || a.running || a.rewashUndo == nil || a.rewashUndo.page != a.statePage {
+		return
+	}
+	snap := a.rewashUndo
+	a.sources = make([]sourceImage, len(snap.sources))
+	copy(a.sources, snap.sources)
+	a.queue = cloneTasksForSnapshot(snap.queue)
+	a.progress = snap.progress
+	a.progText = snap.progText
+	a.rewashCounts = make(map[string]int, len(snap.rewashCounts))
+	for k, v := range snap.rewashCounts {
+		a.rewashCounts[k] = v
+	}
+	a.rewashUndo = nil
+	a.persistWorkspace(a.statePage)
+	a.pushToast("info", "已撤销二次清洗放回")
+	a.emit("workbench", "shell")
 }
 
 func parseIntDefault(s string, def int) int {

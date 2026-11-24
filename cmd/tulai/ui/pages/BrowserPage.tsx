@@ -18,7 +18,7 @@ import {
 } from "tulai/backend";
 import { OutlineBadge } from "tulai/native";
 import { AccountListFrame, AccountViewButton } from "../components/BrowserDrawer";
-import { EmptyNotice, PageToolbar, SectionCard, StatusBadge } from "../components/primitives";
+import { EmptyNotice, PageToolbar, PaneHeader, StatusBadge } from "../components/primitives";
 import { browser, showToast } from "../store";
 
 const PLATFORM_OPTIONS = [
@@ -115,7 +115,10 @@ function AccountRow(props: {
             <Badge text={r().engine} variant="neutral" />
           </If>
           <StatusBadge text={r().health || "未知"} tone={r().healthTone} />
-          <Text class="text-[11px] text-slate-500 dark:text-slate-400">
+          <Text
+            class="text-[11px] text-slate-500 dark:text-slate-400"
+            style={{ fontVariant: ["tabular-nums"] }}
+          >
             {`今日使用 ${r().todayCount} 次${r().usageLabel ? ` · ${r().usageLabel}` : ""}${r().proxy ? ` · 代理 ${r().proxy}` : ""}${r().pendingOp ? ` · ${r().pendingOp}` : ""}`}
           </Text>
           <If when={r().usagePct > 0}>
@@ -310,10 +313,10 @@ export function BrowserPage() {
         }
       />
 
-      {/* 添加条 + 独立滚动账号列表 */}
-      <View class="min-h-0 flex-1 gap-2 p-2">
-        <View class="flex-row flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-[#222B3C] dark:bg-[#131924]">
-          <View class="w-[144px]">
+      {/* 添加条 + 全高平铺账号列表 */}
+      <View class="min-h-0 flex-1 bg-white dark:bg-[#131924]">
+        <View class="shrink-0 flex-row flex-wrap items-center gap-2 border-b border-[#E5E9F0] px-3 py-2 dark:border-[#222B3C]">
+          <View class="w-[136px]">
             <Select
               options={PLATFORM_OPTIONS}
               value={newPlatform()}
@@ -325,7 +328,7 @@ export function BrowserPage() {
             value={newName()}
             placeholder="输入账号备注名（如：主力号）快速创建独立资料..."
             onChange={({ value }) => newName.set(value)}
-            class="min-w-[200px] flex-1"
+            class="min-w-[180px] flex-1"
           />
           <Button
             text="新建账号"
@@ -346,9 +349,7 @@ export function BrowserPage() {
           />
         </View>
 
-        <SectionCard
-          class="flex-1 min-h-0"
-          compact
+        <PaneHeader
           title={`账号列表 (${rows().length})`}
           subtitle={st().batchActive ? st().batchText : st().status || "点击账号名可就地重命名"}
           right={
@@ -376,31 +377,31 @@ export function BrowserPage() {
               </If>
             </View>
           }
-        >
-          <AccountListFrame class="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-200 dark:border-[#222B3C]">
-            <If when={rows().length > 0}>
-              <View class="flex-row items-center justify-between border-b border-slate-200 bg-slate-50 px-2.5 py-1.5 dark:border-[#222B3C] dark:bg-[#1A2232]">
-                <Text class="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  账号 / 状态 / 今日用量
-                </Text>
-                <Text class="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  操作
-                </Text>
-              </View>
-            </If>
-            <List
-              testID="browser-account-list"
-              class="min-h-0 flex-1"
-              contentClass="pr-1"
-              each={rows()}
-              keyExtractor={(r) => String(r.id)}
-              estimatedItemSize={48}
-              empty={<EmptyNotice icon="globe" title="暂无账号" subtitle="选择上方平台并输入备注名即可创建独立账号资料" />}
-            >
-              {(row) => <AccountRow row={row()} names={names} proxies={proxies} />}
-            </List>
-          </AccountListFrame>
-        </SectionCard>
+        />
+
+        <AccountListFrame class="min-h-0 flex-1 overflow-hidden">
+          <If when={rows().length > 0}>
+            <View class="flex-row items-center justify-between border-b border-[#E5E9F0] bg-[#F1F5F9]/80 px-3 py-1.5 dark:border-[#222B3C] dark:bg-[#1A2232]">
+              <Text class="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                账号 / 状态 / 今日用量
+              </Text>
+              <Text class="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                操作
+              </Text>
+            </View>
+          </If>
+          <List
+            testID="browser-account-list"
+            class="min-h-0 flex-1"
+            contentClass="pr-1"
+            each={rows()}
+            keyExtractor={(r) => String(r.id)}
+            estimatedItemSize={48}
+            empty={<EmptyNotice icon="globe" title="暂无账号" subtitle="选择上方平台并输入备注名即可创建独立账号资料" />}
+          >
+            {(row) => <AccountRow row={row()} names={names} proxies={proxies} />}
+          </List>
+        </AccountListFrame>
       </View>
 
       {/* Antigravity 导入/登录方式选择器 */}

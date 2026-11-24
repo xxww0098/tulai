@@ -521,6 +521,8 @@ func (a *App) newWorkspace() {
 
 func (a *App) clearWorkspace(page int) {
 	a.setSessionID(page, 0)
+	a.rewashUndo = nil
+	a.rewashCounts = nil
 	a.onPage(page, func() {
 		a.sources = nil
 		a.srcSel = -1
@@ -567,6 +569,8 @@ func (a *App) reopenSession(id int64) {
 		logging.Log.Warning("切换历史会话失败: %v", err)
 		return
 	}
+	a.rewashUndo = nil
+	a.rewashCounts = nil
 	a.applySession(page, sess, items, true)
 	a.historyOpen = false
 }
@@ -1104,6 +1108,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	a.running = true
 	a.useRunView = false
 	a.resultsDoneOpen = false
+	a.rewashUndo = nil
 	if page == pageWash {
 		a.onPage(page, func() { a.beginWashRun() })
 	}

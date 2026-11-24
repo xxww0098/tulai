@@ -18,6 +18,7 @@ import {
   getShellState,
   getWorkbenchState,
   openWizard,
+  requeueDoneTasks,
   setDarkTheme,
   setLogOpen,
   setNavFolded,
@@ -25,6 +26,7 @@ import {
   setSettingField,
   setTab,
   setWorkbenchField,
+  undoRequeueTasks,
   finishWizard,
   wizardAction,
   watchEvents,
@@ -280,4 +282,15 @@ export function closeWizardModal() {
 export async function runWizardAction(action: string, value: string) {
   await wizardAction(action, value);
   refreshTopic("wizard");
+}
+
+export function requeueWorkbenchDone(taskIndices: number[]) {
+  if (taskIndices.length === 0) return;
+  requeueDoneTasks(taskIndices);
+  refreshTopics("workbench,shell");
+}
+
+export function undoWorkbenchRequeue() {
+  undoRequeueTasks();
+  refreshTopics("workbench,shell");
 }

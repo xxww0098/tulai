@@ -277,14 +277,14 @@ func TestBridgeLazySerializationAndFlushCoalescing(t *testing.T) {
 	SetTestApp(a)
 	defer SetTestApp(nil)
 
-	for i := range 10 {
+	for i := range 30 {
 		a.sources = append(a.sources, sourceImage{Path: filepath.Join(dir, fmt.Sprintf("img_%02d.png", i))})
 	}
 
-	// Workbench bridge caps preview Sources at 6, skips history query and gallery when closed
+	// Workbench bridge caps preview Sources at 24, skips history query and gallery when closed
 	wbClosed := getWorkbenchStateBridge()
-	if len(wbClosed.Sources) != 6 || wbClosed.SourcesTotal != 10 {
-		t.Fatalf("sources = %d total=%d, want 6 / 10", len(wbClosed.Sources), wbClosed.SourcesTotal)
+	if len(wbClosed.Sources) != 24 || wbClosed.SourcesTotal != 30 {
+		t.Fatalf("sources = %d total=%d, want 24 / 30", len(wbClosed.Sources), wbClosed.SourcesTotal)
 	}
 	if len(wbClosed.Sessions) != 0 {
 		t.Fatalf("expected Sessions empty when history dialog closed, got %d", len(wbClosed.Sessions))
@@ -299,8 +299,8 @@ func TestBridgeLazySerializationAndFlushCoalescing(t *testing.T) {
 	if len(wbOpen.Sessions) == 0 {
 		t.Fatal("expected Sessions populated when history dialog open")
 	}
-	if len(wbOpen.GalleryItems) != 10 {
-		t.Fatalf("GalleryItems = %d, want 10 when gallery open", len(wbOpen.GalleryItems))
+	if len(wbOpen.GalleryItems) != 30 {
+		t.Fatalf("GalleryItems = %d, want 30 when gallery open", len(wbOpen.GalleryItems))
 	}
 
 	// Logs bridge skips filtering/entry allocation while closed

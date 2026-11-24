@@ -10,7 +10,7 @@ export function PageToolbar(props: {
 }) {
   return (
     <View
-      class={`border-b border-slate-200/80 bg-white px-3 py-1.5 dark:border-[#1E2738] dark:bg-[#0F141F] ${props.class ?? ""}`}
+      class={`border-b border-[#E5E9F0] bg-white px-3 py-1.5 dark:border-[#222B3C] dark:bg-[#131924] ${props.class ?? ""}`}
     >
       <View class="gap-1.5">
         <View class="flex-row items-center justify-between gap-2">
@@ -42,6 +42,52 @@ export function FormRow(props: {
   );
 }
 
+export function FlushPane(props: {
+  testID?: string;
+  class?: string;
+  children?: JSX.Element;
+}) {
+  return (
+    <View
+      testID={props.testID}
+      class={`min-w-0 min-h-0 flex-1 bg-white dark:bg-[#131924] ${props.class ?? ""}`}
+    >
+      {props.children}
+    </View>
+  );
+}
+
+export function PaneHeader(props: {
+  title: string;
+  subtitle?: string;
+  right?: JSX.Element;
+  class?: string;
+}) {
+  return (
+    <View
+      class={`shrink-0 flex-row items-center justify-between gap-2 border-b border-[#E5E9F0] bg-white px-3 py-2 dark:border-[#222B3C] dark:bg-[#131924] ${props.class ?? ""}`}
+    >
+      <View class="min-w-0 flex-1 gap-0.5">
+        <Text
+          class="truncate text-[13px] font-semibold text-slate-900 dark:text-slate-100"
+          style={{ fontVariant: ["tabular-nums"] }}
+        >
+          {props.title}
+        </Text>
+        <If when={Boolean(props.subtitle)}>
+          <Text
+            class="truncate text-[11px] text-slate-500 dark:text-slate-400"
+            style={{ fontVariant: ["tabular-nums"] }}
+          >
+            {props.subtitle}
+          </Text>
+        </If>
+      </View>
+      {props.right}
+    </View>
+  );
+}
+
 export function SectionCard(props: {
   title?: string;
   subtitle?: string;
@@ -54,7 +100,7 @@ export function SectionCard(props: {
   const hasBody = "children" in props;
   return (
     <View
-      class={`rounded-xl border border-slate-200/80 bg-white dark:border-[#1E2738] dark:bg-[#111722] ${props.compact ? "p-2.5" : "p-3"} ${props.class ?? ""}`}
+      class={`rounded-md border border-[#E5E9F0] bg-white dark:border-[#222B3C] dark:bg-[#131924] ${props.compact ? "p-2.5" : "p-3"} ${props.class ?? ""}`}
     >
       <If when={Boolean(props.title || props.subtitle || "right" in props)}>
         <View

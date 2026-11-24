@@ -14,7 +14,8 @@ import {
   revealPath,
 } from "tulai/backend";
 import { OutlineBadge } from "tulai/native";
-import { EmptyNotice, PageToolbar, SectionCard } from "../components/primitives";
+import { HoverPreviewTarget } from "../components/HoverPreview";
+import { EmptyNotice, PageToolbar, PaneHeader } from "../components/primitives";
 import { dedup } from "../store";
 
 const LEVEL_TABS = [
@@ -107,19 +108,17 @@ export function DedupPage() {
       />
 
       {/* 左：待对比图片池 / 右：相似组报告 */}
-      <View class="min-h-0 flex-1 flex-row gap-2 p-2">
+      <View class="min-h-0 flex-1 flex-row bg-[#F8FAFC] dark:bg-[#0D1118]">
         <View
           testID="dedup-queue"
-          class="h-full min-h-0 shrink-0"
-          style={{ width: "26%", minWidth: 250, maxWidth: 340 }}
+          class="h-full min-h-0 shrink-0 border-r border-[#E5E9F0] bg-white dark:border-[#222B3C] dark:bg-[#131924]"
+          style={{ width: "24%", minWidth: 232, maxWidth: 324 }}
         >
-          <SectionCard
-            class="flex-1 min-h-0"
-            compact
+          <PaneHeader
             title={`待扫描图片 (${st().itemCount})`}
             subtitle={st().itemCount < 2 ? "至少需要 2 张图片" : "支持直接拖入"}
             right={
-              <If when={st().itemCount > 18}>
+              <If when={st().itemCount > 24}>
                 <Button
                   text={st().more ? "收起" : "展开"}
                   size="small"
@@ -128,130 +127,170 @@ export function DedupPage() {
                 />
               </If>
             }
-          >
-            <Scroll class="min-h-0 flex-1" contentClass="pr-1">
-              <If
-                when={(st().items ?? []).length > 0}
-                else={
-                  <EmptyNotice
-                    icon="layers"
-                    title="尚未添加图片"
-                    subtitle="添加图片或文件夹，也可以直接拖拽到这里"
-                  />
-                }
-              >
-                <View class="flex-row flex-wrap gap-2">
-                  <Each
-                    of={st().more ? (st().items ?? []) : (st().items ?? []).slice(0, 18)}
-                    key={(it) => it.path || it.name || ""}
-                  >
-                    {(item) => (
-                      <View class="w-[84px] gap-1 rounded-lg border border-slate-200 bg-slate-50/70 p-1 dark:border-[#222B3C] dark:bg-[#1A2232]">
-                        <View class="h-[62px] w-full items-center justify-center overflow-hidden rounded bg-slate-100 dark:bg-[#0D1118]">
+          />
+          <Scroll class="min-h-0 flex-1" contentClass="p-2.5">
+            <If
+              when={(st().items ?? []).length > 0}
+              else={
+                <EmptyNotice
+                  icon="layers"
+                  title="尚未添加图片"
+                  subtitle="添加图片或文件夹，也可以直接拖拽到这里"
+                />
+              }
+            >
+              <View style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(62px, 1fr))", gap: 6 }}>
+                <Each
+                  of={st().more ? (st().items ?? []) : (st().items ?? []).slice(0, 24)}
+                  key={(it) => it.path || it.name || ""}
+                >
+                  {(item) => (
+                    <HoverPreviewTarget
+                      previewKey={`dedup-q-${item().path || item().name || ""}`}
+                      src={item().fileURL}
+                      title={item().name || "待扫描图片"}
+                      subtitle="待去重比对样本"
+                      badge="待扫"
+                      badgeVariant="neutral"
+                      class="min-w-0"
+                    >
+                      <View class="overflow-hidden rounded-md border border-[#E5E9F0] bg-[#F8FAFC] p-1 dark:border-[#222B3C] dark:bg-[#1A2232]">
+                        <View class="w-full items-center justify-center overflow-hidden rounded bg-slate-100 dark:bg-[#0D1118]" style={{ aspectRatio: 1 }}>
                           <If when={Boolean(item().fileURL)}>
-                            <Image src={item().fileURL} class="h-full w-full object-cover" />
+                            <Image src={item().fileURL} class="h-full w-full object-contain" />
                           </If>
                         </View>
-                        <Text class="truncate text-[10px] text-slate-700 dark:text-slate-200">
+                        <Text class="mt-0.5 truncate text-[10px] text-slate-700 dark:text-slate-200">
                           {item().name}
                         </Text>
                       </View>
-                    )}
-                  </Each>
-                </View>
-              </If>
-            </Scroll>
-          </SectionCard>
+                    </HoverPreviewTarget>
+                  )}
+                </Each>
+              </View>
+            </If>
+          </Scroll>
         </View>
 
-        <View testID="dedup-report" class="min-w-0 min-h-0 flex-1">
-          <SectionCard
-            class="flex-1 min-h-0"
-            compact
+        <View testID="dedup-report" class="min-w-0 min-h-0 flex-1 bg-[#F8FAFC] dark:bg-[#0D1118]">
+          <PaneHeader
             title={
               st().hasReport
                 ? `去重报告 · 保留 ${st().unique} 张 / 移出重复 ${st().duplicates} 张`
                 : "相似图对照结果"
             }
             subtitle={st().savedDir ? `重复副本已整理到：${st().savedDir}` : "点击“开始去重”后在此展示分组对照"}
-          >
-            <Scroll class="min-h-0 flex-1" contentClass="gap-3 pr-1">
+          />
+          <Scroll class="min-h-0 flex-1" contentClass="gap-2.5 p-3">
+            <If
+              when={Boolean(st().hasReport)}
+              else={
+                <EmptyNotice
+                  icon="search"
+                  title="准备就绪"
+                  subtitle="在左侧导入至少 2 张图片后点击右上角“开始去重”"
+                />
+              }
+            >
               <If
-                when={Boolean(st().hasReport)}
+                when={(st().groups ?? []).length > 0}
                 else={
                   <EmptyNotice
-                    icon="search"
-                    title="准备就绪"
-                    subtitle="在左侧导入至少 2 张图片后点击右上角“开始去重”"
+                    icon="circle-check"
+                    title="未发现重复图片"
+                    subtitle="当前相似度阈值下所有图片均为唯一样本"
                   />
                 }
               >
-                <If
-                  when={(st().groups ?? []).length > 0}
-                  else={
-                    <EmptyNotice
-                      icon="circle-check"
-                      title="未发现重复图片"
-                      subtitle="当前相似度阈值下所有图片均为唯一样本"
-                    />
-                  }
-                >
-                  <Each of={st().groups ?? []} key={(g) => String(g.index)}>
-                    {(grp) => (
-                      <View class="gap-2 rounded-lg border border-slate-200 p-3 dark:border-[#222B3C] dark:bg-[#1A2232]">
-                        <View class="flex-row items-center justify-between">
-                          <Text class="text-xs font-semibold text-slate-800 dark:text-slate-100">
-                            {`相似组 #${grp().index + 1}`}
-                          </Text>
-                          <OutlineBadge text={`汉明距离 ${grp().distance}`} />
-                        </View>
-                        <View class="flex-row flex-wrap gap-2.5">
-                          <View class="w-[152px] gap-1 rounded-lg border-2 border-emerald-500/80 bg-emerald-50/50 p-1.5 dark:bg-emerald-500/10">
-                            <View class="h-[96px] w-full overflow-hidden rounded bg-slate-100 dark:bg-[#0D1118]">
+                <Each of={st().groups ?? []} key={(g) => String(g.index)}>
+                  {(grp) => (
+                    <View class="gap-2 rounded-md border border-[#E5E9F0] bg-white p-2.5 dark:border-[#222B3C] dark:bg-[#131924]">
+                      <View class="flex-row items-center justify-between">
+                        <Text
+                          class="text-xs font-semibold text-slate-800 dark:text-slate-100"
+                          style={{ fontVariant: ["tabular-nums"] }}
+                        >
+                          {`相似组 #${grp().index + 1}`}
+                        </Text>
+                        <OutlineBadge text={`汉明距离 ${grp().distance}`} />
+                      </View>
+                      <View style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(108px, 1fr))", gap: 8 }}>
+                        <HoverPreviewTarget
+                          previewKey={`dedup-keep-${grp().index}-${grp().keep.path || ""}`}
+                          src={grp().keep.fileURL}
+                          title={grp().keep.name || "保留主图"}
+                          subtitle={`${grp().keep.width}×${grp().keep.height} · 汉明距离 ${grp().distance}`}
+                          badge="保留"
+                          badgeVariant="success"
+                          class="min-w-0"
+                        >
+                          <View class="gap-1 rounded-md border-2 border-emerald-500/80 bg-emerald-50/40 p-1.5 dark:bg-emerald-500/10">
+                            <View class="w-full overflow-hidden rounded bg-slate-100 dark:bg-[#0D1118]" style={{ aspectRatio: 1 }}>
                               <If when={Boolean(grp().keep.fileURL)}>
                                 <Image src={grp().keep.fileURL} class="h-full w-full object-contain" />
                               </If>
                             </View>
                             <View class="flex-row items-center justify-between gap-1">
                               <Badge text="保留" variant="success" />
-                              <Text class="text-[10px] text-slate-500">{`${grp().keep.width}x${grp().keep.height}`}</Text>
+                              <Text
+                                class="text-[10px] text-slate-500"
+                                style={{ fontVariant: ["tabular-nums"] }}
+                              >
+                                {`${grp().keep.width}×${grp().keep.height}`}
+                              </Text>
                             </View>
                             <Text class="truncate text-[11px] font-medium text-slate-800 dark:text-slate-100">
                               {grp().keep.name}
                             </Text>
                           </View>
+                        </HoverPreviewTarget>
 
-                          <Each of={grp().dupes ?? []} key={(d) => d.path || d.name || ""}>
-                            {(dup) => (
+                        <Each of={grp().dupes ?? []} key={(d) => d.path || d.name || ""}>
+                          {(dup) => (
+                            <HoverPreviewTarget
+                              previewKey={`dedup-dup-${grp().index}-${dup().path || dup().name || ""}`}
+                              src={dup().fileURL}
+                              title={dup().name || "重复图"}
+                              subtitle={`${dup().width}×${dup().height} · 点击定位文件`}
+                              badge="重复"
+                              badgeVariant="warn"
+                              class="min-w-0"
+                            >
                               <View
                                 onPress={() => {
                                   if (dup().path) void revealPath(dup().path!);
                                 }}
-                                class="w-[152px] gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1.5 dark:border-[#334155] dark:bg-[#131924]"
+                                style={{ cursor: dup().path ? "pointer" : "default" }}
+                                class="gap-1 rounded-md border border-[#E5E9F0] bg-[#F8FAFC] p-1.5 dark:border-[#334155] dark:bg-[#1A2232]"
                               >
-                                <View class="h-[96px] w-full overflow-hidden rounded bg-slate-100 dark:bg-[#0D1118]">
+                                <View class="w-full overflow-hidden rounded bg-slate-100 dark:bg-[#0D1118]" style={{ aspectRatio: 1 }}>
                                   <If when={Boolean(dup().fileURL)}>
                                     <Image src={dup().fileURL} class="h-full w-full object-contain" />
                                   </If>
                                 </View>
                                 <View class="flex-row items-center justify-between gap-1">
                                   <Badge text="重复" variant="warn" />
-                                  <Text class="text-[10px] text-slate-500">{`${dup().width}x${dup().height}`}</Text>
+                                  <Text
+                                    class="text-[10px] text-slate-500"
+                                    style={{ fontVariant: ["tabular-nums"] }}
+                                  >
+                                    {`${dup().width}×${dup().height}`}
+                                  </Text>
                                 </View>
                                 <Text class="truncate text-[11px] text-slate-700 dark:text-slate-200">
                                   {dup().name}
                                 </Text>
                               </View>
-                            )}
-                          </Each>
-                        </View>
+                            </HoverPreviewTarget>
+                          )}
+                        </Each>
                       </View>
-                    )}
-                  </Each>
-                </If>
+                    </View>
+                  )}
+                </Each>
               </If>
-            </Scroll>
-          </SectionCard>
+            </If>
+          </Scroll>
         </View>
       </View>
     </View>

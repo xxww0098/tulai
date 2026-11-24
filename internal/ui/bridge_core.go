@@ -75,6 +75,7 @@ type ShellStateDTO struct {
 	Tab          int
 	Dark         bool
 	NavCollapsed bool
+	NavManual    bool
 	LogOpen      bool
 	WizardOn     bool
 	Running      bool
@@ -237,6 +238,7 @@ func getShellStateBridge() ShellStateDTO {
 		Tab:          a.tab,
 		Dark:         a.darkTheme,
 		NavCollapsed: a.navCollapsed,
+		NavManual:    a.navManual,
 		LogOpen:      a.logOpen,
 		WizardOn:     a.wizardOn,
 		Running:      a.running,

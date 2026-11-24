@@ -17,7 +17,7 @@ import {
   setWorkbenchField,
   toggleGallerySelect,
 } from "tulai/backend";
-import { promptParts, workbench } from "../store";
+import { promptParts, requeueWorkbenchDone, workbench } from "../store";
 
 export function WorkbenchDialogs() {
   const wb = workbench;
@@ -305,6 +305,21 @@ export function WorkbenchDialogs() {
             </View>
 
             <View class="flex-row flex-wrap items-center gap-2">
+              <If when={Boolean(currentTile()?.canRewash)}>
+                <Button
+                  testID="lightbox-rewash-btn"
+                  text="放回待洗（二次清洗）"
+                  size="small"
+                  icon="rotate-ccw"
+                  variant="outline"
+                  onPress={() => {
+                    const t = currentTile();
+                    if (!t) return;
+                    requeueWorkbenchDone([t.taskIndex]);
+                    setPreviewPath("");
+                  }}
+                />
+              </If>
               <If when={Boolean(currentTile()?.canReplace)}>
                 <Button
                   testID="lightbox-replace-btn"

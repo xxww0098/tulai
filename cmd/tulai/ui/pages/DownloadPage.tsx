@@ -16,7 +16,7 @@ import {
   toggleDownloadCheck,
 } from "tulai/backend";
 import { OutlineBadge } from "tulai/native";
-import { EmptyNotice, PageToolbar, SectionCard, StatusBadge } from "../components/primitives";
+import { EmptyNotice, PageToolbar, PaneHeader, StatusBadge } from "../components/primitives";
 import { download } from "../store";
 
 export function DownloadPage() {
@@ -66,246 +66,257 @@ export function DownloadPage() {
         }
       />
 
-      {/* 左：链接提交与筛选参数 / 右：独立滚动下载队列 */}
-      <View class="min-h-0 flex-1 flex-row gap-2 p-2">
+      {/* 左：链接提交与 2 列过滤面板 / 右：独立滚动下载队列 */}
+      <View class="min-h-0 flex-1 flex-row bg-[#F8FAFC] dark:bg-[#0D1118]">
         <View
           testID="dl-composer"
-          class="h-full min-h-0 shrink-0"
-          style={{ width: "28%", minWidth: 280, maxWidth: 380 }}
+          class="h-full min-h-0 shrink-0 border-r border-[#E5E9F0] bg-white dark:border-[#222B3C] dark:bg-[#131924]"
+          style={{ width: "27%", minWidth: 276, maxWidth: 360 }}
         >
-          <Scroll class="min-h-0 flex-1" contentClass="gap-2.5 pr-1">
-            <SectionCard compact title="添加下载链接" subtitle="每行一个 HTTP/HTTPS 图片或网页地址">
-              <View class="gap-2.5">
-                <Input
-                  multiline
-                  value={st().urLs || ""}
-                  placeholder="粘贴图片直链或网页地址（支持多行批量）..."
-                  onChange={({ value }) => setDownloadField("urls", value)}
-                  class="h-[116px] rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-900 dark:border-[#334155] dark:bg-[#0D1118] dark:text-slate-100"
-                />
-
-                <View class="flex-row items-center gap-2">
-                  <Switch
-                    size="small"
-                    checked={Boolean(st().browserMode)}
-                    onChange={({ checked }) =>
-                      setDownloadField("browserMode", checked ? "true" : "false")
-                    }
-                  />
-                  <Text class="flex-1 text-xs text-slate-700 dark:text-slate-200">
-                    使用托管 Camoufox 浏览器登录抓取
-                  </Text>
-                </View>
-
-                <View class="flex-row flex-wrap gap-2">
-                  <Button
-                    text="加入下载"
-                    size="small"
-                    icon="download"
-                    variant="primary"
-                    onPress={() => submitDownloadURLs(st().urLs || "")}
-                  />
-                  <Button
-                    text={st().browserBusy ? "正在启动 Camoufox..." : "Camoufox 抓取"}
-                    size="small"
-                    icon="globe"
-                    variant="outline"
-                    busy={Boolean(st().browserBusy)}
-                    onPress={() => openDownloadBrowser(st().urLs || "")}
-                  />
-                </View>
-
-                <If when={Boolean(st().composerErr || st().browserErr || st().importNotice)}>
-                  <Text class="text-xs text-amber-600 dark:text-amber-400">
-                    {st().composerErr || st().browserErr || st().importNotice || ""}
-                  </Text>
-                </If>
+          <Scroll class="min-h-0 flex-1" contentClass="gap-3 p-3">
+            <View class="gap-2.5">
+              <View class="gap-0.5">
+                <Text class="text-[13px] font-semibold text-slate-900 dark:text-slate-100">添加下载链接</Text>
+                <Text class="text-[11px] text-slate-500 dark:text-slate-400">每行一个 HTTP/HTTPS 图片或网页地址</Text>
               </View>
-            </SectionCard>
 
-            <SectionCard
-              compact
-              title="抓取深度与图片过滤"
-              subtitle={`深度 ${st().depth} · 尺寸/大小过滤`}
-              right={
+              <Input
+                multiline
+                value={st().urLs || ""}
+                placeholder="粘贴图片直链或网页地址（支持多行批量）..."
+                onChange={({ value }) => setDownloadField("urls", value)}
+                class="h-[116px] rounded-md border border-[#CBD5E1] bg-white p-2.5 text-xs text-slate-900 dark:border-[#334155] dark:bg-[#0D1118] dark:text-slate-100"
+              />
+
+              <View class="flex-row items-center gap-2">
+                <Switch
+                  size="small"
+                  checked={Boolean(st().browserMode)}
+                  onChange={({ checked }) =>
+                    setDownloadField("browserMode", checked ? "true" : "false")
+                  }
+                />
+                <Text class="flex-1 text-xs text-slate-700 dark:text-slate-200">
+                  使用托管 Camoufox 浏览器登录抓取
+                </Text>
+              </View>
+
+              <View class="flex-row flex-wrap gap-2">
+                <Button
+                  text="加入下载"
+                  size="small"
+                  icon="download"
+                  variant="primary"
+                  onPress={() => submitDownloadURLs(st().urLs || "")}
+                />
+                <Button
+                  text={st().browserBusy ? "正在启动 Camoufox..." : "Camoufox 抓取"}
+                  size="small"
+                  icon="globe"
+                  variant="outline"
+                  busy={Boolean(st().browserBusy)}
+                  onPress={() => openDownloadBrowser(st().urLs || "")}
+                />
+              </View>
+
+              <If when={Boolean(st().composerErr || st().browserErr || st().importNotice)}>
+                <Text class="text-xs text-amber-600 dark:text-amber-400">
+                  {st().composerErr || st().browserErr || st().importNotice || ""}
+                </Text>
+              </If>
+            </View>
+
+            <View class="h-px bg-[#E5E9F0] dark:bg-[#222B3C]" />
+
+            <View class="gap-2.5">
+              <View class="flex-row items-center justify-between gap-2">
+                <View class="min-w-0 flex-1 gap-0.5">
+                  <Text class="text-[13px] font-semibold text-slate-900 dark:text-slate-100">抓取深度与图片过滤</Text>
+                  <Text
+                    class="text-[11px] text-slate-500 dark:text-slate-400"
+                    style={{ fontVariant: ["tabular-nums"] }}
+                  >
+                    {`深度 ${st().depth} · 尺寸/大小过滤`}
+                  </Text>
+                </View>
                 <Button
                   text={filtersOpen() ? "收起" : "展开"}
                   size="small"
                   variant="ghost"
                   onPress={() => filtersOpen.set(!filtersOpen())}
                 />
-              }
-            >
+              </View>
+
               <If when={filtersOpen()}>
-                <View class="gap-2">
-                  <View class="flex-row items-center gap-2">
-                    <Text class="w-[68px] text-xs text-slate-500 dark:text-slate-400">抓取深度</Text>
+                <View style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <View class="min-w-0 gap-1">
+                    <Text class="text-[11px] text-slate-500 dark:text-slate-400">抓取深度</Text>
                     <Input
                       value={String(st().depth)}
                       onChange={({ value }) => setDownloadField("depth", value)}
-                      class="flex-1"
                     />
-                    <Text class="w-[68px] text-xs text-slate-500 dark:text-slate-400">最小(KB)</Text>
+                  </View>
+                  <View class="min-w-0 gap-1">
+                    <Text class="text-[11px] text-slate-500 dark:text-slate-400">最小(KB)</Text>
                     <Input
                       value={String(st().minKB)}
                       onChange={({ value }) => setDownloadField("minKB", value)}
-                      class="flex-1"
                     />
                   </View>
-                  <View class="flex-row items-center gap-2">
-                    <Text class="w-[68px] text-xs text-slate-500 dark:text-slate-400">最大(KB)</Text>
+                  <View class="min-w-0 gap-1">
+                    <Text class="text-[11px] text-slate-500 dark:text-slate-400">最大(KB)</Text>
                     <Input
                       value={String(st().maxKB)}
                       onChange={({ value }) => setDownloadField("maxKB", value)}
-                      class="flex-1"
                     />
-                    <Text class="w-[68px] text-xs text-slate-500 dark:text-slate-400">最小宽度</Text>
+                  </View>
+                  <View class="min-w-0 gap-1">
+                    <Text class="text-[11px] text-slate-500 dark:text-slate-400">最小宽度</Text>
                     <Input
                       value={String(st().minW)}
                       onChange={({ value }) => setDownloadField("minW", value)}
-                      class="flex-1"
                     />
                   </View>
-                  <View class="flex-row items-center gap-2">
-                    <Text class="w-[68px] text-xs text-slate-500 dark:text-slate-400">最小高度</Text>
+                  <View class="min-w-0 gap-1">
+                    <Text class="text-[11px] text-slate-500 dark:text-slate-400">最小高度</Text>
                     <Input
                       value={String(st().minH)}
                       onChange={({ value }) => setDownloadField("minH", value)}
-                      class="flex-1"
                     />
-                    <Text class="w-[68px] text-xs text-slate-500 dark:text-slate-400">最大宽度</Text>
+                  </View>
+                  <View class="min-w-0 gap-1">
+                    <Text class="text-[11px] text-slate-500 dark:text-slate-400">最大宽度</Text>
                     <Input
                       value={String(st().maxW)}
                       onChange={({ value }) => setDownloadField("maxW", value)}
-                      class="flex-1"
                     />
                   </View>
                 </View>
               </If>
-            </SectionCard>
+            </View>
           </Scroll>
         </View>
 
-        <View testID="dl-queue" class="min-w-0 min-h-0 flex-1">
-          <SectionCard
-            class="flex-1 min-h-0"
-            compact
+        <View testID="dl-queue" class="min-w-0 min-h-0 flex-1 bg-white dark:bg-[#131924]">
+          <PaneHeader
             title="下载任务队列"
             right={
               <Input
                 value={st().search || ""}
                 placeholder="搜索任务文件名或链接..."
                 onChange={({ value }) => setDownloadField("search", value)}
-                class="w-[180px]"
+                class="w-[190px]"
+              />
+            }
+          />
+          <View class="shrink-0 border-b border-[#E5E9F0] px-3 py-1.5 dark:border-[#222B3C]">
+            <Tabs
+              variant="segmented"
+              size="small"
+              options={filterTabs()}
+              value={String(st().filter)}
+              onChange={({ value }) => setDownloadFilter(Number(value) || 0)}
+            />
+          </View>
+
+          <List
+            testID="download-task-list"
+            class="min-h-0 flex-1"
+            contentClass="gap-1.5 p-3"
+            each={st().tasks ?? []}
+            keyExtractor={(t) => String(t.id)}
+            estimatedItemSize={84}
+            empty={
+              <EmptyNotice
+                icon="download"
+                title="暂无下载任务"
+                subtitle="在左侧粘贴网页/图片直链，或从顶部导入 CSV / XLSX 表格"
               />
             }
           >
-            <View class="min-h-0 flex-1 gap-3">
-              <Tabs
-                variant="segmented"
-                size="small"
-                options={filterTabs()}
-                value={String(st().filter)}
-                onChange={({ value }) => setDownloadFilter(Number(value) || 0)}
-              />
-
-              <List
-                testID="download-task-list"
-                class="min-h-0 flex-1"
-                contentClass="gap-2 pr-1"
-                each={st().tasks ?? []}
-                keyExtractor={(t) => String(t.id)}
-                estimatedItemSize={84}
-                empty={
-                  <EmptyNotice
-                    icon="download"
-                    title="暂无下载任务"
-                    subtitle="在左侧粘贴网页/图片直链，或从顶部导入 CSV / XLSX 表格"
-                  />
-                }
-              >
-                {(task) => (
-                  <View class="gap-1.5 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5 dark:border-[#222B3C] dark:bg-[#1A2232]">
-                    <View class="flex-row flex-wrap items-center justify-between gap-2">
-                      <View class="min-w-0 flex-1 flex-row items-center gap-2">
-                        <Checkbox
-                          checked={Boolean(task().checked)}
-                          onChange={({ checked }) => toggleDownloadCheck(task().id, checked)}
-                        />
-                        <StatusBadge text={task().phase || "等待"} tone={task().tone} />
-                        <Text class="flex-1 truncate text-xs font-medium text-slate-900 dark:text-slate-100">
-                          {task().name || task().url || `任务 #${task().id}`}
-                        </Text>
-                        <If when={Boolean(task().site)}>
-                          <OutlineBadge text={task().site} />
-                        </If>
-                      </View>
-
-                      <View class="flex-row items-center gap-1">
-                        <If when={task().phase === "进行中" || task().phase === "下载中"}>
-                          <Button
-                            text="暂停"
-                            size="small"
-                            variant="outline"
-                            onPress={() => void downloadRowAction(task().id, "pause")}
-                          />
-                        </If>
-                        <If when={task().phase === "已暂停"}>
-                          <Button
-                            text="继续"
-                            size="small"
-                            variant="primary"
-                            onPress={() => void downloadRowAction(task().id, "resume")}
-                          />
-                        </If>
-                        <If when={task().phase === "失败" || task().phase === "已取消"}>
-                          <Button
-                            text="重试"
-                            size="small"
-                            variant="outline"
-                            onPress={() => void downloadRowAction(task().id, "retry")}
-                          />
-                        </If>
-                        <If when={Boolean(task().path)}>
-                          <Button
-                            text="打开"
-                            size="small"
-                            variant="ghost"
-                            onPress={() => void downloadRowAction(task().id, "open")}
-                          />
-                          <Button
-                            text="定位"
-                            size="small"
-                            variant="ghost"
-                            onPress={() => void downloadRowAction(task().id, "reveal")}
-                          />
-                        </If>
-                        <Button
-                          text="移除"
-                          size="small"
-                          variant="ghost"
-                          onPress={() => void downloadRowAction(task().id, "remove")}
-                        />
-                      </View>
-                    </View>
-
-                    <View class="flex-row items-center gap-3 pl-6">
-                      <View class="flex-1">
-                        <Progress value={Math.min(1, Math.max(0, task().fraction))} />
-                      </View>
-                      <Text class="text-[11px] text-slate-500 dark:text-slate-400">
-                        {task().progressText || (task().isPage ? `${task().imagesDone}/${task().imagesTotal} 张` : "")}
-                      </Text>
-                    </View>
-
-                    <If when={Boolean(task().err)}>
-                      <Text class="pl-6 text-[11px] text-rose-600 dark:text-rose-400">{task().err}</Text>
+            {(task) => (
+              <View class="gap-1.5 rounded-md border border-[#E5E9F0] bg-[#F8FAFC] p-2.5 dark:border-[#222B3C] dark:bg-[#1A2232]">
+                <View class="flex-row flex-wrap items-center justify-between gap-2">
+                  <View class="min-w-0 flex-1 flex-row items-center gap-2">
+                    <Checkbox
+                      checked={Boolean(task().checked)}
+                      onChange={({ checked }) => toggleDownloadCheck(task().id, checked)}
+                    />
+                    <StatusBadge text={task().phase || "等待"} tone={task().tone} />
+                    <Text class="flex-1 truncate text-xs font-medium text-slate-900 dark:text-slate-100">
+                      {task().name || task().url || `任务 #${task().id}`}
+                    </Text>
+                    <If when={Boolean(task().site)}>
+                      <OutlineBadge text={task().site} />
                     </If>
                   </View>
-                )}
-              </List>
-            </View>
-          </SectionCard>
+
+                  <View class="flex-row items-center gap-1">
+                    <If when={task().phase === "进行中" || task().phase === "下载中"}>
+                      <Button
+                        text="暂停"
+                        size="small"
+                        variant="outline"
+                        onPress={() => void downloadRowAction(task().id, "pause")}
+                      />
+                    </If>
+                    <If when={task().phase === "已暂停"}>
+                      <Button
+                        text="继续"
+                        size="small"
+                        variant="primary"
+                        onPress={() => void downloadRowAction(task().id, "resume")}
+                      />
+                    </If>
+                    <If when={task().phase === "失败" || task().phase === "已取消"}>
+                      <Button
+                        text="重试"
+                        size="small"
+                        variant="outline"
+                        onPress={() => void downloadRowAction(task().id, "retry")}
+                      />
+                    </If>
+                    <If when={Boolean(task().path)}>
+                      <Button
+                        text="打开"
+                        size="small"
+                        variant="ghost"
+                        onPress={() => void downloadRowAction(task().id, "open")}
+                      />
+                      <Button
+                        text="定位"
+                        size="small"
+                        variant="ghost"
+                        onPress={() => void downloadRowAction(task().id, "reveal")}
+                      />
+                    </If>
+                    <Button
+                      text="移除"
+                      size="small"
+                      variant="ghost"
+                      onPress={() => void downloadRowAction(task().id, "remove")}
+                    />
+                  </View>
+                </View>
+
+                <View class="flex-row items-center gap-3 pl-6">
+                  <View class="flex-1">
+                    <Progress value={Math.min(1, Math.max(0, task().fraction))} />
+                  </View>
+                  <Text
+                    class="text-[11px] text-slate-500 dark:text-slate-400"
+                    style={{ fontVariant: ["tabular-nums"] }}
+                  >
+                    {task().progressText || (task().isPage ? `${task().imagesDone}/${task().imagesTotal} 张` : "")}
+                  </Text>
+                </View>
+
+                <If when={Boolean(task().err)}>
+                  <Text class="pl-6 text-[11px] text-rose-600 dark:text-rose-400">{task().err}</Text>
+                </If>
+              </View>
+            )}
+          </List>
         </View>
       </View>
 

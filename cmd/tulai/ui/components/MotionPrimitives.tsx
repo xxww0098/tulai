@@ -1,4 +1,4 @@
-import { Animated, Canvas, cleanup, createAnimatedValue, Text, View } from "nsgo";
+import { Animated, Canvas, cleanup, createAnimatedValue, effect, reduceMotion, Text, View } from "nsgo";
 
 export function LivePulseDot(props: {
   color?: "blue" | "emerald" | "amber" | "slate";
@@ -205,16 +205,23 @@ export function ConveyorFlowTrack(props: {
     Animated.timing(flow, { toValue: 1, duration: 1100, easing: "linear" }),
     { resetBeforeIteration: true },
   );
-  flowAnim.start();
+  effect(() => {
+    if ((props.active || props.activeCount > 0) && !reduceMotion()) {
+      flowAnim.start();
+    } else {
+      flowAnim.stop();
+      flow.set(0);
+    }
+  });
   cleanup(() => flowAnim.stop());
 
   const isProcessing = () => props.active || props.activeCount > 0;
-  const hasQueuedFlow = () => isProcessing() && props.pendingCount > 0;
+  const hasQueuedFlow = () => isProcessing() && props.pendingCount > 0 && !reduceMotion();
 
   return (
     <View
       testID="wb-conveyor-track"
-      class="flex-row items-center gap-2 rounded-lg border border-slate-200/80 bg-white/90 px-2.5 py-1 dark:border-[#1E2738] dark:bg-[#111722]/90"
+      class="flex-row items-center gap-2 rounded-md border border-[#E5E9F0] bg-white px-2.5 py-1 dark:border-[#222B3C] dark:bg-[#131924]"
     >
       {/* 1. Pending queue stage */}
       <View class="shrink-0 flex-row items-center gap-1.5 rounded-full bg-slate-100/90 px-2 py-0.5 dark:bg-[#161E2E]">
@@ -256,7 +263,7 @@ export function ConveyorFlowTrack(props: {
       </View>
 
       <If
-        when={isProcessing()}
+        when={isProcessing() && !reduceMotion()}
         else={<FlowRail flow={flow} moving={false} tone="emerald" />}
       >
         <FlowRail flow={flow} moving tone="emerald" />

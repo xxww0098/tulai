@@ -67,11 +67,11 @@ function AccountLaneRow(props: { lane: AccountLaneDTO }) {
   const canView = () => !lane().extension && lane().platform !== "Antigravity";
   return (
     <View
-      class="gap-1 border-b border-slate-200/70 px-2.5 py-1.5 transition-colors duration-150 dark:border-[#222B3C]"
+      class="gap-1 border-b border-[#E5E9F0] px-2.5 py-1.5 transition-colors duration-150 dark:border-[#222B3C]"
       classList={{
-        "bg-white hover:bg-slate-50/80 dark:bg-[#131924] dark:hover:bg-[#1A2232]":
+        "bg-white hover:bg-[#F1F5F9]/70 dark:bg-[#131924] dark:hover:bg-[#1A2232]":
           !lane().disabled,
-        "bg-slate-50/70 opacity-75 dark:bg-[#0F141D]":
+        "bg-[#F1F5F9]/80 opacity-75 dark:bg-[#0F141D]":
           Boolean(lane().disabled),
       }}
     >
@@ -334,7 +334,7 @@ export function AccountLanes() {
   };
 
   return (
-    <View class="shrink-0 gap-1.5 border-b border-slate-200/80 bg-white px-3 py-1.5 dark:border-[#1E2738] dark:bg-[#111722]">
+    <View class="shrink-0 gap-1.5 border-b border-[#E5E9F0] bg-white px-3 py-1.5 dark:border-[#222B3C] dark:bg-[#131924]">
       {/* Header Row */}
       <View class="flex-row items-center justify-between gap-2">
         <View class="min-w-0 flex-1 flex-row flex-wrap items-center gap-2">

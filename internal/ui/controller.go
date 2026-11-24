@@ -55,6 +55,16 @@ type sourceImage struct {
 	WashOutput string
 }
 
+type rewashSnapshot struct {
+	page         int
+	sources      []sourceImage
+	queue        []tasks.Task
+	progress     float64
+	progText     string
+	count        int
+	rewashCounts map[string]int
+}
+
 type pageState struct {
 	sources     []sourceImage
 	srcSel      int
@@ -307,6 +317,8 @@ type App struct {
 	historyOpen     bool
 	resultsDoneOpen bool
 	laneCollapsed   bool
+	rewashUndo      *rewashSnapshot
+	rewashCounts    map[string]int
 	stamps          map[string]int64
 
 	tab          int
