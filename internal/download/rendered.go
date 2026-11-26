@@ -26,16 +26,17 @@ import (
 
 	"github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/browser"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 // RenderedSession owns a separate browser process and its page. Its profile is
 // retained so a user can sign in once and use that login in subsequent tasks.
 type RenderedSession struct {
-	process        *camoufox.Process
+	process        *fingerprint.Process
 	life           context.Context
 	tab            context.Context
 	target         string
+	targetClosed   bool
 	closeTab       context.CancelFunc
 	closeAllocator context.CancelFunc
 	releaseProfile func()
@@ -110,7 +111,15 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	if err != nil {
 		return nil, err
 	}
-	options := camoufox.Options{Profile: profileDir, Headless: headless, DirectNetwork: true}
+	var collisionRoots []string
+	if filepath.Base(profileDir) == "DownloadBrowser" {
+		collisionRoots = append(collisionRoots, filepath.Join(filepath.Dir(profileDir), "BrowserData", "Fingerprint"))
+		_ = EnsureDownloadBrowserBookmarks(profileDir)
+	}
+	if strings.TrimSpace(runtimeDir) != "" {
+		collisionRoots = append(collisionRoots, filepath.Join(runtimeDir, "BrowserData", "Fingerprint"))
+	}
+	options := fingerprint.Options{Profile: profileDir, Headless: headless, DirectNetwork: true, CollisionRoots: collisionRoots}
 	var assistant *downloadAssistant
 	if handler != nil {
 		var addon string
@@ -121,14 +130,14 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 		}
 		options.Addons = []string{addon}
 	}
-	process, err := camoufox.Start(ctx, runtimeDir, options, nil)
+	process, err := fingerprint.Start(ctx, runtimeDir, options, nil)
 	if err != nil {
 		assistant.close()
 		release()
 		return nil, err
 	}
 	life, closeTab := context.WithCancel(process.Context())
-	tab := camoufox.PageContext(life, process, process.Page)
+	tab := fingerprint.PageContext(life, process, process.Page)
 	closeAlloc := func() { process.Close() }
 	getter := NewHTTPGetter("")
 	getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -155,14 +164,20 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 			s.startIP = literal.Unmap()
 		}
 	}
-	unsubscribe := process.Subscribe(func(event camoufox.Event) {
+	unsubscribe := process.Subscribe(func(event fingerprint.Event) {
 		if event.Event == "closed" {
 			s.mu.Lock()
 			delete(s.documents, event.Target)
 			active := event.Target == s.target
+			if active {
+				s.targetClosed = true
+				s.pageURL, s.pageIP = nil, netip.Addr{}
+				s.docURL, s.docIP = nil, netip.Addr{}
+				s.start, s.startIP, s.expected = nil, netip.Addr{}, ""
+			}
 			s.mu.Unlock()
 			if active {
-				s.markClosed()
+				go s.reconcileClosedTarget(event.Target)
 			}
 			return
 		}
@@ -191,7 +206,7 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 		}
 		s.mu.Unlock()
 	})
-	context.AfterFunc(tab, unsubscribe)
+	context.AfterFunc(life, unsubscribe)
 	context.AfterFunc(process.Context(), s.markClosed)
 	if start != nil {
 		if err := s.run(ctx, navigateDownloadPage(start)); err != nil {
@@ -209,7 +224,7 @@ func openRenderedWithAssistant(ctx context.Context, profileDir, rawURL, proxy st
 	return s, nil
 }
 
-func navigateDownloadPage(target *url.URL) camoufox.Action {
+func navigateDownloadPage(target *url.URL) fingerprint.Action {
 	params := map[string]any{"url": tuchongBrowserEntry(target), "recoverInterrupted": true}
 	if pinterestHost(target) && (target.EscapedPath() == "" || target.EscapedPath() == "/") {
 		// The guide opens this landing page for the user to browse or sign in.
@@ -243,6 +258,9 @@ func (s *RenderedSession) OpenTarget(ctx context.Context, rawURL string) error {
 	if err != nil || start.User != nil {
 		return errors.New("浏览器地址必须是不含账号密码的 HTTP / HTTPS 地址")
 	}
+	if err := s.ensureActiveTab(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.pageURL, s.pageIP = nil, netip.Addr{}
 	s.expected = ""
@@ -262,6 +280,166 @@ func (s *RenderedSession) OpenTarget(ctx context.Context, rawURL string) error {
 		return fmt.Errorf("打开下载网址: %w", err)
 	}
 	return nil
+}
+
+func (s *RenderedSession) activeTab() context.Context {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	tab := s.tab
+	s.mu.RUnlock()
+	return tab
+}
+
+func (s *RenderedSession) startURL() *url.URL {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	start := s.start
+	s.mu.RUnlock()
+	return start
+}
+
+func (s *RenderedSession) switchTargetLocked(targetID string) {
+	if s.target == targetID && s.tab != nil && !s.targetClosed {
+		return
+	}
+	parent := s.life
+	if parent == nil && s.process != nil {
+		parent = s.process.Context()
+	}
+	s.target = targetID
+	s.targetClosed = false
+	s.tab = fingerprint.PageContext(parent, s.process, targetID)
+	if s.documents != nil {
+		doc := s.documents[targetID]
+		s.docURL, s.docIP = doc.url, doc.ip
+	} else {
+		s.docURL, s.docIP = nil, netip.Addr{}
+	}
+}
+
+func (s *RenderedSession) reconcileClosedTarget(closedTarget string) {
+	if s == nil || s.process == nil || !s.process.Alive() {
+		s.markClosed()
+		return
+	}
+	parent := s.life
+	if parent == nil {
+		parent = s.process.Context()
+	}
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	var targets struct {
+		Infos []struct {
+			ID   string `json:"targetId"`
+			Type string `json:"type"`
+		} `json:"targetInfos"`
+	}
+	if err := s.process.Call(ctx, "", "Target.getTargets", nil, &targets); err != nil {
+		s.markClosed()
+		return
+	}
+	var fallback string
+	for _, info := range targets.Infos {
+		if info.Type == "page" && info.ID != "" && info.ID != closedTarget {
+			fallback = info.ID
+		}
+	}
+	if fallback == "" {
+		s.markClosed()
+		return
+	}
+	s.mu.Lock()
+	if s.target == closedTarget && s.targetClosed {
+		s.switchTargetLocked(fallback)
+	}
+	s.mu.Unlock()
+}
+
+func (s *RenderedSession) ensureActiveTab(ctx context.Context) error {
+	if !s.Alive() {
+		return errors.New("下载浏览器已关闭，请重新打开")
+	}
+	s.mu.RLock()
+	tab := s.tab
+	closed := s.targetClosed
+	s.mu.RUnlock()
+	if !closed && tab != nil && tab.Err() == nil {
+		return nil
+	}
+	var targets struct {
+		Infos []struct {
+			ID   string `json:"targetId"`
+			Type string `json:"type"`
+		} `json:"targetInfos"`
+	}
+	if err := s.process.Call(ctx, "", "Target.getTargets", nil, &targets); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("下载浏览器已关闭，请重新打开")
+	}
+	var fallback string
+	for _, info := range targets.Infos {
+		if info.Type == "page" && info.ID != "" {
+			fallback = info.ID
+		}
+	}
+	if fallback == "" {
+		s.markClosed()
+		return errors.New("下载浏览器已关闭，请重新打开")
+	}
+	s.mu.Lock()
+	if s.targetClosed || s.tab == nil || s.tab.Err() != nil {
+		s.switchTargetLocked(fallback)
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func hasHashRoute(raw string) bool {
+	if u, err := url.Parse(strings.TrimSpace(raw)); err == nil {
+		return strings.HasPrefix(u.Fragment, "/") || strings.HasPrefix(u.Fragment, "!")
+	}
+	return false
+}
+
+func renderedURLMatches(rawURL, observed string, start *url.URL, allowSearchAlias bool) bool {
+	if observed == rawURL {
+		return true
+	}
+	if start != nil && !hasHashRoute(rawURL) && !hasHashRoute(observed) {
+		if got, err := crawlInputURL(observed); err == nil && got.String() == start.String() {
+			return true
+		}
+	}
+	if allowSearchAlias && (pinterestSearchURLMatches(rawURL, observed) || temuSearchURLMatches(rawURL, observed)) {
+		return true
+	}
+	if !allowSearchAlias && start != nil && isTemuSearch(start) && temuSearchURLMatches(rawURL, observed) {
+		return true
+	}
+	return false
+}
+
+func isTemuVerificationPath(p string) bool {
+	if p == "/bgn_verification.html" {
+		return true
+	}
+	trimmed := strings.TrimPrefix(p, "/")
+	locale, rest, ok := strings.Cut(trimmed, "/")
+	if !ok || rest != "bgn_verification.html" || len(locale) < 2 || len(locale) > 8 {
+		return false
+	}
+	for _, r := range locale {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *RenderedSession) downloadMarkers() extbundle.DownloadAddonMarkers {
@@ -300,7 +478,7 @@ func (s *RenderedSession) bindPage(ctx context.Context, rawURL, marker string) e
 		return errors.New("下载浏览器已关闭，请重新打开")
 	}
 	matches := func(observed string) bool {
-		return observed == rawURL || (marker == "" && pinterestSearchURLMatches(rawURL, observed))
+		return renderedURLMatches(rawURL, observed, start, marker == "")
 	}
 	var targets struct {
 		Infos []struct {
@@ -313,7 +491,6 @@ func (s *RenderedSession) bindPage(ctx context.Context, rawURL, marker string) e
 		return err
 	}
 	var selected string
-	var selectedTab context.Context
 	var selectedURL string
 	script := `({url:location.href})`
 	if marker != "" {
@@ -321,11 +498,8 @@ func (s *RenderedSession) bindPage(ctx context.Context, rawURL, marker string) e
 		selector := fmt.Sprintf("[%s][%s]", markers.HostAttr, markers.RequestAttr)
 		script = fmt.Sprintf(`({url:location.href,match:Array.from(document.querySelectorAll(%q)).some(el=>el.getAttribute(%q)===%q)})`, selector, markers.RequestAttr, marker)
 	}
-	for _, target := range targets.Infos {
-		if target.Type != "page" || !matches(target.URL) {
-			continue
-		}
-		tab := camoufox.PageContext(s.life, s.process, target.ID)
+	probeTarget := func(targetID string) (bool, error) {
+		tab := fingerprint.PageContext(s.life, s.process, targetID)
 		var state struct {
 			URL   string
 			Match bool
@@ -333,9 +507,33 @@ func (s *RenderedSession) bindPage(ctx context.Context, rawURL, marker string) e
 		err := runRendered(ctx, tab, chromedp.Evaluate(script, &state))
 		if err == nil && matches(state.URL) && (marker == "" || state.Match) {
 			if selected != "" {
-				return errors.New("有多个标签页符合该网址，请在目标页点击「下载到 tulai」")
+				return false, errors.New("有多个标签页符合该网址，请在目标页点击「下载到 tulai」")
 			}
-			selected, selectedTab, selectedURL = target.ID, tab, state.URL
+			selected, selectedURL = targetID, state.URL
+			return true, nil
+		}
+		return false, nil
+	}
+	var fallbackIDs []string
+	for _, target := range targets.Infos {
+		if target.Type != "page" {
+			continue
+		}
+		if !matches(target.URL) {
+			fallbackIDs = append(fallbackIDs, target.ID)
+			continue
+		}
+		if _, err := probeTarget(target.ID); err != nil {
+			return err
+		}
+	}
+	if selected == "" && ctx.Err() == nil && len(fallbackIDs) > 0 {
+		// Target.getTargets reads Playwright's cached page.url(), which can briefly
+		// lag behind SPA pushState/replaceState updates. Probe remaining tabs live.
+		for _, targetID := range fallbackIDs {
+			if _, err := probeTarget(targetID); err != nil {
+				return err
+			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -354,8 +552,9 @@ func (s *RenderedSession) bindPage(ctx context.Context, rawURL, marker string) e
 		return errors.New("下载浏览器中未找到该网页，请打开填写的网址。若站点要求登录或验证，请处理后返回目标页")
 	}
 	s.mu.Lock()
+	s.switchTargetLocked(selected)
 	doc := s.documents[selected]
-	s.target, s.tab, s.start = selected, selectedTab, start
+	s.start = start
 	s.expected = selectedURL
 	s.pageURL, s.pageIP = nil, netip.Addr{}
 	s.docURL, s.docIP, s.startIP, s.frozen = doc.url, doc.ip, netip.Addr{}, true
@@ -376,11 +575,19 @@ func (s *RenderedSession) Close() {
 	}
 	s.markClosed()
 	s.closed.Do(func() {
-		s.closeTab()
-		s.closeAllocator()
-		s.getter.client.CloseIdleConnections()
+		if s.closeTab != nil {
+			s.closeTab()
+		}
+		if s.closeAllocator != nil {
+			s.closeAllocator()
+		}
+		if s.getter != nil {
+			s.getter.CloseIdleConnections()
+		}
 		s.assistant.close()
-		s.releaseProfile()
+		if s.releaseProfile != nil {
+			s.releaseProfile()
+		}
 	})
 }
 
@@ -390,15 +597,12 @@ func (s *RenderedSession) markClosed() {
 	}
 }
 
-// Alive reports whether the dedicated browser and its captured page are still open.
+// Alive reports whether the dedicated browser session is still open.
 func (s *RenderedSession) Alive() bool {
 	if s == nil || s.process == nil || !s.process.Alive() || s.done == nil {
 		return false
 	}
-	s.mu.RLock()
-	tab := s.tab
-	s.mu.RUnlock()
-	if tab == nil || tab.Err() != nil {
+	if s.life != nil && s.life.Err() != nil {
 		return false
 	}
 	select {
@@ -409,7 +613,7 @@ func (s *RenderedSession) Alive() bool {
 	}
 }
 
-// Done closes when the dedicated browser or its page closes.
+// Done closes when the dedicated browser or its last page closes.
 func (s *RenderedSession) Done() <-chan struct{} { return s.done }
 
 // PageURL is the URL of the last successfully captured page; credentials are removed.
@@ -422,24 +626,38 @@ func (s *RenderedSession) PageURL() string {
 	return pageReferer(s.pageURL)
 }
 
+// Focus brings the dedicated Fingerprint download browser window to the front.
+func (s *RenderedSession) Focus(ctx context.Context) error {
+	if s == nil {
+		return errors.New("下载浏览器已关闭，请重新打开")
+	}
+	if err := s.ensureActiveTab(ctx); err != nil {
+		return err
+	}
+	return s.run(ctx, page.BringToFront())
+}
+
 // Getter returns the streaming downloader associated with the captured page.
 func (s *RenderedSession) Getter() Getter { return s }
 
-func (s *RenderedSession) run(ctx context.Context, actions ...camoufox.Action) error {
+func (s *RenderedSession) run(ctx context.Context, actions ...fingerprint.Action) error {
 	s.mu.RLock()
 	tab := s.tab
 	s.mu.RUnlock()
 	return runRendered(ctx, tab, actions...)
 }
 
-func runRendered(ctx, tab context.Context, actions ...camoufox.Action) error {
+func runRendered(ctx, tab context.Context, actions ...fingerprint.Action) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if tab == nil {
+		return errors.New("下载浏览器已关闭，请重新打开")
 	}
 	op, cancel := context.WithTimeout(tab, 45*time.Second)
 	stop := context.AfterFunc(ctx, cancel)
 	defer func() { stop(); cancel() }()
-	err := camoufox.Run(op, actions...)
+	err := fingerprint.Run(op, actions...)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -502,7 +720,7 @@ func renderedAccessSite(target *url.URL) string {
 	}
 }
 
-func (s *RenderedSession) captureSnapshot(ctx context.Context, waitForAccess bool) (renderedSnapshot, error) {
+func (s *RenderedSession) captureSnapshot(ctx context.Context, start *url.URL, waitForAccess bool) (renderedSnapshot, error) {
 	var snapshot renderedSnapshot
 	var deadline time.Time
 	for {
@@ -516,7 +734,7 @@ func (s *RenderedSession) captureSnapshot(ctx context.Context, waitForAccess boo
 			return snapshot, err
 		}
 		target, parseErr := crawlInputURL(snapshot.URL)
-		if parseErr != nil || !sameRenderedSite(s.start, target) || renderedAccessSite(target) == "" {
+		if parseErr != nil || !sameRenderedSite(start, target) || renderedAccessSite(target) == "" {
 			return snapshot, err
 		}
 		if deadline.IsZero() {
@@ -538,8 +756,13 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 	s.mu.Lock()
 	s.pageURL = nil
 	s.pageIP = netip.Addr{}
+	originStart := s.start
 	expected := s.expected
 	s.mu.Unlock()
+	var expectedURL *url.URL
+	if expected != "" {
+		expectedURL, _ = crawlInputURL(expected)
+	}
 	if err := Wait(ctx, 400*time.Millisecond); err != nil {
 		return result, err
 	}
@@ -549,117 +772,117 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 	var originalY float64
 	var partial error
 	defer func() {
-		if first != nil && s.tab.Err() == nil {
+		if tab := s.activeTab(); first != nil && tab != nil && tab.Err() == nil {
 			restore, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			_ = s.run(restore, chromedp.Evaluate(fmt.Sprintf(`if (location.href === %q) window.scrollTo(0, %g)`, firstRaw, originalY), nil))
+			_ = runRendered(restore, tab, chromedp.Evaluate(fmt.Sprintf(`if (location.href === %q) window.scrollTo(0, %g)`, firstRaw, originalY), nil))
 		}
 	}()
 	for step := 0; step <= maxRenderedScrolls; step++ {
-		snapshot, err := s.captureSnapshot(ctx, step == 0 && renderedAccessSite(s.start) != "")
+		snapshot, err := s.captureSnapshot(ctx, originStart, step == 0 && renderedAccessSite(originStart) != "")
 		if err != nil {
 			return result, err
 		}
-		if expected != "" && snapshot.URL != expected {
+		if expected != "" && !renderedURLMatches(expected, snapshot.URL, expectedURL, false) {
 			return result, errors.New("浏览器页面已变化，请返回目标页面后重新下载")
 		}
 		page, err := crawlInputURL(snapshot.URL)
-		if err != nil || !sameRenderedSite(s.start, page) {
+		if err != nil || !sameRenderedSite(originStart, page) {
 			return result, errors.New("浏览器当前页面已离开原始站点，请返回目标网页后重试")
 		}
-		if isPinterestSearch(s.start) && !pinterestSameSearch(s.start, page) {
+		if isPinterestSearch(originStart) && !pinterestSameSearch(originStart, page) {
 			return result, errors.New("Pinterest 搜索已跳转或查询条件发生变化，请在下载浏览器中返回目标搜索结果")
 		}
-		if isNeteasePhotoPage(s.start) {
-			return discoverNeteasePhoto(ctx, s.Getter(), s.start)
+		if isNeteasePhotoPage(originStart) {
+			return discoverNeteasePhoto(ctx, s.Getter(), originStart)
 		}
 		if googleVerificationPage(page) {
 			return result, errors.New("Google 要求安全验证，请在下载浏览器中完成验证后重试")
 		}
-		if isBingImageDetail(s.start) && !bingDetailSameRequest(s.start, page) {
+		if isBingImageDetail(originStart) && !bingDetailSameRequest(originStart, page) {
 			return result, errors.New("Bing 单图页面已跳转或搜索条件发生变化")
 		}
-		if isTwitterProfileMedia(s.start) {
+		if isTwitterProfileMedia(originStart) {
 			return result, errors.New("X 媒体页可能需要登录，当前尚未支持；请打开作者主页或单个帖子")
 		}
-		if isTwitterProfile(s.start) && !twitterSameProfile(s.start, page) {
+		if isTwitterProfile(originStart) && !twitterSameProfile(originStart, page) {
 			return result, errors.New("X 作者主页已跳转，请完成登录后重试")
 		}
-		if isGoogleImageSearch(s.start) {
-			if !googleImagesSameSearch(s.start, page) {
+		if isGoogleImageSearch(originStart) {
+			if !googleImagesSameSearch(originStart, page) {
 				return result, errors.New("Google 图片搜索已跳转或查询条件发生变化")
 			}
 		}
-		if isAmazonSearch(s.start) && !amazonSearchSamePage(s.start, page) {
+		if isAmazonSearch(originStart) && !amazonSearchSamePage(originStart, page) {
 			return result, errors.New("亚马逊搜索已跳转或查询条件发生变化")
 		}
-		if isEbaySearch(s.start) && !ebaySearchSameRequest(s.start, page) {
+		if isEbaySearch(originStart) && !ebaySearchSameRequest(originStart, page) {
 			return result, errors.New("eBay 搜索已跳转或查询条件发生变化")
 		}
-		if isTemuSearch(s.start) && !temuSearchSameSearch(s.start, page) {
+		if isTemuSearch(originStart) && !temuSearchSameSearch(originStart, page) {
 			return result, errors.New("TEMU 搜索已跳转或查询条件发生变化，请完成验证后重试")
 		}
-		if (isTemuSearch(s.start) || isTemuHome(s.start)) && temuSearchSite(page) && page.Path == "/bgn_verification.html" {
+		if (isTemuSearch(originStart) || isTemuHome(originStart)) && temuSearchSite(page) && isTemuVerificationPath(page.Path) {
 			return result, errors.New("TEMU 要求安全验证，请在下载浏览器中完成后重试")
 		}
-		if isWechatArticle(s.start) && isWechatVerification(page) {
+		if isWechatArticle(originStart) && isWechatVerification(page) {
 			return result, errors.New("公众号要求安全验证，请在下载浏览器中完成验证后重试")
 		}
-		if isAlibabaProduct(s.start) && !isAlibabaProduct(page) {
+		if isAlibabaProduct(originStart) && !isAlibabaProduct(page) {
 			return result, errors.New("阿里巴巴国际站商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isDouyinProduct(s.start) && !isDouyinProduct(page) {
+		if isDouyinProduct(originStart) && !isDouyinProduct(page) {
 			return result, errors.New("抖音商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isYouzanProduct(s.start) && !isYouzanProduct(page) {
+		if isYouzanProduct(originStart) && !isYouzanProduct(page) {
 			return result, errors.New("有赞商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isIMDbPage(s.start) && !isIMDbPage(page) {
+		if isIMDbPage(originStart) && !isIMDbPage(page) {
 			return result, errors.New("IMDb 页面已跳转，可能需要登录或安全验证")
 		}
-		if (isSinaBlogArticle(s.start) || isSinaBlogList(s.start)) && !isSinaBlogArticle(page) && !isSinaBlogList(page) {
+		if (isSinaBlogArticle(originStart) || isSinaBlogList(originStart)) && !isSinaBlogArticle(page) && !isSinaBlogList(page) {
 			return result, errors.New("新浪博客文章已跳转，可能需要登录或安全验证")
 		}
-		if isDHgateProduct(s.start) && !isDHgateProduct(page) {
+		if isDHgateProduct(originStart) && !isDHgateProduct(page) {
 			return result, errors.New("敦煌网商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isWeidianProduct(s.start) && !isWeidianProduct(page) {
+		if isWeidianProduct(originStart) && !isWeidianProduct(page) {
 			return result, errors.New("微店商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isYupooPage(s.start) && !isYupooPage(page) {
+		if isYupooPage(originStart) && !isYupooPage(page) {
 			return result, errors.New("又拍页面已跳转，可能需要登录或安全验证")
 		}
-		if isZOLPage(s.start) && !isZOLPage(page) {
+		if isZOLPage(originStart) && !isZOLPage(page) {
 			return result, errors.New("中关村在线图片页已跳转，可能需要登录或安全验证")
 		}
-		if isAutohomePhoto(s.start) && !isAutohomePhoto(page) {
+		if isAutohomePhoto(originStart) && !isAutohomePhoto(page) {
 			return result, errors.New("汽车之家图片页已跳转，可能需要登录或安全验证")
 		}
-		if isMadeInChinaProduct(s.start) && !isMadeInChinaProduct(page) {
+		if isMadeInChinaProduct(originStart) && !isMadeInChinaProduct(page) {
 			return result, errors.New("中国制造网商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isDangdangProduct(s.start) && !isDangdangProduct(page) {
+		if isDangdangProduct(originStart) && !isDangdangProduct(page) {
 			return result, errors.New("当当商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isVIPProduct(s.start) && !isVIPProduct(page) {
+		if isVIPProduct(originStart) && !isVIPProduct(page) {
 			return result, errors.New("唯品会商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isSogouImageSearch(s.start) && !isSogouImageSearch(page) {
+		if isSogouImageSearch(originStart) && !isSogouImageSearch(page) {
 			return result, errors.New("搜狗图片页面已跳转，可能需要安全验证")
 		}
-		if isOzonProduct(s.start) && !isOzonProduct(page) {
+		if isOzonProduct(originStart) && !isOzonProduct(page) {
 			return result, errors.New("Ozon 商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isSOImageSearch(s.start) && !isSOImageSearch(page) {
+		if isSOImageSearch(originStart) && !isSOImageSearch(page) {
 			return result, errors.New("360 图片页面已跳转，可能需要安全验证")
 		}
-		if original := zhihuPageRef(s.start); original.id != "" && zhihuPageRef(page) != original {
+		if original := zhihuPageRef(originStart); original.id != "" && zhihuPageRef(page) != original {
 			return result, errors.New("知乎页面已跳转，可能需要登录或安全验证")
 		}
-		if id := behanceProjectID(s.start); id != "" && behanceProjectID(page) != id {
+		if id := behanceProjectID(originStart); id != "" && behanceProjectID(page) != id {
 			return result, errors.New("Behance 作品已跳转，可能需要登录或安全验证")
 		}
-		if route := tuchongRouteOf(s.start); route.site != "" && tuchongRouteOf(page) != route {
+		if route := tuchongRouteOf(originStart); route.site != "" && tuchongRouteOf(page) != route {
 			return result, errors.New("图虫作品或作者页面已跳转，可能需要登录或安全验证")
 		}
 		if snapshot.Status == http.StatusUnauthorized || snapshot.Status == http.StatusForbidden {
@@ -669,257 +892,257 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 				return result, fmt.Errorf("%s页面访问受限，请在下载浏览器中完成登录或验证并确认内容可见: %w", site, status)
 			}
 		}
-		if isUnsplashPage(s.start) && !isUnsplashPage(page) {
+		if isUnsplashPage(originStart) && !isUnsplashPage(page) {
 			return result, errors.New("Unsplash 页面已跳转，可能需要登录或安全验证")
 		}
-		if isYanxuanProduct(s.start) && !isYanxuanProduct(page) {
+		if isYanxuanProduct(originStart) && !isYanxuanProduct(page) {
 			return result, errors.New("网易严选商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isJJsHouseProduct(s.start) && !isJJsHouseProduct(page) {
+		if isJJsHouseProduct(originStart) && !isJJsHouseProduct(page) {
 			return result, errors.New("JJ's House 商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isBaijiahaoPage(s.start) && !isBaijiahaoPage(page) {
+		if isBaijiahaoPage(originStart) && !isBaijiahaoPage(page) {
 			return result, errors.New("百家号页面已跳转，可能需要登录或安全验证")
 		}
-		if isToutiaoArticle(s.start) && !isToutiaoArticle(page) {
+		if isToutiaoArticle(originStart) && !isToutiaoArticle(page) {
 			return result, errors.New("今日头条文章已跳转，可能需要登录或安全验证")
 		}
-		if (isAicaigouProduct(s.start) || isAicaigouShop(s.start)) && !isAicaigouProduct(page) && !isAicaigouShop(page) {
+		if (isAicaigouProduct(originStart) || isAicaigouShop(originStart)) && !isAicaigouProduct(page) && !isAicaigouShop(page) {
 			return result, errors.New("爱采购页面已跳转，可能需要登录或安全验证")
 		}
-		if isRajceAlbum(s.start) && !isRajceAlbum(page) {
+		if isRajceAlbum(originStart) && !isRajceAlbum(page) {
 			return result, errors.New("Rajče 相册已跳转，可能需要登录或安全验证")
 		}
 		if isRajceProfile(page) {
 			return result, rajceProfileUnsupported()
 		}
-		if isSpoonflowerPage(s.start) && !isSpoonflowerPage(page) {
+		if isSpoonflowerPage(originStart) && !isSpoonflowerPage(page) {
 			return result, errors.New("Spoonflower 页面已跳转，可能需要登录或安全验证")
 		}
-		if isMogujieProduct(s.start) && !isMogujieProduct(page) {
+		if isMogujieProduct(originStart) && !isMogujieProduct(page) {
 			return result, errors.New("蘑菇街商品页面已跳转，可能已下架或需要安全验证")
 		}
-		if isCNUWork(s.start) && !isCNUWork(page) {
+		if isCNUWork(originStart) && !isCNUWork(page) {
 			return result, errors.New("CNU 作品页面已跳转，可能需要登录或安全验证")
 		}
 		if isCNUUser(page) {
 			return result, cnuUserUnsupported()
 		}
-		if isYandePage(s.start) && !isYandePage(page) {
+		if isYandePage(originStart) && !isYandePage(page) {
 			return result, errors.New("yande.re 页面已跳转，可能需要登录或安全验证")
 		}
-		if isSuningProduct(s.start) && !isSuningProduct(page) {
+		if isSuningProduct(originStart) && !isSuningProduct(page) {
 			return result, errors.New("苏宁商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isYiwugouProduct(s.start) && !isYiwugouProduct(page) {
+		if isYiwugouProduct(originStart) && !isYiwugouProduct(page) {
 			return result, errors.New("义乌购商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isCtripAlbum(s.start) && !isCtripAlbum(page) {
+		if isCtripAlbum(originStart) && !isCtripAlbum(page) {
 			return result, errors.New("携程相册页面已跳转，可能需要登录或安全验证")
 		}
-		if isGoooodPage(s.start) && !isGoooodPage(page) {
+		if isGoooodPage(originStart) && !isGoooodPage(page) {
 			return result, errors.New("谷德页面已跳转，可能需要登录或安全验证")
 		}
-		if isFangAlbum(s.start) && !isFangAlbum(page) {
+		if isFangAlbum(originStart) && !isFangAlbum(page) {
 			return result, errors.New("房天下相册已跳转，可能需要登录或安全验证")
 		}
-		if isArchDailyPage(s.start) && !isArchDailyPage(page) {
+		if isArchDailyPage(originStart) && !isArchDailyPage(page) {
 			return result, errors.New("ArchDaily 页面已跳转，可能需要登录或安全验证")
 		}
-		if isPhotoplusPage(s.start) && !isPhotoplusPage(page) {
+		if isPhotoplusPage(originStart) && !isPhotoplusPage(page) {
 			return result, errors.New("Photoplus 活动页面已跳转，可能需要登录或安全验证")
 		}
-		if isWSYProduct(s.start) && !isWSYProduct(page) {
+		if isWSYProduct(originStart) && !isWSYProduct(page) {
 			return result, errors.New("网商园商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isPexelsPhoto(s.start) && !isPexelsPhoto(page) {
+		if isPexelsPhoto(originStart) && !isPexelsPhoto(page) {
 			return result, errors.New("Pexels 图片页面已跳转，可能需要登录或安全验证")
 		}
-		if isTemuProduct(s.start) && !isTemuProduct(page) {
+		if isTemuProduct(originStart) && !isTemuProduct(page) {
 			return result, errors.New("TEMU 商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isSheinProduct(s.start) && !isSheinProduct(page) {
+		if isSheinProduct(originStart) && !isSheinProduct(page) {
 			return result, errors.New("SHEIN 商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isGelbooruPage(s.start) && !isGelbooruPage(page) {
+		if isGelbooruPage(originStart) && !isGelbooruPage(page) {
 			return result, errors.New("Gelbooru 页面已跳转，可能需要登录或安全验证")
 		}
-		if isXianyuItem(s.start) && !isXianyuItem(page) {
+		if isXianyuItem(originStart) && !isXianyuItem(page) {
 			return result, errors.New("闲鱼商品页面已跳转，可能需要登录或安全验证")
 		}
-		if isDewuProduct(s.start) && !isDewuProduct(page) {
+		if isDewuProduct(originStart) && !isDewuProduct(page) {
 			return result, errors.New("得物商品页面已跳转，可能需要登录或安全验证")
 		}
-		if pailixiangLegacy(s.start) {
+		if pailixiangLegacy(originStart) {
 			return result, errors.New("拍立享旧版相册暂不支持，请使用当前公开活动链接")
 		}
-		if isPailixiangPage(s.start) && !isPailixiangPage(page) {
+		if isPailixiangPage(originStart) && !isPailixiangPage(page) {
 			return result, errors.New("拍立享活动页面已跳转，可能需要登录或安全验证")
 		}
-		if isWikiArtAuthor(s.start) && !isWikiArtAuthor(page) {
+		if isWikiArtAuthor(originStart) && !isWikiArtAuthor(page) {
 			return result, errors.New("WikiArt 作者页面已跳转，可能需要登录或安全验证")
 		}
-		if isKuaishouPost(s.start) && !isKuaishouPost(page) {
+		if isKuaishouPost(originStart) && !isKuaishouPost(page) {
 			return result, errors.New("快手作品页面已跳转，可能需要登录或安全验证")
 		}
-		if isAlltuuAlbum(s.start) || isAlltuuAlbum(page) {
+		if isAlltuuAlbum(originStart) || isAlltuuAlbum(page) {
 			return result, alltuuUnsupported()
 		}
-		if isDouyinContent(s.start) && !isDouyinContent(page) {
+		if isDouyinContent(originStart) && !isDouyinContent(page) {
 			return result, errors.New("抖音作品页面已跳转，可能需要登录或安全验证")
 		}
-		if isIssuuDocument(s.start) && !isIssuuDocument(page) {
+		if isIssuuDocument(originStart) && !isIssuuDocument(page) {
 			return result, errors.New("Issuu 文档页面已跳转，可能需要登录或访问授权")
 		}
-		if isHouzzProject(s.start) && !isHouzzProject(page) {
+		if isHouzzProject(originStart) && !isHouzzProject(page) {
 			return result, errors.New("Houzz 项目页面已跳转，可能需要登录或安全验证")
 		}
-		if kind, id := mihuashiRef(s.start); kind != "" {
+		if kind, id := mihuashiRef(originStart); kind != "" {
 			currentKind, currentID := mihuashiRef(page)
 			if kind != currentKind || id != currentID {
 				return result, errors.New("米画师页面已跳转，作品内容暂无法确认")
 			}
 		}
-		if isLightInTheBoxProduct(s.start) && !isLightInTheBoxProduct(page) {
+		if isLightInTheBoxProduct(originStart) && !isLightInTheBoxProduct(page) {
 			return result, errors.New("兰亭商品页面已跳转，可能需要登录或安全验证")
 		}
-		if (isOnexPhoto(s.start) || isOnexGallery(s.start)) && !isOnexPhoto(page) && !isOnexGallery(page) {
+		if (isOnexPhoto(originStart) || isOnexGallery(originStart)) && !isOnexPhoto(page) && !isOnexGallery(page) {
 			return result, errors.New("1x 作品页面已跳转，可能需要登录或安全验证")
 		}
-		if (isPhotography35Photo(s.start) || isPhotography35Author(s.start)) && !isPhotography35Photo(page) && !isPhotography35Author(page) {
+		if (isPhotography35Photo(originStart) || isPhotography35Author(originStart)) && !isPhotography35Photo(page) && !isPhotography35Author(page) {
 			return result, errors.New("35photo 页面已跳转，可能需要登录或安全验证")
 		}
-		if isPconlinePhoto(s.start) && !isPconlinePhoto(page) {
+		if isPconlinePhoto(originStart) && !isPconlinePhoto(page) {
 			return result, errors.New("摄影部落作品页面已跳转，可能需要登录或安全验证")
 		}
-		if isImgsrcPage(s.start) && (!isImgsrcPage(page) || imgsrcPageRef(s.start).owner != imgsrcPageRef(page).owner) {
+		if isImgsrcPage(originStart) && (!isImgsrcPage(page) || imgsrcPageRef(originStart).owner != imgsrcPageRef(page).owner) {
 			return result, errors.New("ImgSrc 相册页面已跳转，可能需要访问授权")
 		}
-		if isMtimePage(s.start) && (mtimePageRef(s.start).kind != mtimePageRef(page).kind || mtimePageRef(s.start).id != mtimePageRef(page).id) {
+		if isMtimePage(originStart) && (mtimePageRef(originStart).kind != mtimePageRef(page).kind || mtimePageRef(originStart).id != mtimePageRef(page).id) {
 			return result, errors.New("时光网图片页面已跳转")
 		}
-		if kind, id := animePicturesRoute(s.start); kind != "" {
+		if kind, id := animePicturesRoute(originStart); kind != "" {
 			currentKind, currentID := animePicturesRoute(page)
-			if kind != currentKind || id != currentID || (kind == "search" && !animePicturesSameSearch(s.start, page, false)) {
+			if kind != currentKind || id != currentID || (kind == "search" && !animePicturesSameSearch(originStart, page, false)) {
 				return result, errors.New("Anime-Pictures 页面已跳转或搜索条件已变化")
 			}
 		}
-		if start := faPageRef(s.start); start.kind != "" {
+		if start := faPageRef(originStart); start.kind != "" {
 			current := faPageRef(page)
 			if (start.kind == "photo" && (current.kind != "photo" || start.id != current.id)) ||
 				(start.kind != "photo" && (current.kind == "photo" || !strings.EqualFold(start.author, current.author))) {
 				return result, errors.New("Fur Affinity 页面已跳转到其他作品或作者")
 			}
 		}
-		if product, sku := gomeProductRef(s.start); product != "" {
+		if product, sku := gomeProductRef(originStart); product != "" {
 			currentProduct, currentSKU := gomeProductRef(page)
 			if product != currentProduct || sku != currentSKU {
 				return result, errors.New("国美商品页面已跳转")
 			}
 		}
-		if shop := dianpingPageRef(s.start).shop; shop != "" && shop != dianpingPageRef(page).shop {
+		if shop := dianpingPageRef(originStart).shop; shop != "" && shop != dianpingPageRef(page).shop {
 			return result, errors.New("大众点评页面已跳转到其他门店")
 		}
-		if kind, id := nipicRoute(s.start); kind != "" {
+		if kind, id := nipicRoute(originStart); kind != "" {
 			currentKind, currentID := nipicRoute(page)
-			if kind != currentKind || id != currentID || (kind == "search" && !nipicSameSearch(s.start, page, false)) {
+			if kind != currentKind || id != currentID || (kind == "search" && !nipicSameSearch(originStart, page, false)) {
 				return result, errors.New("昵图/汇图页面已跳转或搜索条件已变化")
 			}
 		}
-		if id := qyerAlbumID(s.start); id != "" && qyerAlbumID(page) != id {
+		if id := qyerAlbumID(originStart); id != "" && qyerAlbumID(page) != id {
 			return result, errors.New("穷游相册页面已跳转")
 		}
-		if isOnlyFansSite(s.start) {
-			requested, current := onlyFansProfile(s.start), onlyFansProfile(page)
+		if isOnlyFansSite(originStart) {
+			requested, current := onlyFansProfile(originStart), onlyFansProfile(page)
 			if current == "" || (requested != "" && requested != current) {
 				return result, errors.New("OnlyFans 请先登录并打开已授权的作者主页")
 			}
 		}
-		if ref := muyingPageRef(s.start); ref.kind != "" {
+		if ref := muyingPageRef(originStart); ref.kind != "" {
 			current := muyingPageRef(page)
 			if ref.kind != current.kind || ref.id != current.id {
 				return result, errors.New("母婴天下页面已跳转")
 			}
 		}
-		if kind, id := ymatouRoute(s.start); kind != "" {
+		if kind, id := ymatouRoute(originStart); kind != "" {
 			currentKind, currentID := ymatouRoute(page)
-			if kind != currentKind || id != currentID || !strings.EqualFold(s.start.Hostname(), page.Hostname()) {
+			if kind != currentKind || id != currentID || !strings.EqualFold(originStart.Hostname(), page.Hostname()) {
 				return result, errors.New("洋码头商品页面已跳转")
 			}
 		}
-		if ref := neteaseBlogRef(s.start); ref.id != "" && ref != neteaseBlogRef(page) {
+		if ref := neteaseBlogRef(originStart); ref.id != "" && ref != neteaseBlogRef(page) {
 			return result, errors.New("网易博客文章页面已跳转")
 		}
-		if kind, id := soukuanRoute(s.start); kind != "" {
+		if kind, id := soukuanRoute(originStart); kind != "" {
 			currentKind, currentID := soukuanRoute(page)
-			if kind != currentKind || id != currentID || !strings.EqualFold(s.start.Hostname(), page.Hostname()) {
+			if kind != currentKind || id != currentID || !strings.EqualFold(originStart.Hostname(), page.Hostname()) {
 				return result, errors.New("搜款网商品页面已跳转")
 			}
 		}
-		if start := mokoPageRef(s.start); start.kind != "" {
+		if start := mokoPageRef(originStart); start.kind != "" {
 			current := mokoPageRef(page)
 			if (start.kind == "post" && (current.kind != "post" || start.id != current.id)) ||
 				(start.kind != "post" && (current.owner != start.owner || (start.kind == "category" && (current.kind != "category" || start.category != current.category)))) {
 				return result, errors.New("美空页面已跳转到其他作品或作者")
 			}
 		}
-		if id := xiaomiYoupinID(s.start); id != "" && id != xiaomiYoupinID(page) {
+		if id := xiaomiYoupinID(originStart); id != "" && id != xiaomiYoupinID(page) {
 			return result, errors.New("小米有品商品页面已跳转")
 		}
-		if id := zcygovID(s.start); id != "" && (id != zcygovID(page) || !strings.EqualFold(s.start.Hostname(), page.Hostname())) {
+		if id := zcygovID(originStart); id != "" && (id != zcygovID(page) || !strings.EqualFold(originStart.Hostname(), page.Hostname())) {
 			return result, errors.New("政采云商品页面已跳转")
 		}
-		if id := dribbbleShotID(s.start); id != "" && id != dribbbleShotID(page) {
+		if id := dribbbleShotID(originStart); id != "" && id != dribbbleShotID(page) {
 			return result, errors.New("Dribbble 作品页面已跳转")
 		}
-		if kind, id := facebookRoute(s.start); kind != "" {
+		if kind, id := facebookRoute(originStart); kind != "" {
 			currentKind, currentID := facebookRoute(page)
 			if kind != currentKind || id != currentID {
 				return result, errors.New("Facebook 图片页面已跳转，请完成登录后重试")
 			}
 		}
-		if start := tiktokPageRef(s.start); start.kind != "" {
+		if start := tiktokPageRef(originStart); start.kind != "" {
 			current := tiktokPageRef(page)
 			if current.kind == "" || !strings.EqualFold(start.author, current.author) || start.id != current.id {
 				return result, errors.New("TikTok 页面已跳转到其他作者或作品")
 			}
 		}
-		if id := mujiProductID(s.start); id != "" && id != mujiProductID(page) {
+		if id := mujiProductID(originStart); id != "" && id != mujiProductID(page) {
 			return result, errors.New("无印良品商品页面已跳转")
 		}
-		if start := ehentaiRoute(s.start); start.kind != "" && (start != ehentaiRoute(page) || !ehentaiSafeQuery(s.start) || !ehentaiSafeQuery(page)) {
+		if start := ehentaiRoute(originStart); start.kind != "" && (start != ehentaiRoute(page) || !ehentaiSafeQuery(originStart) || !ehentaiSafeQuery(page)) {
 			return result, errors.New("E-Hentai 页面已跳转到其他画廊或图片")
 		}
-		if key := gallery121Key(s.start); key != "" && key != gallery121Key(page) {
+		if key := gallery121Key(originStart); key != "" && key != gallery121Key(page) {
 			return result, errors.New("图片集页面已跳转到其他作品")
 		}
-		if isTwitterStatus(s.start) && !twitterSameStatus(s.start, page) {
+		if isTwitterStatus(originStart) && !twitterSameStatus(originStart, page) {
 			return result, errors.New("X 帖子已跳转到其他作者或作品")
 		}
-		if key := gallery128Key(s.start); key != "" && key != gallery128Key(page) {
+		if key := gallery128Key(originStart); key != "" && key != gallery128Key(page) {
 			return result, errors.New("图片集页面已跳转到其他作品")
 		}
-		if isSizuoArticle(s.start) && !sizuoSameArticle(s.start, page) {
+		if isSizuoArticle(originStart) && !sizuoSameArticle(originStart, page) {
 			return result, errors.New("四座网页面已跳转到其他作品")
 		}
-		if isWellcoPage(s.start) && !wellcoSameFetchPage(s.start, page) {
+		if isWellcoPage(originStart) && !wellcoSameFetchPage(originStart, page) {
 			return result, errors.New("Wellco 页面已跳转到其他商品或分类")
 		}
 		if is500pxChinaLegacyPage(page) {
 			return result, errors.New("请等待 500px 中国站完成页面跳转和加载后重试")
 		}
-		if _, profile := xiaohongshuProfileID(s.start); profile && strings.EqualFold(page.Hostname(), "www.xiaohongshu.com") && page.Path == "/login" {
+		if _, profile := xiaohongshuProfileID(originStart); profile && strings.EqualFold(page.Hostname(), "www.xiaohongshu.com") && page.Path == "/login" {
 			return result, errors.New("小红书主页需要登录，请在下载浏览器中完成登录后重试")
 		}
-		if qzoneIsGroupAlbum(s.start) && !qzoneIsGroupAlbum(page) {
+		if qzoneIsGroupAlbum(originStart) && !qzoneIsGroupAlbum(page) {
 			return result, errors.New("请在下载浏览器中登录并打开 QQ 群相册后重试")
 		}
-		if _, groupList := qzoneGroupAlbumListID(s.start); groupList {
+		if _, groupList := qzoneGroupAlbumListID(originStart); groupList {
 			if _, current := qzoneGroupAlbumListID(page); !current && !qzoneIsGroupAlbum(page) {
 				return result, errors.New("请在下载浏览器中登录并打开 QQ 群相册后重试")
 			}
 		}
-		if _, personal := qzonePersonalOwner(s.start); personal || qzonePersonalAlbumDetail(s.start) {
+		if _, personal := qzonePersonalOwner(originStart); personal || qzonePersonalAlbumDetail(originStart) {
 			if _, current := qzonePersonalOwner(page); !current {
 				if !qzonePersonalAlbumDetail(page) {
 					return result, errors.New("请在下载浏览器中登录并打开 QQ 空间相册后重试")
@@ -937,11 +1160,11 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 				s.pageIP = literal.Unmap()
 			}
 			s.mu.Unlock()
-			if isGoogleImageSearch(s.start) {
-				return googleImagesCapture(ctx, s, s.start, page)
+			if isGoogleImageSearch(originStart) {
+				return googleImagesCapture(ctx, s, originStart, page)
 			}
-			if (isTemuSearch(s.start) || isTemuHome(s.start)) && isTemuSearch(page) {
-				return temuSearchCapture(ctx, s, s.start, page)
+			if (isTemuSearch(originStart) || isTemuHome(originStart)) && isTemuSearch(page) {
+				return temuSearchCapture(ctx, s, originStart, page)
 			}
 			if albums, matched, err := s.captureQzoneGroupList(ctx, page, snapshot.URL); matched {
 				return albums, err
@@ -1178,9 +1401,9 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 				case isGallery121(page):
 					return gallery121Collect(ctx, s.Getter(), page, doc)
 				case isTwitterStatus(page):
-					return twitterCollect(ctx, twitterCapturePage(s.start, page), doc)
+					return twitterCollect(ctx, twitterCapturePage(originStart, page), doc)
 				case isTwitterProfile(page):
-					return twitterProfileCapture(ctx, s, s.start, page)
+					return twitterProfileCapture(ctx, s, originStart, page)
 				case isGallery128Page(page):
 					return gallery128Collect(ctx, s.Getter(), page, doc)
 				case isSizuoArticle(page):
@@ -1426,14 +1649,19 @@ type renderedRedirectGuardKey struct{}
 // Get streams a resource and applies browser cookies only to the captured origin.
 // Redirects are processed individually so credentials never move across origins.
 func (s *RenderedSession) Get(ctx context.Context, rawURL string, prepare func(*http.Request)) (*Response, error) {
-	if err := s.tab.Err(); err != nil {
-		return nil, err
-	}
 	s.mu.RLock()
+	tab := s.tab
+	start := s.start
 	page := s.pageURL
 	pageIP := s.pageIP
 	startIP := s.startIP
 	s.mu.RUnlock()
+	if tab == nil {
+		return nil, errors.New("下载浏览器已关闭，请重新打开")
+	}
+	if err := tab.Err(); err != nil {
+		return nil, err
+	}
 	if page == nil {
 		return nil, errors.New("请先采集浏览器当前网页")
 	}
@@ -1442,7 +1670,7 @@ func (s *RenderedSession) Get(ctx context.Context, rawURL string, prepare func(*
 		return nil, errors.New("图片地址必须是不含账号密码的 HTTP / HTTPS 地址")
 	}
 	requestCtx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(s.tab, cancel)
+	stop := context.AfterFunc(tab, cancel)
 	cleanup := func() { stop(); cancel() }
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, initial.String(), nil)
 	if err != nil {
@@ -1486,7 +1714,7 @@ func (s *RenderedSession) Get(ctx context.Context, rawURL string, prepare func(*
 			}
 		}
 		policy := safeDownloadPolicy{}
-		if pageIP.IsValid() && pageIP == startIP && sameOrigin(s.start, page) && !isPublicDownloadIP(pageIP) && (sameOrigin(page, current) ||
+		if pageIP.IsValid() && pageIP == startIP && sameOrigin(start, page) && !isPublicDownloadIP(pageIP) && (sameOrigin(page, current) ||
 			(pageIP.IsLoopback() && strings.EqualFold(page.Hostname(), current.Hostname()))) {
 			policy.allowedLocal = pageIP
 		}

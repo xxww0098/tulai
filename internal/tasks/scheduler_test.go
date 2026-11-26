@@ -11,7 +11,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
@@ -115,7 +114,9 @@ func TestWashSendGapIncludesGenerationTime(t *testing.T) {
 		{"generation exceeds gap", true, true, 12 * time.Second, 12 * time.Second},
 		{"generation shorter than gap", true, true, 3 * time.Second, 10 * time.Second},
 		{"unconfirmed send keeps gap", true, false, 3 * time.Second, 13 * time.Second},
-		{"image generation unchanged", false, true, 3 * time.Second, 13 * time.Second},
+		{"image generation includes generation time", false, true, 3 * time.Second, 10 * time.Second},
+		{"image generation exceeds gap", false, true, 12 * time.Second, 12 * time.Second},
+		{"image generation unconfirmed keeps gap", false, false, 3 * time.Second, 13 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
@@ -607,82 +608,6 @@ func TestAutoConcurrencyPicksUpRecoveredAccount(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-}
-
-func TestExtensionAccountsRunInParallel(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	st.Set(extbridge.SettingBrowserBackend, "extension")
-	if _, err := st.UpsertExtensionAccount("千问", "profile-a", "甲"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.UpsertExtensionAccount("千问", "profile-b", "乙"); err != nil {
-		t.Fatal(err)
-	}
-	got := overlapStarted(t, st, Options{
-		Platforms: []string{"千问"}, Images: []string{"a.png", "b.png", "c.png"},
-	})
-	if len(got) != 2 {
-		t.Fatalf("两个扩展配置文件应同时出图: %v", got)
-	}
-	if got[0] == got[1] {
-		t.Fatalf("两个任务落在同一个扩展账号: %v", got)
-	}
-}
-
-func TestExtensionPlaceholderIDsDoNotShareASlot(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	st.Set(extbridge.SettingBrowserBackend, "extension")
-	got := overlapStarted(t, st, Options{
-		Platforms: []string{"豆包", "千问"}, Images: []string{"a.png"}, Concurrency: 2,
-	})
-	if len(got) != 2 || got[0] == got[1] {
-		t.Fatalf("扩展占位 -1 与 -2 应各占一个名额: %v", got)
-	}
-}
-
-func TestSameExtensionProfileStaysSerial(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	st.Set(extbridge.SettingBrowserBackend, "extension")
-	qianwen, err := st.UpsertExtensionAccount("千问", "profile-a", "甲")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doubao, err := st.UpsertExtensionAccount("豆包", "profile-a", "甲")
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := st.UpsertExtensionAccount("豆包", "profile-b", "乙")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := overlapStarted(t, st, Options{
-		Platforms: []string{"豆包", "千问"}, Images: []string{"a.png", "b.png"},
-	})
-	seen := map[int64]bool{}
-	for _, id := range got {
-		seen[id] = true
-	}
-	if seen[qianwen.ID] && seen[doubao.ID] {
-		t.Fatalf("同一扩展配置文件的千问和豆包不应同时出图: %v", got)
-	}
-	if !seen[other.ID] {
-		t.Fatalf("另一个配置文件应同时出图: %v", got)
-	}
-	if len(got) != 2 {
-		t.Fatalf("应有两个配置文件在跑: %v", got)
-	}
 }
 
 func TestTwoAccountsOverlapOneTaskTime(t *testing.T) {

@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/captcha"
-	"github.com/xxww0098/tulai/internal/extbridge"
-	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -182,7 +180,7 @@ func TestSubmittedCaptchaDoesNotResendOnAnotherAccount(t *testing.T) {
 }
 
 func TestUncertainSendNeverRetriesOnAnotherAccount(t *testing.T) {
-	for _, platform := range []string{"豆包", "千问", "ChatGPT"} {
+	for _, platform := range []string{"豆包", "千问"} {
 		t.Run(platform, func(t *testing.T) {
 			st := openRotateStore(t)
 			addNamed(t, st, platform, "甲")
@@ -209,8 +207,8 @@ func TestUncertainSendNeverRetriesOnAnotherAccount(t *testing.T) {
 }
 
 func TestUncertainSendPrecedesOtherRecovery(t *testing.T) {
-	for _, platform := range []string{"豆包", "千问", "ChatGPT", "Antigravity"} {
-		for _, cause := range []error{heal.ErrNetwork, heal.ErrCrashed, captcha.ErrVerificationRequired, errHumanGaveUp, strategy.ErrAccountQuota, strategy.ErrAccountRate, strategy.ErrModeration, strategy.ErrPlatformReply} {
+	for _, platform := range []string{"豆包", "千问"} {
+		for _, cause := range []error{errHealNetwork, errHealCrashed, captcha.ErrVerificationRequired, errHumanGaveUp, strategy.ErrAccountQuota, strategy.ErrAccountRate, strategy.ErrModeration, strategy.ErrPlatformReply} {
 			t.Run(platform+"/"+cause.Error(), func(t *testing.T) {
 				e := NewEngine(nil, nil, nil, "")
 				e.opts.RetryCount = 3
@@ -229,8 +227,8 @@ func TestUncertainSendPrecedesOtherRecovery(t *testing.T) {
 }
 
 func TestAcceptedTasksNeverRotateOnAccountFault(t *testing.T) {
-	for _, platform := range []string{"豆包", "千问", "ChatGPT"} {
-		for _, failure := range []error{strategy.ErrAccountQuota, strategy.ErrAccountRate, errExtOffline, errDoubaoLogin, captcha.ErrVerificationRequired, errors.New("额度不足")} {
+	for _, platform := range []string{"豆包", "千问"} {
+		for _, failure := range []error{strategy.ErrAccountQuota, strategy.ErrAccountRate, errors.New("未登录"), captcha.ErrVerificationRequired, errors.New("额度不足")} {
 			t.Run(platform+"/"+failure.Error(), func(t *testing.T) {
 				st := openRotateStore(t)
 				owner := addNamed(t, st, platform, "原账号")
@@ -277,7 +275,7 @@ func TestAuthSwitchesAccount(t *testing.T) {
 		Platforms: []string{"豆包"}, Images: []string{"a.png"}, Concurrency: 1,
 	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
 		if task.BrowserID == first.ID {
-			return errDoubaoLogin
+			return errors.New("未登录")
 		}
 		return nil
 	})
@@ -391,8 +389,7 @@ func TestFailureRotationWaitsForBusyTargetAccount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := openRotateStore(t)
 			if tc.wash {
-				st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-				st.Set(extbridge.SettingExtPort, freePort(t))
+				st.Set("browser_backend", store.EngineFingerprint)
 			}
 			first := addNamed(t, st, "豆包", "豆包1")
 			second := addNamed(t, st, "豆包", "豆包2")
@@ -542,9 +539,9 @@ func TestFailureRotationAlternatesAccountsWithUpdatedRanOn(t *testing.T) {
 
 func TestDoubaoSevenDayQuotaDisablesAccountForTodayAndSwitches(t *testing.T) {
 	quotaMsg := "近 7 天额度已用完，预计明天恢复。升级到标准套餐畅享更多额度。"
-	protoQuota := mapExtErr(&extbridge.ProtoError{Code: extbridge.EQuota, Message: quotaMsg}, extAck{}, "豆包")
-	if classifyFault(protoQuota) != faultQuota {
-		t.Fatalf("expected faultQuota for %v, got %v", protoQuota, classifyFault(protoQuota))
+	quotaErr := fmt.Errorf("%w: %s", strategy.ErrAccountQuota, quotaMsg)
+	if classifyFault(quotaErr) != faultQuota {
+		t.Fatalf("expected faultQuota for %v, got %v", quotaErr, classifyFault(quotaErr))
 	}
 	if classifyFault(errors.New("近 7 天额度用完，预计明天恢复")) != faultQuota {
 		t.Fatal("expected faultQuota for plain text 7-day quota message")
@@ -568,7 +565,7 @@ func TestDoubaoSevenDayQuotaDisablesAccountForTodayAndSwitches(t *testing.T) {
 				if task.BrowserID == first.ID {
 					quotaHit.Store(true)
 					task.submitted = submitted
-					return mapExtErr(&extbridge.ProtoError{Code: extbridge.EQuota, Message: quotaMsg}, extAck{}, "豆包")
+					return quotaErr
 				}
 				return nil
 			})

@@ -17,23 +17,23 @@ class MigrationTest(unittest.TestCase):
         self.target = Path(self.tmp.name).resolve() / "app data"
         self.target.mkdir()
         (self.source / "database").mkdir(parents=True)
-        profile = self.source / "BrowserData/Camoufox/account-1"
+        profile = self.source / "BrowserData/Fingerprint/account-1"
         profile.mkdir(parents=True)
-        (profile / "cookies.sqlite").write_bytes(b"saved login")
-        (profile / ".tulai-identity.json").write_bytes(b"saved fingerprint")
+        (profile / "Cookies").write_bytes(b"saved login")
+        (profile / ".tulai-fingerprint.json").write_bytes(b"saved fingerprint")
         output = self.source / "输出结果"
         output.mkdir()
         (output / "result.png").write_bytes(b"existing result")
         db = sqlite3.connect(self.source / "database/config.db")
         db.executescript("""
             CREATE TABLE browsers (id INTEGER PRIMARY KEY, platform TEXT, name TEXT, user_data_dir TEXT,
-                legacy_user_data_dir TEXT, is_logged_in INTEGER, ext_account TEXT, health TEXT, port INTEGER, is_running INTEGER,
+                is_logged_in INTEGER, ext_account TEXT, health TEXT, port INTEGER, is_running INTEGER,
                 day_key TEXT, day_count INTEGER, day_success INTEGER, day_failed INTEGER);
             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE sessions (id INTEGER PRIMARY KEY, images TEXT);
             CREATE TABLE session_tasks (id INTEGER PRIMARY KEY, source TEXT, outputs TEXT);
         """)
-        db.execute("INSERT INTO browsers VALUES (1,'豆包','account',?, '',1,'','ready',9333,0,'2026-11-03',47,43,14)", (str(profile),))
+        db.execute("INSERT INTO browsers VALUES (1,'豆包','account',?, 1,'','ready',9333,0,'2026-11-03',47,43,14)", (str(profile),))
         db.execute("INSERT INTO settings VALUES ('output_path',?)", (str(output),))
         db.execute("INSERT INTO settings VALUES ('download_records',?)", (json.dumps([{"path": str(output / "result.png")}]),))
         db.execute("INSERT INTO sessions VALUES (1,?)", (str(output / "result.png"),))
@@ -50,13 +50,13 @@ class MigrationTest(unittest.TestCase):
         for name in ("database", "BrowserData"):
             self.assertEqual((self.target / name).resolve(), self.target / "data" / name)
             self.assertFalse((self.target / "data" / name).is_symlink())
-        profile = self.target / "BrowserData/Camoufox/account-1"
-        self.assertEqual((profile / "cookies.sqlite").read_bytes(), b"saved login")
-        self.assertEqual((profile / ".tulai-identity.json").read_bytes(), b"saved fingerprint")
-        self.assertEqual((self.source / "BrowserData/Camoufox/account-1/cookies.sqlite").read_bytes(), b"saved login")
+        profile = self.target / "BrowserData/Fingerprint/account-1"
+        self.assertEqual((profile / "Cookies").read_bytes(), b"saved login")
+        self.assertEqual((profile / ".tulai-fingerprint.json").read_bytes(), b"saved fingerprint")
+        self.assertEqual((self.source / "BrowserData/Fingerprint/account-1/Cookies").read_bytes(), b"saved login")
         db = sqlite3.connect(self.target / "database/config.db")
         account = db.execute("SELECT user_data_dir,is_logged_in,health,day_count,day_success,day_failed FROM browsers").fetchone()
-        self.assertEqual(account, ("BrowserData/Camoufox/account-1", 1, "ready", 47, 43, 14))
+        self.assertEqual(account, ("BrowserData/Fingerprint/account-1", 1, "ready", 47, 43, 14))
         expected = str(self.target / "data/输出结果/result.png")
         self.assertEqual(db.execute("SELECT outputs FROM session_tasks").fetchone()[0], expected)
         self.assertEqual(db.execute("SELECT images FROM sessions").fetchone()[0], expected)

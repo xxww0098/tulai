@@ -18,7 +18,7 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -228,19 +228,19 @@ func TestDribbblePublicPageLive(t *testing.T) {
 	}
 	t.Logf("current page: %v", err)
 }
-func TestDribbbleCamoufoxCapture(t *testing.T) {
-	runtime := os.Getenv("TULAI_DRIBBBLE_CAMOUFOX_ROOT")
+func TestDribbbleFingerprintCapture(t *testing.T) {
+	runtime := os.Getenv("TULAI_DRIBBBLE_FINGERPRINT_ROOT")
 	if runtime == "" {
-		t.Skip("set TULAI_DRIBBBLE_CAMOUFOX_ROOT to a copied temporary runtime")
+		t.Skip("set TULAI_DRIBBBLE_FINGERPRINT_ROOT to a copied temporary runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(process.Context())
-	tab := camoufox.PageContext(life, process, process.Page)
+	tab := fingerprint.PageContext(life, process, process.Page)
 	getter := NewHTTPGetter("")
 	getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	getter.client.Transport.(*http.Transport).DialContext = safeDownloadDial
@@ -251,19 +251,19 @@ func TestDribbbleCamoufoxCapture(t *testing.T) {
 	img := `<img class="v-img content-block" src="` + dribbbleTestOriginal + `?resize=400x">`
 	body := dribbbleFixture(dribbbleTestPage, preload, img)
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == dribbbleTestPage {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if e := camoufox.Run(session.tab, action); e != nil {
+			if e := fingerprint.Run(session.tab, action); e != nil {
 				select {
 				case responses <- e:
 				default:
@@ -274,7 +274,7 @@ func TestDribbbleCamoufoxCapture(t *testing.T) {
 	if err := session.run(ctx, fetch.Enable()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(dribbbleTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(dribbbleTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

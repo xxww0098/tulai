@@ -67,3 +67,65 @@ func TestPreferUnwatermarkedURL(t *testing.T) {
 		})
 	}
 }
+
+func TestComposerTextMatches(t *testing.T) {
+	cases := []struct {
+		name     string
+		expected string
+		actual   string
+		want     bool
+	}{
+		{name: "exact single line", expected: "油画风景", actual: "油画风景", want: true},
+		{name: "exact multiline", expected: "第一段\n\n第二段", actual: "第一段\n\n第二段", want: true},
+		{name: "rich text blank line expansion", expected: "第一段\n第二段", actual: "第一段\n\n第二段", want: true},
+		{name: "rich text blank line collapse", expected: "第一段\n\n第二段", actual: "第一段\n第二段", want: true},
+		{name: "reordered lines rejected", expected: "第一段\n第二段", actual: "第二段\n第一段", want: false},
+		{name: "truncated line rejected", expected: "第一段\n第二段", actual: "第一段\n第二", want: false},
+		{name: "missing line rejected", expected: "第一段\n第二段", actual: "第一段", want: false},
+		{name: "empty actual rejected", expected: "第一段", actual: "", want: false},
+		{name: "both empty match", expected: "  \n ", actual: "", want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := composerTextMatches(tc.expected, tc.actual); got != tc.want {
+				t.Fatalf("composerTextMatches(%q, %q) = %v, want %v", tc.expected, tc.actual, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestQwenIntlFactoryAndURLHelpers(t *testing.T) {
+	strat := Factory("千问国际")
+	if strat == nil {
+		t.Fatal("Factory(\"千问国际\") returned nil")
+	}
+	if _, ok := strat.(*QwenIntl); !ok {
+		t.Fatalf("unexpected strategy type: %T", strat)
+	}
+	if strat.Platform() != "千问国际" {
+		t.Fatalf("Platform() = %q, want 千问国际", strat.Platform())
+	}
+	if strat.HomeURL() != "https://chat.qwen.ai/" {
+		t.Fatalf("HomeURL() = %q, want https://chat.qwen.ai/", strat.HomeURL())
+	}
+	if _, ok := strat.(HistoryCleaner); !ok {
+		t.Fatal("QwenIntl must implement HistoryCleaner")
+	}
+
+	raw := "https://cdn.qwenlm.ai/output/img.png?x-oss-process=image/resize,w_1024&foo=bar"
+	want := "https://cdn.qwenlm.ai/output/img.png?foo=bar"
+	if got := stripOSSProcessURL(raw); got != want {
+		t.Fatalf("stripOSSProcessURL(%q) = %q, want %q", raw, got, want)
+	}
+	plain := "https://cdn.qwenlm.ai/output/img.png?foo=bar"
+	if got := stripOSSProcessURL(plain); got != plain {
+		t.Fatalf("stripOSSProcessURL(%q) changed to %q", plain, got)
+	}
+
+	if got := qwenChatURLFor(nil, "千问国际", "uuid-123"); got != "https://chat.qwen.ai/c/uuid-123" {
+		t.Fatalf("qwenChatURLFor(千问国际) = %q, want https://chat.qwen.ai/c/uuid-123", got)
+	}
+	if got := qwenChatURLFor(nil, "千问", "uuid-123"); got != "https://www.qianwen.com/chat/uuid-123" {
+		t.Fatalf("qwenChatURLFor(千问) = %q, want https://www.qianwen.com/chat/uuid-123", got)
+	}
+}

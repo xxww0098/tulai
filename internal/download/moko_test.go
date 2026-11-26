@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -231,19 +231,19 @@ func TestMokoRenderedCapture(t *testing.T) {
 	defer session.Close()
 	body := mokoPostFixture("1052776", "aaronsky", "4813", mokoTestPic(mokoTestImage)+`<div class="post-limit">游客仅能观看部分</div>`+mokoTestPic("http://img2.moko.cc/users/0/16/4813/post/8a/img2_src_9803621.jpg"))
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == mokoTestPost {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if e := camoufox.Run(session.tab, action); e != nil {
+			if e := fingerprint.Run(session.tab, action); e != nil {
 				select {
 				case responses <- e:
 				default:
@@ -256,7 +256,7 @@ func TestMokoRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(mokoTestPost)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(mokoTestPost)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(mokoTestPost)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

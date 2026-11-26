@@ -112,7 +112,7 @@ func grayscaleImage(src *image.NRGBA) *image.NRGBA {
 
 func resizeImage(src *image.NRGBA, w, h int) *image.NRGBA {
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
-	xdraw.BiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Src, nil)
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Src, nil)
 	return dst
 }
 
@@ -128,7 +128,7 @@ func containImage(src *image.NRGBA, w, h int, upscale bool) *image.NRGBA {
 	}
 	x := (w - nw) / 2
 	y := (h - nh) / 2
-	xdraw.BiLinear.Scale(dst, image.Rect(x, y, x+nw, y+nh), src, src.Bounds(), xdraw.Src, nil)
+	xdraw.CatmullRom.Scale(dst, image.Rect(x, y, x+nw, y+nh), src, src.Bounds(), xdraw.Src, nil)
 	return dst
 }
 

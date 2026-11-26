@@ -10,7 +10,7 @@ import (
 
 // ReusableDoubaoChat returns the current conversation only when its last reply is complete.
 func ReusableDoubaoChat(s *cdp.Session) string {
-	if s == nil || s.IsEgo() {
+	if s == nil {
 		return ""
 	}
 	raw, err := s.Evaluate(`(() => {

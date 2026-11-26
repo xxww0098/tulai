@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 const fixtureBrowserPort = 40001
@@ -18,14 +18,14 @@ const fixtureBrowserPort = 40001
 var fixtureBrowser struct {
 	sync.Mutex
 	root    string
-	process *camoufox.Process
+	process *fingerprint.Process
 }
 
 func TestMain(tests *testing.M) {
 	result := tests.Run()
 	if fixtureBrowser.process != nil {
 		fixtureBrowser.process.Close()
-		camoufox.Unregister(fixtureBrowserPort, fixtureBrowser.process)
+		fingerprint.Unregister(fixtureBrowserPort, fixtureBrowser.process)
 	}
 	if fixtureBrowser.root != "" {
 		if err := os.RemoveAll(fixtureBrowser.root); err != nil {
@@ -38,7 +38,7 @@ func TestMain(tests *testing.M) {
 
 func newFixtureClient(t *testing.T) *cdp.Client {
 	t.Helper()
-	dataDir := camoufoxtest.ConfigDir(t)
+	dataDir := fingerprinttest.ConfigDir(t)
 	fixtureBrowser.Lock()
 	defer fixtureBrowser.Unlock()
 	if fixtureBrowser.process == nil {
@@ -49,18 +49,18 @@ func newFixtureClient(t *testing.T) *cdp.Client {
 			}
 			fixtureBrowser.root = root
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), camoufoxtest.StartTimeout)
+		ctx, cancel := context.WithTimeout(t.Context(), fingerprinttest.StartTimeout)
 		defer cancel()
-		process, err := camoufox.Start(ctx, dataDir, camoufox.Options{
+		process, err := fingerprint.Start(ctx, dataDir, fingerprint.Options{
 			Profile: filepath.Join(fixtureBrowser.root, "profile"), Headless: true, DirectNetwork: true,
 		}, os.Stderr)
 		if err != nil {
 			t.Fatal(err)
 		}
 		fixtureBrowser.process = process
-		camoufox.Register(fixtureBrowserPort, process)
+		fingerprint.Register(fixtureBrowserPort, process)
 	}
-	client, err := cdp.NewClient(camoufox.Endpoint(fixtureBrowserPort))
+	client, err := cdp.NewClient(fingerprint.Endpoint(fixtureBrowserPort))
 	if err != nil {
 		t.Fatal(err)
 	}

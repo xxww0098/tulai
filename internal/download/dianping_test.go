@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -274,19 +274,19 @@ func TestDianpingRenderedCapture(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader(second)), Request: r}, nil
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == dianpingTestPage {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(first)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if e := camoufox.Run(session.tab, action); e != nil {
+			if e := fingerprint.Run(session.tab, action); e != nil {
 				select {
 				case responses <- e:
 				default:
@@ -299,7 +299,7 @@ func TestDianpingRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(dianpingTestPage)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(dianpingTestPage), chromedp.Evaluate(`document.cookie="synthetic_dianping=authorized; Path=/; Secure"`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(dianpingTestPage), chromedp.Evaluate(`document.cookie="synthetic_dianping=authorized; Path=/; Secure"`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

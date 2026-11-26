@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -320,5 +322,353 @@ func TestImageEditProcessOneWritesSuffixedFile(t *testing.T) {
 	}
 	if again.output != filepath.Join(outDir, "cat_edit-1.png") {
 		t.Fatalf("第二次输出名不对: %s", again.output)
+	}
+}
+
+func TestImageEditPickHelpers(t *testing.T) {
+	app := &App{}
+	app.editEnsureMaps()
+
+	// Empty file list stays safe.
+	app.editSelectAllPicks()
+	if len(app.edit.picks) != 0 || app.edit.pickAnchor != 0 {
+		t.Fatalf("空列表全选结果异常: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+
+	app.edit.files = []*editFile{
+		{Path: "/图/a.png", Name: "a.png", Status: "pending"},
+		{Path: "/图/b.png", Name: "b.png", Status: "ok"},
+		{Path: "/图/c.png", Name: "c.png", Status: "failed"},
+		{Path: "/图/d.png", Name: "d.png", Status: "pending"},
+	}
+	app.edit.fileOps["/图/d.png"] = imageedit.Options{CropWidth: 100, CropHeight: 100}
+	app.edit.pickAnchor = 2
+
+	app.editSelectAllPicks()
+	if len(app.edit.picks) != 4 || app.edit.pickAnchor != 0 {
+		t.Fatalf("全选失败: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+
+	app.editInvertPicks()
+	if len(app.edit.picks) != 0 || app.edit.pickAnchor != 0 {
+		t.Fatalf("全选后反选应清空: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+
+	app.edit.picks["/图/a.png"] = true
+	app.edit.picks["/图/c.png"] = true
+	app.edit.picks["/图/stale.png"] = true
+	app.editInvertPicks()
+	if len(app.edit.picks) != 2 || !app.edit.picks["/图/b.png"] || !app.edit.picks["/图/d.png"] {
+		t.Fatalf("反选结果不对: %v", app.edit.picks)
+	}
+	if app.edit.pickAnchor != 1 {
+		t.Fatalf("反选后锚点应为 1，实际 %d", app.edit.pickAnchor)
+	}
+
+	app.editPickByStatus("ok")
+	if len(app.edit.picks) != 1 || !app.edit.picks["/图/b.png"] || app.edit.pickAnchor != 1 {
+		t.Fatalf("按 ok 勾选不对: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+
+	app.editPickByStatus("failed")
+	if len(app.edit.picks) != 1 || !app.edit.picks["/图/c.png"] || app.edit.pickAnchor != 2 {
+		t.Fatalf("按 failed 勾选不对: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+
+	app.editPickByStatus("pending")
+	if len(app.edit.picks) != 2 || !app.edit.picks["/图/a.png"] || !app.edit.picks["/图/d.png"] || app.edit.pickAnchor != 0 {
+		t.Fatalf("按 pending 勾选不对: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+
+	app.editPickByStatus("customCrop")
+	if len(app.edit.picks) != 1 || !app.edit.picks["/图/d.png"] || app.edit.pickAnchor != 3 {
+		t.Fatalf("按 customCrop 勾选不对: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+
+	app.editPickByStatus("unknown")
+	if len(app.edit.picks) != 0 || app.edit.pickAnchor != 0 {
+		t.Fatalf("未知状态应清空勾选: picks=%v anchor=%d", app.edit.picks, app.edit.pickAnchor)
+	}
+}
+
+func TestImageEditRemovePicked(t *testing.T) {
+	app := &App{}
+	app.editEnsureMaps()
+	app.edit.files = []*editFile{
+		{Path: "/图/a.png", Name: "a.png", Status: "pending"},
+		{Path: "/图/b.png", Name: "b.png", Status: "pending"},
+		{Path: "/图/c.png", Name: "c.png", Status: "pending"},
+		{Path: "/图/d.png", Name: "d.png", Status: "pending"},
+	}
+	app.edit.fileOps["/图/a.png"] = imageedit.Options{CropWidth: 80, CropHeight: 80}
+	app.edit.fileOps["/图/c.png"] = imageedit.Options{CropWidth: 120, CropHeight: 120}
+	app.edit.picks["/图/a.png"] = true
+	app.edit.selected = 2
+	app.edit.zoom = 2.5
+
+	// Guard while running.
+	app.edit.running = true
+	app.editRemovePicked()
+	if len(app.edit.files) != 4 || !app.edit.picks["/图/a.png"] {
+		t.Fatalf("运行中不应删除已勾选文件: len=%d picks=%v", len(app.edit.files), app.edit.picks)
+	}
+	app.edit.running = false
+
+	// Removing file before selected keeps selected pointing to c.png without resetting view.
+	app.editRemovePicked()
+	if len(app.edit.files) != 3 || app.edit.selected != 1 || app.edit.selectedFile().Path != "/图/c.png" {
+		t.Fatalf("删前项后选中不对: len=%d selected=%d", len(app.edit.files), app.edit.selected)
+	}
+	if _, ok := app.edit.fileOps["/图/a.png"]; ok {
+		t.Fatal("已删除文件的 fileOps 应被清理")
+	}
+	if _, ok := app.edit.fileOps["/图/c.png"]; !ok {
+		t.Fatal("未删除文件的 fileOps 不应被清理")
+	}
+	if len(app.edit.picks) != 0 {
+		t.Fatalf("删除后 picks 应清空: %v", app.edit.picks)
+	}
+	if app.edit.zoom != 2.5 {
+		t.Fatalf("选中文件未变时不应重置视图: zoom=%v", app.edit.zoom)
+	}
+
+	// Removing trailing files including selected clamps index and resets view.
+	app.edit.picks["/图/c.png"] = true
+	app.edit.picks["/图/d.png"] = true
+	app.editRemovePicked()
+	if len(app.edit.files) != 1 || app.edit.selected != 0 || app.edit.selectedFile().Path != "/图/b.png" {
+		t.Fatalf("删尾项后选中不对: len=%d selected=%d", len(app.edit.files), app.edit.selected)
+	}
+	if app.edit.zoom != 1 {
+		t.Fatalf("选中文件变化后应重置视图: zoom=%v", app.edit.zoom)
+	}
+
+	// Removing last remaining file sets selected = -1.
+	app.edit.zoom = 1.8
+	app.edit.picks["/图/b.png"] = true
+	app.editRemovePicked()
+	if len(app.edit.files) != 0 || app.edit.selected != -1 {
+		t.Fatalf("删空后 selected 应为 -1: len=%d selected=%d", len(app.edit.files), app.edit.selected)
+	}
+	if app.edit.zoom != 1 {
+		t.Fatalf("删空后应重置视图: zoom=%v", app.edit.zoom)
+	}
+}
+
+func TestImageEditSyncCropToAndClearCustomCrops(t *testing.T) {
+	app := &App{}
+	app.editEnsureMaps()
+	app.edit.srcW, app.edit.srcH = 800, 600
+	app.edit.selected = -1
+
+	// No selected file -> notice & false.
+	if app.editSyncCropTo("all") {
+		t.Fatal("无选中图时不应同步成功")
+	}
+	if app.edit.notice != "请先为当前图片设置裁剪区域" {
+		t.Fatalf("无选中图提示不对: %q", app.edit.notice)
+	}
+
+	app.edit.files = []*editFile{
+		{Path: "/图/a.png", Name: "a.png", Status: "pending"},
+		{Path: "/图/b.png", Name: "b.png", Status: "pending"},
+		{Path: "/图/c.png", Name: "c.png", Status: "pending"},
+	}
+	app.edit.selected = 0
+	app.edit.notice = ""
+
+	// No crop box -> notice & false.
+	if app.editSyncCropTo("picked") {
+		t.Fatal("无裁剪框时不应同步成功")
+	}
+	if app.edit.notice != "请先为当前图片设置裁剪区域" {
+		t.Fatalf("无裁剪框提示不对: %q", app.edit.notice)
+	}
+
+	// Uniform crop mode with centered crop box and CropRatio -> sync to picked (none picked -> selected).
+	app.edit.enabled.Crop = true
+	app.edit.uniformCrop = true
+	app.edit.opts.CropWidth = 200
+	app.edit.opts.CropHeight = 100
+	app.edit.opts.CropRatio = "2:1"
+	if !app.editSyncCropTo("picked") {
+		t.Fatal("未勾选时同步到 picked 应回退到当前选中图")
+	}
+	if app.edit.uniformCrop {
+		t.Fatal("同步后应关闭 uniformCrop")
+	}
+	if ov, ok := app.edit.fileOps["/图/a.png"]; !ok || ov.CropWidth != 200 || ov.CropHeight != 100 ||
+		ov.CropLeft == nil || *ov.CropLeft != 300 || ov.CropTop == nil || *ov.CropTop != 250 || ov.CropRatio != "2:1" {
+		t.Fatalf("同步到当前图内容不对: %+v", ov)
+	}
+	if len(app.edit.fileOps) != 1 {
+		t.Fatalf("未勾选时不应写入其他图: %+v", app.edit.fileOps)
+	}
+
+	// Sync to picked subset only.
+	app.edit.fileOps["/图/a.png"] = imageedit.Options{
+		CropLeft:   imageedit.Int(10),
+		CropTop:    imageedit.Int(20),
+		CropWidth:  300,
+		CropHeight: 200,
+		CropRatio:  "3:2",
+	}
+	app.edit.picks["/图/b.png"] = true
+	if !app.editSyncCropTo("picked") {
+		t.Fatal("同步到已选应成功")
+	}
+	if _, ok := app.edit.fileOps["/图/c.png"]; ok {
+		t.Fatal("未勾选的 c.png 不应被同步")
+	}
+	ovB := app.edit.fileOps["/图/b.png"]
+	if ovB.CropWidth != 300 || ovB.CropHeight != 200 || ovB.CropLeft == nil || *ovB.CropLeft != 10 || ovB.CropTop == nil || *ovB.CropTop != 20 || ovB.CropRatio != "3:2" {
+		t.Fatalf("同步到已选结果不对: %+v", ovB)
+	}
+
+	// Sync to all and verify independent CropLeft/CropTop pointers.
+	if !app.editSyncCropTo("all") {
+		t.Fatal("同步到全部应成功")
+	}
+	if len(app.edit.fileOps) != 3 {
+		t.Fatalf("同步到全部应覆盖 3 张图: %d", len(app.edit.fileOps))
+	}
+	if app.edit.notice == "" || !strings.Contains(app.edit.notice, "3") {
+		t.Fatalf("同步提示应包含数量: %q", app.edit.notice)
+	}
+	ovA := app.edit.fileOps["/图/a.png"]
+	ovB = app.edit.fileOps["/图/b.png"]
+	ovC := app.edit.fileOps["/图/c.png"]
+	if ovA.CropLeft == ovB.CropLeft || ovB.CropLeft == ovC.CropLeft || ovA.CropTop == ovB.CropTop || ovB.CropTop == ovC.CropTop {
+		t.Fatal("每张图必须持有独立的 CropLeft/CropTop 指针副本")
+	}
+	*ovA.CropLeft = 99
+	if *ovB.CropLeft != 10 || *ovC.CropLeft != 10 {
+		t.Fatalf("修改单图指针影响了其他图: b=%d c=%d", *ovB.CropLeft, *ovC.CropLeft)
+	}
+
+	// Clear custom crops by scope: selected, picked, all.
+	app.edit.selected = 0
+	app.editClearCustomCrops("selected")
+	if _, ok := app.edit.fileOps["/图/a.png"]; ok {
+		t.Fatal("清除 selected 失败")
+	}
+	if len(app.edit.fileOps) != 2 {
+		t.Fatalf("清除 selected 不应影响其他图: %d", len(app.edit.fileOps))
+	}
+
+	app.edit.picks = map[string]bool{"/图/b.png": true}
+	app.editClearCustomCrops("picked")
+	if _, ok := app.edit.fileOps["/图/b.png"]; ok {
+		t.Fatal("清除 picked 失败")
+	}
+	if _, ok := app.edit.fileOps["/图/c.png"]; !ok {
+		t.Fatal("清除 picked 不应删未勾选图")
+	}
+
+	app.editClearCustomCrops("all")
+	if len(app.edit.fileOps) != 0 {
+		t.Fatalf("清除 all 后仍留有覆盖: %+v", app.edit.fileOps)
+	}
+}
+
+func TestImageEditServiceBatchDTOAndMethods(t *testing.T) {
+	ctx := context.Background()
+
+	// Nil app safety for all new service methods.
+	nilSvc := &ImageEditService{}
+	nilSvc.EditSelectAllPicks(ctx)
+	nilSvc.EditInvertPicks(ctx)
+	nilSvc.EditPickByStatus(ctx, "ok")
+	nilSvc.EditRemovePicked(ctx)
+	nilSvc.EditSyncCropTo(ctx, "all")
+	nilSvc.EditClearCustomCrops(ctx, "all")
+
+	dir := t.TempDir()
+	p1 := filepath.Join(dir, "1.png")
+	p2 := filepath.Join(dir, "2.png")
+	p3 := filepath.Join(dir, "3.png")
+	p4 := filepath.Join(dir, "4.png")
+	p5 := filepath.Join(dir, "5.png")
+	p6 := filepath.Join(dir, "6.png")
+	for _, p := range []string{p1, p2, p3, p4, p5, p6} {
+		editTestImage(t, p, 120, 80)
+	}
+
+	app := &App{}
+	app.editEnsureMaps()
+	app.edit.srcW, app.edit.srcH = 120, 80
+	app.edit.files = []*editFile{
+		{Path: p1, Name: "1.png", Status: "pending"},
+		{Path: p2, Name: "2.png", Status: "ok"},
+		{Path: p3, Name: "3.png", Status: "failed"},
+		{Path: p4, Name: "4.png", Status: "pending"},
+		{Path: p5, Name: "5.png", Status: "pending"},
+		{Path: p6, Name: "6.png", Status: "pending"},
+	}
+	app.edit.selected = 0
+	// Cover every HasCustomCrop trigger plus whitespace-only CropRatio & orphan fileOps entry.
+	app.edit.fileOps[p1] = imageedit.Options{CropWidth: 40}
+	app.edit.fileOps[p2] = imageedit.Options{CropHeight: 40}
+	app.edit.fileOps[p3] = imageedit.Options{CropLeft: imageedit.Int(5)}
+	app.edit.fileOps[p4] = imageedit.Options{CropTop: imageedit.Int(5)}
+	app.edit.fileOps[p5] = imageedit.Options{CropRatio: "16:9"}
+	app.edit.fileOps[p6] = imageedit.Options{CropRatio: "   "}
+	app.edit.fileOps[filepath.Join(dir, "orphan.png")] = imageedit.Options{CropWidth: 50, CropHeight: 50}
+
+	svc := &ImageEditService{app: app}
+	dto := svc.GetImageEditState(ctx)
+	if dto.CustomCropCount != 5 {
+		t.Fatalf("CustomCropCount 应为 5，实际 %d", dto.CustomCropCount)
+	}
+	for i := 0; i < 5; i++ {
+		if !dto.Files[i].HasCustomCrop {
+			t.Fatalf("第 %d 张图应为 HasCustomCrop=true", i)
+		}
+	}
+	if dto.Files[5].HasCustomCrop {
+		t.Fatal("空白 CropRatio 不应算作 HasCustomCrop")
+	}
+
+	// Verify camelCase JSON tags on ImageEditStateDTO and EditFileDTO.
+	raw, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("JSON 序列化失败: %v", err)
+	}
+	if !strings.Contains(string(raw), `"customCropCount":5`) || !strings.Contains(string(raw), `"hasCustomCrop":true`) {
+		t.Fatalf("缺少预期的 camelCase 字段: %s", string(raw))
+	}
+
+	// Service IPC round-trips.
+	svc.EditSelectAllPicks(ctx)
+	if got := svc.GetImageEditState(ctx).PickedCount; got != 6 {
+		t.Fatalf("EditSelectAllPicks 后 PickedCount=%d, want 6", got)
+	}
+	svc.EditInvertPicks(ctx)
+	if got := svc.GetImageEditState(ctx).PickedCount; got != 0 {
+		t.Fatalf("EditInvertPicks 后 PickedCount=%d, want 0", got)
+	}
+	svc.EditPickByStatus(ctx, "failed")
+	st := svc.GetImageEditState(ctx)
+	if st.PickedCount != 1 || !st.Files[2].Picked {
+		t.Fatalf("EditPickByStatus(failed) 不对: pickedCount=%d files[2].picked=%v", st.PickedCount, st.Files[2].Picked)
+	}
+
+	svc.EditClearCustomCrops(ctx, "all")
+	if got := svc.GetImageEditState(ctx).CustomCropCount; got != 0 {
+		t.Fatalf("EditClearCustomCrops(all) 后 CustomCropCount=%d, want 0", got)
+	}
+
+	svc.EditSetCropBox(ctx, 10, 10, 60, 40)
+	svc.EditSyncCropTo(ctx, "all")
+	st = svc.GetImageEditState(ctx)
+	if st.CustomCropCount != 6 || st.UniformCrop {
+		t.Fatalf("EditSyncCropTo(all) 后状态不对: customCropCount=%d uniformCrop=%v", st.CustomCropCount, st.UniformCrop)
+	}
+
+	svc.EditPickByStatus(ctx, "failed")
+	svc.EditRemovePicked(ctx)
+	st = svc.GetImageEditState(ctx)
+	if len(st.Files) != 5 || st.CustomCropCount != 5 {
+		t.Fatalf("EditRemovePicked 后数量不对: files=%d customCropCount=%d", len(st.Files), st.CustomCropCount)
 	}
 }

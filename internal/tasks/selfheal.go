@@ -8,10 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
-	"github.com/xxww0098/tulai/internal/extbridge"
-	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
@@ -30,23 +27,23 @@ var (
 	stuckRe = regexp.MustCompile(`页面长时间没有进展|页面卡住|无进展`)
 )
 
-func runtimeKind(err error) heal.Kind {
+func runtimeKind(err error) healKind {
 	if err == nil {
-		return heal.KindNone
+		return healKindNone
 	}
-	if errors.Is(err, heal.ErrNetwork) || netRe.MatchString(err.Error()) {
-		return heal.KindNetwork
+	if errors.Is(err, errHealNetwork) || netRe.MatchString(err.Error()) {
+		return healKindNetwork
 	}
-	if errors.Is(err, heal.ErrCrashed) || crashRe.MatchString(err.Error()) {
-		return heal.KindCrash
+	if errors.Is(err, errHealCrashed) || crashRe.MatchString(err.Error()) {
+		return healKindCrash
 	}
-	if errors.Is(err, heal.ErrStuck) || stuckRe.MatchString(err.Error()) {
-		return heal.KindStuck
+	if errors.Is(err, errHealStuck) || stuckRe.MatchString(err.Error()) {
+		return healKindStuck
 	}
-	if errors.Is(err, captcha.ErrVerificationRequired) || errors.Is(err, errNeedsVerify) || extbridge.CodeOf(err) == extbridge.ECaptchaHuman || strings.Contains(err.Error(), "安全验证") {
-		return heal.KindVerify
+	if errors.Is(err, captcha.ErrVerificationRequired) || errors.Is(err, errNeedsVerify) || strings.Contains(err.Error(), "安全验证") {
+		return healKindVerify
 	}
-	return heal.KindNone
+	return healKindNone
 }
 
 // SetLoginProbe 注入登录探测。为空时不巡检，测试也不访问网页。
@@ -162,7 +159,6 @@ func (e *Engine) scanLogins(ctx context.Context) {
 
 // settleAccount 在派发前探测当前账号。探测把它标成不可用时，改派到下一个并再探一次。
 func (e *Engine) settleAccount(ctx context.Context, task *Task) (wait time.Time, dead bool) {
-	e.syncAgyAccounts()
 	seen := map[int64]bool{}
 	for n := 0; n < 8; n++ {
 		if task.BrowserID > 0 && !seen[task.BrowserID] {
@@ -175,6 +171,40 @@ func (e *Engine) settleAccount(ctx context.Context, task *Task) (wait time.Time,
 		}
 	}
 	return wait, dead
+}
+
+// settleAccountSnap 使用单轮调度已缓存的账号快照，避免每条排队任务重复查询 SQLite 和重复探测同一账号。
+func (e *Engine) settleAccountSnap(
+	ctx context.Context,
+	task *Task,
+	rows []store.Browser,
+	byID map[int64]store.Browser,
+	probed map[int64]bool,
+	busy map[int64]bool,
+	now time.Time,
+	reload func() ([]store.Browser, map[int64]store.Browser),
+) (wait time.Time, dead bool, nextRows []store.Browser, nextByID map[int64]store.Browser) {
+	nextRows, nextByID = rows, byID
+	seen := map[int64]bool{}
+	for n := 0; n < 8; n++ {
+		id := task.BrowserID
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			if !probed[id] && !busy[id] {
+				probed[id] = true
+				if row, ok := nextByID[id]; ok {
+					if e.refreshLoginRow(ctx, row, true, now) && reload != nil {
+						nextRows, nextByID = reload()
+					}
+				}
+			}
+		}
+		wait, dead = e.prepareAccountRows(nextRows, task, now)
+		if dead || task.BrowserID <= 0 || seen[task.BrowserID] {
+			return wait, dead, nextRows, nextByID
+		}
+	}
+	return wait, dead, nextRows, nextByID
 }
 
 func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
@@ -192,7 +222,7 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 		return
 	}
 	now := time.Now()
-	if !heal.Due(last, now, before) {
+	if !loginProbeDue(last, now, before) {
 		return
 	}
 	var row store.Browser
@@ -203,11 +233,32 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 			break
 		}
 	}
-	if !found || row.Disabled || row.ExtAccount != "" || row.Platform == agy.Platform {
+	if !found {
 		return
 	}
+	e.refreshLoginRow(ctx, row, before, now)
+}
+
+func (e *Engine) refreshLoginRow(ctx context.Context, row store.Browser, before bool, now time.Time) bool {
+	if e == nil || e.store == nil || row.ID <= 0 {
+		return false
+	}
+	id := row.ID
+	if e.AccountManual(id) {
+		return false
+	}
+	e.mu.Lock()
+	probe := e.loginProbe
+	last := e.loginLast[id]
+	e.mu.Unlock()
+	if probe == nil || !loginProbeDue(last, now, before) {
+		return false
+	}
+	if row.Disabled || (row.Platform != "豆包" && row.Platform != "千问" && row.Platform != "千问国际") {
+		return false
+	}
 	if e.accountBusy(id) {
-		return
+		return false
 	}
 	e.mu.Lock()
 	if e.loginLast == nil {
@@ -218,18 +269,15 @@ func (e *Engine) refreshLogin(ctx context.Context, id int64, before bool) {
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	state, err := probe(pctx, row)
 	cancel()
-	e.applyLogin(row, heal.NormalizeState(state, err))
+	e.applyLogin(row, normalizeLoginState(state, err))
+	return true
 }
 
 func (e *Engine) applyLogin(b store.Browser, state string) {
 	if e == nil || e.store == nil || b.ID <= 0 {
 		return
 	}
-	// Antigravity 没有浏览器页面。登录探测会把正在出图的号误记成退出登录。
-	if b.Platform == agy.Platform {
-		return
-	}
-	if state == heal.StateOut && e.accountBusy(b.ID) {
+	if state == loginStateOut && e.accountBusy(b.ID) {
 		logging.Event(logging.Line{
 			Stage: "probe", Platform: b.Platform, Account: accountLabel(b), Port: b.Port,
 			Msg: "生成中的探测结果是退出登录，没有正面证据，已忽略", Error: "busy",
@@ -244,21 +292,21 @@ func (e *Engine) applyLogin(b store.Browser, state string) {
 	// 新建的账号在登录完成前本来就会显示登录页。第一次探测到 out 只是
 	// 用户还在扫码，不是“从已登录变成退出”，不能抢先弹重新登录提示。
 	// 这里也不记成 out，之后第一次读到 in 才会按“登录确认”处理。
-	if _, seen := e.loginPrev[b.ID]; !seen && state == heal.StateOut && !b.IsLoggedIn {
+	if _, seen := e.loginPrev[b.ID]; !seen && state == loginStateOut && !b.IsLoggedIn {
 		e.mu.Unlock()
 		return
 	}
-	if state == heal.StateIn || state == heal.StateOut || state == heal.StateChallenge || state == heal.StateRegion {
+	if state == loginStateIn || state == loginStateOut || state == loginStateChallenge || state == loginStateRegion {
 		e.loginPrev[b.ID] = state
 	}
 	e.mu.Unlock()
 	// 先按库里的当前行确认。上次探测已经是 in 时，Observe 不会再发事件，
 	// 但任务可能把这一行写成了 exhausted / 未登录。
 	repaired := false
-	if state == heal.StateIn {
+	if state == loginStateIn {
 		repaired = e.store.ConfirmLogin(b.ID)
 	}
-	out := heal.Observe(prev, state, accountLabel(b))
+	out := observeLoginState(prev, state, accountLabel(b))
 	if out.Mark == "" && out.Log == "" && out.Notice == "" && !repaired {
 		return
 	}
@@ -304,8 +352,8 @@ func (e *Engine) NoteLoginConfirmed(id int64) {
 	if e.loginPrev == nil {
 		e.loginPrev = map[int64]string{}
 	}
-	changed := e.loginPrev[id] != heal.StateIn
-	e.loginPrev[id] = heal.StateIn
+	changed := e.loginPrev[id] != loginStateIn
+	e.loginPrev[id] = loginStateIn
 	if e.attentionID == id {
 		e.attention = ""
 		e.attentionID = 0
@@ -327,7 +375,7 @@ func (e *Engine) announceAccount(id int64, kind faultKind) {
 	if row.ID <= 0 {
 		row.ID = id
 	}
-	e.applyLogin(row, heal.StateOut)
+	e.applyLogin(row, loginStateOut)
 }
 
 func heldForUser(b store.Browser) bool {
@@ -480,7 +528,7 @@ func accountLabel(b store.Browser) string {
 // finished 为真时任务已经有最终状态。
 func (e *Engine) healAttempt(ctx context.Context, t *Task, err error, sliderTried *bool) (again bool, finished bool) {
 	kind := runtimeKind(err)
-	if kind == heal.KindNone {
+	if kind == healKindNone {
 		return false, false
 	}
 	id := t.ranOnOr(t.BrowserID)
@@ -490,9 +538,9 @@ func (e *Engine) healAttempt(ctx context.Context, t *Task, err error, sliderTrie
 	sliderFn := e.sliderFn
 	hook := e.onRecover
 	e.mu.Unlock()
-	sliderOK := sliderFn != nil && t.Platform == "千问"
+	sliderOK := sliderFn != nil && (t.Platform == "千问" || t.Platform == "千问国际")
 	for {
-		plan := heal.Decide(heal.Input{
+		plan := decideHeal(healInput{
 			Kind:            kind,
 			Attempt:         t.Attempts,
 			MaxAttempts:     1 + e.opts.RetryCount,
@@ -502,11 +550,11 @@ func (e *Engine) healAttempt(ctx context.Context, t *Task, err error, sliderTrie
 			Submitted:       t.submitted,
 			Label:           label,
 		})
-		if hook != nil && plan.Action != heal.ActionTrySlider {
+		if hook != nil && plan.Action != healActionTrySlider {
 			hook(plan.Action, id)
 		}
 		switch plan.Action {
-		case heal.ActionTrySlider:
+		case healActionTrySlider:
 			if sliderTried != nil {
 				*sliderTried = true
 			}
@@ -525,9 +573,9 @@ func (e *Engine) healAttempt(ctx context.Context, t *Task, err error, sliderTrie
 				return true, false
 			}
 			continue
-		case heal.ActionRelaunch, heal.ActionReload, heal.ActionBackoff:
+		case healActionRelaunch, healActionReload, healActionBackoff:
 			e.noteAuto(plan.Log)
-			e.recoverBrowser(id, plan.Action == heal.ActionRelaunch)
+			e.recoverBrowser(id, plan.Action == healActionRelaunch)
 			if plan.Wait > 0 {
 				select {
 				case <-time.After(plan.Wait):
@@ -538,10 +586,10 @@ func (e *Engine) healAttempt(ctx context.Context, t *Task, err error, sliderTrie
 				}
 			}
 			return true, false
-		case heal.ActionSwitch, heal.ActionPause:
+		case healActionSwitch, healActionPause:
 			e.finishVerify(t, err, plan, row)
 			return false, true
-		case heal.ActionFail:
+		case healActionFail:
 			e.noteAuto(plan.Log)
 			t.Status = StatusFailed
 			t.Error = plan.Reason
@@ -552,7 +600,7 @@ func (e *Engine) healAttempt(ctx context.Context, t *Task, err error, sliderTrie
 	}
 }
 
-func (e *Engine) finishVerify(t *Task, err error, plan heal.Plan, row store.Browser) {
+func (e *Engine) finishVerify(t *Task, err error, plan healPlan, row store.Browser) {
 	if plan.Log != "" {
 		e.noteAuto(plan.Log)
 	}
@@ -580,7 +628,7 @@ func (e *Engine) recoverBrowser(id int64, restart bool) {
 		return
 	}
 	for _, b := range e.store.Browsers() {
-		if b.ID == id && b.ExtAccount == "" {
+		if b.ID == id {
 			e.browsers.Stop(id)
 			return
 		}

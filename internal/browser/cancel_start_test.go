@@ -7,11 +7,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
@@ -53,7 +52,7 @@ func TestTaskStartCanCancelWhileWaitingForAccount(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := manager.StartTask(ctx, store.Browser{ID: 1}, t.TempDir(), KindCamoufox, "about:blank")
+		_, err := manager.StartTask(ctx, store.Browser{ID: 1}, t.TempDir(), KindFingerprint, "about:blank")
 		done <- err
 	}()
 	select {
@@ -73,51 +72,7 @@ func TestTaskStartCanCancelWhileWaitingForAccount(t *testing.T) {
 }
 
 func TestTaskStartCancellationAndProcessLifetime(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "runtime", "camoufox", camoufox.Version)
-	node := filepath.Join(dir, "node", "bin", "node")
-	if runtime.GOOS == "windows" {
-		node = filepath.Join(dir, "node", "node.exe")
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(executable)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lock, err := os.ReadFile(filepath.Join("..", "camoufox", "driver", "package-lock.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	marker, _ := json.Marshal(map[string]string{"executable": node, "version": camoufox.Version, "platform": runtime.GOOS + "/" + runtime.GOARCH})
-	native := map[string]string{
-		"windows/amd64": "impit-win32-x64-msvc",
-		"darwin/amd64":  "impit-darwin-x64",
-		"darwin/arm64":  "impit-darwin-arm64",
-		"linux/amd64":   "impit-linux-x64-gnu",
-		"linux/arm64":   "impit-linux-arm64-gnu",
-	}[runtime.GOOS+"/"+runtime.GOARCH]
-	impitMeta, _ := json.Marshal(map[string]any{"optionalDependencies": map[string]string{native: "0.14.8"}})
-	files := map[string][]byte{
-		node: data, filepath.Join(dir, "package-lock.json"): lock,
-		filepath.Join(dir, "ready.json"):                               marker,
-		filepath.Join(dir, "node_modules", "camoufox", "package.json"): []byte("{}"),
-		filepath.Join(dir, "node_modules", "impit", "package.json"):    impitMeta,
-		filepath.Join(dir, "node_modules", native, "package.json"):     []byte(`{"version":"0.14.8"}`),
-	}
-	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
-		files[filepath.Join(dir, "node_modules", native, "impit-node.win32-x64-msvc.node")] = []byte("x")
-	}
-	for name, body := range files {
-		if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(name, body, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
+	root := fakeLauncherRuntime(t)
 	for _, hold := range []string{"start", "Page.navigate", "none"} {
 		t.Run(hold, func(t *testing.T) {
 			t.Setenv("TULAI_BROWSER_PIPE_FIXTURE", hold)
@@ -126,12 +81,13 @@ func TestTaskStartCancellationAndProcessLifetime(t *testing.T) {
 			manager := NewManager()
 			manager.configDir = root
 			t.Cleanup(manager.StopAll)
-			account := store.Browser{ID: 1, Port: 49981, Name: "fixture", UserDataDir: t.TempDir()}
+			dataRoot := t.TempDir()
+			account := store.Browser{ID: 1, Port: 49981, Name: "fixture", UserDataDir: ProfileDir(dataRoot, KindFingerprint, "fixture")}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := manager.StartTaskWithAddon(ctx, account, root, "https://example.invalid/", "fixture-addon")
+				_, err := manager.StartTask(ctx, account, dataRoot, KindFingerprint, "https://example.invalid/")
 				done <- err
 			}()
 			if hold != "none" {
@@ -162,18 +118,16 @@ func TestTaskStartCancellationAndProcessLifetime(t *testing.T) {
 				t.Fatal("launcher request did not finish after cancellation")
 			}
 			cancel()
-			proc, err := camoufox.Find(camoufox.Endpoint(account.Port))
+			proc, err := fingerprint.Find(fingerprint.Endpoint(account.Port))
 			if err != nil || !proc.Alive() {
 				t.Fatalf("task cancellation closed a successfully started process: %v", err)
 			}
 			if err := proc.Call(context.Background(), proc.Page, "fixture-ping", nil, nil); err != nil {
 				t.Fatalf("process did not survive task cancellation: %v", err)
 			}
-			if manager.StopWithAddon(account.ID, "previous-addon") || manager.StopWithAddon(account.ID, "") || !proc.Alive() {
-				t.Fatal("cleanup for another bridge stopped the current browser")
-			}
-			if !manager.StopWithAddon(account.ID, "fixture-addon") || manager.IsRunning(account.ID) {
-				t.Fatal("the matching bridge did not release its browser")
+			manager.Stop(account.ID)
+			if manager.IsRunning(account.ID) {
+				t.Fatal("stopping the account did not release its browser")
 			}
 		})
 	}

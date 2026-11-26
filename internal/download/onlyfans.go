@@ -14,7 +14,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 var (
@@ -228,18 +228,18 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 	if err := checkCurrent(); err != nil {
 		return result, true, err
 	}
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, false)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), false)
 	if err != nil {
 		return result, true, errors.New("无法创建 OnlyFans 采集标签")
 	}
 	defer closeChild()
 	stopOnCancel := context.AfterFunc(ctx, closeChild)
 	defer stopOnCancel()
-	run := func(actions ...camoufox.Action) error {
+	run := func(actions ...fingerprint.Action) error {
 		op, cancel := context.WithTimeout(child, 30*time.Second)
 		stop := context.AfterFunc(ctx, cancel)
 		defer func() { stop(); cancel() }()
-		if err := camoufox.Run(op, actions...); err != nil {
+		if err := fingerprint.Run(op, actions...); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -261,7 +261,7 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 			overflow.Store(true)
 		}
 	}
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		switch e := event.(type) {
 		case *fetch.EventRequestPaused:
 			allowed := false
@@ -270,11 +270,11 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 				allowed = e.Request.Method == "GET" && parseErr == nil && sameOrigin(page, target) && onlyFansProfile(target) == profile
 			}
 			go func() {
-				var action camoufox.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
+				var action fingerprint.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
 				if allowed {
 					action = fetch.ContinueRequest(e.RequestID)
 				}
-				_ = camoufox.Run(child, action)
+				_ = fingerprint.Run(child, action)
 			}()
 		case *network.EventRequestWillBeSent:
 			if e.RedirectResponse != nil {
@@ -347,7 +347,7 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 		}
 	})
 	initTimeout := time.AfterFunc(30*time.Second, closeChild)
-	err = camoufox.Run(child, network.Enable().WithMaxResourceBufferSize(onlyFansMaxBody).WithMaxTotalBufferSize(4*onlyFansMaxBody).WithMaxPostDataSize(1),
+	err = fingerprint.Run(child, network.Enable().WithMaxResourceBufferSize(onlyFansMaxBody).WithMaxTotalBufferSize(4*onlyFansMaxBody).WithMaxPostDataSize(1),
 		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}}))
 	initTimeout.Stop()
 	if err != nil {
@@ -356,7 +356,7 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 		}
 		return result, true, errors.New("无法监听 OnlyFans 授权页面")
 	}
-	if err := run(camoufox.Navigate(page.String())); err != nil {
+	if err := run(fingerprint.Navigate(page.String())); err != nil {
 		if ctx.Err() != nil {
 			return result, true, ctx.Err()
 		}

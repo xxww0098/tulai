@@ -95,6 +95,64 @@ func TestWatermarkDoesNotInventMarks(t *testing.T) {
 	}
 }
 
+func TestDoubaoWatermarkRepairsNonSquareRatiosWithoutFalsePositives(t *testing.T) {
+	style := watermarkStyles[0] // 豆包
+	data, err := watermarkFiles.ReadFile("watermarks/" + style.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	im, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	background := color.NRGBA{72, 110, 148, 255}
+	for _, dim := range []struct {
+		name string
+		w, h int
+	}{
+		{"4:3", 1024, 768},
+		{"3:4", 768, 1024},
+		{"16:9", 1280, 720},
+		{"9:16", 720, 1280},
+	} {
+		t.Run(dim.name, func(t *testing.T) {
+			src := image.NewNRGBA(image.Rect(0, 0, dim.w, dim.h))
+			draw.Draw(src, src.Bounds(), image.NewUniform(background), image.Point{}, draw.Src)
+			s := float64(min(dim.w, dim.h)) / float64(style.ref)
+			mw, mh := int(math.Round(float64(im.Bounds().Dx())*s)), int(math.Round(float64(im.Bounds().Dy())*s))
+			mask := resize(im, mw, mh)
+			x := dim.w - int(math.Round(float64(style.x)*s)) - mw
+			y := dim.h - int(math.Round(float64(style.y)*s)) - mh
+			for row := 0; row < mh; row++ {
+				for col := 0; col < mw; col++ {
+					r, g, b, _ := mask.At(col, row).RGBA()
+					a := float64(max(r, g, b)) / 65535
+					mix := func(v uint8) uint8 { return uint8(math.Round(float64(v)*(1-a) + 255*a)) }
+					src.SetNRGBA(x+col, y+row, color.NRGBA{mix(background.R), mix(background.G), mix(background.B), 255})
+				}
+			}
+			out, changed, err := RemoveWatermark(context.Background(), src, "豆包")
+			if err != nil || !changed {
+				t.Fatalf("%s: changed=%v err=%v", dim.name, changed, err)
+			}
+			if _, again, err := RemoveWatermark(context.Background(), out, "豆包"); again || err != nil {
+				t.Fatalf("%s: cleaned output matched again: changed=%v err=%v", dim.name, again, err)
+			}
+
+			// 无水印的纹理非方图不得误报
+			clean := image.NewNRGBA(image.Rect(0, 0, dim.w, dim.h))
+			for cy := 0; cy < dim.h; cy++ {
+				for cx := 0; cx < dim.w; cx++ {
+					clean.SetNRGBA(cx, cy, color.NRGBA{uint8(cx*17 + cy*13), uint8(cx*5 + cy), uint8(cy * 7), 255})
+				}
+			}
+			if _, changed, err := RemoveWatermark(context.Background(), clean, "豆包"); changed || err != nil {
+				t.Fatalf("%s: clean textured image falsely matched: changed=%v err=%v", dim.name, changed, err)
+			}
+		})
+	}
+}
+
 func TestWatermarkDownloadedSamples(t *testing.T) {
 	root := os.Getenv("TULAI_WATERMARK_SAMPLES")
 	if root == "" {
@@ -137,5 +195,59 @@ func TestWatermarkDownloadedSamples(t *testing.T) {
 				t.Fatalf("changed=%v err=%v", changed, err)
 			}
 		})
+	}
+}
+
+func BenchmarkRemoveWatermark2048(b *testing.B) {
+	style := watermarkStyles[0]
+	tpl, err := loadWatermarkTemplate(style.file)
+	if err != nil {
+		b.Fatal(err)
+	}
+	background := color.NRGBA{72, 110, 148, 255}
+	marked := image.NewNRGBA(image.Rect(0, 0, 2048, 2048))
+	draw.Draw(marked, marked.Bounds(), image.NewUniform(background), image.Point{}, draw.Src)
+	s := 2048.0 / float64(style.ref)
+	mw, mh := int(math.Round(float64(tpl.Bounds().Dx())*s)), int(math.Round(float64(tpl.Bounds().Dy())*s))
+	mask := resize(tpl, mw, mh)
+	x := 2048 - int(math.Round(float64(style.x)*s)) - mw
+	y := 2048 - int(math.Round(float64(style.y)*s)) - mh
+	for row := 0; row < mh; row++ {
+		for col := 0; col < mw; col++ {
+			r, g, bl, _ := mask.At(col, row).RGBA()
+			a := float64(max(r, g, bl)) / 65535
+			mix := func(v uint8) uint8 { return uint8(math.Round(float64(v)*(1-a) + 255*a)) }
+			marked.SetNRGBA(x+col, y+row, color.NRGBA{mix(background.R), mix(background.G), mix(background.B), 255})
+		}
+	}
+	clean := image.NewNRGBA(image.Rect(0, 0, 2048, 2048))
+	draw.Draw(clean, clean.Bounds(), image.NewUniform(background), image.Point{}, draw.Src)
+
+	b.Run("with-watermark", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_, changed, err := RemoveWatermark(context.Background(), marked, "豆包")
+			if err != nil || !changed {
+				b.Fatalf("changed=%v err=%v", changed, err)
+			}
+		}
+	})
+	b.Run("clean-miss", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_, changed, err := RemoveWatermark(context.Background(), clean, "豆包")
+			if err != nil || changed {
+				b.Fatalf("changed=%v err=%v", changed, err)
+			}
+		}
+	})
+}
+
+func BenchmarkResize2048To512(b *testing.B) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2048, 2048))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = resize(src, 512, 512)
 	}
 }

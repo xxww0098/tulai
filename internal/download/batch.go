@@ -6,10 +6,12 @@ import (
 	"sync"
 )
 
-// BatchProgress 是批量下载的一条进展。Done 是已经处理完的条数，含失败和跳过。
+// BatchProgress 是批量下载的一条进展。Done 是已经处理完的条数，含失败和跳过；
+// BytesWritten 是整批单调递增的累计已写字节数，供界面计算实时速度。
 type BatchProgress struct {
-	Done, Total int
-	Current     Progress
+	Done, Total  int
+	BytesWritten int64
+	Current      Progress
 }
 
 // BatchResult 是批量下载里的一项结果。
@@ -37,13 +39,15 @@ func RunBatch(ctx context.Context, dl *Downloader, job Job, items []Item, worker
 
 	var mu sync.Mutex
 	done := 0
+	var totalBytes int64
+	writtenByItem := make([]int64, len(items))
 	finish := func(i int, res BatchResult) {
 		mu.Lock()
 		defer mu.Unlock()
 		results[i] = res
 		done++
 		if report != nil {
-			report(BatchProgress{Done: done, Total: len(items)})
+			report(BatchProgress{Done: done, Total: len(items), BytesWritten: totalBytes})
 		}
 	}
 
@@ -60,11 +64,15 @@ func RunBatch(ctx context.Context, dl *Downloader, job Job, items []Item, worker
 					if p.Filename != "" && p.Filename != "[archived]" {
 						path = p.Filename
 					}
-					if report != nil {
-						mu.Lock()
-						report(BatchProgress{Done: done, Total: len(items), Current: p})
-						mu.Unlock()
+					mu.Lock()
+					if (p.Stage == "writing" || p.Stage == "done") && p.BytesWritten > writtenByItem[i] {
+						totalBytes += p.BytesWritten - writtenByItem[i]
+						writtenByItem[i] = p.BytesWritten
 					}
+					if report != nil {
+						report(BatchProgress{Done: done, Total: len(items), BytesWritten: totalBytes, Current: p})
+					}
+					mu.Unlock()
 				})
 				finish(i, BatchResult{
 					URL:     item.URL,
@@ -89,7 +97,7 @@ dispatch:
 
 	// 取消后没派出去的条目也要有结果，界面才不会少算。
 	for i := range results {
-		if results[i].URL == "" {
+		if results[i].URL == "" && results[i].Err == nil && !results[i].Skipped {
 			results[i] = BatchResult{URL: items[i].URL, Err: ctx.Err()}
 			done++
 		}

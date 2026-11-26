@@ -6,9 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
@@ -23,17 +21,13 @@ const (
 	faultRate
 	faultAuth
 	faultCaptcha
-	faultOffline
 	faultUncertain
 	faultReply
 )
 
-// errExtOffline 表示指定的扩展配置文件这会儿没连上。有别的账号就换，没有就按普通错误重试。
-var errExtOffline = errors.New("扩展账号未连接")
-
 var (
-	quotaPattern = regexp.MustCompile(`额度不足|额度已用尽|额度已用|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|免费次数已|已达上限|超出.{0,8}限额|生成次数已|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|已达上限)|quota exceeded|daily limit`)
-	ratePattern  = regexp.MustCompile(`过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests`)
+	quotaPattern = regexp.MustCompile(`额度不足|额度已用尽|额度已用|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|免费次数已|已达上限|超出.{0,8}限额|生成次数已|积分不足|免费额度已用完|今日对话次数已达上限|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|已达上限)|quota exceeded|daily limit|not enough credits|insufficient credits|out of credits|daily free allowance|today['’]s chat limit has been reached|already use(?:d)? up .{0,24}credits`)
+	ratePattern  = regexp.MustCompile(`过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests|operation is too frequent|too many files uploaded|too many requests in the queue|chat limited|global limited|file upload limited`)
 	authPattern  = regexp.MustCompile(`未登录|请先登录|请登录|登录已失效|登录失效|登录状态失效`)
 )
 
@@ -41,33 +35,23 @@ func classifyFault(err error) faultKind {
 	if err == nil {
 		return faultNone
 	}
-	var quota *agy.QuotaError
-	if errors.As(err, &quota) {
-		return faultQuota
-	}
-	if errors.Is(err, agy.ErrNeedLogin) {
-		return faultAuth
-	}
-	if errors.Is(err, strategy.ErrSubmissionUncertain) || extbridge.CodeOf(err) == extbridge.ESendUncertain {
+	if errors.Is(err, strategy.ErrSubmissionUncertain) {
 		return faultUncertain
 	}
 	if errors.Is(err, strategy.ErrPlatformReply) {
 		return faultReply
 	}
-	if errors.Is(err, errHumanGaveUp) || errors.Is(err, captcha.ErrVerificationRequired) || errors.Is(err, errNeedsVerify) || extbridge.CodeOf(err) == extbridge.ECaptchaHuman {
+	if errors.Is(err, errHumanGaveUp) || errors.Is(err, captcha.ErrVerificationRequired) || errors.Is(err, errNeedsVerify) {
 		return faultCaptcha
 	}
 	text := strings.ToLower(err.Error())
-	if errors.Is(err, strategy.ErrAccountQuota) || extbridge.CodeOf(err) == extbridge.EQuota || quotaPattern.MatchString(text) {
+	if errors.Is(err, strategy.ErrAccountQuota) || quotaPattern.MatchString(text) {
 		return faultQuota
 	}
-	if errors.Is(err, strategy.ErrAccountRate) || extbridge.CodeOf(err) == extbridge.ERateLimit || ratePattern.MatchString(text) {
+	if errors.Is(err, strategy.ErrAccountRate) || ratePattern.MatchString(text) {
 		return faultRate
 	}
-	if errors.Is(err, errExtOffline) {
-		return faultOffline
-	}
-	if errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) || extbridge.CodeOf(err) == extbridge.ENotLoggedIn || authPattern.MatchString(err.Error()) {
+	if authPattern.MatchString(err.Error()) {
 		return faultAuth
 	}
 	return faultNone
@@ -83,8 +67,6 @@ func faultLabel(kind faultKind) string {
 		return "未登录"
 	case faultCaptcha:
 		return "需要验证"
-	case faultOffline:
-		return "扩展未连接"
 	case faultReply:
 		return "平台回复异常"
 	default:
@@ -102,10 +84,6 @@ func (e *Engine) noteFault(id int64, kind faultKind, err error, now time.Time) {
 	case faultQuota:
 		health = store.HealthExhausted
 		until = nextLocalMidnight(now).Unix()
-		var quota *agy.QuotaError
-		if errors.As(err, &quota) && !quota.Until.IsZero() {
-			until = quota.Until.Unix()
-		}
 	case faultRate:
 		until = now.Add(15 * time.Minute).Unix()
 	case faultCaptcha:
@@ -113,8 +91,6 @@ func (e *Engine) noteFault(id int64, kind faultKind, err error, now time.Time) {
 	case faultAuth:
 		health = store.HealthExhausted
 		until = 0
-	case faultOffline:
-		until = now.Add(45 * time.Second).Unix()
 	case faultReply:
 		until = now.Add(replyCooldown).Unix()
 	default:

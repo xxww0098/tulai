@@ -189,7 +189,7 @@ func TestLegacyCapMigrationPreservesIndependentProviderSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]string{
-		"daily_cap": "15", "daily_cap_qianwen": "4", "daily_cap_agy": "15", "daily_cap_chatgpt": "15",
+		"daily_cap": "15", "daily_cap_qianwen": "4",
 	} {
 		if got := s.Get(key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
@@ -204,7 +204,7 @@ func TestLegacyCapMigrationPreservesIndependentProviderSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if s.GetInt("daily_cap") != 0 || s.GetInt("daily_cap_qianwen") != 4 || s.GetInt("daily_cap_agy") != 15 {
+	if s.GetInt("daily_cap") != 0 || s.GetInt("daily_cap_qianwen") != 4 {
 		t.Fatal("changing Doubao's cap changed another platform or was not persisted")
 	}
 }

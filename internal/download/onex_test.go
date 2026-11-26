@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -159,19 +159,19 @@ func TestOnexRenderedCapture(t *testing.T) {
 			}
 			defer session.Close()
 			responses := make(chan error, 8)
-			camoufox.ListenTarget(session.tab, func(event any) {
+			fingerprint.ListenTarget(session.tab, func(event any) {
 				paused, ok := event.(*fetch.EventRequestPaused)
 				if !ok {
 					return
 				}
 				go func() {
-					var action camoufox.Action
+					var action fingerprint.Action
 					if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == tc.target {
 						action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(tc.body)))
 					} else {
 						action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 					}
-					if err := camoufox.Run(session.tab, action); err != nil {
+					if err := fingerprint.Run(session.tab, action); err != nil {
 						select {
 						case responses <- err:
 						default:
@@ -184,7 +184,7 @@ func TestOnexRenderedCapture(t *testing.T) {
 			}
 			start, _ := url.Parse(tc.target)
 			session.start = start
-			if err := session.run(ctx, camoufox.Navigate(tc.target)); err != nil {
+			if err := session.run(ctx, fingerprint.Navigate(tc.target)); err != nil {
 				t.Fatal(err)
 			}
 			got, err := session.Capture(ctx)

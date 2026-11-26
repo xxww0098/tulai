@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 func TestCanceledEvaluationClosesOnlyItsPage(t *testing.T) {
@@ -26,9 +26,9 @@ func TestCanceledEvaluationClosesOnlyItsPage(t *testing.T) {
 		_, _ = w.Write([]byte("fixture"))
 	}))
 	defer server.Close()
-	proc, _ := camoufoxtest.Start(t, server.URL)
+	proc, _ := fingerprinttest.Start(t, server.URL)
 	closed := make(chan struct{}, 1)
-	unsubscribe := proc.Subscribe(func(event camoufox.Event) {
+	unsubscribe := proc.Subscribe(func(event fingerprint.Event) {
 		if event.Event == "closed" && event.Target == proc.Page {
 			closed <- struct{}{}
 		}

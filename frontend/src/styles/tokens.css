@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg-paper: #F2F4F7;
+  --bg-rail: #ECEEF2;
+  --bg-rail-hover: #E2E5EB;
+  --bg-rail-active: #FFFFFF;
+  --border-rail: #E2E6EC;
+  --rail-text: #0F172A;
+  --rail-muted: #475569;
+
+  --bg-card: #FFFFFF;
+  --bg-card-header: #FAFBFD;
+  --bg-surface-hover: #E9EDF2;
+  --bg-surface-pressed: #DFE4EC;
+  --bg-sunken: #F5F7FA;
+  --bg-sunken-hover: #EBEEF3;
+  --bg-field: #FFFFFF;
+
+  --border-hairline: #E6EAF0;
+  --border-divider: #EEF1F6;
+  --border-strong: #CBD5E1;
+
+  --text-ink: #0F172A;
+  --text-muted: #526075;
+  --text-subtle: #8492A6;
+
+  --accent: #2563EB;
+  --accent-hover: #1D4ED8;
+  --accent-pressed: #1E40AF;
+  --accent-soft: #EFF6FF;
+  --accent-border: #BFDBFE;
+  --on-accent: #FFFFFF;
+
+  --status-ok: #15803D;
+  --status-ok-bg: #ECFDF5;
+  --status-ok-border: #A7F3D0;
+  --status-warn: #B45309;
+  --status-warn-bg: #FFFBEB;
+  --status-warn-border: #FDE68A;
+  --status-danger: #DC2626;
+  --status-danger-bg: #FEF2F2;
+  --status-danger-border: #FECACA;
+
+  --track-bg: #CBD5E1;
+  --knob-bg: #FFFFFF;
+
+  --selection-bg: rgba(37, 99, 235, 0.22);
+  --focus-ring: rgba(37, 99, 235, 0.55);
+  --scrollbar-thumb: rgba(15, 23, 42, 0.22);
+  --scrollbar-thumb-hover: rgba(15, 23, 42, 0.36);
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  --float-shadow: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+.dark {
+  --bg-paper: #0C1017;
+  --bg-rail: #10151F;
+  --bg-rail-hover: #171E2C;
+  --bg-rail-active: #1D2536;
+  --border-rail: #1D2536;
+  --rail-text: #F1F5F9;
+  --rail-muted: #94A3B8;
+
+  --bg-card: #131924;
+  --bg-card-header: #161D2B;
+  --bg-surface-hover: #1E2738;
+  --bg-surface-pressed: #28344B;
+  --bg-sunken: #182030;
+  --bg-sunken-hover: #222C3F;
+  --bg-field: #131924;
+
+  --border-hairline: #222B3C;
+  --border-divider: #1E2636;
+  --border-strong: #334155;
+
+  --text-ink: #F1F5F9;
+  --text-muted: #94A3B8;
+  --text-subtle: #64748B;
+
+  --accent: #60A5FA;
+  --accent-hover: #93C5FD;
+  --accent-pressed: #3B82F6;
+  --accent-soft: #172540;
+  --accent-border: #2E4A7D;
+  --on-accent: #090D16;
+
+  --status-ok: #34D399;
+  --status-ok-bg: rgba(16, 185, 129, 0.14);
+  --status-ok-border: rgba(52, 211, 153, 0.3);
+  --status-warn: #FBBF24;
+  --status-warn-bg: rgba(245, 158, 11, 0.14);
+  --status-warn-border: rgba(251, 191, 36, 0.3);
+  --status-danger: #F87171;
+  --status-danger-bg: rgba(239, 68, 68, 0.14);
+  --status-danger-border: rgba(248, 113, 113, 0.3);
+
+  --track-bg: #334155;
+  --knob-bg: #F8FAFC;
+
+  --selection-bg: rgba(96, 165, 250, 0.24);
+  --focus-ring: rgba(96, 165, 250, 0.65);
+  --scrollbar-thumb: rgba(148, 163, 184, 0.28);
+  --scrollbar-thumb-hover: rgba(148, 163, 184, 0.44);
+  --card-shadow: none;
+  --float-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+@theme inline {
+  --color-paper: var(--bg-paper);
+  --color-rail: var(--bg-rail);
+  --color-rail-hover: var(--bg-rail-hover);
+  --color-rail-active: var(--bg-rail-active);
+  --color-rail-border: var(--border-rail);
+  --color-card: var(--bg-card);
+  --color-card-header: var(--bg-card-header);
+  --color-sunken: var(--bg-sunken);
+  --color-sunken-hover: var(--bg-sunken-hover);
+  --color-field: var(--bg-field);
+  --color-hairline: var(--border-hairline);
+  --color-divider: var(--border-divider);
+  --color-strong: var(--border-strong);
+  --color-ink: var(--text-ink);
+  --color-muted: var(--text-muted);
+  --color-subtle: var(--text-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-border: var(--accent-border);
+  --color-on-accent: var(--on-accent);
+  --color-status-ok: var(--status-ok);
+  --color-status-warn: var(--status-warn);
+  --color-status-danger: var(--status-danger);
+}

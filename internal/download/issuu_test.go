@@ -20,8 +20,8 @@ import (
 	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 const issuuTestPage = "https://issuu.com/sample/docs/book"
@@ -158,9 +158,9 @@ func TestIssuuRedirectAndCancel(t *testing.T) {
 
 func TestIssuuRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint")
 	}
-	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
+	session, err := openDedicatedFixture(t, fingerprinttest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,13 +168,13 @@ func TestIssuuRenderedCapture(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == issuuTestPage {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(issuuFixture(false, "PUBLIC", "sample", "book", 124))))
 			} else if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == issuuTestPage+"?gated=1" {
@@ -185,7 +185,7 @@ func TestIssuuRenderedCapture(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -198,7 +198,7 @@ func TestIssuuRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(issuuTestPage)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(issuuTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(issuuTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	readerCtx, stopReader := context.WithTimeout(ctx, 15*time.Second)
@@ -226,7 +226,7 @@ func TestIssuuRenderedCapture(t *testing.T) {
 	if err == nil || len(got.Items) != 2 || got.Items[0].URL != issuuTestSVG1 {
 		t.Fatalf("capture=%+v err=%v", got.Items, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(issuuTestPage+"?gated=1")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(issuuTestPage+"?gated=1")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

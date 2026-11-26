@@ -8,10 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/captcha"
-	"github.com/xxww0098/tulai/internal/heal"
-	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
@@ -19,21 +16,21 @@ func TestCrashRelaunchesThenStopsAtCap(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts.RetryCount = 1
 	var relaunch, reload int
-	e.onRecover = func(action heal.Action, id int64) {
+	e.onRecover = func(action healAction, id int64) {
 		if id != 7 {
 			t.Errorf("account = %d", id)
 		}
 		switch action {
-		case heal.ActionRelaunch:
+		case healActionRelaunch:
 			relaunch++
-		case heal.ActionReload:
+		case healActionReload:
 			reload++
 		}
 	}
 	calls := 0
 	got := e.execute(context.Background(), Task{Index: 1, Platform: "豆包", BrowserID: 7}, func(context.Context, *Task) error {
 		calls++
-		return heal.ErrCrashed
+		return errHealCrashed
 	})
 	if calls != 2 || relaunch != 1 || reload != 0 || got.Status != StatusFailed || got.Error != "浏览器崩溃，自动重启后仍失败" {
 		t.Fatalf("crash heal calls=%d relaunch=%d reload=%d task=%+v", calls, relaunch, reload, got)
@@ -47,13 +44,13 @@ func TestCrashRelaunchesThenStopsAtCap(t *testing.T) {
 func TestCrashWithoutRetriesFailsOnce(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	relaunch := 0
-	e.onRecover = func(action heal.Action, _ int64) {
-		if action == heal.ActionRelaunch {
+	e.onRecover = func(action healAction, _ int64) {
+		if action == healActionRelaunch {
 			relaunch++
 		}
 	}
 	got := e.execute(context.Background(), Task{Platform: "豆包", BrowserID: 1}, func(context.Context, *Task) error {
-		return heal.ErrCrashed
+		return errHealCrashed
 	})
 	if relaunch != 0 || got.Status != StatusFailed || got.Attempts != 1 || got.Error != "浏览器崩溃了" {
 		t.Fatalf("cap without retry: relaunch=%d task=%+v", relaunch, got)
@@ -64,8 +61,8 @@ func TestStuckReloads(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts.RetryCount = 1
 	reload := 0
-	e.onRecover = func(action heal.Action, _ int64) {
-		if action == heal.ActionReload {
+	e.onRecover = func(action healAction, _ int64) {
+		if action == healActionReload {
 			reload++
 		}
 	}
@@ -73,7 +70,7 @@ func TestStuckReloads(t *testing.T) {
 	got := e.execute(context.Background(), Task{Platform: "千问", BrowserID: 3}, func(context.Context, *Task) error {
 		calls++
 		if calls == 1 {
-			return heal.ErrStuck
+			return errHealStuck
 		}
 		return nil
 	})
@@ -88,8 +85,8 @@ func TestStuckReloads(t *testing.T) {
 func TestGenerateTimeoutDoesNotReload(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	reload := 0
-	e.onRecover = func(action heal.Action, _ int64) {
-		if action == heal.ActionReload {
+	e.onRecover = func(action healAction, _ int64) {
+		if action == healActionReload {
 			reload++
 		}
 	}
@@ -154,7 +151,7 @@ func TestNetworkBackoffRetries(t *testing.T) {
 		got := e.execute(context.Background(), Task{Platform: "豆包", BrowserID: 1}, func(context.Context, *Task) error {
 			calls++
 			if calls == 1 {
-				return heal.ErrNetwork
+				return errHealNetwork
 			}
 			return nil
 		})
@@ -228,25 +225,6 @@ func TestSliderSuccessRetriesSameAccount(t *testing.T) {
 	}
 }
 
-func TestAgyProbeDoesNotLogOut(t *testing.T) {
-	st := openRotateStore(t)
-	row := addNamed(t, st, agy.Platform, "acc1")
-	st.UpdateBrowser(row.ID, true, true)
-	e := NewEngine(st, nil, nil, "")
-	e.setActive(row.ID, true)
-	from := len(logging.Log.Entries())
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
-	held := browserByID(t, st, row.ID)
-	if !held.IsLoggedIn || held.Health == store.HealthExhausted {
-		t.Fatalf("Antigravity 探测改了账号: %+v", held)
-	}
-	for _, entry := range logging.Log.Entries()[from:] {
-		if strings.Contains(entry.Text, "没有正面证据") {
-			t.Fatalf("probe log %q", entry.Text)
-		}
-	}
-}
-
 func TestBusyAccountProbeCannotLogOut(t *testing.T) {
 	st := openRotateStore(t)
 	row := addNamed(t, st, "豆包", "豆包2")
@@ -258,7 +236,7 @@ func TestBusyAccountProbeCannotLogOut(t *testing.T) {
 		return nil
 	})
 	e.setActive(row.ID, true)
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateOut)
 	held := browserByID(t, st, row.ID)
 	if !held.IsLoggedIn || held.Health == store.HealthExhausted || focused != 0 {
 		t.Fatalf("busy account was logged out: %+v focus=%d", held, focused)
@@ -267,7 +245,7 @@ func TestBusyAccountProbeCannotLogOut(t *testing.T) {
 		t.Fatalf("notes = %v", e.AutoNotes())
 	}
 	e.setActive(row.ID, false)
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateOut)
 	held = browserByID(t, st, row.ID)
 	if held.IsLoggedIn || focused != row.ID {
 		t.Fatalf("idle logout should stick: %+v focus=%d", held, focused)
@@ -284,7 +262,7 @@ func TestFirstProbeBeforeLoginStaysQuiet(t *testing.T) {
 		return nil
 	})
 
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateOut)
 	held := browserByID(t, st, row.ID)
 	if held.IsLoggedIn || held.Health == store.HealthExhausted || focused != 0 {
 		t.Fatalf("an unfinished first login was treated as a logout: %+v focus=%d", held, focused)
@@ -293,11 +271,11 @@ func TestFirstProbeBeforeLoginStaysQuiet(t *testing.T) {
 		t.Fatal("an unfinished first login should not raise a relogin banner")
 	}
 
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateIn)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateIn)
 	if held = browserByID(t, st, row.ID); !held.IsLoggedIn {
 		t.Fatalf("login confirmation = %+v", held)
 	}
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateOut)
 	text, id, ok := e.Attention()
 	if !ok || id != row.ID || text != "豆包1 需要重新扫码登录" {
 		t.Fatalf("a confirmed account should report a real logout: %q id=%d ok=%v", text, id, ok)
@@ -309,7 +287,7 @@ func TestConfirmedLoginClearsStaleAttention(t *testing.T) {
 	row := addNamed(t, st, "豆包", "豆包1")
 	st.UpdateBrowser(row.ID, true, true)
 	e := NewEngine(st, nil, nil, "")
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateOut)
 	if _, _, ok := e.Attention(); !ok {
 		t.Fatal("real logout should raise attention")
 	}
@@ -320,7 +298,7 @@ func TestConfirmedLoginClearsStaleAttention(t *testing.T) {
 		t.Fatalf("stale relogin banner remained after login: %q", text)
 	}
 
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateOut)
 	if text, _, ok := e.Attention(); !ok || text != "豆包1 需要重新扫码登录" {
 		t.Fatalf("logout after a confirmed login was lost: %q ok=%v", text, ok)
 	}
@@ -332,14 +310,14 @@ func TestLogoutProbeRestoresWithoutManualReset(t *testing.T) {
 	st.UpdateBrowser(row.ID, true, true)
 	e := NewEngine(st, nil, nil, "")
 	e.SetLoginProbe(func(context.Context, store.Browser) (string, error) {
-		return heal.StateUnknown, nil
+		return loginStateUnknown, nil
 	})
 	var focused int64
 	e.SetLoginFocus(func(_ context.Context, b store.Browser) error {
 		focused = b.ID
 		return nil
 	})
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateOut)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateOut)
 	held := browserByID(t, st, row.ID)
 	task := &Task{Platform: "豆包", BrowserID: row.ID}
 	wait, dead := e.prepareAccount(task, time.Now())
@@ -350,11 +328,11 @@ func TestLogoutProbeRestoresWithoutManualReset(t *testing.T) {
 	if !ok || id != row.ID || text != "账号2 需要重新扫码登录" || focused != row.ID {
 		t.Fatalf("banner=%q id=%d focus=%d ok=%v", text, id, focused, ok)
 	}
-	e.applyLogin(held, heal.StateOut)
+	e.applyLogin(held, loginStateOut)
 	if again, _, ok := e.Attention(); !ok || again != text {
 		t.Fatalf("repeat probe changed the banner: %q ok=%v", again, ok)
 	}
-	e.applyLogin(browserByID(t, st, row.ID), heal.StateIn)
+	e.applyLogin(browserByID(t, st, row.ID), loginStateIn)
 	back := browserByID(t, st, row.ID)
 	if !back.Usable(time.Now()) || !back.IsLoggedIn || back.Health != store.HealthReady {
 		t.Fatalf("restored = %+v", back)
@@ -381,9 +359,9 @@ func TestProbeLogoutWaitsThenDispatches(t *testing.T) {
 		e.SetLoginProbe(func(context.Context, store.Browser) (string, error) {
 			n++
 			if n < 3 {
-				return heal.StateOut, nil
+				return loginStateOut, nil
 			}
-			return heal.StateIn, nil
+			return loginStateIn, nil
 		})
 		e.SetLoginFocus(func(context.Context, store.Browser) error { return nil })
 		calls := 0
@@ -411,14 +389,14 @@ func TestProbeInClearsStaleLogout(t *testing.T) {
 			st.UpdateBrowser(row.ID, true, false)
 			st.UpdateBrowserHealth(row.ID, store.HealthExhausted, 0, "未登录")
 			e := NewEngine(st, nil, nil, "")
-			e.applyLogin(browserByID(t, st, row.ID), heal.StateIn)
+			e.applyLogin(browserByID(t, st, row.ID), loginStateIn)
 			back := browserByID(t, st, row.ID)
 			if !back.Usable(time.Now()) || !back.IsLoggedIn || back.Health != store.HealthReady || back.LastError != "" {
 				t.Fatalf("confirm = %+v", back)
 			}
 			st.UpdateBrowser(row.ID, false, false)
 			st.UpdateBrowserHealth(row.ID, store.HealthExhausted, 0, "未登录")
-			e.applyLogin(browserByID(t, st, row.ID), heal.StateIn)
+			e.applyLogin(browserByID(t, st, row.ID), loginStateIn)
 			back = browserByID(t, st, row.ID)
 			if !back.Usable(time.Now()) || !back.IsLoggedIn || back.Health != store.HealthReady || back.LastError != "" {
 				t.Fatalf("stale prev still blocked rotation: %+v", back)
@@ -434,7 +412,7 @@ func TestLoginCheckSkipsWhenRecent(t *testing.T) {
 	n := 0
 	e.SetLoginProbe(func(context.Context, store.Browser) (string, error) {
 		n++
-		return heal.StateIn, nil
+		return loginStateIn, nil
 	})
 	e.refreshLogin(context.Background(), row.ID, true)
 	e.refreshLogin(context.Background(), row.ID, true)
@@ -442,7 +420,7 @@ func TestLoginCheckSkipsWhenRecent(t *testing.T) {
 		t.Fatalf("second dispatch check should wait: probes=%d", n)
 	}
 	e.mu.Lock()
-	e.loginLast[row.ID] = time.Now().Add(-heal.LoginMinGap)
+	e.loginLast[row.ID] = time.Now().Add(-loginMinGap)
 	e.mu.Unlock()
 	e.refreshLogin(context.Background(), row.ID, true)
 	if n != 2 {

@@ -25,17 +25,14 @@ func TestBuiltinsContainOnlyDoubaoWash(t *testing.T) {
 	}
 }
 
-func TestImportTextKeepsLinesAndBlankParagraphs(t *testing.T) {
+func TestImportTextKeepsOnePromptPerLine(t *testing.T) {
 	if got := ImportText("甲\r\n乙\n"); got != "甲\n乙" {
 		t.Fatalf("lines = %q", got)
 	}
-	if got := ImportText("\uFEFF甲\n\n乙\n"); got != "甲\n乙" {
-		t.Fatalf("blank lines = %q", got)
+	if got := ImportText("\uFEFF  甲 \n\n  乙\r丙\n\n丁  "); got != "甲\n乙\n丙\n丁" {
+		t.Fatalf("blank lines and cr/crlf = %q", got)
 	}
-	if got := ImportText("甲\n\n乙\n丙\n\n丁"); got != "甲\n乙 丙\n丁" {
-		t.Fatalf("paragraphs = %q", got)
-	}
-	if got := ImportText("  \n"); got != "" {
+	if got := ImportText("  \n\r\n "); got != "" {
 		t.Fatalf("empty = %q", got)
 	}
 	lines := TaskPrompts("", ImportText("画一只猫\n\n画一条鱼"))
@@ -87,17 +84,20 @@ func TestUserCopyDoesNotReplaceBuiltin(t *testing.T) {
 }
 
 func TestPromptKindsKeepLegacyEntriesShared(t *testing.T) {
-	users := ParseUser(`[{"id":"u1","label":"旧模板","body":"旧正文"},{"id":"u2","label":"洗图模板","body":"洗图正文","kind":"wash"}]`)
-	if len(users) != 2 || users[0].Kind != "" || users[1].Kind != KindWash {
+	users := ParseUser(`[{"id":"u1","label":"旧模板","body":"旧正文"},{"id":"u2","label":"洗图模板","body":"洗图正文","kind":"wash"},{"id":"u3","label":"裂变模板","body":"裂变正文","kind":"fission"}]`)
+	if len(users) != 3 || users[0].Kind != "" || users[1].Kind != KindWash || users[2].Kind != KindFission {
 		t.Fatalf("legacy or typed prompts: %+v", users)
 	}
 	again := ParseUser(FormatUser(users))
-	if len(again) != 2 || again[0].Kind != "" || again[1].Kind != KindWash {
+	if len(again) != 3 || again[0].Kind != "" || again[1].Kind != KindWash || again[2].Kind != KindFission {
 		t.Fatalf("kind round trip: %+v", again)
 	}
 	for _, item := range Catalog(again) {
 		if item.ID == "u2" && item.Kind != KindWash {
-			t.Fatalf("catalog lost kind: %+v", item)
+			t.Fatalf("catalog lost wash kind: %+v", item)
+		}
+		if item.ID == "u3" && item.Kind != KindFission {
+			t.Fatalf("catalog lost fission kind: %+v", item)
 		}
 	}
 }
@@ -119,5 +119,39 @@ func TestDuplicateUserLabelGetsID(t *testing.T) {
 	}
 	if IDForLabel("豆包洗图（u1）", users) != "u1" || IDForLabel("没有", users) != "" {
 		t.Fatal("id for label")
+	}
+}
+
+func TestFissionTextPrompts(t *testing.T) {
+	if got := FissionTextPrompts(""); got != nil {
+		t.Fatalf("blank text fission should return nil, got %v", got)
+	}
+	if got := FissionTextPrompts(DefaultFissionPrompt); got != nil {
+		t.Fatalf("mother-image default prompt should return nil for text-only fission, got %v", got)
+	}
+
+	// Single theme auto-expands to 4 distinct text-only directions without attachment wording
+	theme := FissionTextPrompts("复古飞行员橘猫，水彩插画")
+	if len(theme) != 4 {
+		t.Fatalf("theme fission len = %d, want 4", len(theme))
+	}
+	seen := map[string]bool{}
+	for i, p := range theme {
+		if !strings.Contains(p, "复古飞行员橘猫，水彩插画") || strings.Contains(p, "附件母图") || seen[p] {
+			t.Fatalf("theme direction #%d invalid: %q", i+1, p)
+		}
+		seen[p] = true
+	}
+
+	// Exactly 4 non-empty lines preserve each custom direction verbatim in order
+	customLines := FissionTextPrompts("清晨森林特写\n\n雪山远景航拍\n咖啡馆俯视平铺\n霓虹夜景仰视")
+	if len(customLines) != 4 {
+		t.Fatalf("4-line fission len = %d, want 4", len(customLines))
+	}
+	wantPrefixes := []string{"清晨森林特写", "雪山远景航拍", "咖啡馆俯视平铺", "霓虹夜景仰视"}
+	for i, want := range wantPrefixes {
+		if !strings.HasPrefix(customLines[i], want) || !strings.Contains(customLines[i], "不超过 60%") {
+			t.Fatalf("4-line direction #%d = %q, want prefix %q", i+1, customLines[i], want)
+		}
 	}
 }

@@ -16,6 +16,7 @@ func TestTrustedInputAndSingleUploadChange(t *testing.T) {
 		w.Write([]byte(`<!doctype html><html><body>
 <input id="text" value="old text"><input id="email" type="email" value="old@example.com"><input id="number" type="number" value="123"><textarea id="area">old text</textarea>
 <div id="editor" contenteditable="true"><b>old</b> text</div>
+<div id="chip-editor" contenteditable="true"><p><span data-testid="skill_input_exit_button" contenteditable="false">图像生成</span>old prompt</p></div>
 <input id="disabled" disabled><textarea id="readonly" readonly>readonly</textarea>
 <div id="aria-disabled" contenteditable="true" aria-disabled="true">disabled</div><div id="aria-readonly" contenteditable="true" aria-readonly="true">readonly</div><div id="plain">plain</div><input id="checkbox" type="checkbox">
 <input id="upload" type="file"><button id="send" disabled>send</button>
@@ -34,14 +35,14 @@ document.querySelector('#upload').addEventListener('change',()=>window.changes++
 	if err := s.InjectBase(); err != nil {
 		t.Fatal(err)
 	}
-	if !s.EvaluateBool(`window.__tulaiBaseInstalled===3&&window.__tulaiPending===window.__keptPending&&window.__tulaiPending.marker==='retained'&&window.__tulaiSeq===7`) {
+	if !s.EvaluateBool(`window.__tulaiBaseInstalled===4&&window.__tulaiPending===window.__keptPending&&window.__tulaiPending.marker==='retained'&&window.__tulaiSeq===7`) {
 		t.Fatal("base upgrade did not replace old revision while preserving pending calls")
 	}
 	if _, err := s.Evaluate(`window.__tulaiBaseInstalled=true;window.tulaiUnmarkFileInput=()=>{window.__oldUnmark=true}`); err != nil {
 		t.Fatal(err)
 	}
 	s.EnsureBase()
-	if !s.EvaluateBool(`window.__tulaiBaseInstalled===3`) {
+	if !s.EvaluateBool(`window.__tulaiBaseInstalled===4`) {
 		t.Fatal("EnsureBase did not upgrade the old boolean marker")
 	}
 	for _, tc := range []struct{ selector, text string }{
@@ -63,6 +64,13 @@ document.querySelector('#upload').addEventListener('change',()=>window.changes++
 		if err != nil || ParseJSValue(out, &state) != nil || state.Text != tc.text || !state.Trusted {
 			t.Fatalf("%s did not receive trusted full replacement: %s, %v", tc.selector, out, err)
 		}
+	}
+	if err := s.InsertText("#chip-editor", "水彩风景"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.EvaluateBool(`(()=>{const chip=document.querySelector('#chip-editor [data-testid="skill_input_exit_button"]');return !!chip&&chip.textContent==='图像生成'&&document.querySelector('#chip-editor').innerText.includes('水彩风景')&&!document.querySelector('#chip-editor').innerText.includes('old prompt')})()`) {
+		out, _ := s.Evaluate(`document.querySelector('#chip-editor').innerHTML`)
+		t.Fatalf("InsertText wiped skill chip or failed to replace text: %s", out)
 	}
 	if !s.EvaluateBool(`!document.querySelector('#send').disabled`) {
 		t.Fatal("trusted editor input did not enable send")

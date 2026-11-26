@@ -5,80 +5,64 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/nsgo-dev/nsgo/tsx"
 )
 
-func init() {
-	tsx.RegisterFunctions("tulai/backend", map[string]any{
-		"getRenameState":    getRenameStateBridge,
-		"renamePickFiles":   renamePickFilesBridge,
-		"renamePickFolder":  renamePickFolderBridge,
-		"renameIngestPaths": renameIngestPathsBridge,
-		"renameClear":       renameClearBridge,
-		"renameRemoveAt":    renameRemoveAtBridge,
-		"renameSetField":    renameSetFieldBridge,
-		"renameSetRule":     renameSetRuleBridge,
-		"renameAddRule":     renameAddRuleBridge,
-		"renameRemoveRule":  renameRemoveRuleBridge,
-		"renameSetDraft":    renameSetDraftBridge,
-		"renamePasteLines":  renamePasteLinesBridge,
-		"renameMoveRow":     renameMoveRowBridge,
-		"renameSuggestAI":   renameSuggestAIBridge,
-		"renameSaveAIModel": renameSaveAIModelBridge,
-		"renameApply":       renameApplyBridge,
-		"renameUndo":        renameUndoBridge,
-	})
+// RenameService exposes batch file renaming, rule planning, AI suggestions, and undo IPCs.
+type RenameService struct {
+	app *App
 }
 
+// RenameRuleDTO represents one search/replace rule entry.
 type RenameRuleDTO struct {
-	Index    int
-	Find     string
-	With     string
-	Template int
-	Count    int
-	Offset   int
-	Text     string
+	Index    int    `json:"index"`
+	Find     string `json:"find"`
+	With     string `json:"with"`
+	Template int    `json:"template"`
+	Count    int    `json:"count"`
+	Offset   int    `json:"offset"`
+	Text     string `json:"text"`
 }
 
+// RenameRowDTO represents one file row and its live planned target name.
 type RenameRowDTO struct {
-	Index   int
-	Path    string
-	OldName string
-	NewName string
-	Draft   string
-	Changed bool
+	Index   int    `json:"index"`
+	Path    string `json:"path"`
+	OldName string `json:"oldName"`
+	NewName string `json:"newName"`
+	Draft   string `json:"draft"`
+	Changed bool   `json:"changed"`
 }
 
+// RenameStateDTO represents the full batch rename page snapshot.
 type RenameStateDTO struct {
-	Mode          int
-	Busy          bool
-	IncludeExt    bool
-	InsertKind    string
-	Position      string
-	Index         int
-	Text          string
-	Prefix        string
-	Suffix        string
-	NumFormat     string
-	NumStart      int
-	NumWidth      int
-	NumPrefix     string
-	NumSuffix     string
-	SortBy        string
-	AIPrompt      string
-	AISettings    bool
-	AIURL         string
-	AIKey         string
-	AIModel       string
-	Rules         []RenameRuleDTO
-	Rows          []RenameRowDTO
-	ChangedCount  int
-	CanUndo       bool
-	PlanErr       string
-	Note          string
-	Err           string
-	TemplateNames []string
+	Mode          int             `json:"mode"`
+	Busy          bool            `json:"busy"`
+	IncludeExt    bool            `json:"includeExt"`
+	InsertKind    string          `json:"insertKind"`
+	Position      string          `json:"position"`
+	Index         int             `json:"index"`
+	Text          string          `json:"text"`
+	Prefix        string          `json:"prefix"`
+	Suffix        string          `json:"suffix"`
+	NumFormat     string          `json:"numFormat"`
+	NumStart      int             `json:"numStart"`
+	NumWidth      int             `json:"numWidth"`
+	NumPrefix     string          `json:"numPrefix"`
+	NumSuffix     string          `json:"numSuffix"`
+	SortBy        string          `json:"sortBy"`
+	AIPrompt      string          `json:"aiPrompt"`
+	AISettings    bool            `json:"aiSettings"`
+	AIURL         string          `json:"aiUrl"`
+	AIKey         string          `json:"aiKey"`
+	AIModel       string          `json:"aiModel"`
+	Rules         []RenameRuleDTO `json:"rules"`
+	Rows          []RenameRowDTO  `json:"rows"`
+	ChangedCount  int             `json:"changedCount"`
+	CanUndo       bool            `json:"canUndo"`
+	PlanErr       string          `json:"planErr"`
+	Note          string          `json:"note"`
+	Err           string          `json:"err"`
+	TemplateNames []string        `json:"templateNames"`
 }
 
 var renameTemplateLabels = []string{
@@ -92,109 +76,132 @@ var renameTemplateLabels = []string{
 	"某字符之前的 N 位",
 }
 
-func getRenameStateBridge() RenameStateDTO {
-	a := getApp()
-	if a == nil {
-		return RenameStateDTO{TemplateNames: renameTemplateLabels}
-	}
-	s := &a.fileRename
-	s.init()
-
-	changes, planErr := a.renamePlan()
-	planErrStr := ""
-	if planErr != nil {
-		planErrStr = planErr.Error()
-	}
-
-	rules := make([]RenameRuleDTO, 0, len(s.rules))
-	for i, r := range s.rules {
-		rules = append(rules, RenameRuleDTO{
-			Index:    i,
-			Find:     r.Find,
-			With:     r.With,
-			Template: r.Template,
-			Count:    r.Count,
-			Offset:   r.Offset,
-			Text:     r.Text,
-		})
-	}
-
-	rows := make([]RenameRowDTO, 0, len(s.items))
-	changedCount := 0
-	for i, item := range s.items {
-		oldName := filepath.Base(item.path)
-		newName := oldName
-		changed := false
-		if i < len(changes) {
-			newName = filepath.Base(changes[i].To)
-			changed = changes[i].From != changes[i].To
-		}
-		if changed {
-			changedCount++
-		}
-		rows = append(rows, RenameRowDTO{
-			Index:   i,
-			Path:    item.path,
-			OldName: oldName,
-			NewName: newName,
-			Draft:   item.draft,
-			Changed: changed,
-		})
-	}
-
+func emptyRenameState() RenameStateDTO {
 	return RenameStateDTO{
-		Mode:          s.mode,
-		Busy:          s.busy,
-		IncludeExt:    s.includeExt,
-		InsertKind:    s.insertKind,
-		Position:      s.position,
-		Index:         int(s.index),
-		Text:          s.text,
-		Prefix:        s.prefix,
-		Suffix:        s.suffix,
-		NumFormat:     s.numFormat,
-		NumStart:      int(s.numStart),
-		NumWidth:      int(s.numWidth),
-		NumPrefix:     s.numPrefix,
-		NumSuffix:     s.numSuffix,
-		SortBy:        s.sortBy,
-		AIPrompt:      s.aiPrompt,
-		AISettings:    s.aiSettings,
-		AIURL:         a.customURL,
-		AIKey:         a.customKey,
-		AIModel:       a.customModel,
-		Rules:         rules,
-		Rows:          rows,
-		ChangedCount:  changedCount,
-		CanUndo:       len(s.undo) > 0,
-		PlanErr:       planErrStr,
-		Note:          s.note,
-		Err:           s.err,
-		TemplateNames: renameTemplateLabels,
+		Rules:         []RenameRuleDTO{},
+		Rows:          []RenameRowDTO{},
+		TemplateNames: append([]string(nil), renameTemplateLabels...),
 	}
 }
 
-func renamePickFilesBridge(ctx context.Context) error {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
+// GetRenameState returns the current batch rename items, rules, and planned preview.
+func (s *RenameService) GetRenameState(ctx context.Context) RenameStateDTO {
+	if s.app == nil {
+		return emptyRenameState()
+	}
+	out, err := callValue(s.app, ctx, func() RenameStateDTO {
+		a := s.app
+		st := &a.fileRename
+		st.init()
+
+		changes, planErr := a.renamePlan()
+		planErrStr := ""
+		if planErr != nil {
+			planErrStr = planErr.Error()
+		}
+
+		rules := make([]RenameRuleDTO, 0, len(st.rules))
+		for i, r := range st.rules {
+			rules = append(rules, RenameRuleDTO{
+				Index:    i,
+				Find:     r.Find,
+				With:     r.With,
+				Template: r.Template,
+				Count:    r.Count,
+				Offset:   r.Offset,
+				Text:     r.Text,
+			})
+		}
+
+		rows := make([]RenameRowDTO, 0, len(st.items))
+		changedCount := 0
+		for i, item := range st.items {
+			oldName := filepath.Base(item.path)
+			newName := oldName
+			changed := false
+			if i < len(changes) {
+				newName = filepath.Base(changes[i].To)
+				changed = changes[i].From != changes[i].To
+			}
+			if changed {
+				changedCount++
+			}
+			rows = append(rows, RenameRowDTO{
+				Index:   i,
+				Path:    item.path,
+				OldName: oldName,
+				NewName: newName,
+				Draft:   item.draft,
+				Changed: changed,
+			})
+		}
+
+		return RenameStateDTO{
+			Mode:          st.mode,
+			Busy:          st.busy,
+			IncludeExt:    st.includeExt,
+			InsertKind:    st.insertKind,
+			Position:      st.position,
+			Index:         int(st.index),
+			Text:          st.text,
+			Prefix:        st.prefix,
+			Suffix:        st.suffix,
+			NumFormat:     st.numFormat,
+			NumStart:      int(st.numStart),
+			NumWidth:      int(st.numWidth),
+			NumPrefix:     st.numPrefix,
+			NumSuffix:     st.numSuffix,
+			SortBy:        st.sortBy,
+			AIPrompt:      st.aiPrompt,
+			AISettings:    st.aiSettings,
+			AIURL:         a.customURL,
+			AIKey:         a.customKey,
+			AIModel:       a.customModel,
+			Rules:         rules,
+			Rows:          rows,
+			ChangedCount:  changedCount,
+			CanUndo:       len(st.undo) > 0,
+			PlanErr:       planErrStr,
+			Note:          st.note,
+			Err:           st.err,
+			TemplateNames: append([]string(nil), renameTemplateLabels...),
+		}
+	})
+	if err != nil {
+		return emptyRenameState()
+	}
+	return out
+}
+
+// RenamePickFiles opens a multi-file picker and adds selected files to the rename list.
+func (s *RenameService) RenamePickFiles(ctx context.Context) error {
+	if s.app == nil {
 		return nil
 	}
-	paths, err := a.pickFilesAsync(ctx, "选择要重命名的文件", true, nil, "所有文件")
+	busy, err := callValue(s.app, ctx, func() bool { return s.app.fileRename.busy })
+	if err != nil || busy {
+		return err
+	}
+	paths, err := s.app.pickFilesAsync(ctx, "选择要重命名的文件", true, nil, "所有文件")
 	if err != nil || len(paths) == 0 {
 		return err
 	}
-	return a.onScope(ctx, func() {
-		a.renameIngest(paths)
-		a.emit("rename")
+	return s.app.call(ctx, func() {
+		s.app.renameIngest(paths)
+		s.app.emit("rename")
 	})
 }
 
-func renamePickFolderBridge(ctx context.Context, recursive bool) error {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
+// RenamePickFolder opens a folder picker and adds files from selected folders.
+func (s *RenameService) RenamePickFolder(ctx context.Context, recursive bool) error {
+	if s.app == nil {
 		return nil
 	}
-	dirs, err := a.pickDirsAsync(ctx, "选择包含文件的文件夹", true)
+	busy, err := callValue(s.app, ctx, func() bool { return s.app.fileRename.busy })
+	if err != nil || busy {
+		return err
+	}
+	dirs, err := s.app.pickDirsAsync(ctx, "选择包含文件的文件夹", true)
 	if err != nil || len(dirs) == 0 {
 		return err
 	}
@@ -203,197 +210,257 @@ func renamePickFolderBridge(ctx context.Context, recursive bool) error {
 	if recursive {
 		paths, failed = renameReadFolders(dirs)
 	}
-	return a.onScope(ctx, func() {
-		a.renameIngest(paths)
+	return s.app.call(ctx, func() {
+		s.app.renameIngest(paths)
 		if failed > 0 {
-			a.fileRename.err = strconv.Itoa(failed) + " 个项目读取失败或包含待恢复的暂存目录，已跳过"
+			s.app.fileRename.err = strconv.Itoa(failed) + " 个项目读取失败或包含待恢复的暂存目录，已跳过"
+		}
+		s.app.emit("rename")
+	})
+}
+
+// RenameIngestPaths adds dropped or supplied paths to the rename list.
+func (s *RenameService) RenameIngestPaths(ctx context.Context, paths []string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.renameIngest(paths)
+		s.app.emit("rename")
+	})
+}
+
+// RenameClear empties the rename list and undo history.
+func (s *RenameService) RenameClear(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		if s.app.fileRename.busy {
+			return
+		}
+		s.app.fileRename.items = nil
+		s.app.fileRename.undo = nil
+		s.app.fileRename.err = ""
+		s.app.fileRename.note = ""
+		s.app.emit("rename")
+	})
+}
+
+// RenameRemoveAt removes a file row by index.
+func (s *RenameService) RenameRemoveAt(ctx context.Context, index int) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		if s.app.fileRename.busy {
+			return
+		}
+		if index >= 0 && index < len(s.app.fileRename.items) {
+			s.app.fileRename.items = append(s.app.fileRename.items[:index], s.app.fileRename.items[index+1:]...)
+			s.app.emit("rename")
+		}
+	})
+}
+
+// RenameSetField updates a rename parameter or AI rename configuration field.
+func (s *RenameService) RenameSetField(ctx context.Context, field, value string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		st := &a.fileRename
+		st.init()
+		switch field {
+		case "mode":
+			st.mode = clampInt(parseIntDefault(value, 0), 0, 4)
+		case "includeExt":
+			st.includeExt = value == "true" || value == "1"
+		case "insertKind":
+			st.insertKind = value
+		case "position":
+			st.position = value
+		case "index":
+			st.index = float64(max(1, parseIntDefault(value, 1)))
+		case "text":
+			st.text = value
+		case "prefix":
+			st.prefix = value
+		case "suffix":
+			st.suffix = value
+		case "numFormat":
+			st.numFormat = value
+		case "numStart":
+			st.numStart = float64(max(0, parseIntDefault(value, 1)))
+		case "numWidth":
+			st.numWidth = float64(clampInt(parseIntDefault(value, 0), 0, 12))
+		case "numPrefix":
+			st.numPrefix = value
+		case "numSuffix":
+			st.numSuffix = value
+		case "sortBy":
+			st.sortBy = value
+			a.renameSort()
+		case "aiPrompt":
+			st.aiPrompt = value
+		case "aiSettings":
+			st.aiSettings = value == "true" || value == "1"
+		case "aiURL", "aiUrl":
+			a.customURL = strings.TrimSpace(value)
+		case "aiKey":
+			a.customKey = strings.TrimSpace(value)
+		case "aiModel":
+			a.customModel = strings.TrimSpace(value)
 		}
 		a.emit("rename")
 	})
 }
 
-func renameIngestPathsBridge(paths []string) {
-	if a := getApp(); a != nil {
-		a.renameIngest(paths)
-		a.emit("rename")
-	}
-}
-
-func renameClearBridge() {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
+// RenameSetRule updates one search/replace rule entry by index.
+func (s *RenameService) RenameSetRule(ctx context.Context, index int, find, with, text string, template, count, offset int) {
+	if s.app == nil {
 		return
 	}
-	a.fileRename.items = nil
-	a.fileRename.undo = nil
-	a.fileRename.err = ""
-	a.fileRename.note = ""
-	a.emit("rename")
-}
-
-func renameRemoveAtBridge(index int) {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
-		return
-	}
-	if index >= 0 && index < len(a.fileRename.items) {
-		a.fileRename.items = append(a.fileRename.items[:index], a.fileRename.items[index+1:]...)
-		a.emit("rename")
-	}
-}
-
-func renameSetFieldBridge(field, value string) {
-	a := getApp()
-	if a == nil {
-		return
-	}
-	s := &a.fileRename
-	s.init()
-	switch field {
-	case "mode":
-		s.mode = clampInt(parseIntDefault(value, 0), 0, 4)
-	case "includeExt":
-		s.includeExt = value == "true" || value == "1"
-	case "insertKind":
-		s.insertKind = value
-	case "position":
-		s.position = value
-	case "index":
-		s.index = float64(max(1, parseIntDefault(value, 1)))
-	case "text":
-		s.text = value
-	case "prefix":
-		s.prefix = value
-	case "suffix":
-		s.suffix = value
-	case "numFormat":
-		s.numFormat = value
-	case "numStart":
-		s.numStart = float64(max(0, parseIntDefault(value, 1)))
-	case "numWidth":
-		s.numWidth = float64(clampInt(parseIntDefault(value, 0), 0, 12))
-	case "numPrefix":
-		s.numPrefix = value
-	case "numSuffix":
-		s.numSuffix = value
-	case "sortBy":
-		s.sortBy = value
-		a.renameSort()
-	case "aiPrompt":
-		s.aiPrompt = value
-	case "aiSettings":
-		s.aiSettings = value == "true" || value == "1"
-	case "aiURL":
-		a.customURL = strings.TrimSpace(value)
-	case "aiKey":
-		a.customKey = strings.TrimSpace(value)
-	case "aiModel":
-		a.customModel = strings.TrimSpace(value)
-	}
-	a.emit("rename")
-}
-
-func renameSetRuleBridge(index int, find, with, text string, template, count, offset int) {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
-		return
-	}
-	s := &a.fileRename
-	s.init()
-	if index >= 0 && index < len(s.rules) {
-		s.rules[index] = renameRule{
-			Find:     find,
-			With:     with,
-			Template: clampInt(template, 0, len(renameTemplateLabels)-1),
-			Count:    max(1, count),
-			Offset:   max(1, offset),
-			Text:     text,
+	_ = s.app.call(ctx, func() {
+		st := &s.app.fileRename
+		if st.busy {
+			return
 		}
-		a.emit("rename")
-	}
+		st.init()
+		if index >= 0 && index < len(st.rules) {
+			st.rules[index] = renameRule{
+				Find:     find,
+				With:     with,
+				Template: clampInt(template, 0, len(renameTemplateLabels)-1),
+				Count:    max(0, count),
+				Offset:   max(0, offset),
+				Text:     text,
+			}
+			s.app.emit("rename")
+		}
+	})
 }
 
-func renameAddRuleBridge() {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
+// RenameAddRule appends a new blank search/replace rule.
+func (s *RenameService) RenameAddRule(ctx context.Context) {
+	if s.app == nil {
 		return
 	}
-	a.fileRename.init()
-	a.fileRename.rules = append(a.fileRename.rules, renameRule{Count: 1, Offset: 1})
-	a.emit("rename")
+	_ = s.app.call(ctx, func() {
+		if s.app.fileRename.busy {
+			return
+		}
+		s.app.fileRename.init()
+		s.app.fileRename.rules = append(s.app.fileRename.rules, renameRule{Count: 1, Offset: 0})
+		s.app.emit("rename")
+	})
 }
 
-func renameRemoveRuleBridge(index int) {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
+// RenameRemoveRule deletes a search/replace rule by index (leaving at least one rule).
+func (s *RenameService) RenameRemoveRule(ctx context.Context, index int) {
+	if s.app == nil {
 		return
 	}
-	s := &a.fileRename
-	if len(s.rules) > 1 && index >= 0 && index < len(s.rules) {
-		s.rules = append(s.rules[:index], s.rules[index+1:]...)
-		a.emit("rename")
-	}
+	_ = s.app.call(ctx, func() {
+		st := &s.app.fileRename
+		if st.busy {
+			return
+		}
+		if len(st.rules) > 1 && index >= 0 && index < len(st.rules) {
+			st.rules = append(st.rules[:index], st.rules[index+1:]...)
+			s.app.emit("rename")
+		}
+	})
 }
 
-func renameSetDraftBridge(index int, draft string) {
-	a := getApp()
-	if a == nil || a.fileRename.busy {
+// RenameSetDraft updates the manual target filename draft for one row.
+func (s *RenameService) RenameSetDraft(ctx context.Context, index int, draft string) {
+	if s.app == nil {
 		return
 	}
-	if index >= 0 && index < len(a.fileRename.items) {
-		a.fileRename.items[index].draft = draft
-		a.emit("rename")
-	}
+	_ = s.app.call(ctx, func() {
+		if s.app.fileRename.busy {
+			return
+		}
+		if index >= 0 && index < len(s.app.fileRename.items) {
+			s.app.fileRename.items[index].draft = draft
+			s.app.emit("rename")
+		}
+	})
 }
 
-func renamePasteLinesBridge(start int, text string) {
-	if a := getApp(); a != nil {
-		a.renamePasteAt(start, text)
-		a.emit("rename")
-	}
-}
-
-func renameMoveRowBridge(from, to int) {
-	if a := getApp(); a != nil {
-		a.renameReorder([]int{from}, to)
-		a.emit("rename")
-	}
-}
-
-func renameSuggestAIBridge() {
-	if a := getApp(); a != nil {
-		a.renameSuggest()
-	}
-}
-
-func renameSaveAIModelBridge(url, key, model string) {
-	if a := getApp(); a != nil {
-		a.customURL = strings.TrimSpace(url)
-		a.customKey = strings.TrimSpace(key)
-		a.customModel = strings.TrimSpace(model)
-		a.saveRenameModel()
-		a.emit("rename")
-	}
-}
-
-func renameApplyBridge() {
-	a := getApp()
-	if a == nil {
+// RenamePasteLines pastes newline-delimited names starting at the given row index.
+func (s *RenameService) RenamePasteLines(ctx context.Context, start int, text string) {
+	if s.app == nil {
 		return
 	}
-	changes, err := a.renamePlan()
-	if err != nil {
-		a.fileRename.err = err.Error()
-		a.emit("rename")
-		return
-	}
-	a.renameApply(changes, false)
+	_ = s.app.call(ctx, func() {
+		s.app.renamePasteAt(start, text)
+		s.app.emit("rename")
+	})
 }
 
-func renameUndoBridge() {
-	a := getApp()
-	if a == nil || len(a.fileRename.undo) == 0 {
+// RenameMoveRow reorders a file row from one index to another.
+func (s *RenameService) RenameMoveRow(ctx context.Context, from, to int) {
+	if s.app == nil {
 		return
 	}
-	a.renameApply(a.fileRename.undo, true)
+	_ = s.app.call(ctx, func() {
+		s.app.renameReorder([]int{from}, to)
+		s.app.emit("rename")
+	})
+}
+
+// RenameSuggestAI requests AI-generated target filenames in the background.
+func (s *RenameService) RenameSuggestAI(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.renameSuggest()
+	})
+}
+
+// RenameSaveAIModel persists the custom AI model endpoint, API key, and model ID.
+func (s *RenameService) RenameSaveAIModel(ctx context.Context, url, key, model string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.customURL = strings.TrimSpace(url)
+		s.app.customKey = strings.TrimSpace(key)
+		s.app.customModel = strings.TrimSpace(model)
+		s.app.saveRenameModel()
+		s.app.emit("rename")
+	})
+}
+
+// RenameApply validates and executes the planned batch rename operation.
+func (s *RenameService) RenameApply(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		changes, err := s.app.renamePlan()
+		if err != nil {
+			s.app.fileRename.err = err.Error()
+			s.app.emit("rename")
+			return
+		}
+		s.app.renameApply(changes, false)
+	})
+}
+
+// RenameUndo reverts the last applied batch rename operation.
+func (s *RenameService) RenameUndo(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		if len(s.app.fileRename.undo) == 0 {
+			return
+		}
+		s.app.renameApply(s.app.fileRename.undo, true)
+	})
 }

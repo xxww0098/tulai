@@ -16,7 +16,7 @@ import (
 
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 const xiaomiYoupinTestPage = "https://www.xiaomiyoupin.com/detail?gid=185130"
@@ -131,7 +131,7 @@ func TestXiaomiYoupinNetworkObservation(t *testing.T) {
 	page := xiaomiYoupinTestURL(t, xiaomiYoupinTestPage)
 	o := newXiaomiYoupinObserver(page, ctx.Done())
 	request := func(id network.RequestID, method, raw string) {
-		// Camoufox's request event omits Type; the response supplies it.
+		// A request event may omit Type; the response supplies it.
 		o.event(&network.EventRequestWillBeSent{RequestID: id, Request: &network.Request{URL: raw, Method: method}})
 	}
 	response := func(id network.RequestID, raw string, status int64, sw bool) {
@@ -202,20 +202,20 @@ func TestXiaomiYoupinSavedPublicResponse(t *testing.T) {
 
 // Optional real browser check uses a copied runtime and an empty temporary
 // profile. The site, not the test, initiates the gateway request.
-func TestXiaomiYoupinPublicCamoufoxCapture(t *testing.T) {
-	runtime := os.Getenv("TULAI_XIAOMI_YOUPIN_CAMOUFOX_ROOT")
+func TestXiaomiYoupinPublicFingerprintCapture(t *testing.T) {
+	runtime := os.Getenv("TULAI_XIAOMI_YOUPIN_FINGERPRINT_ROOT")
 	if runtime == "" {
-		t.Skip("set TULAI_XIAOMI_YOUPIN_CAMOUFOX_ROOT to a copied temporary runtime")
+		t.Skip("set TULAI_XIAOMI_YOUPIN_FINGERPRINT_ROOT to a copied temporary runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var eventMu sync.Mutex
 	observed := map[string]int{}
-	stopObserve := process.Subscribe(func(e camoufox.Event) {
+	stopObserve := process.Subscribe(func(e fingerprint.Event) {
 		if e.Event != "Network.requestWillBeSent" && e.Event != "Network.responseReceived" {
 			return
 		}
@@ -252,14 +252,14 @@ func TestXiaomiYoupinPublicCamoufoxCapture(t *testing.T) {
 	})
 	defer stopObserve()
 	life, closeTab := context.WithCancel(process.Context())
-	tab := camoufox.PageContext(life, process, process.Page)
+	tab := fingerprint.PageContext(life, process, process.Page)
 	getter := NewHTTPGetter("")
 	getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	getter.client.Transport.(*http.Transport).DialContext = safeDownloadDial
 	page := xiaomiYoupinTestURL(t, xiaomiYoupinTestPage)
 	session := &RenderedSession{process: process, tab: tab, closeTab: closeTab, closeAllocator: process.Close, releaseProfile: func() {}, getter: getter, start: page}
 	defer session.Close()
-	if err := session.run(ctx, camoufox.Navigate(xiaomiYoupinTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(xiaomiYoupinTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	var title string

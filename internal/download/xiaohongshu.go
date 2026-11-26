@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"net/url"
 	"regexp"
 	"strings"
@@ -147,19 +147,19 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 	if err := checkCurrent(); err != nil {
 		return result, true, err
 	}
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, false)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), false)
 	if err != nil {
 		return result, true, err
 	}
 	defer closeChild()
-	run := func(ctx context.Context, actions ...camoufox.Action) error {
+	run := func(ctx context.Context, actions ...fingerprint.Action) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		op, cancel := context.WithTimeout(child, 45*time.Second)
 		stop := context.AfterFunc(ctx, cancel)
 		defer func() { stop(); cancel() }()
-		err := camoufox.Run(op, actions...)
+		err := fingerprint.Run(op, actions...)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -167,7 +167,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 	}
 	var expected atomic.Value
 	expected.Store("")
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
@@ -191,12 +191,12 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 			if allowed {
 				action = fetch.ContinueRequest(paused.RequestID)
 			}
-			_ = camoufox.Run(child, action)
+			_ = fingerprint.Run(child, action)
 		}()
 	})
 	stopInit := context.AfterFunc(ctx, closeChild)
 	initTimer := time.AfterFunc(45*time.Second, closeChild)
-	initErr := camoufox.Run(child, fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}}))
+	initErr := fingerprint.Run(child, fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}}))
 	stopInit()
 	initTimer.Stop()
 	if initErr != nil {
@@ -205,7 +205,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 		}
 		return result, true, errors.New("无法创建小红书主页采集标签")
 	}
-	if err := run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		if ctx.Err() != nil {
 			return result, true, ctx.Err()
 		}
@@ -298,7 +298,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 		}
 		noteID, _ := xiaohongshuNoteID(target)
 		expected.Store(noteID)
-		if err := run(ctx, camoufox.Navigate(target.String())); err != nil {
+		if err := run(ctx, fingerprint.Navigate(target.String())); err != nil {
 			if ctx.Err() != nil {
 				return result, true, ctx.Err()
 			}
@@ -411,7 +411,7 @@ func (s *RenderedSession) captureXiaohongshuNote(ctx context.Context, page *url.
 	return result, true, err
 }
 
-func xiaohongshuReadNote(ctx context.Context, run func(context.Context, ...camoufox.Action) error, observedURL, id string) (xiaohongshuSnapshot, error) {
+func xiaohongshuReadNote(ctx context.Context, run func(context.Context, ...fingerprint.Action) error, observedURL, id string) (xiaohongshuSnapshot, error) {
 	var snapshot xiaohongshuSnapshot
 	for attempt := 0; attempt < 6; attempt++ {
 		if err := run(ctx, chromedp.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, observedURL, id), &snapshot)); err != nil {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net"
 	"net/http"
@@ -163,7 +163,7 @@ func TestVIPDiscoverMobileConversionAndRedirect(t *testing.T) {
 
 func TestVIPRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	png := filterPNG(t, 1, 1)
 	var imageRequests, badRequests atomic.Int32
@@ -217,10 +217,10 @@ func TestVIPRenderedCapture(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -233,14 +233,14 @@ func TestVIPRenderedCapture(t *testing.T) {
 	if imageRequests.Load() != 1 || badRequests.Load() != 0 {
 		t.Fatalf("image requests=%d bad=%d", imageRequests.Load(), badRequests.Load())
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://detail.vip.com/detail-12-35.html")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://detail.vip.com/detail-12-35.html")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
 	if err != nil || len(got.Items) != 2 || got.Items[0].Metadata["vip_goods_id"] != "35" {
 		t.Fatalf("current product=%+v err=%v", got, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://detail.vip.com/login")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://detail.vip.com/login")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

@@ -82,51 +82,211 @@ func Hash(path string) (Signature, error) {
 	if err != nil {
 		return Signature{}, fmt.Errorf("解码 %s: %w", filepath.Base(path), err)
 	}
-	b := img.Bounds()
-	sig := Signature{
-		Path:   path,
-		Width:  b.Dx(),
-		Height: b.Dy(),
-		Bytes:  int64(len(data)),
-		Pixels: pixelDigest(img),
-	}
-	var gray [sampleSide * sampleSide]uint8
-	sampleGray(img, gray[:])
-	sig.MeanR, sig.MeanG, sig.MeanB = meanColor(img)
-	sig.Flat = variance(gray[:]) < flatVariance
-	sig.Hash = phash(gray[:])
+	sig := HashImage(img)
+	sig.Path = path
+	sig.Bytes = int64(len(data))
+	sig.Pixels = pixelDigest(img)
 	return sig, nil
 }
 
-// pixelDigest 把图画进固定 RGBA 缓冲再取摘要。用 RGBA() 取值，色板图和灰度图也能对齐。
-func pixelDigest(img image.Image) string {
-	b := img.Bounds()
-	buf := make([]byte, 0, b.Dx()*b.Dy()*4)
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			r, g, bl, a := img.At(x, y).RGBA()
-			buf = append(buf, byte(r>>8), byte(g>>8), byte(bl>>8), byte(a>>8))
-		}
+// HashImage 直接对已解码的图像计算感知哈希、平均色与平坦度，不读盘也不算整图像素 SHA-256。
+func HashImage(img image.Image) Signature {
+	sig := PerceptualHashImage(img)
+	if img == nil {
+		return sig
 	}
-	sum := sha256.Sum256(buf)
-	return hex.EncodeToString(sum[:])
+	sig.MeanR, sig.MeanG, sig.MeanB = meanColor(img)
+	return sig
 }
 
-// meanColor 是整图的平均色，按人眼对灰度的权重换算后比较用。
+// PerceptualHashImage 仅计算洗图质检所需的 32×32 感知哈希与平坦度，跳过全图平均色与像素 SHA-256。
+func PerceptualHashImage(img image.Image) Signature {
+	if img == nil {
+		return Signature{Flat: true}
+	}
+	b := img.Bounds()
+	sig := Signature{
+		Width:  b.Dx(),
+		Height: b.Dy(),
+	}
+	var gray [sampleSide * sampleSide]uint8
+	sampleGray(img, gray[:])
+	sig.Flat = variance(gray[:]) < flatVariance
+	sig.Hash = phash(gray[:])
+	return sig
+}
+
+// PerceptualHashFile 解码本地图片并仅计算感知哈希与平坦度，不分配整图 RGBA 缓冲也不算像素 SHA-256。
+func PerceptualHashFile(path string) (Signature, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Signature{}, err
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return Signature{}, fmt.Errorf("解码 %s: %w", filepath.Base(path), err)
+	}
+	sig := PerceptualHashImage(img)
+	sig.Path = path
+	sig.Bytes = int64(len(data))
+	return sig, nil
+}
+
+// pixelDigest 按行流式计算整图像素 RGBA 摘要，避免为 2K/4K 大图分配数十 MB 临时缓冲与逐像素接口拆箱。
+func pixelDigest(img image.Image) string {
+	b := img.Bounds()
+	w := b.Dx()
+	if w <= 0 || b.Dy() <= 0 {
+		sum := sha256.Sum256(nil)
+		return hex.EncodeToString(sum[:])
+	}
+	h := sha256.New()
+	rowBuf := make([]byte, w*4)
+	switch src := img.(type) {
+	case *image.RGBA:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			off := (y-src.Rect.Min.Y)*src.Stride + (b.Min.X-src.Rect.Min.X)*4
+			h.Write(src.Pix[off : off+w*4])
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	case *image.NRGBA:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			off := (y-src.Rect.Min.Y)*src.Stride + (b.Min.X-src.Rect.Min.X)*4
+			pix := src.Pix[off : off+w*4]
+			opaqueRow := true
+			for i := 3; i < len(pix); i += 4 {
+				if pix[i] != 255 {
+					opaqueRow = false
+					break
+				}
+			}
+			if opaqueRow {
+				h.Write(pix)
+				continue
+			}
+			for x := 0; x < w; x++ {
+				i := x * 4
+				a := uint32(pix[i+3])
+				r := (uint32(pix[i]) * 0x101 * a) / 0xff
+				g := (uint32(pix[i+1]) * 0x101 * a) / 0xff
+				bl := (uint32(pix[i+2]) * 0x101 * a) / 0xff
+				rowBuf[i] = byte(r >> 8)
+				rowBuf[i+1] = byte(g >> 8)
+				rowBuf[i+2] = byte(bl >> 8)
+				rowBuf[i+3] = byte(a)
+			}
+			h.Write(rowBuf)
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	case *image.YCbCr:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := 0; x < w; x++ {
+				sx := b.Min.X + x
+				yi := src.YOffset(sx, y)
+				ci := src.COffset(sx, y)
+				r, g, bl := color.YCbCrToRGB(src.Y[yi], src.Cb[ci], src.Cr[ci])
+				i := x * 4
+				rowBuf[i] = r
+				rowBuf[i+1] = g
+				rowBuf[i+2] = bl
+				rowBuf[i+3] = 255
+			}
+			h.Write(rowBuf)
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	case *image.Gray:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			off := (y-src.Rect.Min.Y)*src.Stride + (b.Min.X - src.Rect.Min.X)
+			pix := src.Pix[off : off+w]
+			for x, v := range pix {
+				i := x * 4
+				rowBuf[i], rowBuf[i+1], rowBuf[i+2], rowBuf[i+3] = v, v, v, 255
+			}
+			h.Write(rowBuf)
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	default:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := 0; x < w; x++ {
+				r, g, bl, a := img.At(b.Min.X+x, y).RGBA()
+				i := x * 4
+				rowBuf[i] = byte(r >> 8)
+				rowBuf[i+1] = byte(g >> 8)
+				rowBuf[i+2] = byte(bl >> 8)
+				rowBuf[i+3] = byte(a >> 8)
+			}
+			h.Write(rowBuf)
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	}
+}
+
+// meanColor 是整图的平均色，对常见像素格式走直接切片读取快路径。
 func meanColor(img image.Image) (uint8, uint8, uint8) {
 	b := img.Bounds()
-	var rs, gs, bs, n uint64
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			r, g, bl, _ := img.At(x, y).RGBA()
-			rs += uint64(r >> 8)
-			gs += uint64(g >> 8)
-			bs += uint64(bl >> 8)
-			n++
-		}
-	}
+	w, h := b.Dx(), b.Dy()
+	n := uint64(w) * uint64(h)
 	if n == 0 {
 		return 0, 0, 0
+	}
+	var rs, gs, bs uint64
+	switch src := img.(type) {
+	case *image.RGBA:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			off := (y-src.Rect.Min.Y)*src.Stride + (b.Min.X-src.Rect.Min.X)*4
+			pix := src.Pix[off : off+w*4]
+			for i := 0; i < len(pix); i += 4 {
+				rs += uint64(pix[i])
+				gs += uint64(pix[i+1])
+				bs += uint64(pix[i+2])
+			}
+		}
+	case *image.NRGBA:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			off := (y-src.Rect.Min.Y)*src.Stride + (b.Min.X-src.Rect.Min.X)*4
+			pix := src.Pix[off : off+w*4]
+			for i := 0; i < len(pix); i += 4 {
+				a := uint32(pix[i+3])
+				if a == 255 {
+					rs += uint64(pix[i])
+					gs += uint64(pix[i+1])
+					bs += uint64(pix[i+2])
+				} else if a > 0 {
+					rs += uint64(((uint32(pix[i]) * 0x101 * a) / 0xff) >> 8)
+					gs += uint64(((uint32(pix[i+1]) * 0x101 * a) / 0xff) >> 8)
+					bs += uint64(((uint32(pix[i+2]) * 0x101 * a) / 0xff) >> 8)
+				}
+			}
+		}
+	case *image.YCbCr:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				yi := src.YOffset(x, y)
+				ci := src.COffset(x, y)
+				r, g, bl := color.YCbCrToRGB(src.Y[yi], src.Cb[ci], src.Cr[ci])
+				rs += uint64(r)
+				gs += uint64(g)
+				bs += uint64(bl)
+			}
+		}
+	case *image.Gray:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			off := (y-src.Rect.Min.Y)*src.Stride + (b.Min.X - src.Rect.Min.X)
+			pix := src.Pix[off : off+w]
+			for _, v := range pix {
+				rs += uint64(v)
+			}
+		}
+		gs, bs = rs, rs
+	default:
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				r, g, bl, _ := img.At(x, y).RGBA()
+				rs += uint64(r >> 8)
+				gs += uint64(g >> 8)
+				bs += uint64(bl >> 8)
+			}
+		}
 	}
 	return uint8(rs / n), uint8(gs / n), uint8(bs / n)
 }
@@ -136,6 +296,20 @@ func sampleGray(img image.Image, out []uint8) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w <= 0 || h <= 0 {
+		return
+	}
+	switch src := img.(type) {
+	case *image.NRGBA:
+		sampleGrayNRGBA(src, b, w, h, out)
+		return
+	case *image.RGBA:
+		sampleGrayRGBA(src, b, w, h, out)
+		return
+	case *image.YCbCr:
+		sampleGrayYCbCr(src, b, w, h, out)
+		return
+	case *image.Gray:
+		sampleGray8(src, b, w, h, out)
 		return
 	}
 	for gy := 0; gy < sampleSide; gy++ {
@@ -162,6 +336,137 @@ func sampleGray(img image.Image, out []uint8) {
 				continue
 			}
 			out[gy*sampleSide+gx] = uint8(sum / n >> 8)
+		}
+	}
+}
+
+func gray16FromRGB8(r, g, b uint8) uint64 {
+	r16 := uint32(r) * 0x101
+	g16 := uint32(g) * 0x101
+	b16 := uint32(b) * 0x101
+	return uint64((19595*r16 + 38470*g16 + 7471*b16 + 1<<15) >> 16)
+}
+
+func sampleGrayRGBA(src *image.RGBA, b image.Rectangle, w, h int, out []uint8) {
+	for gy := 0; gy < sampleSide; gy++ {
+		y0 := b.Min.Y + gy*h/sampleSide
+		y1 := b.Min.Y + (gy+1)*h/sampleSide
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		for gx := 0; gx < sampleSide; gx++ {
+			x0 := b.Min.X + gx*w/sampleSide
+			x1 := b.Min.X + (gx+1)*w/sampleSide
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var sum, n uint64
+			for y := y0; y < y1; y++ {
+				row := (y - src.Rect.Min.Y) * src.Stride
+				for x := x0; x < x1; x++ {
+					off := row + (x-src.Rect.Min.X)*4
+					sum += gray16FromRGB8(src.Pix[off], src.Pix[off+1], src.Pix[off+2])
+					n++
+				}
+			}
+			if n > 0 {
+				out[gy*sampleSide+gx] = uint8(sum / n >> 8)
+			}
+		}
+	}
+}
+
+func sampleGrayNRGBA(src *image.NRGBA, b image.Rectangle, w, h int, out []uint8) {
+	for gy := 0; gy < sampleSide; gy++ {
+		y0 := b.Min.Y + gy*h/sampleSide
+		y1 := b.Min.Y + (gy+1)*h/sampleSide
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		for gx := 0; gx < sampleSide; gx++ {
+			x0 := b.Min.X + gx*w/sampleSide
+			x1 := b.Min.X + (gx+1)*w/sampleSide
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var sum, n uint64
+			for y := y0; y < y1; y++ {
+				row := (y - src.Rect.Min.Y) * src.Stride
+				for x := x0; x < x1; x++ {
+					off := row + (x-src.Rect.Min.X)*4
+					a := uint32(src.Pix[off+3])
+					if a == 0xff {
+						sum += gray16FromRGB8(src.Pix[off], src.Pix[off+1], src.Pix[off+2])
+					} else if a > 0 {
+						r16 := (uint32(src.Pix[off]) * 0x101 * a) / 0xff
+						g16 := (uint32(src.Pix[off+1]) * 0x101 * a) / 0xff
+						b16 := (uint32(src.Pix[off+2]) * 0x101 * a) / 0xff
+						sum += uint64((19595*r16 + 38470*g16 + 7471*b16 + 1<<15) >> 16)
+					}
+					n++
+				}
+			}
+			if n > 0 {
+				out[gy*sampleSide+gx] = uint8(sum / n >> 8)
+			}
+		}
+	}
+}
+
+func sampleGrayYCbCr(src *image.YCbCr, b image.Rectangle, w, h int, out []uint8) {
+	for gy := 0; gy < sampleSide; gy++ {
+		y0 := b.Min.Y + gy*h/sampleSide
+		y1 := b.Min.Y + (gy+1)*h/sampleSide
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		for gx := 0; gx < sampleSide; gx++ {
+			x0 := b.Min.X + gx*w/sampleSide
+			x1 := b.Min.X + (gx+1)*w/sampleSide
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var sum, n uint64
+			for y := y0; y < y1; y++ {
+				yiBase := src.YOffset(x0, y)
+				for x := x0; x < x1; x++ {
+					ci := src.COffset(x, y)
+					r, g, bl, _ := color.YCbCr{Y: src.Y[yiBase+x-x0], Cb: src.Cb[ci], Cr: src.Cr[ci]}.RGBA()
+					sum += uint64((19595*r + 38470*g + 7471*bl + 1<<15) >> 16)
+					n++
+				}
+			}
+			if n > 0 {
+				out[gy*sampleSide+gx] = uint8(sum / n >> 8)
+			}
+		}
+	}
+}
+
+func sampleGray8(src *image.Gray, b image.Rectangle, w, h int, out []uint8) {
+	for gy := 0; gy < sampleSide; gy++ {
+		y0 := b.Min.Y + gy*h/sampleSide
+		y1 := b.Min.Y + (gy+1)*h/sampleSide
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		for gx := 0; gx < sampleSide; gx++ {
+			x0 := b.Min.X + gx*w/sampleSide
+			x1 := b.Min.X + (gx+1)*w/sampleSide
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			var sum, n uint64
+			for y := y0; y < y1; y++ {
+				row := (y - src.Rect.Min.Y) * src.Stride
+				for x := x0; x < x1; x++ {
+					sum += uint64(src.Pix[row+x-src.Rect.Min.X]) * 0x101
+					n++
+				}
+			}
+			if n > 0 {
+				out[gy*sampleSide+gx] = uint8(sum / n >> 8)
+			}
 		}
 	}
 }

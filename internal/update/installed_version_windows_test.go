@@ -3,6 +3,7 @@
 package update
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"go.yaml.in/yaml/v3"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -107,18 +107,18 @@ func TestSyncWindowsInstalledVersionDoesNotCreateRegistration(t *testing.T) {
 }
 
 func TestWindowsUninstallKeyMatchesAppIdentifier(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "cmd", "tulai", "nsgo.yaml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "mygo.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var config struct {
-		ID string `yaml:"id"`
+		Identifier string `json:"identifier"`
 	}
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	want := `Software\Microsoft\Windows\CurrentVersion\Uninstall\` + config.ID
-	if config.ID == "" || windowsUninstallKey != want {
+	want := `Software\Microsoft\Windows\CurrentVersion\Uninstall\` + config.Identifier
+	if config.Identifier == "" || windowsUninstallKey != want {
 		t.Fatalf("uninstall key = %q, want %q", windowsUninstallKey, want)
 	}
 }

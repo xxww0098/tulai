@@ -1,7 +1,14 @@
 package ui
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -145,10 +152,288 @@ func TestRequeueIgnoredWhileRunning(t *testing.T) {
 	}
 }
 
+func TestClearWorkbenchResultsClearsQueuePreservesFilesAndPersists(t *testing.T) {
+	a, st, srcs, outs := setupRewashTestApp(t, 3)
+
+	// Requeue one task and open lightbox preview on a result file to test full cleanup.
+	requeueDoneTasksBridge([]int{1})
+	a.previewOn = true
+	a.previewPath = outs[1]
+
+	clearWorkbenchResultsBridge()
+
+	wb := getWorkbenchStateBridge()
+	if wb.DoneCount != 0 || wb.PendingCount != 0 || wb.TotalCount != 0 {
+		t.Fatalf("expected empty queue after clear, got done=%d pending=%d total=%d", wb.DoneCount, wb.PendingCount, wb.TotalCount)
+	}
+	if wb.Progress != 0 || wb.ProgText != "" {
+		t.Fatalf("expected progress reset after clear, got progress=%v progText=%q", wb.Progress, wb.ProgText)
+	}
+	if wb.CanUndoRewash || wb.RewashUndoCount != 0 {
+		t.Fatalf("expected rewash undo cleared, got can=%v count=%d", wb.CanUndoRewash, wb.RewashUndoCount)
+	}
+	if wb.PreviewOn || wb.PreviewPath != "" {
+		t.Fatalf("expected preview closed for cleared result, got on=%v path=%q", wb.PreviewOn, wb.PreviewPath)
+	}
+	if wb.SourcesTotal != 3 {
+		t.Fatalf("expected sources preserved after clearing results, got %d", wb.SourcesTotal)
+	}
+	if a.rewashCounts[filepath.Clean(srcs[0])] != 0 {
+		t.Fatalf("expected rewash count cleared for %s, got %d", srcs[0], a.rewashCounts[filepath.Clean(srcs[0])])
+	}
+	for _, out := range outs {
+		if _, err := os.Stat(out); err != nil {
+			t.Fatalf("expected local output file preserved (%s): %v", out, err)
+		}
+	}
+
+	sess, items, ok, err := st.ActiveSession(store.PageWash)
+	if err != nil || !ok {
+		t.Fatalf("expected persisted wash session, ok=%v err=%v", ok, err)
+	}
+	if len(items) != 0 || sess.Progress != 0 || sess.ProgText != "" {
+		t.Fatalf("expected cleared tasks persisted, got items=%d progress=%v progText=%q", len(items), sess.Progress, sess.ProgText)
+	}
+	if len(sess.Sources) != 3 {
+		t.Fatalf("expected persisted sources preserved, got %d", len(sess.Sources))
+	}
+
+	// Reopening app from same SQLite store stays cleared.
+	reopened := NewApp(st, a.manager, a.engine, a.dataRoot)
+	SetTestApp(reopened)
+	wbReopened := getWorkbenchStateBridge()
+	if wbReopened.DoneCount != 0 || wbReopened.TotalCount != 0 {
+		t.Fatalf("expected reopened app to stay cleared, got done=%d total=%d", wbReopened.DoneCount, wbReopened.TotalCount)
+	}
+}
+
+func TestClearWorkbenchResultsIgnoredWhileRunning(t *testing.T) {
+	a, _, _, _ := setupRewashTestApp(t, 2)
+	a.running = true
+
+	clearWorkbenchResultsBridge()
+
+	wb := getWorkbenchStateBridge()
+	if wb.DoneCount != 2 || wb.TotalCount != 2 {
+		t.Fatalf("expected clear results ignored while running, got done=%d total=%d", wb.DoneCount, wb.TotalCount)
+	}
+}
+
+func TestClearWorkbenchResultsOnlyAffectsActivePage(t *testing.T) {
+	a, _, _, _ := setupRewashTestApp(t, 2)
+
+	// Populate parked free-generation page with a completed task.
+	setWorkbenchFieldBridge("mode", "free")
+	a.queue = []tasks.Task{
+		{Index: 1, Platform: "豆包", Prompt: "cat", Status: tasks.StatusSuccess, Results: []string{"/tmp/cat.png"}},
+	}
+
+	// Switch back to wash and clear wash results only.
+	setWorkbenchFieldBridge("mode", "wash")
+	clearWorkbenchResultsBridge()
+
+	if wbWash := getWorkbenchStateBridge(); wbWash.TotalCount != 0 || wbWash.DoneCount != 0 {
+		t.Fatalf("expected wash results cleared, got total=%d done=%d", wbWash.TotalCount, wbWash.DoneCount)
+	}
+
+	setWorkbenchFieldBridge("mode", "free")
+	if wbFree := getWorkbenchStateBridge(); wbFree.TotalCount != 1 || wbFree.DoneCount != 1 {
+		t.Fatalf("expected parked free-gen results untouched, got total=%d done=%d", wbFree.TotalCount, wbFree.DoneCount)
+	}
+}
+
+func TestCanRewashAndRequeueRestrictedToWashPage(t *testing.T) {
+	a, _, _, outs := setupRewashTestApp(t, 1)
+
+	for _, mode := range []string{"free", "fission"} {
+		t.Run(mode, func(t *testing.T) {
+			setWorkbenchFieldBridge("mode", mode)
+			a.sources = []sourceImage{{Path: "/tmp/mother.png"}}
+			a.queue = []tasks.Task{
+				{Index: 1, Platform: "豆包", Prompt: "测试", Images: []string{"/tmp/mother.png"}, Status: tasks.StatusSuccess, Results: []string{outs[0]}},
+			}
+			wb := getWorkbenchStateBridge()
+			if len(wb.DoneTiles) != 1 || wb.DoneTiles[0].CanRewash {
+				t.Fatalf("mode=%s: CanRewash must be false, got %+v", mode, wb.DoneTiles)
+			}
+			requeueDoneTasksBridge([]int{1})
+			wbAfter := getWorkbenchStateBridge()
+			if wbAfter.DoneCount != 1 || wbAfter.PendingCount != 0 || wbAfter.CanUndoRewash {
+				t.Fatalf("mode=%s: RequeueDoneTasks must be ignored, got done=%d pending=%d undo=%v", mode, wbAfter.DoneCount, wbAfter.PendingCount, wbAfter.CanUndoRewash)
+			}
+			if len(a.sources) != 1 || a.sources[0].Path != "/tmp/mother.png" {
+				t.Fatalf("mode=%s: RequeueDoneTasks polluted sources: %+v", mode, a.sources)
+			}
+		})
+	}
+
+	// UndoRequeueTasks must sync tab -> statePage before guarding pageWash.
+	setWorkbenchFieldBridge("mode", "wash")
+	requeueDoneTasksBridge([]int{1})
+	a.tab = pageFission // Simulate tab switch before syncPage
+	undoRequeueTasksBridge()
+	if a.statePage != pageFission {
+		t.Fatalf("expected UndoRequeueTasks to sync to pageFission, got %d", a.statePage)
+	}
+	setWorkbenchFieldBridge("mode", "wash")
+	if wb := getWorkbenchStateBridge(); !wb.CanUndoRewash || wb.PendingCount != 1 {
+		t.Fatalf("UndoRequeueTasks invoked from fission tab must not mutate wash queue: %+v", wb)
+	}
+}
+
 func createEmptyTestFile(p string) error {
 	_, err := EnsureOutputDir(filepath.Dir(p))
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(p, []byte("png"), 0o644)
+}
+
+func TestDeleteWorkbenchResultRemoveAndTrash(t *testing.T) {
+	a, st, srcs, outs := setupRewashTestApp(t, 2)
+	host := &stubDesktopHost{}
+	a.BindHost(host)
+	svc := &WorkbenchService{app: a}
+
+	// Add a second output image to task 1 to test single-image removal within multi-output tasks
+	extraOut := filepath.Join(filepath.Dir(outs[0]), "out_01_b.png")
+	if err := createEmptyTestFile(extraOut); err != nil {
+		t.Fatal(err)
+	}
+	a.queue[0].Results = []string{outs[0], extraOut}
+	a.previewOn = true
+	a.previewPath = outs[0]
+
+	// 1. Remove from list only (trashFile=false): keeps file on disk, removes only matching result
+	if err := svc.DeleteWorkbenchResult(context.Background(), 1, outs[0], false); err != nil {
+		t.Fatalf("DeleteWorkbenchResult(remove only) failed: %v", err)
+	}
+	if len(host.trashed) != 0 {
+		t.Fatalf("expected no trash calls when trashFile=false, got %v", host.trashed)
+	}
+	if _, err := os.Stat(outs[0]); err != nil {
+		t.Fatalf("expected local file preserved when trashFile=false: %v", err)
+	}
+	if a.previewOn || a.previewPath != "" {
+		t.Fatalf("expected preview closed when previewed tile removed")
+	}
+	wb := getWorkbenchStateBridge()
+	if wb.DoneCount != 2 || len(a.queue) != 2 || len(a.queue[0].Results) != 1 || a.queue[0].Results[0] != extraOut {
+		t.Fatalf("expected only first output removed from task 1, got done=%d queue=%+v", wb.DoneCount, a.queue)
+	}
+
+	// 2. Delete with trashFile=true on task 2: calls TrashPath, removes task, resets source Washed
+	if err := svc.DeleteWorkbenchResult(context.Background(), 2, outs[1], true); err != nil {
+		t.Fatalf("DeleteWorkbenchResult(trash) failed: %v", err)
+	}
+	if len(host.trashed) != 1 || host.trashed[0] != outs[1] {
+		t.Fatalf("expected TrashPath called with %q, got %v", outs[1], host.trashed)
+	}
+	wb = getWorkbenchStateBridge()
+	if wb.DoneCount != 1 || len(a.queue) != 1 {
+		t.Fatalf("expected task 2 removed, got done=%d queue=%d", wb.DoneCount, len(a.queue))
+	}
+	if a.sources[1].Path != srcs[1] || a.sources[1].Washed || a.sources[1].WashOutput != "" {
+		t.Fatalf("expected washed state reset for trashed wash output, got %+v", a.sources[1])
+	}
+
+	// Verify persisted session reflects the deletions
+	_, savedTasks, ok, err := st.ActiveSession(store.PageWash)
+	if err != nil || !ok {
+		t.Fatalf("expected active session persisted, ok=%v err=%v", ok, err)
+	}
+	if len(savedTasks) != 1 || savedTasks[0].Outputs != extraOut {
+		t.Fatalf("expected persisted session updated, got %+v", savedTasks)
+	}
+
+	// 3. Refuses arbitrary path not belonging to a.queue
+	outside := filepath.Join(t.TempDir(), "secret.png")
+	if err := createEmptyTestFile(outside); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteWorkbenchResult(context.Background(), 999, outside, true); err != nil {
+		t.Fatalf("unexpected error on unmatched target: %v", err)
+	}
+	if len(host.trashed) != 1 {
+		t.Fatalf("must not trash unverified path outside queue, trashed=%v", host.trashed)
+	}
+
+	// 4. Trash failure keeps task intact in queue
+	host.trashErr = errors.New("recycle bin unavailable")
+	if err := svc.DeleteWorkbenchResult(context.Background(), 1, extraOut, true); err == nil {
+		t.Fatalf("expected trash error propagated")
+	}
+	if len(a.queue) != 1 {
+		t.Fatalf("queue must stay intact when TrashPath fails")
+	}
+	host.trashErr = nil
+
+	// 5. Ignored while running
+	a.running = true
+	if err := svc.DeleteWorkbenchResult(context.Background(), 1, extraOut, false); err != nil {
+		t.Fatalf("unexpected error while running: %v", err)
+	}
+	if len(a.queue) != 1 {
+		t.Fatalf("must ignore delete while running")
+	}
+}
+
+func TestCoreCopyImageAndEditOpenPath(t *testing.T) {
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	img.Set(2, 2, color.RGBA{R: 20, G: 120, B: 240, A: 255})
+
+	pngPath := filepath.Join(dir, "sample.png")
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pngPath, pngBuf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	jpgPath := filepath.Join(dir, "sample.jpg")
+	var jpgBuf bytes.Buffer
+	if err := jpeg.Encode(&jpgBuf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jpgPath, jpgBuf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{}
+	host := &stubDesktopHost{}
+	a.BindHost(host)
+
+	coreSvc := &CoreService{app: a}
+	if err := coreSvc.CopyImage(context.Background(), pngPath); err != nil {
+		t.Fatalf("CopyImage(png) failed: %v", err)
+	}
+	if !bytes.Equal(host.clipboardImage, pngBuf.Bytes()) {
+		t.Fatalf("expected PNG bytes passed directly to clipboard")
+	}
+
+	host.clipboardImage = nil
+	if err := coreSvc.CopyImage(context.Background(), jpgPath); err != nil {
+		t.Fatalf("CopyImage(jpg) failed: %v", err)
+	}
+	if !bytes.HasPrefix(host.clipboardImage, pngHeaderMagic) {
+		t.Fatalf("expected JPEG converted to PNG bytes for clipboard, got %d bytes", len(host.clipboardImage))
+	}
+
+	// EditOpenPath appends and selects newly added image even when filmstrip is non-empty
+	editSvc := &ImageEditService{app: a}
+	editSvc.EditAddPaths(context.Background(), []string{pngPath})
+	if a.edit.selected != 0 || len(a.edit.files) != 1 {
+		t.Fatalf("unexpected initial filmstrip state: selected=%d len=%d", a.edit.selected, len(a.edit.files))
+	}
+	editSvc.EditOpenPath(context.Background(), jpgPath)
+	if len(a.edit.files) != 2 || a.edit.selected != 1 {
+		t.Fatalf("expected EditOpenPath to append and select jpgPath, got selected=%d len=%d", a.edit.selected, len(a.edit.files))
+	}
+	// Re-opening existing image selects it without duplicating
+	editSvc.EditOpenPath(context.Background(), pngPath)
+	if len(a.edit.files) != 2 || a.edit.selected != 0 {
+		t.Fatalf("expected EditOpenPath to select existing pngPath without dupes, got selected=%d len=%d", a.edit.selected, len(a.edit.files))
+	}
 }

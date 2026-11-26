@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 func TestTaskTargetStaysInBackground(t *testing.T) {
@@ -134,7 +134,7 @@ func TestTypeChunksKeepTheWholePrompt(t *testing.T) {
 		t.Fatalf("chunks = %q", got)
 	}
 	parts := typeChunks("123456789012345")
-	if len(parts) != 2 || parts[0] != "12345678" || parts[1] != "9012345" {
+	if len(parts) != 1 || parts[0] != "123456789012345" {
 		t.Fatalf("parts = %#v", parts)
 	}
 	if len(typeChunks("")) != 1 || typeChunks("")[0] != "" {
@@ -172,7 +172,7 @@ func TestOpenURLKeepsPageAfterDisconnect(t *testing.T) {
 	if testing.Short() {
 		t.Skip("跳过 Chrome E2E")
 	}
-	_, wsURL := camoufoxtest.Start(t, "about:blank")
+	_, wsURL := fingerprinttest.Start(t, "about:blank")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	requested := make(chan struct{}, 3)
@@ -258,11 +258,18 @@ func TestChooseLoginPagePrefersTheVisibleBlankTab(t *testing.T) {
 		t.Fatal("not the login site")
 	}
 	qianwen := "https://www.tongyi.com/"
-	if !landed("https://www.qianwen.com/?ch=tongyi_redirect", qianwen) || !landed("https://chat.qwen.ai/", qianwen) {
+	if !landed("https://www.qianwen.com/?ch=tongyi_redirect", qianwen) {
 		t.Fatal("qianwen login redirect should count as the tongyi page")
 	}
-	if landed("https://not-qianwen.com/", qianwen) || landed("https://www.doubao.com/chat/", qianwen) {
-		t.Fatal("unrelated host counted as qianwen")
+	if landed("https://chat.qwen.ai/", qianwen) || landed("https://not-qianwen.com/", qianwen) || landed("https://www.doubao.com/chat/", qianwen) {
+		t.Fatal("international qwen or unrelated host must not count as domestic qianwen")
+	}
+	qwenIntl := "https://chat.qwen.ai/"
+	if !landed("https://chat.qwen.ai/c/abc-123", qwenIntl) {
+		t.Fatal("qwen.ai chat url should count as qwen_intl")
+	}
+	if landed("https://www.tongyi.com/", qwenIntl) || landed("https://www.qianwen.com/", qwenIntl) || landed("https://www.doubao.com/chat/", qwenIntl) {
+		t.Fatal("domestic qianwen or doubao must not count as qwen_intl")
 	}
 }
 
@@ -273,6 +280,7 @@ func TestQianwenKeepsOneTab(t *testing.T) {
 		{ID: "c", URL: "https://www.tongyi.com/"},
 		{ID: "d", URL: "about:blank"},
 		{ID: "e", URL: "https://www.doubao.com/chat/"},
+		{ID: "f", URL: "https://chat.qwen.ai/c/intl-1"},
 	}
 	keep, closeIDs, create := chooseBackgroundPage(pages, "https://www.tongyi.com/")
 	if create || keep != "c" {
@@ -282,7 +290,7 @@ func TestQianwenKeepsOneTab(t *testing.T) {
 	for _, id := range closeIDs {
 		closed[id] = true
 	}
-	if !closed["a"] || !closed["b"] || !closed["d"] || closed["c"] || closed["e"] || len(closeIDs) != 3 {
+	if !closed["a"] || !closed["b"] || !closed["d"] || closed["c"] || closed["e"] || closed["f"] || len(closeIDs) != 3 {
 		t.Fatalf("close=%v", closeIDs)
 	}
 	extra := extraPages(pages, "https://www.tongyi.com/", "b")
@@ -290,7 +298,18 @@ func TestQianwenKeepsOneTab(t *testing.T) {
 	for _, id := range extra {
 		left[id] = true
 	}
-	if !left["a"] || !left["c"] || !left["d"] || left["b"] || left["e"] {
+	if !left["a"] || !left["c"] || !left["d"] || left["b"] || left["e"] || left["f"] {
 		t.Fatalf("extra=%v", extra)
+	}
+	keepIntl, closeIntl, createIntl := chooseBackgroundPage(pages, "https://chat.qwen.ai/")
+	if createIntl || keepIntl != "f" {
+		t.Fatalf("intl keep=%s create=%v close=%v", keepIntl, createIntl, closeIntl)
+	}
+	closedIntl := map[string]bool{}
+	for _, id := range closeIntl {
+		closedIntl[id] = true
+	}
+	if !closedIntl["d"] || closedIntl["a"] || closedIntl["b"] || closedIntl["c"] || closedIntl["e"] || closedIntl["f"] || len(closeIntl) != 1 {
+		t.Fatalf("intl close=%v", closeIntl)
 	}
 }

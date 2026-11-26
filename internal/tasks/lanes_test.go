@@ -55,13 +55,6 @@ func TestMapLaneStates(t *testing.T) {
 			f.LastError = "需要安全验证"
 			return f
 		}(), state: LaneCaptcha, action: "去处理"},
-		{name: "extension offline", fact: func() LaneFact {
-			f := base
-			f.Extension = true
-			f.LoggedIn = false
-			f.Offline = true
-			return f
-		}(), state: LaneOffline},
 		{name: "local offline", fact: func() LaneFact {
 			f := base
 			f.Offline = true
@@ -88,27 +81,6 @@ func TestMapLaneStates(t *testing.T) {
 				t.Fatalf("lane %+v", got)
 			}
 		})
-	}
-}
-
-func TestAssembleSharesExtensionSlot(t *testing.T) {
-	now := time.Now()
-	rows := []store.Browser{
-		{ID: 2, Platform: "千问", Name: "甲", ExtAccount: "p", IsLoggedIn: true, Health: store.HealthReady},
-		{ID: 5, Platform: "豆包", Name: "甲", ExtAccount: "p", IsLoggedIn: true, Health: store.HealthReady},
-	}
-	board := Assemble(rows, LaneLive{
-		Busy: map[int64]int64{2: 5},
-		Jobs: map[int64]LaneJob{5: {Index: 1, Prompt: "猫", Image: "a.png", Started: now}},
-	}, 20, now)
-	if len(board.Lanes) != 2 || board.Active != 2 {
-		t.Fatalf("board %+v", board)
-	}
-	if board.Lanes[0].State != LaneRunning || board.Lanes[0].Job != nil {
-		t.Fatalf("sibling %+v", board.Lanes[0])
-	}
-	if board.Lanes[1].State != LaneRunning || board.Lanes[1].Job == nil || board.Lanes[1].Job.Prompt != "猫" {
-		t.Fatalf("worker %+v", board.Lanes[1])
 	}
 }
 

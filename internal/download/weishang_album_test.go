@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -263,7 +263,7 @@ func TestWeishangProductFailuresAndPartial(t *testing.T) {
 
 func TestWeishangRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -276,19 +276,19 @@ func TestWeishangRenderedCapture(t *testing.T) {
 	defer session.Close()
 	const page = `<html><title>product</title><img src="https://xcimg.szwego.com/img/recommended.jpg"></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == weishangTestBase {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(page)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -300,7 +300,7 @@ func TestWeishangRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(weishangTestPage)
-	if err := session.run(ctx, camoufox.Navigate(weishangTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(weishangTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
@@ -337,7 +337,7 @@ func TestWeishangRenderedCapture(t *testing.T) {
 	}
 	resp.Body.Close()
 	albumURL := weishangTestBase + "#/shop_detail/A202006012055527750026253"
-	if err := session.run(ctx, camoufox.Navigate(albumURL)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(albumURL)); err != nil {
 		t.Fatal(err)
 	}
 	album, err := session.Capture(ctx)

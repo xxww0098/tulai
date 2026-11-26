@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCamoufoxAutomationSignals(t *testing.T) {
+func TestFingerprintAutomationSignals(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; worker-src blob:")
 		if r.URL.Path == "/probe.js" {
@@ -71,7 +71,7 @@ func TestCamoufoxAutomationSignals(t *testing.T) {
 			t.Fatalf("webdriver exposed in a page, iframe or worker: %s", value)
 		}
 	}
-	if probe.Base != 3 || probe.Literal != "__tulai stays unchanged" || probe.CSP != "blocked" || probe.StackReads != 0 || len(probe.Names) != 0 || len(probe.FrameNames) != 0 || strings.Contains(strings.ToLower(probe.UserAgent), "headless") {
+	if probe.Base != 4 || probe.Literal != "__tulai stays unchanged" || probe.CSP != "blocked" || probe.StackReads != 0 || len(probe.Names) != 0 || len(probe.FrameNames) != 0 || strings.Contains(strings.ToLower(probe.UserAgent), "headless") {
 		t.Fatalf("automation detection probe reported a signal: %s", value)
 	}
 	value, err = s.Evaluate(`(()=>{Object.defineProperty(document.defaultView,'__tulaiPageCanary',{value:'site',configurable:false,writable:false});window.__tulaiPageCanary='private';return [window.__tulaiPageCanary,document.defaultView.__tulaiPageCanary]})()`)

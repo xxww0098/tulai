@@ -22,7 +22,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	xhtml "golang.org/x/net/html"
 )
 
@@ -500,19 +500,19 @@ func TestBingDetailLive(t *testing.T) {
 type bingDetailTestTransport func(*http.Request) (*http.Response, error)
 
 func (f bingDetailTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-func TestBingDetailCamoufoxCapture(t *testing.T) {
-	runtime := os.Getenv("TULAI_BING_DETAIL_CAMOUFOX_ROOT")
+func TestBingDetailFingerprintCapture(t *testing.T) {
+	runtime := os.Getenv("TULAI_BING_DETAIL_FINGERPRINT_ROOT")
 	if runtime == "" {
-		t.Skip("set TULAI_BING_DETAIL_CAMOUFOX_ROOT to a copied temporary runtime")
+		t.Skip("set TULAI_BING_DETAIL_FINGERPRINT_ROOT to a copied temporary runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(process.Context())
-	tab := camoufox.PageContext(life, process, process.Page)
+	tab := fingerprint.PageContext(life, process, process.Page)
 	getter := NewHTTPGetter("")
 	getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	var sameCookie, foreignCookie atomic.Bool
@@ -530,25 +530,25 @@ func TestBingDetailCamoufoxCapture(t *testing.T) {
 	page, _ := url.Parse(root)
 	session := &RenderedSession{process: process, tab: tab, closeTab: closeTab, closeAllocator: process.Close, releaseProfile: func() {}, getter: getter, start: page}
 	defer session.Close()
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == root {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(bingDetailTestDocument(bingDetailTestID, bingDetailTestThumb))))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			_ = camoufox.Run(session.tab, action)
+			_ = fingerprint.Run(session.tab, action)
 		}()
 	})
 	if err := session.run(ctx, fetch.Enable()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(root)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(root)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(c context.Context) error {

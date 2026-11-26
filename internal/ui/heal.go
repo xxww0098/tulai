@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/browser"
-	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
@@ -25,7 +25,7 @@ func (a *App) wireHealing() {
 }
 
 func (a *App) probeAccount(ctx context.Context, b store.Browser) (string, error) {
-	if b.ExtAccount != "" || !accountWindowOpen(b) {
+	if !accountWindowOpen(b) {
 		return "unknown", nil
 	}
 	return cdp.ProbeLogin(ctx, browser.AccountEndpoint(b))
@@ -40,7 +40,7 @@ func (a *App) ensureAccountPage(ctx context.Context, b store.Browser) error {
 		}
 		return err
 	}
-	if a == nil || b.ExtAccount != "" || a.manager == nil {
+	if a == nil || a.manager == nil {
 		return nil
 	}
 	if a.manager.IsHeadless(b.ID) && !a.browserDrawerBusy(b.ID) {
@@ -127,19 +127,16 @@ func accountLabel(b store.Browser) string {
 }
 
 func (a *App) solveSlider(ctx context.Context, b store.Browser) error {
-	if b.Engine == browser.KindChromeCDP {
-		return captcha.ErrVerificationRequired
-	}
-	if b.Platform != "千问" || b.Port <= 0 {
+	if (b.Platform != "千问" && b.Platform != "千问国际") || b.Port <= 0 {
 		return errors.New("没有滑块处理")
 	}
-	return captcha.SolveQianwenSliderAt(ctx, camoufox.Endpoint(b.Port))
+	return captcha.ErrVerificationRequired
 }
 
 func accountWindowOpen(b store.Browser) bool {
 	if b.Port <= 0 {
 		return false
 	}
-	_, err := camoufox.Find(browser.AccountEndpoint(b))
+	_, err := fingerprint.Find(browser.AccountEndpoint(b))
 	return err == nil
 }

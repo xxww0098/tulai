@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 func TestPageViewKeepsBusyTaskPage(t *testing.T) {
@@ -29,7 +29,7 @@ func TestPageViewKeepsBusyTaskPage(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	proc, endpoint := camoufoxtest.Start(t, server.URL)
+	proc, endpoint := fingerprinttest.Start(t, server.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	view, err := AttachPageView(ctx, endpoint, server.URL)
@@ -42,7 +42,7 @@ func TestPageViewKeepsBusyTaskPage(t *testing.T) {
 		}
 	}()
 	closed := make(chan struct{}, 1)
-	unsubscribe := proc.Subscribe(func(event camoufox.Event) {
+	unsubscribe := proc.Subscribe(func(event fingerprint.Event) {
 		if event.Event == "closed" && event.Target == proc.Page {
 			closed <- struct{}{}
 		}
@@ -115,7 +115,7 @@ func TestPageViewControlsExistingPageAndDetaches(t *testing.T) {
 		fmt.Fprint(w, `<!doctype html><title>drawer fixture</title><body style="margin:0"><input style="position:absolute;left:20px;top:20px;width:300px;height:40px"><button style="position:absolute;left:350px;top:20px;width:100px;height:40px" onclick="document.title='clicked'">click</button><div style="height:350px;background:#ee2222"></div><div style="height:2000px;background:#2222ee"></div></body>`)
 	}))
 	defer srv.Close()
-	_, endpoint := camoufoxtest.Start(t, srv.URL)
+	_, endpoint := fingerprinttest.Start(t, srv.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	view, err := AttachPageView(ctx, endpoint, srv.URL)

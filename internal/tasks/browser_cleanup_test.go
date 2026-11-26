@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/xxww0098/tulai/internal/browser"
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -41,7 +41,7 @@ func TestBatchClosesOnlyUsedBrowsers(t *testing.T) {
 			err = e.run(context.Background(), Options{Platforms: []string{"豆包"}, Prompts: []string{"test"}},
 				func(Task) {}, func(Progress) {}, func(ctx context.Context, task *Task) error {
 					e.mu.Lock()
-					e.runBrowsers[task.BrowserID] = ""
+					e.runBrowsers[task.BrowserID] = true
 					e.mu.Unlock()
 					switch outcome {
 					case "failure":
@@ -87,8 +87,8 @@ func (s cleanupFixtureStrategy) InstallHook(*cdp.Session) error {
 }
 
 func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
-	config := camoufoxtest.ConfigDir(t)
-	camoufoxtest.WithoutProxy(t)
+	config := fingerprinttest.ConfigDir(t)
+	fingerprinttest.WithoutProxy(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" {
 			http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: "kept", Path: "/", MaxAge: 3600})
@@ -106,7 +106,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	var accounts []store.Browser
 	for _, name := range []string{"one", "two"} {
-		row, err := st.AddBrowser("豆包", name, filepath.Join(root, name))
+		row, err := st.AddBrowser("豆包", name, browser.ProfileDir(root, browser.KindFingerprint, name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,13 +115,14 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	}
 	mgr := browser.NewManagerWithConfig(config)
 	t.Cleanup(mgr.StopAll)
-	unrelated := store.Browser{ID: 9001, Name: "unrelated", Port: 49991, UserDataDir: filepath.Join(root, "unrelated")}
-	if _, err := mgr.Start(unrelated, root, browser.KindCamoufox, server.URL+"/check", true); err != nil {
+	unrelated := store.Browser{ID: 9001, Name: "unrelated", Port: 49991, UserDataDir: browser.ProfileDir(root, browser.KindFingerprint, "unrelated")}
+	if _, err := mgr.Start(unrelated, root, browser.KindFingerprint, server.URL+"/check", true); err != nil {
 		t.Fatal(err)
 	}
 	e := NewEngine(st, mgr, nil, root)
 	fixture := cleanupFixtureStrategy{home: server.URL + "/login"}
 	started := make(chan int, 2)
+	releaseFirst := make(chan struct{})
 	firstDone := make(chan struct{})
 	release := make(chan struct{})
 	done := runBrowserCleanupBatch(t, func(ctx context.Context) error {
@@ -135,6 +136,15 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 					return err
 				}
 				started <- task.Index
+				// Hold task 1 until task 2 also claims the second account past sameExitStagger;
+				// otherwise a fast Fingerprint startup can finish task 1 before task 2 dispatches.
+				if task.Index == 1 {
+					select {
+					case <-releaseFirst:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
 				if task.Index == 2 {
 					select {
 					case <-release:
@@ -145,7 +155,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 				return nil
 			})
 	})
-	startDeadline := time.NewTimer(camoufoxtest.StartTimeout + 30*time.Second)
+	startDeadline := time.NewTimer(fingerprinttest.StartTimeout + 30*time.Second)
 	defer startDeadline.Stop()
 	for range 2 {
 		select {
@@ -159,6 +169,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 			t.Fatal("accounts did not start")
 		}
 	}
+	close(releaseFirst)
 	select {
 	case <-firstDone:
 	case <-time.After(5 * time.Second):
@@ -186,11 +197,11 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 	if !mgr.IsRunning(unrelated.ID) {
 		t.Fatal("an unrelated browser was closed")
 	}
-	ep, err := mgr.StartTask(t.Context(), accounts[0], root, browser.KindCamoufox, server.URL+"/check")
+	ep, err := mgr.StartTask(t.Context(), accounts[0], root, browser.KindFingerprint, server.URL+"/check")
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc, err := camoufox.Find(ep)
+	proc, err := fingerprint.Find(ep)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +244,7 @@ func TestBatchClosesRealHeadlessBrowsers(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Fatalf("stop test finished before starting: %+v", e.View().Snapshot())
-	case <-time.After(camoufoxtest.StartTimeout + 30*time.Second):
+	case <-time.After(fingerprinttest.StartTimeout + 30*time.Second):
 		t.Fatal("stop test did not start")
 	}
 	e.Stop()

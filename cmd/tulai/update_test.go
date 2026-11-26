@@ -15,14 +15,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nsgo-dev/nsgo/core"
-
 	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/ui"
 	"github.com/xxww0098/tulai/internal/update"
 )
 
 func TestRunningVersionLeavesSourceBuildUnpackaged(t *testing.T) {
-	if got := core.App().Version; got != "" {
+	if got := ui.PackagedVersion(); got != "" {
 		t.Fatalf("source build became eligible for release updates with version %q", got)
 	}
 	if got := runningVersion(); got != ProductVersion {
@@ -195,9 +194,15 @@ func TestConfiguredMirrorUsesApplicationDataOnMac(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Set(update.KeyMirror, "https://mirror.example")
+	st.Set("proxy_mode", "custom")
+	st.Set("proxy_server", "127.0.0.1:7890")
 	st.Close()
 	if got := configuredMirror("darwin", "/tmp/dev/tulai"); got != "https://mirror.example" {
 		t.Fatalf("configured mirror = %q", got)
+	}
+	mirror, proxy := configuredUpdateNetwork("darwin", "/tmp/dev/tulai")
+	if mirror != "https://mirror.example" || proxy != "http://127.0.0.1:7890" {
+		t.Fatalf("configured network = (%q, %q)", mirror, proxy)
 	}
 }
 

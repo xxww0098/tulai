@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/xxww0098/tulai/internal/chatgpt"
 )
 
 // Status 任务状态。
@@ -28,15 +26,26 @@ const (
 	StatusNeedsReview Status = "需核对"
 )
 
+// Phase 表示进行中任务当前所处的真实网页执行阶段，用于前端精确控制点阵等待动效时机。
+type Phase string
+
+const (
+	PhasePreparing   Phase = "preparing"   // 准备浏览器/会话/对话页
+	PhaseUploading   Phase = "uploading"   // 正在网页端上传源图
+	PhaseGenerating  Phase = "generating"  // 网页端已上传完并提交，正在生成图片
+	PhaseDownloading Phase = "downloading" // 已检测到成图，正在下载并保存
+)
+
 // Task 一条批量任务：一个平台 × 一条提示词。图生图另带一张源图；文生图 Images 为空。
 type Task struct {
-	Index     int      // 序号（从 1 起）
-	Platform  string   // 服务商名称
-	BrowserID int64    // 执行用的浏览器（构建后分配）
-	Prompt    string   // 提示词（已拼后缀）
-	Images    []string // 源图路径；文生图为空，执行时不上传
+	Index        int      // 序号（从 1 起）
+	Platform     string   // 服务商名称
+	BrowserID    int64    // 执行用的浏览器（构建后分配）
+	Prompt       string   // 提示词（已拼后缀）
+	Images       []string // 源图路径；文生图为空，执行时不上传
 	Status       Status
-	Attempts     int           // 已尝试次数
+	Phase        Phase // 运行期子阶段：preparing / uploading / generating / downloading
+	Attempts     int   // 已尝试次数
 	Error        string
 	Results      []string      // 已保存结果路径
 	Rewritten    bool          // 审核失败后提示词被改写过，卡片上要能看见
@@ -45,8 +54,7 @@ type Task struct {
 	Elapsed      time.Duration // 执行结束后的最终耗时
 	Undispatched bool          // 从未实际派发即被停止跳过的排队项
 
-	submitted          bool // 已确认发送，重试时继续等待原任务
-	chatGPT            *chatgpt.Generation
+	submitted          bool      // 已确认发送，重试时继续等待原任务
 	sentAt             time.Time // 最近一次确认发送的时间，用于计算账号发送间隔
 	sentURL            string    // 千问 /chat/<id>，重试只回到这一条
 	sentWrap           string    // data-chat-question-wrap
@@ -55,19 +63,23 @@ type Task struct {
 	washWaitTimedOut   bool   // 豆包已确认接收多图批次，等待结果超时
 	slot               int64  // 这次派发时占用的浏览器，完成后用来释放并发名额
 	ranOn              int64  // 实际打到的账号。轮换后 BrowserID 会改成下一个
-	avoidBrowser       int64  // 刚因普通失败换出的账号，避免目标账号忙时立刻弹回原账号
-	rotated            bool   // 失败后已改派，调度器要把任务放回队列
-	pauseNote          string // quota 或 login。换号日志已经写过时，不再补一句容易看错的说明
+	avoidBrowser       int64     // 刚因普通失败换出的账号，避免目标账号忙时立刻弹回原账号
+	rotated            bool      // 失败后已改派，调度器要把任务放回队列
+	retryAfter         time.Time // 失败换号后的非阻塞退避截止时间，不占用原账号和并发名额
+	pauseNote          string    // quota 或 login。换号日志已经写过时，不再补一句容易看错的说明
 	replyRetried       bool   // 平台回了报错后已经在新对话里重试过一次
 	Reassigned         string // 改派到的账号名。卡片写「已改由…」，成功后也留着
 	ReassignWhy        string // 改派前的失败原因
 	soften             int    // 审核改写已经自动重试的次数
-	batch           []Task // 豆包洗图一次发送的原始单图任务
-	batchSendOnly   bool   // 仅提交的批次按发送确认更新成员状态。
-	maxBatch        int    // 拆分审核批次或标记为需单独发送时限制单批上限（1 表示单独发）
-	splitModeration bool   // 由触发内容审核的豆包批次拆出，防止全批审核循环拆单
-	sendSeq         int    // 同一任务拆分、改写或换新对话重发时递增，区分扩展发送幂等键
-	noUse           bool   // 确认还未尝试发送，不占账号每日次数
+	batch              []Task // 豆包洗图一次发送的原始单图任务
+	batchSendOnly      bool   // 仅提交的批次按发送确认更新成员状态。
+	maxBatch           int    // 拆分审核批次或标记为需单独发送时限制单批上限（1 表示单独发）
+	splitModeration    bool   // 由触发内容审核的豆包批次拆出，防止全批审核循环拆单
+	partialRetried     bool   // 豆包部分出图批次已自动补跑过一次缺失源图，防止循环补跑
+	sendSeq            int    // 同一任务拆分、改写或换新对话重发时递增，区分扩展发送幂等键
+	everSent           bool   // 本次账号派发中是否已真正尝试或确认过发送
+	noUse              bool   // 确认还未尝试发送，不占账号每日次数
+	QualityNote        string // 本地质检提示（白边/黑边/疑似未改写回声等，不阻断落盘）
 }
 
 // Worked 报告这条任务是否已经实际派发或执行过（排队中及未派发即停止的任务返回 false）。
@@ -109,21 +121,23 @@ type Options struct {
 	StartBrowserIndex  int
 	OutputPath         string
 	OutputSize         OutputSize
-	RemoveWatermark    bool // 千问另存去水印版本，保留原图
+	QianwenOutputRatio string // 千问显式选择的原生比例（如 "16:9"）；留空按默认策略（图生图贴合原图、文生图 3:4）
+	RepeatCount        int    // 自由生图每条提示词或每张参考图的生成次数（<=1 视为 1）
+	RemoveWatermark    bool   // 千问另存去水印版本，保留原图
+	AutoDeleteHistory  bool // 确认保存结果后自动删除本次平台聊天记录（发送未确认/失败不删）
 	DailyCap           int
 	DailyCaps          map[string]int // 按供应商设置每个账号的每日上限；缺省或非正数用 DailyCap
 	RiskyWords         []string
-	AgyBin             string
-	AgyModel           string
-	AgyHomeRoot        string
-	AgyTimeoutSec      int
-	ChatGPTModel       string
 	// Wash 是洗图：每张源图一单，结果按源文件名存成 PNG，「原名_01.png」起。
 	Wash bool
 	// SoloImages 指定在洗图队列里单独发送（不参与多图合批）的源图路径。
 	SoloImages []string
-	// Fission 将一张母图和四条方向指令组成四个独立任务。
+	// Fission 将一张母图（或 FissionTextOnly 时的纯提示词）和四条方向指令组成四个独立任务。
 	Fission bool
+	// FissionTextOnly 开启后允许不传母图，仅按四条方向提示词直接裂变。
+	FissionTextOnly bool
+	// FissionKeepPaths 裂变重试时已通过核对的结果路径，供多候选择优避让相似度碰撞。
+	FissionKeepPaths []string
 	// Numbering 开启后结果文件按「前缀+补零序号」自动编号命名，替代默认词根。
 	Numbering Numbering
 	// 结果图不经页面、直接按地址下载时的设置。并发按站点算，整批任务共用。
@@ -156,14 +170,25 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 	}
 	var units []queueUnit
 	if opts.Fission {
-		if len(opts.Images) != 1 || len(opts.Prompts) != 4 || len(opts.Platforms) != 1 {
+		if len(opts.Prompts) != 4 || len(opts.Platforms) != 1 {
+			return nil
+		}
+		if opts.FissionTextOnly {
+			if len(opts.Images) != 0 {
+				return nil
+			}
+		} else if len(opts.Images) != 1 {
 			return nil
 		}
 		for _, prompt := range opts.Prompts {
 			if strings.TrimSpace(prompt) == "" {
 				return nil
 			}
-			units = append(units, queueUnit{image: opts.Images[0], hasImage: true, prompt: prompt, fixed: true})
+			if opts.FissionTextOnly {
+				units = append(units, queueUnit{prompt: prompt, fixed: true})
+			} else {
+				units = append(units, queueUnit{image: opts.Images[0], hasImage: true, prompt: prompt, fixed: true})
+			}
 		}
 	} else if len(opts.Images) > 0 {
 		for _, img := range opts.Images {
@@ -187,44 +212,54 @@ func BuildQueue(opts Options, browsersOf map[string][]int64) []Task {
 			solo[filepath.Clean(clean)] = true
 		}
 	}
-	for _, unit := range units {
-		for _, platform := range opts.Platforms {
-			idx++
-			prompt := unit.prompt
-			if !unit.fixed && len(opts.Prompts) > 0 {
-				prompt = opts.Prompts[(idx-1)%len(opts.Prompts)]
-			}
-			if opts.UseSuffix && opts.PromptSuffix != "" {
-				prompt = strings.TrimSpace(prompt + "\n" + opts.PromptSuffix)
-			}
-			if extra := strings.TrimSpace(opts.StructuredPrompt); extra != "" {
-				if strings.TrimSpace(prompt) == "" {
-					prompt = extra
-				} else {
-					prompt = strings.TrimSpace(prompt + "\n附加要求：\n" + extra)
+	repeat := 1
+	if !opts.Fission && !opts.Wash && opts.RepeatCount > 1 {
+		repeat = opts.RepeatCount
+	}
+	for unitIdx, unit := range units {
+		for rep := 0; rep < repeat; rep++ {
+			for _, platform := range opts.Platforms {
+				idx++
+				prompt := unit.prompt
+				if !unit.fixed && len(opts.Prompts) > 0 {
+					if repeat > 1 {
+						prompt = opts.Prompts[unitIdx%len(opts.Prompts)]
+					} else {
+						prompt = opts.Prompts[(idx-1)%len(opts.Prompts)]
+					}
 				}
+				if opts.UseSuffix && opts.PromptSuffix != "" {
+					prompt = strings.TrimSpace(prompt + "\n" + opts.PromptSuffix)
+				}
+				if extra := strings.TrimSpace(opts.StructuredPrompt); extra != "" {
+					if strings.TrimSpace(prompt) == "" {
+						prompt = extra
+					} else {
+						prompt = strings.TrimSpace(prompt + "\n附加要求：\n" + extra)
+					}
+				}
+				var images []string
+				if unit.hasImage {
+					images = []string{unit.image}
+				}
+				t := Task{
+					Index:    idx,
+					Platform: platform,
+					Prompt:   prompt,
+					Images:   images,
+					Status:   StatusPending,
+				}
+				if opts.Wash && len(images) == 1 && solo[filepath.Clean(images[0])] {
+					t.maxBatch = 1
+				}
+				// 分配浏览器（按平台轮转）
+				if ids := browsersOf[platform]; len(ids) > 0 {
+					bi := browserIdx[platform]
+					t.BrowserID = ids[bi%len(ids)]
+					browserIdx[platform] = bi + 1
+				}
+				out = append(out, t)
 			}
-			var images []string
-			if unit.hasImage {
-				images = []string{unit.image}
-			}
-			t := Task{
-				Index:    idx,
-				Platform: platform,
-				Prompt:   prompt,
-				Images:   images,
-				Status:   StatusPending,
-			}
-			if opts.Wash && len(images) == 1 && solo[filepath.Clean(images[0])] {
-				t.maxBatch = 1
-			}
-			// 分配浏览器（按平台轮转）
-			if ids := browsersOf[platform]; len(ids) > 0 {
-				bi := browserIdx[platform]
-				t.BrowserID = ids[bi%len(ids)]
-				browserIdx[platform] = bi + 1
-			}
-			out = append(out, t)
 		}
 	}
 	return out
@@ -255,16 +290,6 @@ func RebuildRetry(items []Task) []Task {
 		}
 		if task.maxBatch == 1 || (task.Error != "" && isModeration(errors.New(task.Error))) {
 			next.maxBatch = 1
-		}
-		if task.Platform == chatgpt.Platform && task.chatGPT != nil && task.chatGPT.Attempted {
-			next.chatGPT, next.BrowserID = task.chatGPT, task.BrowserID
-			next.noUse = true
-			next.submitted, next.sentURL, next.sentAt = task.submitted, task.sentURL, task.sentAt
-			next.Results = append([]string(nil), task.Results...)
-			next.savedHashes = make(map[string]bool, len(task.savedHashes))
-			for hash, saved := range task.savedHashes {
-				next.savedHashes[hash] = saved
-			}
 		}
 		if len(task.Images) > 0 {
 			next.Images = append([]string(nil), task.Images...)
@@ -322,9 +347,12 @@ func sanitizeNamePart(s string, maxRunes int) string {
 	return name
 }
 
-// resultStem 是序号前面的名字。生图用提示词，洗图用源文件名。
+// resultStem 是序号前面的名字。生图用提示词（图生图无提示词时回退原文件名），洗图与裂变用源文件名。
 func (o Options) resultStem(prompt, source string) string {
 	if o.Wash || o.Fission {
+		return sourceStem(source)
+	}
+	if strings.TrimSpace(prompt) == "" && strings.TrimSpace(source) != "" {
 		return sourceStem(source)
 	}
 	return strings.TrimSuffix(promptFileName(prompt), ".png")
@@ -377,13 +405,18 @@ func (o Options) ResultDir(when time.Time) string {
 type QueueView struct {
 	mu    sync.Mutex
 	items []Task
+	byIdx map[int]int
 }
 
 // NewQueueView 创建队列视图。
 func NewQueueView(items []Task) *QueueView {
 	cp := make([]Task, len(items))
 	copy(cp, items)
-	return &QueueView{items: cp}
+	byIdx := make(map[int]int, len(cp))
+	for i := range cp {
+		byIdx[cp[i].Index] = i
+	}
+	return &QueueView{items: cp, byIdx: byIdx}
 }
 
 // Snapshot 返回队列快照。
@@ -395,14 +428,47 @@ func (q *QueueView) Snapshot() []Task {
 	return out
 }
 
-// Update 更新指定任务（按 Index）。
+// Update 更新指定任务（按 Index，O(1) 查找）。
 func (q *QueueView) Update(t Task) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if i, ok := q.byIdx[t.Index]; ok && i < len(q.items) && q.items[i].Index == t.Index {
+		q.items[i] = t
+		return
+	}
 	for i := range q.items {
 		if q.items[i].Index == t.Index {
 			q.items[i] = t
+			if q.byIdx == nil {
+				q.byIdx = map[int]int{}
+			}
+			q.byIdx[t.Index] = i
 			return
+		}
+	}
+}
+
+// UpdateBatch 在单次加锁内批量更新任务状态，减少多图洗图批次的锁竞争。
+func (q *QueueView) UpdateBatch(items []Task) {
+	if len(items) == 0 {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, t := range items {
+		if i, ok := q.byIdx[t.Index]; ok && i < len(q.items) && q.items[i].Index == t.Index {
+			q.items[i] = t
+			continue
+		}
+		for i := range q.items {
+			if q.items[i].Index == t.Index {
+				q.items[i] = t
+				if q.byIdx == nil {
+					q.byIdx = map[int]int{}
+				}
+				q.byIdx[t.Index] = i
+				break
+			}
 		}
 	}
 }

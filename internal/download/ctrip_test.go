@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"image"
 	"io"
 	"net"
@@ -121,7 +121,7 @@ func TestCtripLive(t *testing.T) {
 
 func TestCtripRenderedPaginationWithoutCrossOriginCookies(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	var calls, leaked atomic.Int32
 	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,10 +156,10 @@ func TestCtripRenderedPaginationWithoutCrossOriginCookies(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	result, err := session.Capture(ctx)

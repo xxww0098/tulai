@@ -1,0 +1,31 @@
+{
+  "name": "tulai",
+  "slug": "tulai",
+  "identifier": "dev.tulai.app",
+  "version": "0.1.39",
+  "copyright": "Copyright (c) 2026 xxww0098",
+  "publisher": "xxww0098",
+  "license": "MIT",
+  "icon": "cmd/tulai/assets/Icon.png",
+  "main": "./cmd/tulai",
+  "out": "build",
+  "devUrl": "http://localhost:5173",
+  "devCommand": "bun run --cwd frontend dev",
+  "buildCommand": "bun run --cwd frontend build",
+  "frontendDist": "frontend/dist",
+  "bindings": "frontend/src/mygo.ts",
+  "macos": {
+    "minimumSystemVersion": "12.0",
+    "signingIdentity": "-"
+  },
+  "windows": {
+    "displayName": "tulai",
+    "installDirName": "tulai"
+  },
+  "linux": {
+    "comment": "批量生图（豆包 / 千问）",
+    "categories": ["Graphics", "Utility"],
+    "webview": true,
+    "formats": ["deb"]
+  }
+}

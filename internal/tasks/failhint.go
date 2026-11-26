@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -137,7 +136,7 @@ func isModeration(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, strategy.ErrModeration) || extbridge.CodeOf(err) == extbridge.EModeration {
+	if errors.Is(err, strategy.ErrModeration) {
 		return true
 	}
 	text := err.Error()
@@ -199,10 +198,6 @@ func (e *Engine) softenModeration(t *Task, err error) (again, stop bool) {
 	if t == nil || !isModeration(err) {
 		return false, false
 	}
-	if t.Platform == "ChatGPT" {
-		t.Error, t.Status = err.Error(), StatusFailed
-		return false, true
-	}
 	if t.soften >= 2 {
 		t.Error = err.Error()
 		t.Status = StatusFailed
@@ -223,29 +218,55 @@ func (e *Engine) softenModeration(t *Task, err error) (again, stop bool) {
 
 // noteUse 在这一单结束时记下次数。派出时先不记，避免正在跑的账号被当成已经用满，把并发名额收掉。
 func (e *Engine) noteUse(t Task, previousSoften int) {
-	if e == nil || e.store == nil || t.Attempts == 0 || (t.rotated && t.Status == StatusPending) {
+	e.noteUseMembers([]Task{t}, previousSoften)
+}
+
+// noteUseMembers 将同账号的一批成员汇总为单次 SQLite 写入，避免 10 图洗图产生 10 次串行事务。
+func (e *Engine) noteUseMembers(members []Task, previousSoften int) {
+	if e == nil || e.store == nil || len(members) == 0 {
 		return
 	}
-	id := t.ranOn
-	if id == 0 {
-		id = t.slot
+	type tally struct {
+		used, success, failed int
 	}
-	if id <= 0 {
+	var order []int64
+	byID := make(map[int64]*tally, 1)
+	for _, t := range members {
+		if t.Attempts == 0 || (t.rotated && t.Status == StatusPending) {
+			continue
+		}
+		id := t.ranOn
+		if id == 0 {
+			id = t.slot
+		}
+		if id <= 0 {
+			continue
+		}
+		entry := byID[id]
+		if entry == nil {
+			entry = &tally{}
+			byID[id] = entry
+			order = append(order, id)
+		}
+		switch t.Status {
+		case StatusSuccess:
+			entry.success++
+		case StatusFailed:
+			entry.failed++
+		}
+		if !t.noUse {
+			entry.used += 1 + t.soften - previousSoften
+		}
+	}
+	if len(order) == 0 {
 		return
 	}
-	success, failed := 0, 0
-	switch t.Status {
-	case StatusSuccess:
-		success = 1
-	case StatusFailed:
-		failed = 1
-	}
-	used := 1 + t.soften - previousSoften
-	if t.noUse {
-		used = 0
-	}
-	if err := e.store.RecordUse(id, time.Now(), used, success, failed); err != nil {
-		logging.Log.Errorf("保存账号今日统计失败: %v", err)
+	now := time.Now()
+	for _, id := range order {
+		entry := byID[id]
+		if err := e.store.RecordUse(id, now, entry.used, entry.success, entry.failed); err != nil {
+			logging.Log.Errorf("保存账号今日统计失败: %v", err)
+		}
 	}
 }
 

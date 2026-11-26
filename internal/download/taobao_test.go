@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,7 +155,7 @@ func TestTaobaoLiveProbe(t *testing.T) {
 
 func TestTaobaoCaptureCurrentItemOnly(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -171,13 +171,13 @@ func TestTaobaoCaptureCurrentItemOnly(t *testing.T) {
 	const target = "https://item.taobao.com/item.htm?id=123"
 	const document = `<html><head><title>当前商品</title></head><body><ul id="J_UlThumb"><img src="https://img.alicdn.com/main.jpg_60x60q90.jpg"></ul><div class="SkuContent--valueItem--x" style="background-image:url('https://img.alicdn.com/sku.jpg')"></div><div class="descV8-container"><img src="https://img.alicdn.com/detail.jpg"></div><img src="https://img.alicdn.com/recommendation.jpg"></body></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == target {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).
 					WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).
@@ -185,7 +185,7 @@ func TestTaobaoCaptureCurrentItemOnly(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -197,7 +197,7 @@ func TestTaobaoCaptureCurrentItemOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(target)
-	if err := session.run(ctx, camoufox.Navigate(target)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

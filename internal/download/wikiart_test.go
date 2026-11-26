@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -260,13 +260,13 @@ func TestWikiArtRenderedCapture(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == wikiArtTestAuthor {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(wikiArtTestFixture(wikiArtTestAuthor))))
 			} else if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == wikiArtTestAPI(1) {
@@ -274,7 +274,7 @@ func TestWikiArtRenderedCapture(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -287,7 +287,7 @@ func TestWikiArtRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(wikiArtTestAuthor)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(wikiArtTestAuthor)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(wikiArtTestAuthor)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -299,7 +299,7 @@ func TestWikiArtRenderedCapture(t *testing.T) {
 	if err != nil || len(got.Items) != 3 || calls.Load() != 2 {
 		t.Fatalf("items=%+v calls=%d err=%v", got.Items, calls.Load(), err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(wikiArtTestAPI(1))); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(wikiArtTestAPI(1))); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

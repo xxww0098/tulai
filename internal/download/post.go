@@ -114,20 +114,21 @@ func (s *RenderedSession) Post(ctx context.Context, rawURL string, body []byte, 
 	if err != nil {
 		return nil, err
 	}
-	if s == nil || s.tab == nil || s.getter == nil {
+	tab := s.activeTab()
+	if s == nil || tab == nil || s.getter == nil {
 		return nil, errors.New("浏览器下载会话不可用")
 	}
-	if err := s.tab.Err(); err != nil {
+	if err := tab.Err(); err != nil {
 		return nil, err
 	}
 	s.mu.RLock()
-	page, pageIP, startIP := s.pageURL, s.pageIP, s.startIP
+	start, page, pageIP, startIP := s.start, s.pageURL, s.pageIP, s.startIP
 	s.mu.RUnlock()
 	if page == nil || !sameOrigin(page, target) {
 		return nil, errors.New("POST 只支持浏览器当前网页的同源地址")
 	}
 	requestCtx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(s.tab, cancel)
+	stop := context.AfterFunc(tab, cancel)
 	cleanup := func() { stop(); cancel() }
 	currentPage := func() (*url.URL, error) {
 		var currentRaw string
@@ -163,7 +164,7 @@ func (s *RenderedSession) Post(ctx context.Context, rawURL string, body []byte, 
 		cookieRequest.AddCookie(&http.Cookie{Name: cookie.Name, Value: cookie.Value})
 	}
 	policy := safeDownloadPolicy{}
-	if pageIP.IsValid() && pageIP == startIP && sameOrigin(s.start, page) && !isPublicDownloadIP(pageIP) {
+	if pageIP.IsValid() && pageIP == startIP && sameOrigin(start, page) && !isPublicDownloadIP(pageIP) {
 		policy.allowedLocal = pageIP
 	}
 	hopCtx := context.WithValue(requestCtx, safeDownloadPolicyKey{}, policy)

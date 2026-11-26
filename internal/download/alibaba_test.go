@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"image"
 	"io"
 	"net/http"
@@ -227,7 +227,7 @@ func TestAlibabaLiveOriginalDownload(t *testing.T) {
 
 func TestAlibabaCaptureProduct(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -243,13 +243,13 @@ func TestAlibabaCaptureProduct(t *testing.T) {
 	const target = "https://www.alibaba.com/product-detail/test_1601199193769.html"
 	const document = `<html><head><title>当前商品</title></head><body><div class="id-overflow-hidden id-h-full"><img src="https://s.alicdn.com/main.jpg_60x60.jpg"></div><div id="J-rich-text-description"><img src="https://s.alicdn.com/detail.jpg"></div><img src="https://s.alicdn.com/recommendation.jpg"><script>var x={"globalData":{"sku":{"skuAttrs":[{"values":[{"originImage":"//s.alicdn.com/sku.jpg"}]}]}}};</script></body></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == target {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).
 					WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).
@@ -257,7 +257,7 @@ func TestAlibabaCaptureProduct(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -269,7 +269,7 @@ func TestAlibabaCaptureProduct(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(target)
-	if err := session.run(ctx, camoufox.Navigate(target)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -285,7 +285,7 @@ func TestAlibabaCaptureProduct(t *testing.T) {
 
 func TestAlibabaCaptureRedirectIdentity(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -306,13 +306,13 @@ func TestAlibabaCaptureRedirectIdentity(t *testing.T) {
 	}
 	const document = `<html><body><div class="id-overflow-hidden id-h-full"><img src="https://s.alicdn.com/main.jpg"></div><div id="J-rich-text-description"><img src="https://s.alicdn.com/detail.jpg"></div><script>var x={"globalData":{"sku":null}};</script></body></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument {
 				body := document
 				if strings.Contains(paused.Request.URL, "other_1601199193770.html") {
@@ -324,7 +324,7 @@ func TestAlibabaCaptureRedirectIdentity(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -345,8 +345,8 @@ func TestAlibabaCaptureRedirectIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session.start, _ = url.Parse(tc.source)
-			// Present the landing page directly: guarded Firefox routes reject automatic redirects.
-			if err := session.run(ctx, camoufox.Navigate(redirects[tc.source])); err != nil {
+			// Present the landing page directly: guarded download routes reject automatic redirects.
+			if err := session.run(ctx, fingerprint.Navigate(redirects[tc.source])); err != nil {
 				t.Fatal(err)
 			}
 			got, err := session.Capture(ctx)

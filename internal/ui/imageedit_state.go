@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"math"
 	"os"
@@ -134,8 +133,6 @@ type imageEditState struct {
 	recipeErr  string
 
 	// 预览与缩放
-	origPixels  *image.RGBA
-	outPixels   *image.RGBA
 	origVersion uint64
 	outVersion  uint64
 	origPath    string
@@ -401,6 +398,21 @@ func (a *App) editEffOptions() imageedit.Options {
 		o.Blur, o.Sharpen = 0, false
 	}
 	return o
+}
+
+func editHasCropOverride(ov imageedit.Options) bool {
+	return ov.CropWidth > 0 || ov.CropHeight > 0 || ov.CropLeft != nil || ov.CropTop != nil || strings.TrimSpace(ov.CropRatio) != ""
+}
+
+func (a *App) editFileHasCustomCrop(path string) bool {
+	if a == nil || a.edit.fileOps == nil || path == "" {
+		return false
+	}
+	ov, ok := a.edit.fileOps[path]
+	if !ok {
+		return false
+	}
+	return editHasCropOverride(ov)
 }
 
 // editOptionsFor 合并每张图自己的裁剪位置。
@@ -839,6 +851,86 @@ func (a *App) editSetCropBox(box *editCropBox) {
 	}
 }
 
+// editSyncCropTo 把当前选中图的裁切框复制成独立的单图覆盖。
+func (a *App) editSyncCropTo(scope string) bool {
+	a.editEnsureMaps()
+	st := &a.edit
+	sel := st.selectedFile()
+	if sel == nil {
+		st.notice = "请先为当前图片设置裁剪区域"
+		return false
+	}
+	box, ok := a.editCropBoxFor(sel.Path)
+	if !ok {
+		st.notice = "请先为当前图片设置裁剪区域"
+		return false
+	}
+
+	var targets []*editFile
+	switch scope {
+	case "picked":
+		for _, idx := range a.editPickedIndices() {
+			targets = append(targets, st.files[idx])
+		}
+		if len(targets) == 0 {
+			targets = append(targets, sel)
+		}
+	case "all":
+		targets = st.files
+	default:
+		return false
+	}
+	if len(targets) == 0 {
+		return false
+	}
+
+	ratio := strings.TrimSpace(st.opts.CropRatio)
+	if !st.uniformCrop {
+		if ov, exists := st.fileOps[sel.Path]; exists && strings.TrimSpace(ov.CropRatio) != "" {
+			ratio = strings.TrimSpace(ov.CropRatio)
+		}
+	}
+
+	left := int(math.Round(math.Max(0, box.X)))
+	top := int(math.Round(math.Max(0, box.Y)))
+	w := int(math.Round(math.Max(1, box.W)))
+	h := int(math.Round(math.Max(1, box.H)))
+
+	st.uniformCrop = false
+	a.editMarkUsed("crop")
+	for _, f := range targets {
+		st.fileOps[f.Path] = imageedit.Options{
+			CropLeft:   imageedit.Int(left),
+			CropTop:    imageedit.Int(top),
+			CropWidth:  w,
+			CropHeight: h,
+			CropRatio:  ratio,
+		}
+	}
+	st.notice = fmt.Sprintf("已将当前裁剪区域同步到 %d 张图片", len(targets))
+	return true
+}
+
+// editClearCustomCrops 清除单图裁剪覆盖（当前图、已勾选或全部）。
+func (a *App) editClearCustomCrops(scope string) {
+	a.editEnsureMaps()
+	st := &a.edit
+	switch scope {
+	case "selected":
+		if sel := st.selectedFile(); sel != nil {
+			delete(st.fileOps, sel.Path)
+		}
+	case "picked":
+		for p, on := range st.picks {
+			if on {
+				delete(st.fileOps, p)
+			}
+		}
+	case "all":
+		st.fileOps = map[string]imageedit.Options{}
+	}
+}
+
 // ---- 文件 ----
 
 // editIsImage 按扩展名判断能不能编辑。
@@ -1058,6 +1150,123 @@ func (a *App) editClearPicks() {
 	a.edit.picks = map[string]bool{}
 }
 
+func (a *App) editSelectAllPicks() {
+	a.editEnsureMaps()
+	st := &a.edit
+	st.picks = make(map[string]bool, len(st.files))
+	for _, f := range st.files {
+		st.picks[f.Path] = true
+	}
+	st.pickAnchor = 0
+}
+
+func (a *App) editInvertPicks() {
+	a.editEnsureMaps()
+	st := &a.edit
+	next := make(map[string]bool, len(st.files))
+	anchor := -1
+	for i, f := range st.files {
+		if !st.picks[f.Path] {
+			next[f.Path] = true
+			if anchor < 0 {
+				anchor = i
+			}
+		}
+	}
+	st.picks = next
+	if anchor >= 0 {
+		st.pickAnchor = anchor
+	} else {
+		st.pickAnchor = 0
+	}
+}
+
+func (a *App) editPickByStatus(status string) {
+	a.editEnsureMaps()
+	st := &a.edit
+	next := make(map[string]bool)
+	anchor := -1
+	for i, f := range st.files {
+		match := false
+		switch status {
+		case "pending":
+			match = f.Status == "pending" || f.Status == ""
+		case "ok":
+			match = f.Status == "ok"
+		case "failed":
+			match = f.Status == "failed"
+		case "customCrop":
+			match = a.editFileHasCustomCrop(f.Path)
+		}
+		if match {
+			next[f.Path] = true
+			if anchor < 0 {
+				anchor = i
+			}
+		}
+	}
+	st.picks = next
+	if anchor >= 0 {
+		st.pickAnchor = anchor
+	} else {
+		st.pickAnchor = 0
+	}
+}
+
+func (a *App) editRemovePicked() {
+	a.editEnsureMaps()
+	st := &a.edit
+	if st.running || len(st.picks) == 0 {
+		return
+	}
+	prevPath := ""
+	if f := st.selectedFile(); f != nil {
+		prevPath = f.Path
+	}
+	kept := make([]*editFile, 0, len(st.files))
+	removedBefore := 0
+	removedAny := false
+	for i, f := range st.files {
+		if st.picks[f.Path] {
+			delete(st.fileOps, f.Path)
+			delete(st.picks, f.Path)
+			removedAny = true
+			if st.selected >= 0 && i < st.selected {
+				removedBefore++
+			}
+			continue
+		}
+		kept = append(kept, f)
+	}
+	st.picks = map[string]bool{}
+	st.pickAnchor = 0
+	if !removedAny {
+		return
+	}
+	st.files = kept
+	if len(st.files) == 0 {
+		st.selected = -1
+	} else {
+		if st.selected < 0 {
+			st.selected = 0
+		} else {
+			st.selected -= removedBefore
+		}
+		if st.selected < 0 {
+			st.selected = 0
+		} else if st.selected >= len(st.files) {
+			st.selected = len(st.files) - 1
+		}
+	}
+	newPath := ""
+	if f := st.selectedFile(); f != nil {
+		newPath = f.Path
+	}
+	if newPath != prevPath {
+		a.editResetView()
+	}
+}
+
 func (a *App) editResetView() {
 	st := &a.edit
 	st.zoom = 1
@@ -1084,7 +1293,8 @@ func (a *App) editEnsurePreview() {
 			st.previewSig = ""
 			st.previewGen++
 			st.previewPending = false
-			st.origPixels, st.outPixels = nil, nil
+			a.setEditOrigPath("")
+			a.setEditPreviewJPEG(nil)
 			st.origVersion++
 			st.outVersion++
 			st.origPath = ""
@@ -1108,6 +1318,8 @@ func (a *App) editEnsurePreview() {
 	opts := a.editOptionsFor(path)
 	if st.origPath != path {
 		st.origPath = path
+		a.setEditOrigPath(path)
+		a.setEditPreviewJPEG(nil)
 		go a.editLoadOriginal(path)
 	}
 	if st.previewTimer != nil {
@@ -1123,7 +1335,7 @@ func (a *App) editLoadOriginal(path string) {
 	if err != nil {
 		return
 	}
-	img, err := imageedit.Load(data)
+	_, w, h, err := imageedit.Info(data)
 	if err != nil {
 		return
 	}
@@ -1132,9 +1344,9 @@ func (a *App) editLoadOriginal(path string) {
 		if st.origPath != path {
 			return
 		}
-		st.origPixels = toRGBA(img)
+		a.setEditOrigPath(path)
 		st.origVersion++
-		st.srcW, st.srcH = img.Bounds().Dx(), img.Bounds().Dy()
+		st.srcW, st.srcH = w, h
 		a.emit("imageedit")
 	})
 }
@@ -1158,14 +1370,14 @@ func (a *App) editRenderPreview(path string, opts imageedit.Options, gen int) {
 			if st.previewGen != gen {
 				return
 			}
-			st.outPixels = nil
+			a.setEditPreviewJPEG(nil)
 			st.outVersion++
 			st.previewPending = false
 			a.emit("imageedit")
 		})
 		return
 	}
-	img, err := jpeg.Decode(bytes.NewReader(out))
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(out))
 	if err != nil {
 		a.postUI(func() {
 			if a.edit.previewGen == gen {
@@ -1175,21 +1387,22 @@ func (a *App) editRenderPreview(path string, opts imageedit.Options, gen int) {
 		})
 		return
 	}
+	jpegBytes := append([]byte(nil), out...)
 	a.postUI(func() {
 		st := &a.edit
 		if st.previewGen != gen {
 			return
 		}
-		st.outPixels = toRGBA(img)
+		a.setEditPreviewJPEG(jpegBytes)
 		st.outVersion++
-		st.outW, st.outH = img.Bounds().Dx(), img.Bounds().Dy()
+		st.outW, st.outH = cfg.Width, cfg.Height
 		st.previewPending = false
 		a.emit("imageedit")
 	})
 }
 
 func (a *App) editEnsureThumbs() {
-	// NSGo's <Image source={{ uri }} /> decodes thumbnail files asynchronously on demand.
+	// WebView decodes thumbnail URLs from tulaimedia asynchronously on demand.
 }
 
 // editZoomBy 以舞台中心为原点、光标处为锚点缩放。
@@ -1218,5 +1431,5 @@ func (a *App) editClampPan() {
 // editShowCropUI 是裁切框该不该出现。
 func (a *App) editShowCropUI() bool {
 	st := &a.edit
-	return st.enabled.Crop && st.expanded["crop"] && st.mode == "crop" && st.origPixels != nil && st.srcW > 0
+	return st.enabled.Crop && st.expanded["crop"] && st.mode == "crop" && st.origPath != "" && st.srcW > 0
 }

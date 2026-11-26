@@ -2,158 +2,116 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/tsx"
-
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/store"
 )
 
-func init() {
-	tsx.RegisterFunctions("tulai/backend", map[string]any{
-		"getBrowserState":           getBrowserStateBridge,
-		"selectAccountEngine":       selectAccountEngineBridge,
-		"installCamoufox":           installCamoufoxBridge,
-		"refreshBrowsers":           refreshBrowsersBridge,
-		"createBrowser":             createBrowserBridge,
-		"browserRowAction":          browserRowActionBridge,
-		"setPlatformAccountsDisabled": setPlatformAccountsDisabledBridge,
-		"toggleBrowserCheck":        toggleBrowserCheckBridge,
-		"toggleAllBrowserChecks":    toggleAllBrowserChecksBridge,
-		"runBrowserBatch":           runBrowserBatchBridge,
-		"commitBrowserRename":       commitBrowserRenameBridge,
-		"saveAccountProxy":          saveAccountProxyBridge,
-		"regenerateExtensionToken":  regenerateExtensionTokenBridge,
-		"agyAction":                 agyActionBridge,
-		"openBrowserDrawer":         openBrowserDrawerBridge,
-		"closeBrowserDrawer":        closeBrowserDrawerBridge,
-		"resumeBrowserDrawer":       resumeBrowserDrawerBridge,
-		"getBrowserDrawerState":     getBrowserDrawerStateBridge,
-		"clearBrowserDrawerCopy":    clearBrowserDrawerCopyBridge,
-	})
+// BrowserService exposes account browser management, runtime installation,
+// and interactive CDP browser drawer IPCs.
+type BrowserService struct {
+	app *App
 }
 
+// BrowserRowDTO describes a single managed provider account row.
 type BrowserRowDTO struct {
-	ID         int64
-	Platform   string
-	Name       string
-	Email      string
-	Engine     string
-	Extension  bool
-	IsRunning  bool
-	IsLoggedIn bool
-	Active     bool
-	Disabled   bool
-	Checked    bool
-	Pending    bool
-	PendingOp  string
-	Health     string
-	HealthTone string
-	Proxy      string
-	LastError  string
-	TodayCount int
-	UsageLabel string
-	UsagePct   int
+	ID         int64  `json:"id"`
+	Platform   string `json:"platform"`
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	Engine     string `json:"engine"`
+	IsRunning  bool   `json:"isRunning"`
+	IsLoggedIn bool   `json:"isLoggedIn"`
+	Active     bool   `json:"active"`
+	Disabled   bool   `json:"disabled"`
+	Checked    bool   `json:"checked"`
+	Pending    bool   `json:"pending"`
+	PendingOp  string `json:"pendingOp"`
+	Health     string `json:"health"`
+	HealthTone string `json:"healthTone"`
+	Proxy      string `json:"proxy"`
+	LastError  string `json:"lastError"`
+	TodayCount int    `json:"todayCount"`
+	UsageLabel string `json:"usageLabel"`
+	UsagePct   int    `json:"usagePct"`
 }
 
-type AgyChooserDTO struct {
-	Hint      string
-	Home      string
-	Email     string
-	CanImport bool
-	Keychain  bool
-	Busy      bool
-	Retry     bool
-	Err       string
-	Status    string
-}
-
-type AgyLoginDTO struct {
-	ID      int64
-	Name    string
-	URL     string
-	Busy    bool
-	Retry   bool
-	Err     string
-	Copied  bool
-	Opening bool
-}
-
-type BridgeStatusDTO struct {
-	Listening bool
-	Addr      string
-	Err       string
-	PairLabel string
-	Token     string
-	TokenNote string
-	Port      string
-	Doubao    bool
-	Qianwen   bool
-}
-
+// BrowserStateDTO represents the full account browser management page snapshot.
 type BrowserStateDTO struct {
-	Backend       string
-	BackendLabel  string
-	Engines       []string
-	Ready         bool
-	Busy          bool
-	BadgeLabel    string
-	BadgeTone     string
-	Status        string
-	Detail        string
-	Percent       float64
-	Done          int64
-	Total         int64
-	Speed         int64
-	Supported     bool
-	Running       bool
-	Rows          []BrowserRowDTO
-	SelectedID    int64
-	CheckedCount  int
-	BatchActive   bool
-	BatchText     string
-	MissingHint   string
-	DlBrowserBusy bool
-	DlBrowserOpen bool
-	DlBrowserURL  string
-	Bridge        BridgeStatusDTO
-	AgyChooserOn  bool
-	AgyChooser    AgyChooserDTO
-	AgyLoginOn    bool
-	AgyLogin      AgyLoginDTO
+	Backend       string          `json:"backend"`
+	BackendLabel  string          `json:"backendLabel"`
+	Engines       []string        `json:"engines"`
+	Ready         bool            `json:"ready"`
+	Busy          bool            `json:"busy"`
+	BadgeLabel    string          `json:"badgeLabel"`
+	BadgeTone     string          `json:"badgeTone"`
+	Status        string          `json:"status"`
+	Detail        string          `json:"detail"`
+	Percent       float64         `json:"percent"`
+	Done          int64           `json:"done"`
+	Total         int64           `json:"total"`
+	Speed         int64           `json:"speed"`
+	Supported     bool            `json:"supported"`
+	Running       bool            `json:"running"`
+	Rows          []BrowserRowDTO `json:"rows"`
+	SelectedID    int64           `json:"selectedId"`
+	CheckedCount  int             `json:"checkedCount"`
+	BatchActive   bool            `json:"batchActive"`
+	BatchKind     string          `json:"batchKind"`
+	BatchText     string          `json:"batchText"`
+	MissingHint     string              `json:"missingHint"`
+	SharedExitHints []SharedExitHintDTO `json:"sharedExitHints"`
+	DlBrowserBusy   bool                `json:"dlBrowserBusy"`
+	DlBrowserOpen   bool                `json:"dlBrowserOpen"`
+	DlBrowserURL    string              `json:"dlBrowserUrl"`
 }
 
+// SharedExitHintDTO describes a same-platform shared-exit warning in the account pool.
+type SharedExitHintDTO struct {
+	Platform string `json:"platform"`
+	Message  string `json:"message"`
+}
+
+// BrowserDrawerDTO represents the floating interactive CDP preview drawer state.
 type BrowserDrawerDTO struct {
-	Open      bool
-	AccountID int64
-	Name      string
-	Platform  string
-	Title     string
-	URL       string
-	Loading   bool
-	Manual    bool
-	Resuming  bool
-	Busy      bool
-	Err       string
-	Width     float64
-	Height    float64
-	CopyText  string
-	CopyReady bool
+	Open         bool    `json:"open"`
+	AccountID    int64   `json:"accountId"`
+	Name         string  `json:"name"`
+	Platform     string  `json:"platform"`
+	Title        string  `json:"title"`
+	URL          string  `json:"url"`
+	Loading        bool    `json:"loading"`
+	Manual         bool    `json:"manual"`
+	AwaitingVerify bool    `json:"awaitingVerify"`
+	Resuming       bool    `json:"resuming"`
+	Busy         bool    `json:"busy"`
+	Err          string  `json:"err"`
+	Width        float64 `json:"width"`
+	Height       float64 `json:"height"`
+	CopyText     string  `json:"copyText"`
+	CopyReady    bool    `json:"copyReady"`
+	FrameVersion uint64  `json:"frameVersion"`
+	FrameURL     string  `json:"frameUrl"`
 }
 
-func getBrowserStateBridge() BrowserStateDTO {
-	a := getApp()
+func (a *App) buildBrowserState() BrowserStateDTO {
 	if a == nil {
-		return BrowserStateDTO{}
+		return BrowserStateDTO{
+			Engines:         []string{browser.KindFingerprint},
+			Rows:            []BrowserRowDTO{},
+			SharedExitHints: []SharedExitHintDTO{},
+		}
 	}
-	if a.detectedNote == "" && !a.camoufoxBusy {
+	if a.detectedNote == "" && !a.runtimeBusy {
 		a.refreshDetected()
 	}
-	badgeLabel, badgeTone := a.camoufoxRuntimeBadge()
+	badgeLabel, badgeTone := a.runtimeBadge()
 	now := time.Now()
 	var activeMap map[int64]bool
 	if a.engine != nil {
@@ -165,6 +123,12 @@ func getBrowserStateBridge() BrowserStateDTO {
 		selectedID = a.browserRows[a.browserSel].ID
 	}
 	for _, b := range a.browserRows {
+		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" {
+			continue
+		}
+		if a.manager != nil {
+			b.IsRunning = a.manager.IsRunning(b.ID)
+		}
 		active := activeMap != nil && activeMap[b.ID]
 		health := accountHealthLabel(b, active, b.IsLoggedIn, now)
 		tone := "neutral"
@@ -176,32 +140,21 @@ func getBrowserStateBridge() BrowserStateDTO {
 		case "已禁用", "已用尽":
 			tone = "danger"
 		}
-		email := ""
-		usageLbl := ""
-		usagePct := 0
-		if b.Platform == agy.Platform {
-			if strings.TrimSpace(b.UserDataDir) != "" {
-				email = agy.Email(b.UserDataDir)
-			}
-			uv := a.agyUsageView(b.ID)
-			usageLbl, usagePct, _ = formatAgyUsageView(uv)
+		lastErr := b.LastError
+		// 行可能是换日之前读进缓存的：到期的额度、冷却错误只是历史，不再显示。
+		if b.Expired(now) {
+			lastErr = ""
 		}
 		op, pending := a.browserPending[b.ID]
 		pendingOp := ""
 		if pending {
-			if op.stopping {
-				pendingOp = "stopping"
-			} else {
-				pendingOp = "starting"
-			}
+			pendingOp = op.opKind()
 		}
 		rows = append(rows, BrowserRowDTO{
 			ID:         b.ID,
 			Platform:   b.Platform,
 			Name:       b.Name,
-			Email:      email,
 			Engine:     b.Engine,
-			Extension:  b.ExtAccount != "",
 			IsRunning:  b.IsRunning,
 			IsLoggedIn: b.IsLoggedIn,
 			Active:     active,
@@ -212,24 +165,9 @@ func getBrowserStateBridge() BrowserStateDTO {
 			Health:     health,
 			HealthTone: tone,
 			Proxy:      b.Proxy,
-			LastError:  b.LastError,
+			LastError:  lastErr,
 			TodayCount: b.UsedToday(now),
-			UsageLabel: usageLbl,
-			UsagePct:   usagePct,
 		})
-	}
-	var bs BridgeStatusDTO
-	bs.Token = a.extToken
-	bs.TokenNote = a.extTokenNote
-	bs.Port = a.extPort
-	bs.PairLabel = a.bridgePairLabel()
-	if a.engine != nil {
-		st := a.engine.BridgeStatus()
-		bs.Listening = st.Listening
-		bs.Addr = st.Addr
-		bs.Err = st.Err
-		bs.Doubao = st.Doubao
-		bs.Qianwen = st.Qianwen
 	}
 	batchText := ""
 	if a.browserBatch != nil {
@@ -240,124 +178,246 @@ func getBrowserStateBridge() BrowserStateDTO {
 	if len(missing) > 0 {
 		missingHint = "以下勾选平台尚未添加账号：" + strings.Join(missing, "、")
 	}
-	dto := BrowserStateDTO{
+	return BrowserStateDTO{
 		Backend:       a.browserBackend,
 		BackendLabel:  browser.ChoiceLabel(a.browserBackend),
-		Engines:       []string{browser.KindCamoufox, browser.KindChromeCDP},
-		Ready:         a.camoufoxReady,
-		Busy:          a.camoufoxBusy,
+		Engines:       []string{browser.KindFingerprint},
+		Ready:         a.runtimeReady,
+		Busy:          a.runtimeBusy,
 		BadgeLabel:    badgeLabel,
 		BadgeTone:     badgeTone,
-		Status:        a.camoufoxStatus,
+		Status:        a.runtimeStatus,
 		Detail:        a.detectedDetail,
-		Percent:       a.camoufoxPercent,
-		Done:          a.camoufoxDone,
-		Total:         a.camoufoxTotal,
-		Speed:         a.camoufoxSpeed,
+		Percent:       a.runtimePercent,
+		Done:          a.runtimeDone,
+		Total:         a.runtimeTotal,
+		Speed:         a.runtimeSpeed,
 		Supported:     browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, a.browserBackend),
 		Running:       a.running,
 		Rows:          rows,
 		SelectedID:    selectedID,
 		CheckedCount:  len(a.browserChecked),
-		BatchActive:   a.browserBatch != nil,
-		BatchText:     batchText,
-		MissingHint:   missingHint,
-		DlBrowserBusy: a.dlBrowserBusy,
-		DlBrowserOpen: a.dlBrowser != nil && a.dlBrowser.Alive(),
-		DlBrowserURL:  a.dlBrowserURL,
-		Bridge:        bs,
-	}
-	if a.agyChooser != nil {
-		dto.AgyChooserOn = true
-		dto.AgyChooser = AgyChooserDTO{
-			Hint:      a.agyChooser.hint,
-			Home:      a.agyChooser.home,
-			Email:     a.agyChooser.email,
-			CanImport: a.agyChooser.canImport,
-			Keychain:  a.agyChooser.keychain,
-			Busy:      a.agyChooser.busy,
-			Retry:     a.agyChooser.retry,
-			Err:       a.agyChooser.err,
-			Status:    a.agyChooser.status,
-		}
-	}
-	if a.agyLogin != nil {
-		dto.AgyLoginOn = true
-		dto.AgyLogin = AgyLoginDTO{
-			ID:      a.agyLogin.id,
-			Name:    a.agyLogin.name,
-			URL:     a.agyLogin.url,
-			Busy:    a.agyLogin.busy,
-			Retry:   a.agyLogin.retry,
-			Err:     a.agyLogin.err,
-			Copied:  a.agyLogin.copied,
-			Opening: a.agyLogin.opening,
-		}
-	}
-	return dto
-}
-
-func selectAccountEngineBridge(choice string) {
-	if a := getApp(); a != nil {
-		a.selectAccountEngine(choice)
+		BatchActive:     a.browserBatch != nil,
+		BatchKind:       a.browserBatch.opKind(),
+		BatchText:       batchText,
+		MissingHint:     missingHint,
+		SharedExitHints: a.sharedExitHints(a.browserRows),
+		DlBrowserBusy:   a.dlBrowserBusy,
+		DlBrowserOpen:   a.dlBrowser != nil && a.dlBrowser.Alive(),
+		DlBrowserURL:    a.dlBrowserURL,
 	}
 }
 
-func installCamoufoxBridge() {
-	if a := getApp(); a != nil {
-		a.installCamoufox()
-	}
-}
-
-func refreshBrowsersBridge() {
-	if a := getApp(); a != nil {
-		a.refreshDetected()
-		a.refreshBrowsers()
-	}
-}
-
-func createBrowserBridge(platform, name string) {
-	if a := getApp(); a != nil {
-		a.createBrowser(platform, name)
-	}
-}
-
-func browserRowActionBridge(id int64, action string) {
-	a := getApp()
-	if a == nil {
+func (a *App) loadDismissedSharedExitHints(s *store.Store) {
+	a.dismissedSharedExitHints = map[string]string{}
+	if s == nil {
 		return
 	}
-	row, ok := a.browserByID(id)
-	if !ok {
-		a.refreshBrowsers()
-		row, ok = a.browserByID(id)
+	raw := strings.TrimSpace(s.Get(settingDismissedSharedExitHints))
+	if raw == "" {
+		return
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return
+	}
+	for platform, msg := range parsed {
+		platform = strings.TrimSpace(platform)
+		msg = strings.TrimSpace(msg)
+		if (platform == "豆包" || platform == "千问" || platform == "千问国际") && msg != "" {
+			a.dismissedSharedExitHints[platform] = msg
+		}
+	}
+}
+
+func (a *App) persistDismissedSharedExitHints() {
+	if a == nil || a.store == nil {
+		return
+	}
+	if len(a.dismissedSharedExitHints) == 0 {
+		a.store.Set(settingDismissedSharedExitHints, "")
+		return
+	}
+	data, err := json.Marshal(a.dismissedSharedExitHints)
+	if err != nil {
+		return
+	}
+	a.store.Set(settingDismissedSharedExitHints, string(data))
+}
+
+func (a *App) dismissSharedExitHints(platforms []string) {
+	if a == nil || len(platforms) == 0 {
+		return
+	}
+	changed := false
+	for _, raw := range platforms {
+		platform := strings.TrimSpace(raw)
+		if platform != "豆包" && platform != "千问" && platform != "千问国际" {
+			continue
+		}
+		msg := a.platformSharedExitHint(a.browserRows, platform)
+		if msg == "" {
+			continue
+		}
+		if a.dismissedSharedExitHints == nil {
+			a.dismissedSharedExitHints = map[string]string{}
+		}
+		if a.dismissedSharedExitHints[platform] != msg {
+			a.dismissedSharedExitHints[platform] = msg
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	a.persistDismissedSharedExitHints()
+	a.emit("browsers")
+}
+
+func (a *App) sharedExitHints(accounts []store.Browser) []SharedExitHintDTO {
+	hints := []SharedExitHintDTO{}
+	for _, platform := range []string{"豆包", "千问", "千问国际"} {
+		msg := a.platformSharedExitHint(accounts, platform)
+		if msg == "" {
+			continue
+		}
+		if a.dismissedSharedExitHints[platform] == msg {
+			continue
+		}
+		hints = append(hints, SharedExitHintDTO{
+			Platform: platform,
+			Message:  msg,
+		})
+	}
+	return hints
+}
+
+func (a *App) platformSharedExitHint(accounts []store.Browser, platform string) string {
+	globalProxy := browser.CurrentProxyServer()
+	sharedAccounts := 0
+	directShared := false
+	for _, b := range accounts {
+		if b.Platform != platform || b.Disabled {
+			continue
+		}
+		if len(browser.SamePlatformSharedExit(accounts, b, globalProxy)) > 0 {
+			sharedAccounts++
+			effective := strings.TrimSpace(b.Proxy)
+			if effective == "" {
+				effective = strings.TrimSpace(globalProxy)
+			}
+			if effective == "" {
+				directShared = true
+			}
+		}
+	}
+	if sharedAccounts < 2 {
+		return ""
+	}
+	if directShared {
+		return fmt.Sprintf("当前有 %d 个%s账号共用本机直连出口，建议配置独立代理或增大发送间隔以减少触发验证", sharedAccounts, platform)
+	}
+	return fmt.Sprintf("当前有 %d 个%s账号共用同一代理出口，建议配置独立代理或增大发送间隔以减少触发验证", sharedAccounts, platform)
+}
+
+// GetBrowserState returns the managed accounts and browser runtime status snapshot.
+func (s *BrowserService) GetBrowserState(ctx context.Context) BrowserStateDTO {
+	if s.app == nil {
+		return (*App)(nil).buildBrowserState()
+	}
+	out, err := callValue(s.app, ctx, func() BrowserStateDTO {
+		return s.app.buildBrowserState()
+	})
+	if err != nil {
+		return (*App)(nil).buildBrowserState()
+	}
+	return out
+}
+
+// InstallBrowserRuntime triggers installation of the project-managed Fingerprint browser runtime.
+func (s *BrowserService) InstallBrowserRuntime(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.installBrowserRuntime()
+	})
+}
+
+// DismissSharedExitHints dismisses the current shared-exit warnings for the specified platforms.
+func (s *BrowserService) DismissSharedExitHints(ctx context.Context, platforms []string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.dismissSharedExitHints(platforms)
+	})
+}
+
+// RefreshBrowsers re-checks runtime detection and reloads account browser rows.
+func (s *BrowserService) RefreshBrowsers(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.refreshDetected()
+		s.app.refreshBrowsers()
+	})
+}
+
+// CreateBrowser creates a new isolated provider account profile.
+func (s *BrowserService) CreateBrowser(ctx context.Context, platform, name string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.createBrowser(platform, name)
+	})
+}
+
+// BrowserRowAction executes an action on one account row (launch, stop, drawer, restore, toggleDisabled, delete).
+func (s *BrowserService) BrowserRowAction(ctx context.Context, id int64, action string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		row, ok := a.browserByID(id)
 		if !ok {
-			return
+			a.refreshBrowsers()
+			row, ok = a.browserByID(id)
+			if !ok {
+				return
+			}
 		}
-	}
-	a.selectBrowserID(id)
-	switch action {
-	case "launch":
-		if row.Platform == agy.Platform {
-			a.openAgyLane(row)
-		} else {
+		a.selectBrowserID(id)
+		if a.manager != nil {
+			live := a.manager.IsRunning(row.ID)
+			row.IsRunning = live
+			for i := range a.browserRows {
+				if a.browserRows[i].ID == row.ID {
+					a.browserRows[i].IsRunning = live
+					break
+				}
+			}
+		}
+		switch action {
+		case "launch":
 			a.launchBrowserInstance(row, nil)
+		case "stop":
+			a.stopBrowserInstance(row, nil)
+		case "drawer":
+			a.openBrowserDrawer(row)
+		case "restore":
+			a.restoreBrowserByRow(row)
+		case "toggleDisabled":
+			a.setAccountDisabled(row.ID, !row.Disabled)
+			a.refreshBrowsers()
+		case "delete":
+			a.deleteBrowserByRow(row)
 		}
-	case "stop":
-		a.stopBrowserInstance(row, nil)
-	case "drawer":
-		a.openBrowserDrawer(row)
-	case "restore":
-		a.restoreBrowserByRow(row)
-	case "toggleDisabled":
-		a.setAccountDisabled(row.ID, !row.Disabled)
-		a.refreshBrowsers()
-	case "refreshUsage":
-		a.markAgyUsageForce(row.ID)
-	case "delete":
-		a.deleteBrowserByRow(row)
-	}
-	a.emit("browsers", "workbench")
+		a.emit("browsers", "workbench")
+	})
 }
 
 func (a *App) setAccountDisabled(id int64, disabled bool) {
@@ -373,202 +433,284 @@ func (a *App) setAccountDisabled(id int64, disabled bool) {
 	}
 }
 
-func setPlatformAccountsDisabledBridge(platform string, disabled bool) {
-	a := getApp()
-	if a == nil {
+// SetPlatformAccountsDisabled enables or disables all accounts belonging to a platform.
+func (s *BrowserService) SetPlatformAccountsDisabled(ctx context.Context, platform string, disabled bool) {
+	if s.app == nil {
 		return
 	}
-	platform = strings.TrimSpace(platform)
-	if platform == "" {
-		return
-	}
-	changed := false
-	for _, b := range a.laneBrowsers() {
-		if b.Platform == platform && b.Disabled != disabled {
-			a.setAccountDisabled(b.ID, disabled)
-			changed = true
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		platform = strings.TrimSpace(platform)
+		if platform == "" {
+			return
 		}
-	}
-	if !changed {
-		return
-	}
-	a.refreshBrowsers()
-	a.emit("shell")
+		changed := false
+		for _, b := range a.laneBrowsers() {
+			if b.Platform == platform && b.Disabled != disabled {
+				a.setAccountDisabled(b.ID, disabled)
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+		a.refreshBrowsers()
+		a.emit("shell")
+	})
 }
 
-func toggleBrowserCheckBridge(id int64, on bool) {
-	a := getApp()
-	if a == nil {
+// ToggleBrowserCheck toggles batch-selection checkbox state for an account row.
+func (s *BrowserService) ToggleBrowserCheck(ctx context.Context, id int64, on bool) {
+	if s.app == nil {
 		return
 	}
-	if a.browserChecked == nil {
-		a.browserChecked = map[int64]bool{}
-	}
-	if on {
-		a.browserChecked[id] = true
-	} else {
-		delete(a.browserChecked, id)
-	}
-	a.emit("browsers")
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		if a.browserChecked == nil {
+			a.browserChecked = map[int64]bool{}
+		}
+		if on {
+			a.browserChecked[id] = true
+		} else {
+			delete(a.browserChecked, id)
+		}
+		a.emit("browsers")
+	})
 }
 
-func toggleAllBrowserChecksBridge(on bool) {
-	a := getApp()
-	if a == nil {
+// ToggleAllBrowserChecks checks or unchecks all local account rows.
+func (s *BrowserService) ToggleAllBrowserChecks(ctx context.Context, on bool) {
+	if s.app == nil {
 		return
 	}
-	if a.browserChecked == nil {
-		a.browserChecked = map[int64]bool{}
-	}
-	clear(a.browserChecked)
-	if on {
-		for _, r := range a.browserRows {
-			if r.ExtAccount == "" {
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		if a.browserChecked == nil {
+			a.browserChecked = map[int64]bool{}
+		}
+		clear(a.browserChecked)
+		if on {
+			for _, r := range a.browserRows {
 				a.browserChecked[r.ID] = true
 			}
 		}
-	}
-	a.emit("browsers")
-}
-
-func runBrowserBatchBridge(stopping bool) {
-	if a := getApp(); a != nil {
-		a.runBrowserBatch(stopping)
 		a.emit("browsers")
-	}
+	})
 }
 
-func commitBrowserRenameBridge(id int64, newName string) {
-	a := getApp()
-	if a == nil || a.store == nil || id <= 0 {
+// RunBrowserBatch launches or stops all checked account browsers in a batch.
+func (s *BrowserService) RunBrowserBatch(ctx context.Context, stopping bool) {
+	if s.app == nil {
 		return
 	}
-	newName = strings.TrimSpace(newName)
-	if newName == "" {
-		return
-	}
-	a.renameID = id
-	a.renameDraft = newName
-	a.commitRename()
+	_ = s.app.call(ctx, func() {
+		s.app.runBrowserBatch(stopping)
+		s.app.emit("browsers")
+	})
 }
 
-func saveAccountProxyBridge(id int64, proxyURL string) error {
-	a := getApp()
-	if a == nil {
+// ClearBrowserHistory deletes platform chat history records for one or more accounts.
+// When ids is empty, currently checked accounts are used.
+func (s *BrowserService) ClearBrowserHistory(ctx context.Context, ids []int64, keepRecent int, fastMode bool) error {
+	if s.app == nil {
 		return nil
 	}
-	return a.saveAccountProxy(id, proxyURL)
+	err, callErr := callValue(s.app, ctx, func() error {
+		return s.app.clearBrowserHistory(ids, keepRecent, fastMode)
+	})
+	if callErr != nil {
+		return callErr
+	}
+	return err
 }
 
-func regenerateExtensionTokenBridge() {
-	if a := getApp(); a != nil {
-		a.regenerateExtensionToken()
-	}
-}
-
-func agyActionBridge(ctx context.Context, action, value string) error {
-	a := getApp()
-	if a == nil {
-		return nil
-	}
-	switch action {
-	case "openChooser":
-		a.addAgyAccount()
-	case "closeChooser":
-		a.agyChooser = nil
-	case "startOAuth":
-		a.startAgyOAuth()
-	case "pickFolder":
-		dirs, err := a.pickDirsAsync(ctx, "选择 Antigravity 目录", false)
-		if err != nil {
-			return err
-		}
-		if len(dirs) > 0 {
-			_ = a.onScope(ctx, func() { a.agySelectImportFolder(dirs[0]) })
-		}
-	case "startImport":
-		a.startAgyImport()
-	case "openAuthURL":
-		a.openAgyAuthURL()
-	case "copyAuthURL":
-		if a.agyLogin != nil && a.agyLogin.url != "" {
-			a.copyText(a.agyLogin.url)
-			a.agyLogin.copied = true
-		}
-	case "submitCode":
-		a.submitAgyCode(value)
-	case "retryLogin":
-		a.retryAgyLogin()
-	case "cancelLogin":
-		a.closeAgyLogin()
-	}
-	a.emit("browsers", "wizard")
-	return nil
-}
-
-func openBrowserDrawerBridge(id int64) {
-	a := getApp()
-	if a == nil {
+// StopClearBrowserHistory cancels an in-progress batch chat history cleanup.
+func (s *BrowserService) StopClearBrowserHistory(ctx context.Context) {
+	if s.app == nil {
 		return
 	}
-	for _, row := range a.configuredBrowsers() {
-		if row.ID == id {
-			a.openBrowserDrawer(row)
+	_ = s.app.call(ctx, func() {
+		s.app.stopClearBrowserHistory()
+	})
+}
+
+// SyncAccountUsernames fetches and applies real platform usernames for one or more accounts.
+// When ids is empty, currently checked accounts are used.
+func (s *BrowserService) SyncAccountUsernames(ctx context.Context, ids []int64) error {
+	if s.app == nil {
+		return nil
+	}
+	err, callErr := callValue(s.app, ctx, func() error {
+		return s.app.syncAccountUsernames(ids)
+	})
+	if callErr != nil {
+		return callErr
+	}
+	return err
+}
+
+// StopSyncAccountUsernames cancels an in-progress batch account username sync.
+func (s *BrowserService) StopSyncAccountUsernames(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.stopSyncAccountUsernames()
+	})
+}
+
+// CommitBrowserRename renames an account browser row.
+func (s *BrowserService) CommitBrowserRename(ctx context.Context, id int64, newName string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		if a.store == nil || id <= 0 {
 			return
 		}
-	}
+		newName = strings.TrimSpace(newName)
+		if newName == "" {
+			return
+		}
+		a.renameID = id
+		a.renameDraft = newName
+		a.commitRename()
+	})
 }
 
-func closeBrowserDrawerBridge() {
-	if a := getApp(); a != nil {
-		a.closeBrowserDrawer()
+// SaveAccountProxy validates and persists a per-account proxy URL.
+func (s *BrowserService) SaveAccountProxy(ctx context.Context, id int64, proxyURL string) error {
+	if s.app == nil {
+		return nil
 	}
+	var opErr error
+	if err := s.app.call(ctx, func() {
+		opErr = s.app.saveAccountProxy(id, proxyURL)
+	}); err != nil {
+		return err
+	}
+	return opErr
 }
 
-func resumeBrowserDrawerBridge() {
-	a := getApp()
-	if a == nil || a.browserDrawer == nil {
+// OpenBrowserDrawer opens the floating interactive CDP preview drawer for an account.
+func (s *BrowserService) OpenBrowserDrawer(ctx context.Context, id int64) {
+	if s.app == nil {
 		return
 	}
-	s := a.browserDrawer
-	if s.resuming || !s.held.Load() {
-		return
-	}
-	s.resuming = true
-	a.browserDrawerSend(s, cdp.PageInput{Kind: "resume"})
-	a.emit("browserDrawer")
+	_ = s.app.call(ctx, func() {
+		for _, row := range s.app.configuredBrowsers() {
+			if row.ID == id {
+				s.app.openBrowserDrawer(row)
+				return
+			}
+		}
+	})
 }
 
-func clearBrowserDrawerCopyBridge() {
-	a := getApp()
-	if a != nil && a.browserDrawer != nil {
-		a.browserDrawer.copyReady = false
-		a.browserDrawer.copyText = ""
+// CloseBrowserDrawer closes the floating interactive CDP preview drawer.
+func (s *BrowserService) CloseBrowserDrawer(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.closeBrowserDrawerByUser()
+	})
+}
+
+// ResumeBrowserDrawer hands control back from manual intervention to automated tasks.
+func (s *BrowserService) ResumeBrowserDrawer(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		if a.browserDrawer == nil {
+			return
+		}
+		st := a.browserDrawer
+		if st.resuming || !st.held.Load() {
+			return
+		}
+		st.resuming = true
+		a.browserDrawerSend(st, cdp.PageInput{Kind: "resume"})
 		a.emit("browserDrawer")
-	}
+	})
 }
 
-func getBrowserDrawerStateBridge() BrowserDrawerDTO {
-	a := getApp()
-	if a == nil || a.browserDrawer == nil {
+// ClearBrowserDrawerCopy clears the captured copy notification banner in the drawer.
+func (s *BrowserService) ClearBrowserDrawerCopy(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		if s.app.browserDrawer != nil {
+			s.app.browserDrawer.copyReady = false
+			s.app.browserDrawer.copyText = ""
+			s.app.emit("browserDrawer")
+		}
+	})
+}
+
+// GetBrowserDrawerState returns the floating CDP preview drawer state and live frame URL.
+func (s *BrowserService) GetBrowserDrawerState(ctx context.Context) BrowserDrawerDTO {
+	if s.app == nil {
 		return BrowserDrawerDTO{}
 	}
-	s := a.browserDrawer
-	return BrowserDrawerDTO{
-		Open:      true,
-		AccountID: s.row.ID,
-		Name:      s.row.Name,
-		Platform:  s.row.Platform,
-		Title:     s.title,
-		URL:       s.url,
-		Loading:   s.loading,
-		Manual:    s.held.Load(),
-		Resuming:  s.resuming,
-		Busy:      a.browserDrawerBusy(s.row.ID),
-		Err:       s.err,
-		Width:     s.width,
-		Height:    s.height,
-		CopyText:  s.copyText,
-		CopyReady: s.copyReady,
+	out, err := callValue(s.app, ctx, func() BrowserDrawerDTO {
+		a := s.app
+		if a.browserDrawer == nil {
+			return BrowserDrawerDTO{}
+		}
+		st := a.browserDrawer
+		return BrowserDrawerDTO{
+			Open:         true,
+			AccountID:    st.row.ID,
+			Name:         st.row.Name,
+			Platform:     st.row.Platform,
+			Title:        st.title,
+			URL:          st.url,
+			Loading:        st.loading,
+			Manual:         st.held.Load(),
+			AwaitingVerify: a.engine != nil && a.engine.AccountAwaitingUser(st.row.ID),
+			Resuming:       st.resuming,
+			Busy:         a.browserDrawerBusy(st.row.ID),
+			Err:          st.err,
+			Width:        st.width,
+			Height:       st.height,
+			CopyText:     st.copyText,
+			CopyReady:    st.copyReady,
+			FrameVersion: st.frameVersion,
+			FrameURL:     a.ensureMedia().DrawerFrameURL(st.frameVersion),
+		}
+	})
+	if err != nil {
+		return BrowserDrawerDTO{}
 	}
+	return out
+}
+
+// SendBrowserDrawerInput forwards mouse, wheel, and keyboard inputs from the frontend
+// BrowserStage component to the active CDP PageView.
+func (s *BrowserService) SendBrowserDrawerInput(ctx context.Context, in BrowserInputDTO) bool {
+	if s.app == nil {
+		return false
+	}
+	ok, err := callValue(s.app, ctx, func() bool {
+		return s.app.handleBrowserDrawerInput(in)
+	})
+	if err != nil {
+		return false
+	}
+	return ok
+}
+
+// ---- Test bridge wrappers ----
+
+func getBrowserStateBridge() BrowserStateDTO {
+	return (&BrowserService{app: getApp()}).GetBrowserState(context.Background())
+}
+
+func setPlatformAccountsDisabledBridge(platform string, disabled bool) {
+	(&BrowserService{app: getApp()}).SetPlatformAccountsDisabled(context.Background(), platform, disabled)
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,7 +155,7 @@ func TestPostCancellation(t *testing.T) {
 
 func TestPostRenderedOriginCookiesAndRedirects(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -283,13 +283,13 @@ func TestPostRenderedOriginCookiesAndRedirects(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("browser POST did not stop after cancellation")
 	}
-	if err := session.run(ctx, camoufox.Navigate(other.URL)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(other.URL)); err != nil {
 		t.Fatal(err)
 	}
 	if response, err := session.Post(ctx, server.URL+"/api/items", nil, nil); err == nil || response != nil {
 		t.Fatalf("stale captured origin POST = %+v, %v", response, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(server.URL+"/shop")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(server.URL+"/shop")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Capture(ctx); err != nil {

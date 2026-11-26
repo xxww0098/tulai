@@ -18,7 +18,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -338,13 +338,13 @@ func TestTwitterRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
 		t.Skip("set TULAI_RENDERED_E2E=1 for isolated browser integration")
 	}
-	dataDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")
+	dataDir := os.Getenv("TULAI_FINGERPRINT_TEST_DATA")
 	if dataDir == "" {
-		t.Skip("set TULAI_CAMOUFOX_TEST_DATA to a disposable copy of the Camoufox runtime")
+		t.Skip("set TULAI_FINGERPRINT_TEST_DATA to a disposable copy of the Fingerprint runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, dataDir, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, dataDir, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,23 +353,23 @@ func TestTwitterRenderedCapture(t *testing.T) {
 	getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	transport := getter.client.Transport.(*http.Transport)
 	transport.DialContext, transport.DisableKeepAlives = safeDownloadDial, true
-	session := &RenderedSession{process: process, tab: camoufox.PageContext(life, process, process.Page), closeTab: closeTab,
+	session := &RenderedSession{process: process, tab: fingerprint.PageContext(life, process, process.Page), closeTab: closeTab,
 		closeAllocator: func() { process.Close() }, releaseProfile: func() {}, getter: getter, start: twitterTestURL(t, twitterTestPage)}
 	defer session.Close()
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == twitterTestPage {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(twitterTestFixture())))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -381,7 +381,7 @@ func TestTwitterRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start = twitterTestURL(t, twitterTestPage)
-	if err := session.run(ctx, camoufox.Navigate(twitterTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(twitterTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
@@ -635,20 +635,20 @@ func TestTwitterPublicProfileHTMLSample(t *testing.T) {
 }
 
 func TestTwitterPublicProfileBrowser(t *testing.T) {
-	if os.Getenv("TULAI_TWITTER_PROFILE_BROWSER_LIVE") != "1" || os.Getenv("TULAI_CAMOUFOX_TEST_DATA") == "" {
-		t.Skip("set TULAI_TWITTER_PROFILE_BROWSER_LIVE=1 and TULAI_CAMOUFOX_TEST_DATA for an isolated public page")
+	if os.Getenv("TULAI_TWITTER_PROFILE_BROWSER_LIVE") != "1" || os.Getenv("TULAI_FINGERPRINT_TEST_DATA") == "" {
+		t.Skip("set TULAI_TWITTER_PROFILE_BROWSER_LIVE=1 and TULAI_FINGERPRINT_TEST_DATA for an isolated public page")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, os.Getenv("TULAI_CAMOUFOX_TEST_DATA"), camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, os.Getenv("TULAI_FINGERPRINT_TEST_DATA"), fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Skipf("isolated browser unavailable: %v", err)
 	}
 	life, closeTab := context.WithCancel(process.Context())
-	session := &RenderedSession{process: process, tab: camoufox.PageContext(life, process, process.Page), closeTab: closeTab,
+	session := &RenderedSession{process: process, tab: fingerprint.PageContext(life, process, process.Page), closeTab: closeTab,
 		closeAllocator: func() { process.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: twitterTestURL(t, twitterProfileTestPage)}
 	defer session.Close()
-	if err := session.run(ctx, camoufox.Navigate(twitterProfileTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(twitterProfileTestPage)); err != nil {
 		t.Skipf("public profile navigation unavailable: %v", err)
 	}
 	if err := Wait(ctx, 2*time.Second); err != nil {
@@ -670,18 +670,18 @@ func TestTwitterPublicProfileBrowser(t *testing.T) {
 }
 
 func TestTwitterProfileRenderedCapture(t *testing.T) {
-	if os.Getenv("TULAI_RENDERED_E2E") != "1" || os.Getenv("TULAI_CAMOUFOX_TEST_DATA") == "" {
-		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_CAMOUFOX_TEST_DATA to a disposable Camoufox runtime")
+	if os.Getenv("TULAI_RENDERED_E2E") != "1" || os.Getenv("TULAI_FINGERPRINT_TEST_DATA") == "" {
+		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_FINGERPRINT_TEST_DATA to a disposable Fingerprint runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, os.Getenv("TULAI_CAMOUFOX_TEST_DATA"), camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, os.Getenv("TULAI_FINGERPRINT_TEST_DATA"), fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(process.Context())
 	page := twitterTestURL(t, twitterProfileTestPage)
-	session := &RenderedSession{process: process, tab: camoufox.PageContext(life, process, process.Page), closeTab: closeTab,
+	session := &RenderedSession{process: process, tab: fingerprint.PageContext(life, process, process.Page), closeTab: closeTab,
 		closeAllocator: func() { process.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: page}
 	defer session.Close()
 	hiddenCards := `<style>.fixture-hidden{display:none}.fixture-hidden-image{visibility:hidden}</style>` +
@@ -689,13 +689,13 @@ func TestTwitterProfileRenderedCapture(t *testing.T) {
 		`<article><div><a href="/NASA">NASA</a><a href="/NASA/status/108">time</a></div><div><img class="fixture-hidden-image" src="https://pbs.twimg.com/media/csshiddenimage?format=jpg&amp;name=small"><a style="display:inline-block;width:10px;height:10px" href="/NASA/status/108/photo/1"></a></div></article>`
 	body := strings.Replace(twitterProfileFixture(), `</body>`, hiddenCards+`</body>`, 1)
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == twitterProfileTestPage {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 			} else if u, err := url.Parse(paused.Request.URL); err == nil && paused.ResourceType == network.ResourceTypeImage && u.Hostname() == "pbs.twimg.com" {
@@ -703,7 +703,7 @@ func TestTwitterProfileRenderedCapture(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -711,7 +711,7 @@ func TestTwitterProfileRenderedCapture(t *testing.T) {
 			}
 		}()
 	})
-	if err := session.run(ctx, fetch.Enable(), camoufox.Navigate(twitterProfileTestPage)); err != nil {
+	if err := session.run(ctx, fetch.Enable(), fingerprint.Navigate(twitterProfileTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {

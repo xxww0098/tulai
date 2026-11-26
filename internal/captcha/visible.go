@@ -11,7 +11,7 @@ var ErrVisible = errors.New("页面出现验证码")
 
 // Visible 只读页面上是否有验证码。读失败时带回错误，调用方不能把它当成「已经通过」。
 func Visible(s *cdp.Session) (bool, error) {
-	if s == nil || s.IsEgo() {
+	if s == nil {
 		return false, nil
 	}
 	out, err := s.Evaluate("/* tulai captcha:verification */ (" + verificationExpression + ")")

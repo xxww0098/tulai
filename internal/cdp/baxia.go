@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 //go:embed slider_probe.js
@@ -68,10 +68,10 @@ type SliderLook struct {
 	Passed bool
 }
 
-// SliderConn 附着在已打开的 Camoufox 账号上。关闭时只 detach，不关掉用户的标签页。
+// SliderConn 附着在已打开的 Fingerprint 账号上。关闭时只 detach，不关掉用户的标签页。
 type SliderConn struct {
 	endpoint string
-	proc     *camoufox.Process
+	proc     *fingerprint.Process
 	mu       sync.Mutex
 	sess     map[string]string
 	closed   chan struct{}
@@ -123,12 +123,12 @@ type sliderTarget struct {
 	URL  string
 }
 
-// DialSlider 连接应用内的 Camoufox 账号句柄；不监听或连接调试端口。
+// DialSlider 连接应用内的 Fingerprint 账号句柄；不监听或连接调试端口。
 func DialSlider(ctx context.Context, endpoint string) (*SliderConn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	proc, err := camoufox.Find(endpoint)
+	proc, err := fingerprint.Find(endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +454,7 @@ func (c *SliderConn) session(ctx context.Context, targetID string) (string, erro
 		return "", err
 	}
 	if out.SessionID == "" {
-		return "", fmt.Errorf("没有 Camoufox 页面会话")
+		return "", fmt.Errorf("没有浏览器页面会话")
 	}
 	c.mu.Lock()
 	c.sess[targetID] = out.SessionID
@@ -473,7 +473,7 @@ func (c *SliderConn) Activate(ctx context.Context, targetID string) error {
 func (c *SliderConn) call(ctx context.Context, session, method string, params, dest any) error {
 	select {
 	case <-c.closed:
-		return fmt.Errorf("Camoufox 页面连接已关闭")
+		return fmt.Errorf("浏览器页面连接已关闭")
 	default:
 	}
 	return c.proc.Call(ctx, session, method, params, dest)

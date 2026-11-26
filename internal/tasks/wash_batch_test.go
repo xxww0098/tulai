@@ -3,21 +3,17 @@ package tasks
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -30,36 +26,28 @@ func numberedWashSources(count int) []string {
 	return sources
 }
 
-func TestChromeAndBoundCamoufoxBothBundleWash(t *testing.T) {
+func TestFingerprintBundlesWash(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	fox := addNamed(t, st, "豆包", "指纹")
-	chrome, err := st.AddManagedBrowser("豆包", "Chrome", "", store.EngineChromeCDP)
+	fp, err := st.AddManagedBrowser("豆包", "Fingerprint", "", store.EngineFingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
 	e.opts = Options{Wash: true, WaitResult: true}
-	items := []Task{{Platform: "豆包", BrowserID: chrome.ID, Prompt: "图", Images: []string{"a.png"}}, {Platform: "豆包", Prompt: "图", Images: []string{"b.png"}}}
-	if !e.chromeAccount(chrome.ID) || e.chromeAccount(fox.ID) {
-		t.Fatal("wrong task engine")
-	}
+	items := []Task{{Platform: "豆包", BrowserID: fp.ID, Prompt: "图", Images: []string{"a.png"}}, {Platform: "豆包", Prompt: "图", Images: []string{"b.png"}}}
 	if _, indices := e.bundleWashTasks(items, 0, items[0], 10, time.Now()); len(indices) != 2 {
-		t.Fatal("lost direct-CDP batch", indices)
-	}
-	items[0].BrowserID = fox.ID
-	if _, indices := e.bundleWashTasks(items, 0, items[0], 10, time.Now()); len(indices) != 2 {
-		t.Fatal("lost bound Firefox batch", indices)
+		t.Fatal("lost Fingerprint direct-CDP batch", indices)
 	}
 }
 
-func TestUnsentFirefoxBatchKeepsEachSourceOnChrome(t *testing.T) {
+func TestUnsentWashBatchKeepsEachSourceOnRotatedAccount(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
-	fox := addNamed(t, st, "豆包", "Firefox")
-	chrome, err := st.AddManagedBrowser("豆包", "Chrome", "", store.EngineChromeCDP)
+	first, err := st.AddManagedBrowser("豆包", "账号1", "", store.EngineFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.AddManagedBrowser("豆包", "账号2", "", store.EngineFingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,24 +59,24 @@ func TestUnsentFirefoxBatchKeepsEachSourceOnChrome(t *testing.T) {
 		Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: images,
 		Wash: true, WaitResult: true, Concurrency: 1,
 	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
-		if task.BrowserID == fox.ID && slices.Equal(task.Images, images) {
+		if task.BrowserID == first.ID && slices.Equal(task.Images, images) {
 			calls = append(calls, "batch")
-			return errDoubaoLogin
+			return errors.New("未登录")
 		}
-		if task.BrowserID != chrome.ID || !slices.Equal(task.Images, images) || len(task.batch) != len(images) {
+		if task.BrowserID != second.ID || !slices.Equal(task.Images, images) || len(task.batch) != len(images) {
 			return fmt.Errorf("unexpected account or source images: %d, %v", task.BrowserID, task.Images)
 		}
-		calls = append(calls, "chrome batch")
+		calls = append(calls, "rotated batch")
 		for i := range task.batch {
 			task.batch[i].Results = []string{task.Images[i] + ".out"}
 		}
 		return nil
 	})
-	if err != nil || !slices.Equal(calls, []string{"batch", "chrome batch"}) {
+	if err != nil || !slices.Equal(calls, []string{"batch", "rotated batch"}) {
 		t.Fatalf("attempts = %v, err = %v", calls, err)
 	}
 	for i, item := range e.View().Snapshot() {
-		if item.Status != StatusSuccess || item.BrowserID != chrome.ID || !slices.Equal(item.Results, []string{images[i] + ".out"}) {
+		if item.Status != StatusSuccess || item.BrowserID != second.ID || !slices.Equal(item.Results, []string{images[i] + ".out"}) {
 			t.Fatalf("lost source after switching browsers: %+v", item)
 		}
 	}
@@ -96,8 +84,6 @@ func TestUnsentFirefoxBatchKeepsEachSourceOnChrome(t *testing.T) {
 
 func TestBoundWashDispatchesTenThenOneAndKeepsSources(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	account := addNamed(t, st, "豆包", "甲")
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
@@ -133,7 +119,6 @@ func TestBoundWashDispatchesTenThenOneAndKeepsSources(t *testing.T) {
 
 func TestWashSendOnlyKeepsTheTenImageMessage(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	addNamed(t, st, "豆包", "甲")
 	addNamed(t, st, "豆包", "乙")
 	e := NewEngine(st, nil, nil, "")
@@ -162,9 +147,8 @@ func TestWashSendOnlyKeepsTheTenImageMessage(t *testing.T) {
 
 func TestRotatedWashBatchFitsRemainingAccountQuota(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	first := addNamed(t, st, "豆包", "甲")
-	second, err := st.AddManagedBrowser("豆包", "Chrome", "", store.EngineChromeCDP)
+	second, err := st.AddManagedBrowser("豆包", "Fingerprint", "", store.EngineFingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +185,6 @@ func TestRotatedWashBatchFitsRemainingAccountQuota(t *testing.T) {
 
 func TestBoundWashKeepsTenPerFreshBatchAfterWaitTimeout(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	addNamed(t, st, "豆包", "甲")
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
@@ -217,7 +199,7 @@ func TestBoundWashKeepsTenPerFreshBatchAfterWaitTimeout(t *testing.T) {
 		task.submitted = true
 		if len(sizes) <= 2 {
 			task.washWaitTimedOut = true
-			return &extbridge.ProtoError{Code: extbridge.ETimeout, Message: "等待生成结果超时"}
+			return errors.New("等待生成结果超时")
 		}
 		for i := range task.batch {
 			saved := task.batch[i].Images[0] + ".out"
@@ -242,8 +224,6 @@ func TestBoundWashKeepsTenPerFreshBatchAfterWaitTimeout(t *testing.T) {
 
 func TestBoundWashUsesBothIdleAccountsConcurrently(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	addNamed(t, st, "豆包", "甲")
 	addNamed(t, st, "豆包", "乙")
 	e := NewEngine(st, nil, nil, "")
@@ -299,7 +279,6 @@ func TestBoundWashUsesBothIdleAccountsConcurrently(t *testing.T) {
 
 func TestWashBatchGroupsOnlyMatchingPrompts(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	e := NewEngine(st, nil, nil, "")
 	e.opts = Options{Wash: true, WaitResult: true}
 	pending := []Task{
@@ -317,9 +296,7 @@ func TestBoundWashKeepsFullBatchWhenConcurrencyUnavailable(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
 		t.Run(fmt.Sprint("disabled=", disabled), func(t *testing.T) {
 			st := openRotateStore(t)
-			st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-			st.Set(extbridge.SettingExtPort, freePort(t))
-			addNamed(t, st, "豆包", "甲")
+							addNamed(t, st, "豆包", "甲")
 			second := addNamed(t, st, "豆包", "乙")
 			concurrency := 1
 			if disabled {
@@ -347,7 +324,6 @@ func TestBoundWashKeepsFullBatchWhenConcurrencyUnavailable(t *testing.T) {
 
 func TestWashBatchRespectsRemainingDailyAndSwitchLimits(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	account := addNamed(t, st, "豆包", "甲")
 	if err := st.RecordUse(account.ID, time.Now(), 5, 0, 0); err != nil {
 		t.Fatal(err)
@@ -370,8 +346,6 @@ func TestWashBatchRespectsRemainingDailyAndSwitchLimits(t *testing.T) {
 
 func TestUnsentWashBatchDoesNotUseDailyLimit(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	account := addNamed(t, st, "豆包", "甲")
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
@@ -516,200 +490,26 @@ func TestSingleWashWithExtraResultDoesNotMislabelIt(t *testing.T) {
 	}
 }
 
-func TestSingleWashDoesNotSendWithStaleAttachment(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "phone.png")
-	if err := os.WriteFile(path, resultPNG(t, 85), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sends := 0
-	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
-		name, _ := env.Name()
-		switch name {
-		case extbridge.CmdUpload:
-			return ackOK(env, map[string]any{"attachments": []string{"stale.png", "phone.png"}})
-		case extbridge.CmdSend:
-			sends++
-			return ackOK(env, nil)
-		default:
-			return ackOK(env, nil)
-		}
-	})
-	out, err := RunDoubaoExtension(context.Background(), sess, QianwenJob{TaskID: "11", Images: []string{path}, Prompt: "洗图", VerifyAttachments: true})
-	if err == nil || out.Submitted || out.sendAttempted || sends != 0 {
-		t.Fatalf("stale attachment must block send: out=%+v sends=%d err=%v", out, sends, err)
-	}
-}
-
-func TestWashSendUncertainStillCountsAsAttempted(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "phone.png")
-	if err := os.WriteFile(path, resultPNG(t, 86), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
-		name, _ := env.Name()
-		switch name {
-		case extbridge.CmdUpload:
-			return ackOK(env, map[string]any{"attachments": []string{"phone.png"}})
-		case extbridge.CmdSend:
-			return ackFail(env, extbridge.ESendUncertain, "发送状态未确认")
-		default:
-			return ackOK(env, nil)
-		}
-	})
-	out, err := RunDoubaoExtension(context.Background(), sess, QianwenJob{TaskID: "11", Images: []string{path}, Prompt: "洗图", VerifyAttachments: true})
-	if err == nil || !out.sendAttempted || out.Submitted {
-		t.Fatalf("uncertain send must count as attempted: out=%+v err=%v", out, err)
-	}
-}
-
-func TestBatchUploadChecksActualAttachmentOrder(t *testing.T) {
-	for _, reorder := range []bool{false, true} {
-		t.Run(fmt.Sprint(reorder), func(t *testing.T) {
-			var names []string
-			sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
-				var p struct {
-					Name   string `json:"fileName"`
-					Finish bool   `json:"finish"`
-				}
-				_ = json.Unmarshal(env.Payload, &p)
-				if p.Finish {
-					names = append(names, p.Name)
-				}
-				actual := append([]string(nil), names...)
-				if reorder && len(actual) == 2 {
-					actual[0], actual[1] = actual[1], actual[0]
-				}
-				return ackOK(env, map[string]any{"attachments": actual})
-			})
-			dir := t.TempDir()
-			paths := []string{filepath.Join(dir, "a", "same.png"), filepath.Join(dir, "b", "same.png")}
-			for _, path := range paths {
-				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte("image"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			err := extUpload(context.Background(), sess, QianwenJob{TaskID: "1", IdempotencyPrefix: "batch", Images: paths}, "豆包")
-			if (err != nil) != reorder || !reflect.DeepEqual(names, []string{"01-same.png", "02-same.png"}) {
-				t.Fatalf("order=%v names=%v err=%v", reorder, names, err)
-			}
-		})
-	}
-}
-
 func TestWashUploadNamesDistinguishBatchesAndSameNamedFiles(t *testing.T) {
-	job := QianwenJob{IdempotencyPrefix: "run-1:1", Images: []string{"/a/same.png", "/b/same.png"}, VerifyAttachments: true}
-	first, second := extUploadName(job, 0), extUploadName(job, 1)
-	job.IdempotencyPrefix = "run-2:1"
-	if first == second || first == extUploadName(job, 0) || filepath.Ext(first) != ".png" {
-		t.Fatalf("uploads are not uniquely named: %q %q", first, second)
+	names1 := washBatchUploadNames("run-1:1", []string{"/a/same.png", "/b/same.png"})
+	names2 := washBatchUploadNames("run-2:1", []string{"/a/same.png", "/b/same.png"})
+	if names1[0] == names1[1] || names1[0] == names2[0] || filepath.Ext(names1[0]) != ".png" {
+		t.Fatalf("uploads are not uniquely named: %v %v", names1, names2)
 	}
 }
 
 func TestDoubaoBatchPromptDistinguishesReusedBatches(t *testing.T) {
-	job := QianwenJob{IdempotencyPrefix: "run:1", Prompt: "分别洗图", Images: []string{"/a/same.png", "/b/same.png"}, VerifyAttachments: true}
-	first := strategy.DoubaoWashPrompt(job.Prompt, job.uploadNames())
-	oldName := extUploadName(job, 0)
-	job.IdempotencyPrefix = "run:2"
-	second := strategy.DoubaoWashPrompt(job.Prompt, job.uploadNames())
-	if first == second || strings.Contains(second, oldName) || !strings.HasPrefix(second, job.Prompt) {
+	paths := []string{"/a/same.png", "/b/same.png"}
+	names1 := washBatchUploadNames("run:1", paths)
+	first := strategy.DoubaoWashPrompt("分别洗图", names1)
+	names2 := washBatchUploadNames("run:2", paths)
+	second := strategy.DoubaoWashPrompt("分别洗图", names2)
+	if first == second || strings.Contains(second, names1[0]) || !strings.HasPrefix(second, "分别洗图") {
 		t.Fatalf("reused batch prompt retained old source: %q", second)
 	}
-	for i := range job.Images {
-		if !strings.Contains(second, extUploadName(job, i)) {
+	for i, name := range names2 {
+		if !strings.Contains(second, name) {
 			t.Fatalf("batch prompt omitted source %d: %q", i, second)
-		}
-	}
-}
-
-func TestBatchBridgeUploadsOnceAndSavesTenMatchingResults(t *testing.T) {
-	dir := t.TempDir()
-	var paths, names []string
-	var replies []map[string]any
-	data := map[string][]byte{}
-	for i := 0; i < 10; i++ {
-		path := filepath.Join(dir, fmt.Sprintf("source-%02d.png", i))
-		if err := os.WriteFile(path, resultPNG(t, byte(i+1)), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		paths = append(paths, path)
-		url := fmt.Sprintf("https://cdn.example/raw-%02d.png", i)
-		replies = append(replies, map[string]any{"url": url, "rawUrl": url, "sourceIndex": i + 1})
-		data[url] = resultPNG(t, byte(i+50))
-	}
-	for i, j := 0, len(replies)-1; i < j; i, j = i+1, j-1 {
-		replies[i], replies[j] = replies[j], replies[i]
-	}
-	sends := 0
-	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
-		name, _ := env.Name()
-		if name == extbridge.CmdSetPrompt || name == extbridge.CmdSend || name == extbridge.CmdWaitResult {
-			var p struct {
-				Prompt string `json:"prompt"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			for _, uploaded := range names {
-				if !strings.Contains(p.Prompt, uploaded) {
-					t.Errorf("%s prompt omitted current attachment %q", name, uploaded)
-				}
-			}
-		}
-		switch name {
-		case extbridge.CmdUpload:
-			var p struct {
-				Name   string `json:"fileName"`
-				Finish bool   `json:"finish"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			if p.Finish {
-				names = append(names, p.Name)
-			}
-			return ackOK(env, map[string]any{"attachments": names})
-		case extbridge.CmdSend:
-			sends++
-			return ackOK(env, nil)
-		case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt:
-			return ackOK(env, nil)
-		case extbridge.CmdWaitResult:
-			var p struct {
-				Expected []string `json:"expectedAttachments"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			if !reflect.DeepEqual(p.Expected, names) {
-				t.Errorf("wait must identify the actual uploads: got %v want %v", p.Expected, names)
-			}
-			return ackOK(env, map[string]any{"images": replies})
-		case extbridge.CmdDownload:
-			var p struct {
-				URL    string `json:"url"`
-				Offset int    `json:"offset"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			return chunkAck(env, data[p.URL], p.Offset)
-		default:
-			return ackFail(env, extbridge.EProtocol, name)
-		}
-	})
-	out, err := RunDoubaoExtension(context.Background(), sess, QianwenJob{TaskID: "1", IdempotencyPrefix: "batch", Images: paths, Prompt: "分别洗图", Wait: time.Second, VerifyAttachments: true})
-	if err != nil || !out.Submitted || sends != 1 || len(out.Results) != 10 {
-		t.Fatalf("send=%d results=%d err=%v", sends, len(out.Results), err)
-	}
-	e := NewEngine(nil, nil, nil, "")
-	e.opts = Options{Wash: true, OutputPath: filepath.Join(dir, "out")}
-	task := Task{Platform: "豆包"}
-	for _, path := range paths {
-		task.batch = append(task.batch, Task{Images: []string{path}})
-	}
-	if err := e.saveWashBatch(context.Background(), &task, out.Results, out.sourceIndices); err != nil {
-		t.Fatal(err)
-	}
-	for i, item := range task.batch {
-		got, err := os.ReadFile(item.Results[0])
-		if err != nil || !bytes.Equal(got, data[fmt.Sprintf("https://cdn.example/raw-%02d.png", i)]) {
-			t.Fatalf("source %d got the wrong output: %v", i, err)
 		}
 	}
 }
@@ -761,7 +561,7 @@ func TestSentWashBatchPreservesUnmatchedAndUncertainOutcome(t *testing.T) {
 	}
 	gotMod := e.execute(context.Background(), modTask, func(_ context.Context, task *Task) error {
 		task.submitted = true
-		return mapExtErr(&extbridge.ProtoError{Code: extbridge.EModeration, Message: "审核不通过: 违规内容"}, extAck{}, "豆包")
+		return fmt.Errorf("%w: 违规内容", strategy.ErrModeration)
 	})
 	if gotMod.Status != StatusFailed || strings.Contains(gotMod.Error, "发送状态未确认") {
 		t.Fatalf("moderation failure mislabeled: %+v", gotMod)
@@ -786,45 +586,10 @@ func TestPartialVerifiedWashBatchSavesMatchedWithoutQuarantine(t *testing.T) {
 		}
 		paths = append(paths, p)
 	}
-	data := map[string][]byte{
-		"https://cdn.example/raw-3.png": resultPNG(t, 93),
-		"https://cdn.example/raw-1.png": resultPNG(t, 91),
+	results := []strategy.Result{
+		{URL: "https://cdn.example/raw-3.png", Data: resultPNG(t, 93), WatermarkRemoved: true},
+		{URL: "https://cdn.example/raw-1.png", Data: resultPNG(t, 91), WatermarkRemoved: true},
 	}
-	var names []string
-	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
-		name, _ := env.Name()
-		switch name {
-		case extbridge.CmdUpload:
-			var p struct {
-				Name   string `json:"fileName"`
-				Finish bool   `json:"finish"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			if p.Finish {
-				names = append(names, p.Name)
-			}
-			return ackOK(env, map[string]any{"attachments": names})
-		case extbridge.CmdSetPrompt, extbridge.CmdSend, extbridge.CmdCaptchaAssist:
-			return ackOK(env, nil)
-		case extbridge.CmdWaitResult:
-			return ackOK(env, map[string]any{
-				"conversation": "https://www.doubao.com/chat/partial-1",
-				"images": []map[string]any{
-					{"url": "https://cdn.example/raw-3.png", "rawUrl": "https://cdn.example/raw-3.png", "sourceIndex": 3},
-					{"url": "https://cdn.example/raw-1.png", "rawUrl": "https://cdn.example/raw-1.png", "sourceIndex": 1},
-				},
-			})
-		case extbridge.CmdDownload:
-			var p struct {
-				URL    string `json:"url"`
-				Offset int    `json:"offset"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			return chunkAck(env, data[p.URL], p.Offset)
-		default:
-			return ackFail(env, extbridge.EProtocol, name)
-		}
-	})
 
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{Wash: true, WaitResult: true, OutputPath: outDir, RetryCount: 1}
@@ -840,16 +605,8 @@ func TestPartialVerifiedWashBatchSavesMatchedWithoutQuarantine(t *testing.T) {
 		},
 	}
 	done := e.execute(context.Background(), batch, func(ctx context.Context, task *Task) error {
-		out, err := RunDoubaoExtension(ctx, sess, QianwenJob{
-			TaskID:            "1",
-			IdempotencyPrefix: "partial",
-			Images:            task.Images,
-			Prompt:            task.Prompt,
-			Wait:              time.Second,
-			VerifyAttachments: true,
-		})
-		task.submitted = task.submitted || out.Submitted || out.sendAttempted
-		return e.saveWashResults(ctx, nil, task, out.Results, out.sourceIndices, err)
+		task.submitted = true
+		return e.saveWashResults(ctx, nil, task, results, []int{3, 1}, nil)
 	})
 	if done.Status != StatusFailed || !strings.Contains(done.Error, "已按源图关联保存") || strings.Contains(done.Error, "发送状态未确认") {
 		t.Fatalf("unexpected batch result: %+v", done)
@@ -877,8 +634,6 @@ func TestPartialVerifiedWashBatchSavesMatchedWithoutQuarantine(t *testing.T) {
 
 func TestModerationBatchSplitsAndIsolatesGuiltyImage(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	addNamed(t, st, "豆包", "甲")
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
@@ -896,7 +651,7 @@ func TestModerationBatchSplitsAndIsolatesGuiltyImage(t *testing.T) {
 		for _, img := range task.Images {
 			if img == "bad.png" {
 				task.submitted = true
-				return mapExtErr(&extbridge.ProtoError{Code: extbridge.EModeration, Message: "审核不通过"}, extAck{}, "豆包")
+				return strategy.ErrModeration
 			}
 		}
 		if len(task.batch) > 0 {
@@ -935,8 +690,6 @@ func TestModerationBatchSplitsAndIsolatesGuiltyImage(t *testing.T) {
 
 func TestPromptWideModerationStopsSplittingAfterThreeSoloFails(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	addNamed(t, st, "豆包", "甲")
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
@@ -952,7 +705,7 @@ func TestPromptWideModerationStopsSplittingAfterThreeSoloFails(t *testing.T) {
 			dispatches = append(dispatches, len(task.Images))
 		}
 		task.submitted = true
-		return mapExtErr(&extbridge.ProtoError{Code: extbridge.EModeration, Message: "审核不通过"}, extAck{}, "豆包")
+		return strategy.ErrModeration
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -972,8 +725,6 @@ func TestPromptWideModerationStopsSplittingAfterThreeSoloFails(t *testing.T) {
 
 func TestSoloImagesAndRebuildRetryPreventRebundling(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	addNamed(t, st, "豆包", "甲")
 	e := NewEngine(st, nil, nil, "")
 	defer e.CloseSessions()
@@ -1048,213 +799,5 @@ func TestSoloImagesAndRebuildRetryPreventRebundling(t *testing.T) {
 	}
 	if !reflect.DeepEqual(retryBatches, wantRetryBatches) {
 		t.Fatalf("RebuildRetry bundles mismatch: got %v want %v", retryBatches, wantRetryBatches)
-	}
-}
-
-func TestDoubaoExtensionCopyrightBatchSplitsWithoutSendCacheCollision(t *testing.T) {
-	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
-	addNamed(t, st, "豆包", "甲")
-
-	dir := t.TempDir()
-	names := []string{"01.png", "02.png", "copyright.png", "04.png"}
-	sources := make([]string, len(names))
-	srcByBytes := map[string]string{}
-	outByName := map[string][]byte{}
-	for i, name := range names {
-		srcData := resultPNG(t, byte(i+1))
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, srcData, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		sources[i] = p
-		srcByBytes[string(srcData)] = name
-		outByName[name] = resultPNG(t, byte(i+60))
-	}
-
-	var mu sync.Mutex
-	var attachments []string
-	var uploadedSources []string
-	var pageMark bool
-	var conversation string
-	convSeq := 0
-	const tabID = 7
-
-	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
-		mu.Lock()
-		defer mu.Unlock()
-		name, _ := env.Name()
-		switch name {
-		case extbridge.CmdCaptchaAssist, extbridge.CmdSetPrompt:
-			return ackOK(env, map[string]any{"captchaBlocked": false})
-		case extbridge.CmdWashChat:
-			var p struct {
-				Mode     string `json:"mode"`
-				Expected string `json:"expected"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			switch p.Mode {
-			case "ready":
-				return ackOK(env, map[string]any{"ready": conversation == "", "tabId": tabID})
-			case "fresh":
-				conversation = ""
-				pageMark = false
-				attachments = nil
-				uploadedSources = nil
-				return ackOK(env, map[string]any{"tabId": tabID})
-			case "check":
-				return ackOK(env, map[string]any{
-					"reusable":     conversation != "" && conversation == p.Expected,
-					"conversation": conversation,
-					"tabId":        tabID,
-				})
-			default:
-				return ackFail(env, extbridge.EProtocol, "unexpected washChat mode")
-			}
-		case extbridge.CmdUpload:
-			var p struct {
-				FileName   string `json:"fileName"`
-				DataBase64 string `json:"dataBase64"`
-				Finish     bool   `json:"finish"`
-				Clean      bool   `json:"clean"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			if p.Clean {
-				attachments = nil
-				uploadedSources = nil
-			}
-			if p.Finish {
-				raw, err := base64.StdEncoding.DecodeString(p.DataBase64)
-				if err != nil {
-					return ackFail(env, extbridge.EUploadFail, err.Error())
-				}
-				srcName := srcByBytes[string(raw)]
-				attachments = append(attachments, p.FileName)
-				uploadedSources = append(uploadedSources, srcName)
-			}
-			return ackOK(env, map[string]any{"attachments": append([]string(nil), attachments...)})
-		case extbridge.CmdSend:
-			pageMark = true
-			if conversation == "" {
-				convSeq++
-				conversation = fmt.Sprintf("https://www.doubao.com/chat/conv-%d", convSeq)
-			}
-			return ackOK(env, nil)
-		case extbridge.CmdWaitResult:
-			if !pageMark {
-				return ackFail(env, extbridge.ESelectorMiss, "还没有本轮发送标记，不能收集结果")
-			}
-			if slices.Contains(uploadedSources, "copyright.png") {
-				return ackFail(env, extbridge.EModeration, "审核不通过: 抱歉，由于版权相关限制，暂时无法创作对应的内容，换其他主题试试吧。")
-			}
-			images := make([]map[string]any, len(uploadedSources))
-			for i, srcName := range uploadedSources {
-				images[i] = map[string]any{
-					"url":         "https://cdn.example/" + srcName,
-					"rawUrl":      "https://cdn.example/" + srcName,
-					"sourceIndex": i + 1,
-				}
-			}
-			return ackOK(env, map[string]any{
-				"conversation": conversation,
-				"tabId":        tabID,
-				"images":       images,
-			})
-		case extbridge.CmdDownload:
-			var p struct {
-				URL    string `json:"url"`
-				Offset int    `json:"offset"`
-			}
-			_ = json.Unmarshal(env.Payload, &p)
-			srcName := strings.TrimPrefix(p.URL, "https://cdn.example/")
-			return chunkAck(env, outByName[srcName], p.Offset)
-		default:
-			return ackFail(env, extbridge.EProtocol, name)
-		}
-	})
-
-	e := NewEngine(st, nil, nil, "")
-	defer e.CloseSessions()
-
-	var progress Progress
-	err := e.RunObserved(context.Background(), Options{
-		Platforms:   []string{"豆包"},
-		Prompts:     []string{"数字油画洗图"},
-		Images:      sources,
-		Wash:        true,
-		Concurrency: 1,
-		RetryCount:  2,
-		WaitResult:  true,
-		DailyCap:    100,
-		OutputPath:  filepath.Join(dir, "out"),
-	}, func(Task) {}, func(p Progress) { progress = p }, func(ctx context.Context, task *Task) error {
-		var wash extensionWashChat
-		var err error
-		if task.submitted {
-			e.clearExtensionWash(task.BrowserID)
-		} else {
-			wash, err = e.prepareExtensionWash(ctx, sess, task)
-			if err != nil {
-				return err
-			}
-		}
-		out, err := runExtension(ctx, sess, QianwenJob{
-			TaskID:            strconv.Itoa(task.Index),
-			IdempotencyPrefix: e.extIdempotencyPrefix(task),
-			Prompt:            task.Prompt,
-			Images:            task.Images,
-			Wait:              5 * time.Second,
-			SkipSubmit:        task.submitted,
-			VerifyAttachments: true,
-		}, "豆包")
-		if out.Submitted {
-			task.submitted = true
-			task.sentAt = out.SubmittedAt
-		} else if !task.submitted && out.sendAttempted && err != nil &&
-			!errors.Is(err, strategy.ErrSubmissionUncertain) &&
-			extbridge.CodeOf(err) != extbridge.ETimeout {
-			task.sendSeq++
-		}
-		saveErr := e.saveWashResults(ctx, nil, task, out.Results, out.sourceIndices, err)
-		if task.submitted {
-			e.finishExtensionWash(task, wash, out, saveErr == nil && ctx.Err() == nil)
-		} else {
-			e.clearExtensionWash(task.BrowserID)
-		}
-		return saveErr
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if progress.Done != 4 || progress.Total != 4 {
-		t.Fatalf("unexpected progress: %+v", progress)
-	}
-	snap := e.View().Snapshot()
-	if len(snap) != 4 {
-		t.Fatalf("queue len = %d", len(snap))
-	}
-	for i, item := range snap {
-		name := names[i]
-		if name == "copyright.png" {
-			if item.Status != StatusFailed {
-				t.Fatalf("copyright item should fail, got %+v", item)
-			}
-			if strings.Contains(item.Error, "还没有本轮发送标记") || strings.Contains(item.Error, "发送状态未确认") {
-				t.Fatalf("idempotency cache collided on copyright item: %q", item.Error)
-			}
-			hint := ClassifyFailure(item.Status, item.Error)
-			if hint.Class != FailModeration || hint.Sentence != "触发版权限制，无法生成" {
-				t.Fatalf("unexpected failure hint: %+v (err=%q)", hint, item.Error)
-			}
-			continue
-		}
-		if item.Status != StatusSuccess || len(item.Results) != 1 {
-			t.Fatalf("healthy item %s failed: %+v", name, item)
-		}
-		got, readErr := os.ReadFile(item.Results[0])
-		if readErr != nil || !bytes.Equal(got, outByName[name]) {
-			t.Fatalf("healthy item %s saved wrong content: err=%v", name, readErr)
-		}
 	}
 }

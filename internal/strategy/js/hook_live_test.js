@@ -468,4 +468,84 @@ vm.runInContext('Date.now = () => 900', context)
 context.__tulaiAddResult('https://cdn.example/after-clock-change.png', 'net')
 assert.strictEqual(context.__tulaiResultsSince().length, 2, '时钟回退不能丢掉本轮结果')
 
+// 豆包可见输入框旁的 invisible ProseMirror 克隆体不应被 __tulaiChatReady 选中
+body.childNodes = []
+location.hostname = 'www.doubao.com'
+location.href = 'https://www.doubao.com/chat/'
+const visibleBox = el('div')
+visibleBox.setAttribute('contenteditable', 'true')
+visibleBox.setAttribute('data-testid', 'chat_input_input')
+visibleBox.getBoundingClientRect = () => ({ width: 320, height: 48 })
+const invisibleWrap = el('div')
+invisibleWrap.className = 'pointer-events-none invisible'
+const ghostBox = el('div')
+ghostBox.setAttribute('contenteditable', 'true')
+ghostBox.setAttribute('data-testid', 'chat_input_input')
+ghostBox.innerText = '幽灵残留草稿'
+ghostBox.getBoundingClientRect = () => ({ width: 320, height: 48 })
+invisibleWrap.appendChild(ghostBox)
+body.appendChild(visibleBox)
+body.appendChild(invisibleWrap)
+const readyWithGhost = context.__tulaiChatReady()
+assert.strictEqual(readyWithGhost.ready, true, 'invisible 克隆输入框里的内容不应阻塞新对话就绪: ' + JSON.stringify(readyWithGhost))
+assert.strictEqual(readyWithGhost.chars, 0)
+
+// 豆包服务端返回「出了点问题，请稍后重试。」且已完成流式输出时，应立即识别为 error-reply 触发换新对话重试
+body.childNodes = []
+context.__tulaiPageHost = 'www.doubao.com'
+location.hostname = 'www.doubao.com'
+location.href = 'https://www.doubao.com/chat/12345'
+context.__tulaiMarkTask()
+const errReply = el('div')
+errReply.setAttribute('data-testid', 'receive_message')
+errReply.innerText = '出了点问题，请稍后重试。'
+const errText = el('div')
+errText.setAttribute('data-testid', 'message_text_content')
+errText.setAttribute('data-streaming', 'false')
+errText.innerText = '出了点问题，请稍后重试。'
+errReply.appendChild(errText)
+body.appendChild(errReply)
+const doubaoErrShot = context.__tulaiLiveImages()
+assert.strictEqual(doubaoErrShot.reason, 'error-reply', '豆包纯文字报错回复应识别为 error-reply: ' + JSON.stringify(doubaoErrShot))
+assert.strictEqual(doubaoErrShot.fault, '出了点问题，请稍后重试。')
+
+// 豆包额度提示回复不应被误判为临时报错（仍交给 pageAccountFault 识别）
+errReply.innerText = '今日免费额度已用完，请稍后重试。'
+errText.innerText = errReply.innerText
+const doubaoQuotaShot = context.__tulaiLiveImages()
+assert.strictEqual(doubaoQuotaShot.reason, 'no-new-image', '额度话术不应被 doubaoFault 拦截: ' + JSON.stringify(doubaoQuotaShot))
+
+// 豆包自由生图（未启用 doubaoTurn）多图网格中未就绪的 lazy 卡片也必须主动切 eager 并滚入视口
+body.childNodes = []
+context.__tulaiMarkTask()
+const multiReply = el('div')
+multiReply.setAttribute('data-testid', 'receive_message')
+const scrolledSlots = []
+for (let i = 0; i < 4; i++) {
+  const slot = el('div')
+  slot.setAttribute('class', 'image-box-grid-item')
+  slot.setAttribute('data-finished', i < 2 ? 'true' : 'false')
+  slot.scrollIntoView = () => { scrolledSlots.push(i) }
+  const im = el('img')
+  im.setAttribute('loading', 'lazy')
+  im.loading = 'lazy'
+  if (i < 2) {
+    im.src = 'https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/ready' + i + '.png'
+    im.naturalWidth = 2048
+    im.naturalHeight = 2048
+  } else {
+    im.src = 'data:image/svg+xml;utf8,<svg></svg>'
+    im.naturalWidth = 0
+    im.naturalHeight = 0
+  }
+  slot.appendChild(im)
+  multiReply.appendChild(slot)
+}
+body.appendChild(multiReply)
+const multiShot = context.__tulaiLiveImages()
+assert.strictEqual(multiShot.done, false, '4 格仅完成 2 格时不得提前结束')
+assert.strictEqual(multiReply.childNodes[2].childNodes[0].getAttribute('loading'), 'eager', '未就绪第 3 格 lazy 图必须被切成 eager')
+assert.strictEqual(multiReply.childNodes[3].childNodes[0].getAttribute('loading'), 'eager', '未就绪第 4 格 lazy 图必须被切成 eager')
+assert.deepStrictEqual(scrolledSlots, [2], '应将首个未就绪图格滚入视口促发渲染')
+
 console.log('hook live images ok')

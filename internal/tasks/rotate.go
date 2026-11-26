@@ -3,12 +3,9 @@ package tasks
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
-	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
@@ -20,21 +17,43 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 	if e == nil || e.store == nil || task == nil {
 		return time.Time{}, false
 	}
-	rows := e.accountsFor(task.Platform)
-	if task.Platform == "ChatGPT" && task.chatGPT != nil && task.chatGPT.Attempted {
-		if current := findBrowser(rows, task.BrowserID); current == nil || current.Disabled {
-			task.Error = "ChatGPT 原任务的账号已移除或停用，请检查该账号的网页结果"
-			return time.Time{}, true
-		}
-		if e.AccountManual(task.BrowserID) {
-			return now.Add(heal.RecheckAfter), false
-		}
-		return time.Time{}, false
-	}
-	if len(rows) == 0 {
+	return e.prepareAccountRows(e.accountsFor(task.Platform), task, now)
+}
+
+func (e *Engine) prepareAccountRows(rows []store.Browser, task *Task, now time.Time) (wait time.Time, dead bool) {
+	if e == nil || task == nil || len(rows) == 0 {
 		return time.Time{}, false
 	}
 	limit := e.capFor(task.Platform)
+	// 已确认发送的任务必须留在原账号继续取回结果，绝不能改派到其他账号。
+	if task.submitted && task.BrowserID > 0 {
+		current := findBrowser(rows, task.BrowserID)
+		if current == nil {
+			return time.Time{}, false
+		}
+		if current.Disabled {
+			return now.Add(loginRecheckAfter), false
+		}
+		if current.Usable(now) {
+			return time.Time{}, false
+		}
+		if current.CoolUntil > 0 {
+			if heldForUser(*current) {
+				if task.Error == "" {
+					task.Error = "需要在网页里完成验证"
+				}
+				return time.Time{}, true
+			}
+			return time.Unix(current.CoolUntil, 0), false
+		}
+		if e.accountWaitingOnUser([]store.Browser{*current}, now) {
+			return now.Add(loginRecheckAfter), false
+		}
+		if task.Error == "" {
+			task.Error = "原账号暂时不可用"
+		}
+		return time.Time{}, true
+	}
 	if task.BrowserID <= 0 {
 		if id, ok := pickHealthy(e.store, rows, 0, now, limit); ok {
 			task.BrowserID = id
@@ -52,7 +71,7 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 	}
 	for _, b := range rows {
 		if b.Disabled {
-			return now.Add(heal.RecheckAfter), false
+			return now.Add(loginRecheckAfter), false
 		}
 	}
 	if current == nil {
@@ -65,22 +84,12 @@ func (e *Engine) prepareAccount(task *Task, now time.Time) (wait time.Time, dead
 		}
 		return time.Time{}, true
 	}
-	if task.Platform == agy.Platform && agyAccountsBlocked(rows, now, limit) && !cappedOut(rows, now, limit) {
-		e.noteAgyNoAccount(now)
-		if until.IsZero() {
-			task.Error = ""
-			return now.Add(heal.RecheckAfter), false
-		}
-		return until, false
-	}
 	if until.IsZero() {
 		if e.accountWaitingOnUser(rows, now) {
-			return now.Add(heal.RecheckAfter), false
+			return now.Add(loginRecheckAfter), false
 		}
 		if task.Error == "" {
-			if needsAgyLogin(rows) {
-				task.Error = agy.ErrNeedLogin.Error()
-			} else if cappedOut(rows, now, limit) {
+			if cappedOut(rows, now, limit) {
 				task.Error = "今日已达上限"
 			} else {
 				task.Error = "同平台账号都不可用"
@@ -111,10 +120,8 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	current := task.ranOnOr(task.BrowserID)
 	next, ok := pickHealthy(e.store, e.accountsFor(task.Platform), current, now, e.capFor(task.Platform))
 	if !ok {
-		if kind != faultOffline {
-			e.noteFault(current, kind, err, now)
-			e.announceAccount(current, kind)
-		}
+		e.noteFault(current, kind, err, now)
+		e.announceAccount(current, kind)
 		return false
 	}
 	e.noteFault(current, kind, err, now)
@@ -122,16 +129,12 @@ func (e *Engine) maybeRotate(task *Task, err error, now time.Time) bool {
 	name := browserName(e.store, next)
 	old := browserName(e.store, current)
 	label := faultLabel(kind)
-	if errors.Is(err, agy.ErrNeedLogin) {
-		label = agy.ErrNeedLogin.Error()
-	}
 	logging.Log.Warning("#%d「%s」%s，改用「%s」", task.Index, old, label, name)
 	task.BrowserID = next
 	task.avoidBrowser = 0
 	task.submitted = false
 	task.sendSeq++
 	task.sentURL, task.sentWrap = "", ""
-	task.chatGPT = nil
 	task.rotated = true
 	task.pauseNote = ""
 	if task.Attempts > 0 {
@@ -158,7 +161,6 @@ func (e *Engine) rotateOnFailure(task *Task, now time.Time) bool {
 	task.submitted = false
 	task.sendSeq++
 	task.sentURL, task.sentWrap = "", ""
-	task.chatGPT = nil
 	task.rotated = true
 	task.pauseNote = "rotate"
 	return true
@@ -173,24 +175,36 @@ func (e *Engine) accountsFor(platform string) []store.Browser {
 	if e == nil || e.store == nil {
 		return nil
 	}
-	extension := e.useExtension(platform) && !e.useBoundExtension(platform)
-	var out []store.Browser
-	for _, b := range e.store.Browsers() {
+	return e.accountsFromRows(e.store.Browsers(), platform, time.Now())
+}
+
+func (e *Engine) accountsFromRows(all []store.Browser, platform string, now time.Time) []store.Browser {
+	if e == nil || len(all) == 0 {
+		return nil
+	}
+	e.mu.Lock()
+	var manual map[int64]bool
+	if len(e.manual) > 0 {
+		manual = make(map[int64]bool, len(e.manual))
+		for id, on := range e.manual {
+			if on {
+				manual[id] = true
+			}
+		}
+	}
+	e.mu.Unlock()
+	coolUntil := now.Add(2 * time.Second).Unix()
+	out := make([]store.Browser, 0, len(all))
+	for _, b := range all {
 		if b.Platform != platform {
 			continue
 		}
-		if _, unavailable := e.unavailableEngines.Load(browser.CanonicalBackend(b.Engine)); unavailable && b.ExtAccount == "" && platform != agy.Platform {
+		if _, unavailable := e.unavailableEngines.Load(browser.CanonicalBackend(b.Engine)); unavailable {
 			continue
 		}
-		if extension && b.ExtAccount == "" {
-			continue
-		}
-		if !extension && b.ExtAccount != "" {
-			continue
-		}
-		if e.AccountManual(b.ID) {
+		if manual[b.ID] {
 			// 只改调度快照，用户账号的健康状态和登录信息仍保留在库里。
-			b.Health, b.CoolUntil = store.HealthCooling, time.Now().Add(2*time.Second).Unix()
+			b.Health, b.CoolUntil = store.HealthCooling, coolUntil
 		}
 		out = append(out, b)
 	}
@@ -200,11 +214,13 @@ func (e *Engine) accountsFor(platform string) []store.Browser {
 // allDoubaoAccountsFull 只把明确的日上限或平台额度耗尽视为停止条件。
 // 冷却、登录、人工接管和禁用仍可能恢复，不能当作额度用完。
 func (e *Engine) allDoubaoAccountsFull(now time.Time) bool {
-	rows := e.accountsFor("豆包")
+	return e.allDoubaoAccountsFullRows(e.accountsFor("豆包"), now, e.capFor("豆包"))
+}
+
+func (e *Engine) allDoubaoAccountsFullRows(rows []store.Browser, now time.Time, limit int) bool {
 	if len(rows) == 0 {
 		return false
 	}
-	limit := e.capFor("豆包")
 	for _, b := range rows {
 		if b.Disabled || e.AccountManual(b.ID) {
 			return false
@@ -223,19 +239,6 @@ func (t *Task) ranOnOr(fallback int64) int64 {
 		return t.ranOn
 	}
 	return fallback
-}
-
-// agyAccountsBlocked 是这个平台一个能用的号都没有。每日上限另走失败，不在这里。
-func agyAccountsBlocked(rows []store.Browser, now time.Time, cap int) bool {
-	if len(rows) == 0 {
-		return false
-	}
-	for _, b := range rows {
-		if b.Platform != agy.Platform || openAccount(b, now, cap) {
-			return false
-		}
-	}
-	return true
 }
 
 func openAccount(b store.Browser, now time.Time, cap int) bool {
@@ -273,19 +276,13 @@ func pickHealthy(st *store.Store, rows []store.Browser, avoid int64, now time.Ti
 
 func pickHealthyCaps(st *store.Store, rows []store.Browser, avoid int64, now time.Time, caps CapFor) (int64, bool) {
 	var best *store.Browser
-	bestRemaining := -1.0
 	for i := range rows {
 		b := &rows[i]
 		if b.ID == avoid || !openAccountCaps(*b, now, caps) {
 			continue
 		}
-		remaining := -1.0
-		if b.Platform == agy.Platform {
-			remaining = agyRemaining(st, b.ID, now)
-		}
-		if best == nil || remaining > bestRemaining || (remaining == bestRemaining && (b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID))) {
+		if best == nil || b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID) {
 			best = b
-			bestRemaining = remaining
 		}
 	}
 	if best == nil {
@@ -295,23 +292,18 @@ func pickHealthyCaps(st *store.Store, rows []store.Browser, avoid int64, now tim
 }
 
 // ParallelSlots 是这些账号里现在能同时出图的名额。
-// 同一个扩展配置文件只算一个：扩展每次命令都把标签页拉到前台，一个窗口不能两单一起跑。
 func ParallelSlots(rows []store.Browser, now time.Time, cap int) int {
 	return ParallelSlotsCaps(rows, now, FlatCap(cap))
 }
 
 // ParallelSlotsCaps 按账号所属供应商的上限统计可用名额。
 func ParallelSlotsCaps(rows []store.Browser, now time.Time, caps CapFor) int {
-	seen := map[string]struct{}{}
+	seen := map[int64]struct{}{}
 	for _, b := range rows {
 		if !openAccountCaps(b, now, caps) {
 			continue
 		}
-		key := strconv.FormatInt(b.ID, 10)
-		if b.ExtAccount != "" {
-			key = "ext:" + b.ExtAccount
-		}
-		seen[key] = struct{}{}
+		seen[b.ID] = struct{}{}
 	}
 	return len(seen)
 }

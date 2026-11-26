@@ -3,21 +3,16 @@ package ui
 import (
 	"testing"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
-func TestLaneAccountTitlePrefersEmail(t *testing.T) {
-	ln := tasks.AccountLane{Platform: agy.Platform, Name: "acc1", Email: "xiewei0098@gmail.com"}
-	if got := laneAccountTitle(ln); got != "xiewei0098@gmail.com" {
+func TestLaneAccountTitleUsesName(t *testing.T) {
+	ln := tasks.AccountLane{Platform: "千问", Name: "千问1"}
+	if got := laneAccountTitle(ln); got != "千问1" {
 		t.Fatalf("got %q", got)
 	}
-	ln.Email = "  "
-	if got := laneAccountTitle(ln); got != "acc1" {
-		t.Fatalf("fallback %q", got)
-	}
-	other := tasks.AccountLane{Platform: "豆包", Name: "豆包1", Email: "ignored@x.com"}
-	if got := laneAccountTitle(other); got != "豆包1" {
-		t.Fatalf("other platform %q", got)
+	blank := tasks.AccountLane{Platform: "豆包", Name: "  "}
+	if got := laneAccountTitle(blank); got != "豆包" {
+		t.Fatalf("blank name %q", got)
 	}
 }

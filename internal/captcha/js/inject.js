@@ -23,10 +23,15 @@
   function rnd(a, b) { return a + Math.random() * (b - a); }
   function visible(el) {
     if (!el) return false;
-    var s = getComputedStyle(el);
-    if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
     var r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    if (!(r.width > 0 && r.height > 0)) return false;
+    if (typeof r.right === 'number' && typeof r.bottom === 'number' && (r.right <= 0 || r.bottom <= 0)) return false;
+    for (var cur = el, depth = 0; cur && cur !== document.body && cur !== document.documentElement && depth < 12; cur = cur.parentElement, depth++) {
+      var s = getComputedStyle(cur);
+      if (!s) continue;
+      if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0' || parseFloat(s.opacity) === 0) return false;
+    }
+    return true;
   }
   function cls(el) { return ((el && el.className) || '').toString(); }
 
@@ -153,6 +158,7 @@
   // ---------------- 验证窗口检测 ----------------
   var CAPTCHA_SEL = [
     '#captcha_verify_image',
+    'iframe#baxia-dialog-content', 'iframe[src*="punish"]',
     'iframe[src*="captcha"]', 'iframe[src*="verify"]', 'iframe[src*="geetest"]', 'iframe[src*="turing"]',
     'div[class*="dialog"]', 'div[class*="modal"]', 'div[class*="popup"]',
     'div[class*="overlay"] canvas', '[class*="captcha"] canvas', '[class*="verify"] canvas',
@@ -165,7 +171,10 @@
   function captchaEvidence(el) {
     var identity = cls(el) + ' ' + (el.id || '') + ' ' + (el.getAttribute('data-testid') || '');
     if (/captcha|geetest|yidun|turing|verification/i.test(identity)) return true;
-    if (el.tagName === 'IFRAME') return /captcha|verify|geetest|turing/i.test(el.getAttribute('src') || '');
+    if (el.tagName === 'IFRAME') {
+      if (/baxia/i.test(el.id || '')) return true;
+      return /captcha|verify|geetest|turing|punish|nocaptcha|baxia/i.test(el.getAttribute('src') || '');
+    }
     return CAPTCHA_TEXT.test((el.innerText || '').slice(0, 1000));
   }
 

@@ -16,10 +16,15 @@ const (
 	IDDoubaoPixelWash = "doubao_pixel_wash"
 	KindGen           = "gen"
 	KindWash          = "wash"
-	DefaultWashPrompt = `请分别参考每张输入图重新绘制，并为每张原图生成一张独立图片。
+	KindFission       = "fission"
+	// PreviousDefaultWashPrompt preserves the previous unchanged generic wash draft for startup upgrade.
+	PreviousDefaultWashPrompt = `请分别参考每张输入图重新绘制，并为每张原图生成一张独立图片。
 保留原图的主体、主题、构图、整体风格、主要色彩和清晰可辨的文字与标志，不改变关键特征；未指定输出比例时参考原图比例。
 在保留主要内容的前提下，适度调整线条、纹理、光影和局部细节，使画面自然清晰，与原图有适当区别。
 不要新增无关元素、文字或水印，不要猜测无法辨认的文字；避免主体变形、重复、模糊或拼图。直接输出图片，不要输出文字说明。`
+	DefaultWashPrompt = `请提取参考图中的核心画作并完整重新绘制为一幅高清纯平面插画，只输出一张独立成图。
+去掉外围画框、展示背景、实物载体、网格数字与装饰文字，保留核心主体、构图、配色与画风，同时重新刻画清晰的笔触、线条、色彩层次与自然光影质感，使画面细腻自然且与原图有明显重绘感。
+画作内容与其自身背景自然延展铺满整个画幅四边，四周不留白边、黑边或边框，保留原有背景色调，不添加无关文字或拼图。直接输出图片。`
 	// LegacyDoubaoWashPrompt is kept only to upgrade an unchanged active draft.
 	LegacyDoubaoWashPrompt = `每张图单独按以下要求生成一张图。反推图生文要求：以数字油画作为画面主体，全文将该对象称作主体，中文详尽描述主体表面全部图案细节：1、可以识别的IP形象、知名人物、地名、景点、建筑直接写出对应专有名称；2、完整描述画面主题、配色并标注具体十六进制色值，细致拆解构图布局，重点突出油画艺术风格，包含画布肌理、颜料笔触、厚涂堆叠质感，可指定印象派、写实油画、复古做旧油画等画风；3、识别参考图内所有非图案类封面标题、装饰标语、书籍文字，全部剔除，主体画面不保留任何额外文字，不生成标题、书名、宣传文案；4、写明背景属性，明确是纯色背景，标注背景具体颜色；5、输出文本字数不少于100字。
 若参考图画面裁切残缺、内容不完整，则依据参考图主体图案元素补全缺失部分，重构生成完整主体图案。
@@ -316,47 +321,12 @@ func LabelFromBody(body string) string {
 	return line
 }
 
-// ImportText 把 txt 收成「每行一条」。
-// 空行隔开、且其中有一段超过一行时，按空行分段，段内换行并成一条。
-// 否则丢掉空行，每行一条。这样两种常见写法都进得了 TaskPrompts。
+// ImportText 把导入的文本规范为「一行一条提示词」，去掉 BOM、统一换行并跳过空行。
 func ImportText(raw string) string {
 	raw = strings.TrimPrefix(raw, "\uFEFF")
 	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	raw = strings.ReplaceAll(raw, "\r", "\n")
-	var blocks [][]string
-	var cur []string
-	blank := false
-	sawBlank := false
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			if len(cur) > 0 {
-				blocks = append(blocks, cur)
-				cur = nil
-				blank = true
-			}
-			continue
-		}
-		if blank && len(blocks) > 0 {
-			sawBlank = true
-		}
-		blank = false
-		cur = append(cur, line)
-	}
-	if len(cur) > 0 {
-		blocks = append(blocks, cur)
-	}
-	var out []string
-	if sawBlank {
-		for _, block := range blocks {
-			out = append(out, strings.Join(block, " "))
-		}
-	} else {
-		for _, block := range blocks {
-			out = append(out, block...)
-		}
-	}
-	return strings.Join(out, "\n")
+	return strings.Join(splitLines(raw), "\n")
 }
 
 // TaskPrompts 是这次要送出去的提示词。

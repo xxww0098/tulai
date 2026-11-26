@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/xxww0098/tulai/internal/prompts"
-	"github.com/xxww0098/tulai/internal/tasks"
 )
 
 type promptPart struct {
@@ -139,6 +138,8 @@ func promptKindLabel(kind string) string {
 		return "生图"
 	case prompts.KindWash:
 		return "洗图"
+	case prompts.KindFission:
+		return "裂变"
 	default:
 		return "通用"
 	}
@@ -150,6 +151,8 @@ func promptKind(label string) string {
 		return prompts.KindGen
 	case "洗图":
 		return prompts.KindWash
+	case "裂变":
+		return prompts.KindFission
 	default:
 		return ""
 	}
@@ -211,13 +214,28 @@ func promptOptionLabel(id string, options []prompts.Template) string {
 
 func (a *App) taskPromptList() []string {
 	if a.statePage == pageFission {
-		return []string{a.fissionPrompt()}
+		if a.skipImages {
+			return prompts.FissionTextPrompts(a.prompts)
+		}
+		return prompts.FissionPrompts(a.fissionPrompt())
 	}
 	if a.statePage == pageWash {
 		return []string{a.washPrompt()}
 	}
+	if a.statePage == pageHome && a.batchMode == batchImage {
+		if normalizeImagePromptMode(a.imagePromptMode) == "per_line" && strings.TrimSpace(a.imgPromptPick) == "" {
+			return splitLines(a.prompts)
+		}
+		if p := strings.TrimSpace(a.prompts); p != "" {
+			return []string{p}
+		}
+		return nil
+	}
 	if strings.TrimSpace(a.promptPick) != "" {
-		return []string{strings.TrimSpace(a.prompts)}
+		if p := strings.TrimSpace(a.prompts); p != "" {
+			return []string{p}
+		}
+		return nil
 	}
 	return splitLines(a.prompts)
 }
@@ -239,46 +257,237 @@ func isBuiltinPrompt(id string) bool {
 	return ok
 }
 
-func (a *App) applyPromptChoice() {
+func (a *App) workbenchModeKind() string {
+	switch a.statePage {
+	case pageWash:
+		return prompts.KindWash
+	case pageFission:
+		return prompts.KindFission
+	default:
+		return prompts.KindGen
+	}
+}
+
+func (a *App) currentModePromptChoice() string {
+	switch a.statePage {
+	case pageWash:
+		return a.washPromptChoice
+	case pageFission:
+		return a.fissionPromptChoice
+	default:
+		if a.batchMode == batchImage {
+			return a.imgGenPromptChoice
+		}
+		return a.genPromptChoice
+	}
+}
+
+func (a *App) resolvedPromptChoiceFor(pick string) string {
+	if strings.TrimSpace(pick) == "" {
+		return choosePromptLabel
+	}
+	label := promptOptionLabel(pick, promptOptions(choosePromptLabel, a.userPrompts))
+	if label == "" {
+		return choosePromptLabel
+	}
+	return label
+}
+
+func (a *App) resolvedGenPromptChoice() string {
+	label := a.resolvedPromptChoiceFor(a.promptPick)
+	if label == choosePromptLabel {
+		a.promptPick = ""
+		a.promptChoice = ""
+	}
+	return label
+}
+
+func workbenchPromptItems(kind string, users []prompts.UserPrompt) ([]prompts.Template, []PromptOptionDTO) {
+	all := promptOptions(choosePromptLabel, users)
+	matched := make([]prompts.Template, 0, len(all))
+	other := make([]prompts.Template, 0, len(all))
+	for _, tpl := range all[1:] {
+		kl := promptKindLabel(tpl.Kind)
+		cat := promptKind(kl)
+		if cat == "" || cat == kind {
+			matched = append(matched, tpl)
+		} else if !tpl.Builtin {
+			other = append(other, tpl)
+		}
+	}
+	selectable := make([]prompts.Template, 0, len(matched)+len(other))
+	dtos := make([]PromptOptionDTO, 0, len(matched)+len(other))
+	appendGroup := func(items []prompts.Template, isMatched bool) {
+		for _, tpl := range items {
+			selectable = append(selectable, tpl)
+			dtos = append(dtos, PromptOptionDTO{
+				ID:      tpl.ID,
+				Label:   tpl.Label,
+				KindLbl: promptKindLabel(tpl.Kind),
+				Builtin: tpl.Builtin,
+				Matched: isMatched,
+			})
+		}
+	}
+	appendGroup(matched, true)
+	appendGroup(other, false)
+	return selectable, dtos
+}
+
+func (a *App) clearEditedPromptChoice(page int, value string) {
+	if page == pageHome {
+		if a.batchMode == batchImage {
+			if a.imgPromptPick == "" && (a.imgGenPromptChoice == "" || a.imgGenPromptChoice == choosePromptLabel) {
+				return
+			}
+			if strings.TrimSpace(value) == "" {
+				a.imgPromptPick = ""
+				a.imgGenPromptChoice = choosePromptLabel
+				a.imgFreeformPrompts = ""
+				return
+			}
+			tpl, ok := resolvePromptTemplate(a.imgPromptPick, a.userPrompts)
+			if !ok || !prompts.SameText(value, tpl.Body) {
+				a.imgPromptPick = ""
+				a.imgGenPromptChoice = choosePromptLabel
+				a.imgFreeformPrompts = value
+			}
+			return
+		}
+		if a.promptPick == "" && (a.genPromptChoice == "" || a.genPromptChoice == choosePromptLabel) {
+			return
+		}
+		if strings.TrimSpace(value) == "" {
+			a.promptPick = ""
+			a.promptChoice = ""
+			a.genPromptChoice = choosePromptLabel
+			a.freeformPrompts = ""
+			return
+		}
+		tpl, ok := resolvePromptTemplate(a.promptPick, a.userPrompts)
+		if !ok || !prompts.SameText(value, tpl.Body) {
+			a.promptPick = ""
+			a.promptChoice = ""
+			a.genPromptChoice = choosePromptLabel
+			a.freeformPrompts = value
+		}
+		return
+	}
+	var choice *string
+	switch page {
+	case pageWash:
+		choice = &a.washPromptChoice
+	case pageFission:
+		choice = &a.fissionPromptChoice
+	default:
+		return
+	}
+	if *choice == "" || *choice == choosePromptLabel {
+		return
+	}
+	all := promptOptions(choosePromptLabel, a.userPrompts)
+	id := promptOptionID(*choice, all)
+	if id == "" {
+		*choice = choosePromptLabel
+		return
+	}
+	tpl, ok := resolvePromptTemplate(id, a.userPrompts)
+	if !ok || !prompts.SameText(value, tpl.Body) {
+		*choice = choosePromptLabel
+	}
+}
+
+func (a *App) detachActiveFreeTemplate() {
+	if a.statePage != pageHome {
+		return
+	}
+	if a.batchMode == batchImage {
+		a.imgPromptPick = ""
+		a.imgGenPromptChoice = choosePromptLabel
+		a.imgFreeformPrompts = a.prompts
+		a.imgPrompts = a.prompts
+		return
+	}
+	a.promptPick = ""
+	a.promptChoice = ""
+	a.genPromptChoice = choosePromptLabel
+	a.freeformPrompts = a.prompts
+	a.textPrompts = a.prompts
+}
+
+func (a *App) applyWorkbenchPrompt(label string) {
 	page := a.statePage
 	if a.running && a.runPage == page {
 		return
 	}
-	choice := a.genPromptChoice
-	if page == pageWash {
-		choice = a.washPromptChoice
-	}
-	options := workspacePromptOptions(prompts.KindGen, a.userPrompts)
-	if page == pageWash {
-		options = workspacePromptOptions(prompts.KindWash, a.userPrompts)
-	}
-	id := promptOptionID(choice, options)
-	if id == "" {
-		if page == pageWash {
-			a.prompts = a.defaultWashPrompt()
+	selectable, _ := workbenchPromptItems(a.workbenchModeKind(), a.userPrompts)
+	if label == "" || label == choosePromptLabel {
+		switch page {
+		case pageWash:
 			a.washPromptChoice = choosePromptLabel
-		} else {
-			a.promptPick = ""
-			a.promptChoice = ""
-			a.genPromptChoice = choosePromptLabel
-			a.prompts = a.freeformPrompts
+			a.prompts = a.defaultWashPrompt()
+		case pageFission:
+			a.fissionPromptChoice = choosePromptLabel
+			if a.skipImages {
+				a.prompts = ""
+			} else {
+				a.prompts = DefaultFissionPrompt
+			}
+		default:
+			if a.batchMode == batchImage {
+				a.imgPromptPick = ""
+				a.imgGenPromptChoice = choosePromptLabel
+				a.prompts = a.imgFreeformPrompts
+				a.imgPrompts = a.prompts
+			} else {
+				a.promptPick = ""
+				a.promptChoice = ""
+				a.genPromptChoice = choosePromptLabel
+				a.prompts = a.freeformPrompts
+				a.textPrompts = a.prompts
+			}
 		}
+		return
+	}
+	id := promptOptionID(label, selectable)
+	if id == "" {
 		return
 	}
 	tpl, ok := resolvePromptTemplate(id, a.userPrompts)
 	if !ok {
 		return
 	}
-	if page == pageWash {
+	switch page {
+	case pageWash:
+		a.washPromptChoice = label
 		a.prompts = tpl.Body
-		return
+	case pageFission:
+		a.fissionPromptChoice = label
+		a.prompts = tpl.Body
+	default:
+		if a.batchMode == batchImage {
+			if a.imgPromptPick == "" {
+				a.imgFreeformPrompts = a.prompts
+			}
+			a.imgPromptPick = tpl.ID
+			a.imgGenPromptChoice = label
+			a.prompts = tpl.Body
+			a.imgPrompts = tpl.Body
+		} else {
+			if a.promptPick == "" {
+				a.freeformPrompts = a.prompts
+			}
+			a.promptPick = tpl.ID
+			a.promptChoice = tpl.ID
+			a.genPromptChoice = label
+			a.prompts = tpl.Body
+			a.textPrompts = tpl.Body
+		}
 	}
-	if a.promptPick == "" {
-		a.freeformPrompts = a.prompts
-	}
-	a.promptPick = tpl.ID
-	a.promptChoice = tpl.ID
-	a.prompts = tpl.Body
+}
+
+func (a *App) applyPromptChoice() {
+	a.applyWorkbenchPrompt(a.currentModePromptChoice())
 }
 
 func (a *App) commitPromptEdits() string {
@@ -293,6 +502,10 @@ func (a *App) commitPromptEdits() string {
 	if isBuiltinPrompt(a.promptEditPick) {
 		u := a.addUserCopy(a.promptEditPick, body)
 		a.promptEditPick = u.ID
+		a.promptEditName = u.Label
+		a.promptEditKind = promptKindLabel(u.Kind)
+		a.promptEditDraft = u.Body
+		a.promptEditNote = "已另存为「" + u.Label + "」"
 		a.syncWorkspacePrompt(u)
 		a.persistPromptLibrary()
 		return ""
@@ -309,14 +522,52 @@ func (a *App) commitPromptEdits() string {
 }
 
 func (a *App) syncWorkspacePrompt(u prompts.UserPrompt) {
+	label := promptOptionLabel(u.ID, promptOptions(choosePromptLabel, a.userPrompts))
 	if a.promptPick == u.ID {
 		a.promptChoice = u.ID
-		a.genPromptChoice = promptOptionLabel(u.ID, workspacePromptOptions(prompts.KindGen, a.userPrompts))
-		if a.statePage == pageHome {
-			a.prompts = u.Body
-		} else if gen, ok := a.parked[pageHome]; ok {
-			gen.prompts = u.Body
-			a.parked[pageHome] = gen
+		a.genPromptChoice = label
+		a.textPrompts = u.Body
+		if a.batchMode == batchText {
+			a.setHomePrompts(u.Body)
+		}
+	}
+	if a.imgPromptPick == u.ID {
+		a.imgGenPromptChoice = label
+		a.imgPrompts = u.Body
+		if a.batchMode == batchImage {
+			a.setHomePrompts(u.Body)
+		}
+	}
+	for plat, ws := range a.platformSpaces {
+		if plat == a.selectedPlatform() {
+			continue
+		}
+		changed := false
+		if ws.promptPick == u.ID {
+			ws.promptChoice = u.ID
+			ws.genPromptChoice = label
+			ws.textPrompts = u.Body
+			if ws.batchMode == batchText {
+				if gen, ok := ws.pages[pageHome]; ok {
+					gen.prompts = u.Body
+					ws.pages[pageHome] = gen
+				}
+			}
+			changed = true
+		}
+		if ws.imgPromptPick == u.ID {
+			ws.imgGenPromptChoice = label
+			ws.imgPrompts = u.Body
+			if ws.batchMode == batchImage {
+				if gen, ok := ws.pages[pageHome]; ok {
+					gen.prompts = u.Body
+					ws.pages[pageHome] = gen
+				}
+			}
+			changed = true
+		}
+		if changed {
+			a.platformSpaces[plat] = ws
 		}
 	}
 }
@@ -348,14 +599,23 @@ func (a *App) saveCurrentPrompt() {
 
 func (a *App) addUserCopy(from, body string) prompts.UserPrompt {
 	tpl, _ := resolvePromptTemplate(from, a.userPrompts)
-	name := tpl.Label + "（自定义）"
-	if tpl.Label == "" {
-		name = "自定义提示词"
+	baseName := strings.TrimSpace(a.promptEditName)
+	if baseName == "" || baseName == tpl.Label {
+		if tpl.Label != "" {
+			baseName = tpl.Label + "（自定义）"
+		} else {
+			baseName = "自定义提示词"
+		}
+	}
+	name := prompts.UniqueLabel(baseName, a.userPrompts)
+	kind := tpl.Kind
+	if editedKind := strings.TrimSpace(a.promptEditKind); editedKind != "" {
+		kind = promptKind(editedKind)
 	}
 	u := prompts.UserPrompt{
 		ID:    prompts.NextUserID(a.userPrompts),
 		Label: name,
-		Kind:  tpl.Kind,
+		Kind:  kind,
 		Body:  body,
 		From:  from,
 	}
@@ -396,11 +656,49 @@ func (a *App) deleteUserPrompt() {
 	if idx < 0 {
 		return
 	}
+	deletedLabel := promptOptionLabel(id, promptOptions(choosePromptLabel, a.userPrompts))
 	a.userPrompts = append(a.userPrompts[:idx], a.userPrompts[idx+1:]...)
 	if a.promptPick == id {
 		a.promptPick = ""
 		a.promptChoice = ""
 		a.genPromptChoice = choosePromptLabel
+	}
+	if a.imgPromptPick == id {
+		a.imgPromptPick = ""
+		a.imgGenPromptChoice = choosePromptLabel
+	}
+	if deletedLabel != "" {
+		if a.washPromptChoice == deletedLabel {
+			a.washPromptChoice = choosePromptLabel
+		}
+		if a.fissionPromptChoice == deletedLabel {
+			a.fissionPromptChoice = choosePromptLabel
+		}
+	}
+	for plat, ws := range a.platformSpaces {
+		changed := false
+		if ws.promptPick == id {
+			ws.promptPick = ""
+			ws.promptChoice = ""
+			ws.genPromptChoice = choosePromptLabel
+			changed = true
+		}
+		if ws.imgPromptPick == id {
+			ws.imgPromptPick = ""
+			ws.imgGenPromptChoice = choosePromptLabel
+			changed = true
+		}
+		if deletedLabel != "" && ws.washPromptChoice == deletedLabel {
+			ws.washPromptChoice = choosePromptLabel
+			changed = true
+		}
+		if deletedLabel != "" && ws.fissionPromptChoice == deletedLabel {
+			ws.fissionPromptChoice = choosePromptLabel
+			changed = true
+		}
+		if changed {
+			a.platformSpaces[plat] = ws
+		}
 	}
 	a.promptEditPick = ""
 	a.promptEditDraft = ""
@@ -418,11 +716,4 @@ func (a *App) persistPromptLibrary() {
 	a.store.Set("prompts_freeform", a.freeformPrompts)
 	a.store.Set("prompt_suffix", a.promptSuffix)
 	a.store.SetInt("use_suffix", boolInt(a.useSuffix))
-}
-
-func (a *App) bridgeStatusLine(st tasks.BridgeStatus) (string, string, bool) {
-	if st.Listening {
-		return fmt.Sprintf("本地扩展桥运行中 · %s", st.Addr), "success", true
-	}
-	return "本地扩展桥未启动", "neutral", false
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestExistingAccountsDefaultToEnabled(t *testing.T) {
@@ -46,7 +47,9 @@ func TestAccountDisabledPersistsWithoutChangingHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.UpdateBrowser(b.ID, true, true)
-	s.UpdateBrowserHealth(b.ID, HealthCooling, 123, "等待恢复")
+	// 冷却还没到期：这次要验证的是禁用只改 disabled，重启后冷却照旧留着。
+	until := time.Now().Add(time.Hour).Unix()
+	s.UpdateBrowserHealth(b.ID, HealthCooling, until, "等待恢复")
 	if err := s.SetBrowserDisabled(b.ID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +62,7 @@ func TestAccountDisabledPersistsWithoutChangingHealth(t *testing.T) {
 	}
 	defer s.Close()
 	got := browser(t, s, b.ID)
-	if !got.Disabled || !got.IsLoggedIn || got.Health != HealthCooling || got.CoolUntil != 123 || got.LastError != "等待恢复" {
+	if !got.Disabled || !got.IsLoggedIn || got.Health != HealthCooling || got.CoolUntil != until || got.LastError != "等待恢复" {
 		t.Fatalf("保存后账号状态变化: %+v", got)
 	}
 	if browser(t, s, other.ID).Disabled {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -138,7 +138,7 @@ func TestMtimeCurrentPublic(t *testing.T) {
 
 func TestMtimeRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -151,7 +151,7 @@ func TestMtimeRenderedCapture(t *testing.T) {
 	defer session.Close()
 	page := "https://movie.mtime.com/12408/posters_and_images/"
 	interceptErrors := make(chan error, 1)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
@@ -161,7 +161,7 @@ func TestMtimeRenderedCapture(t *testing.T) {
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == page {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(`<html><body>movie</body></html>`)))
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -173,7 +173,7 @@ func TestMtimeRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(page)
-	if err := session.run(ctx, camoufox.Navigate(page)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page)); err != nil {
 		t.Fatal(err)
 	}
 	session.getter.client.Transport = mtimeRoundTrip(func(r *http.Request) (*http.Response, error) {

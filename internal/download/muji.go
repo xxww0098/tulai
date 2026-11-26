@@ -181,12 +181,13 @@ func mujiCollect(ctx context.Context, getter Getter, page *url.URL, doc *html.No
 		}
 	}
 	if session, ok := getter.(*RenderedSession); ok {
-		if session == nil || session.tab == nil || session.getter == nil || session.tab.Err() != nil {
+		tab := session.activeTab()
+		if session == nil || tab == nil || session.getter == nil || tab.Err() != nil {
 			return result, errors.New("无印良品下载浏览器已关闭")
 		}
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
-		stop := context.AfterFunc(session.tab, cancel)
+		stop := context.AfterFunc(tab, cancel)
 		defer func() { stop(); cancel() }()
 	}
 	probeGetter := mujiImageGetter(getter)

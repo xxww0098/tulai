@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -28,6 +29,7 @@ type downloadBrowser interface {
 	BindCurrent(context.Context, string, string) error
 	BindOpenPage(context.Context, string) error
 	OpenTarget(context.Context, string) error
+	Focus(context.Context) error
 	Getter() download.Getter
 	Alive() bool
 	Close()
@@ -103,11 +105,13 @@ type downloadTask struct {
 	Rendered       bool
 	ImportedImage  bool
 
-	cancel    context.CancelFunc
-	paused    bool
-	overwrite bool
-	lastAt    time.Time
-	lastBytes int64
+	cancel        context.CancelFunc
+	paused        bool
+	overwrite     bool
+	removed       bool
+	browserClosed bool
+	lastAt        time.Time
+	lastBytes     int64
 }
 
 func newDownloadTask(id int, raw, dir string) *downloadTask {
@@ -329,10 +333,11 @@ func groupBySite(tasks []*downloadTask) []dlSiteGroup {
 // addDownloadURLs 把一段文本里的地址加进队列，返回有效和无效的行数。
 func (a *App) addDownloadURLs(text string) (added, invalid int) {
 	dir := a.downloadDir()
-	seen := map[string]bool{}
+	existingByURL := make(map[string]*downloadTask, len(a.dlTasks))
 	for _, t := range a.dlTasks {
-		seen[t.URL] = true
+		existingByURL[t.URL] = t
 	}
+	seen := map[string]bool{}
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -347,6 +352,33 @@ func (a *App) addDownloadURLs(text string) (added, invalid int) {
 			continue
 		}
 		seen[line] = true
+		if existing := existingByURL[line]; existing != nil {
+			if existing.Phase == dlFailed || existing.Phase == dlCanceled || existing.Phase == dlPaused {
+				dirChanged := existing.Dir != dir
+				existing.Dir = dir
+				existing.Depth = clampInt(int(a.dlDepth), 1, 32767)
+				existing.ImageFilter = a.downloadImageFilter()
+				existing.Rendered = a.dlBrowserMode
+				existing.overwrite = false
+				existing.Phase = dlQueued
+				existing.Err = ""
+				existing.Written = 0
+				existing.Total = 0
+				existing.ImagesDone = 0
+				existing.ImagesTotal = 0
+				existing.ImagesFiltered = 0
+				existing.Speed = 0
+				if dirChanged || !existing.IsPage {
+					existing.Path = ""
+				} else if existing.Path != "" {
+					if _, statErr := os.Stat(existing.Path); os.IsNotExist(statErr) {
+						existing.Path = ""
+					}
+				}
+				added++
+			}
+			continue
+		}
 		a.dlNextID++
 		task := newDownloadTask(a.dlNextID, line, dir)
 		task.Depth = clampInt(int(a.dlDepth), 1, 32767)
@@ -359,6 +391,7 @@ func (a *App) addDownloadURLs(text string) (added, invalid int) {
 			}
 		}
 		a.dlTasks = append(a.dlTasks, task)
+		existingByURL[line] = task
 		added++
 	}
 	if added > 0 {
@@ -386,7 +419,7 @@ func (a *App) pumpDownloads() {
 		if active >= limit {
 			break
 		}
-		if t.Phase == dlQueued && (!t.Rendered || a.dlBrowserTask == nil) {
+		if t.Phase == dlQueued && (!t.Rendered || (a.dlBrowserTask == nil && !a.dlBrowserBusy)) {
 			a.startDownloadTask(t)
 			active++
 		}
@@ -405,6 +438,8 @@ func (a *App) startDownloadTask(t *downloadTask) {
 	t.Err = ""
 	t.Speed = 0
 	t.ImagesFiltered = 0
+	t.removed = false
+	t.browserClosed = false
 	t.lastAt = time.Time{}
 	t.lastBytes = t.Written
 	a.saveDownloadRecords()
@@ -413,9 +448,14 @@ func (a *App) startDownloadTask(t *downloadTask) {
 	var rendered downloadBrowser
 	bindRendered := false
 	if t.Rendered {
-		if a.dlBrowserBusy || a.dlBrowserTask != nil || a.dlBrowser == nil || !a.dlBrowser.Alive() {
+		if a.dlBrowser == nil || !a.dlBrowser.Alive() {
 			cancel()
-			a.finishDownloadTask(t, errors.New("请在下载浏览器打开该任务的网址后再继续"))
+			a.finishDownloadTask(t, errors.New("请先在托管指纹浏览器中打开该任务的网址后再继续"))
+			return
+		}
+		if a.dlBrowserBusy || a.dlBrowserTask != nil {
+			cancel()
+			a.finishDownloadTask(t, errors.New("指纹浏览器正在执行其他任务，请稍后重试"))
 			return
 		}
 		rendered = a.dlBrowser
@@ -515,6 +555,26 @@ func (a *App) startDownloadTask(t *downloadTask) {
 }
 
 func (a *App) downloadPageImages(ctx context.Context, t *downloadTask, dl *download.Downloader, job download.Job, found download.Discovery, pageDir string, workers int, discoveryErr error) error {
+	if len(found.Items) == 0 {
+		a.dlRun(func() {
+			t.IsPage = true
+			t.ImagesDone, t.ImagesTotal, t.ImagesFiltered = 0, 0, 0
+			t.Written, t.Total = 0, 0
+			if t.Path != "" {
+				if _, err := os.Stat(t.Path); os.IsNotExist(err) {
+					t.Path = ""
+				}
+			}
+			if found.Title != "" {
+				t.Name = found.Title
+			}
+			a.saveDownloadRecords()
+		})
+		if discoveryErr != nil {
+			return discoveryErr
+		}
+		return errors.New("网页中没有找到图片")
+	}
 	if pageDir == "" {
 		pageDir = filepath.Join(job.Directory, downloadName(found.Title, t.URL))
 	}
@@ -528,25 +588,39 @@ func (a *App) downloadPageImages(ctx context.Context, t *downloadTask, dl *downl
 		found.Items[i].RequireImage = true
 	}
 	a.dlRun(func() {
+		if t.removed {
+			return
+		}
 		t.IsPage, t.Path = true, pageDir
 		t.ImagesDone, t.ImagesTotal, t.ImagesFiltered = 0, len(found.Items), 0
-		t.Written, t.Total = 0, 0
+		t.Written, t.Total, t.Speed = 0, 0, 0
+		t.lastAt = time.Now()
+		t.lastBytes = 0
 		if found.Title != "" {
 			t.Name = found.Title
 		}
 		a.saveDownloadRecords()
 	})
-	if len(found.Items) == 0 {
-		if discoveryErr != nil {
-			return discoveryErr
-		}
-		return errors.New("网页中没有找到图片")
-	}
+	var batchWritten int64
+	var lastEmit time.Time
+	lastDone := 0
 	results := download.RunBatch(ctx, dl, job, found.Items, workers, func(p download.BatchProgress) {
+		if p.BytesWritten > batchWritten {
+			batchWritten = p.BytesWritten
+		}
+		now := time.Now()
+		doneChanged := p.Done > lastDone
+		if !doneChanged && now.Sub(lastEmit) < 150*time.Millisecond {
+			return
+		}
+		if doneChanged {
+			lastDone = p.Done
+		}
+		lastEmit = now
+		writtenSnap := batchWritten
+		doneSnap := p.Done
 		a.dlRun(func() {
-			if t.Phase == dlActive && p.Done > t.ImagesDone {
-				t.ImagesDone = p.Done
-			}
+			a.applyBatchProgress(t, doneSnap, writtenSnap)
 		})
 	})
 	failed, filtered := 0, 0
@@ -561,7 +635,19 @@ func (a *App) downloadPageImages(ctx context.Context, t *downloadTask, dl *downl
 			}
 		}
 	}
-	a.dlRun(func() { t.ImagesFiltered = filtered })
+	finalWritten := batchWritten
+	a.dlRun(func() {
+		if t.removed {
+			return
+		}
+		t.ImagesFiltered = filtered
+		if finalWritten > t.Written {
+			t.Written = finalWritten
+		}
+		if ctx.Err() == nil && len(found.Items) > t.ImagesDone {
+			t.ImagesDone = len(found.Items)
+		}
+	})
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -613,7 +699,7 @@ func (a *App) dlRun(fn func()) {
 }
 
 func (a *App) applyTaskProgress(t *downloadTask, p download.Progress) {
-	if t.Phase != dlActive {
+	if t.Phase != dlActive || t.removed {
 		return
 	}
 	if p.Filename != "" && p.Filename != "[archived]" {
@@ -628,13 +714,33 @@ func (a *App) applyTaskProgress(t *downloadTask, p download.Progress) {
 	if p.Total > 0 {
 		t.Total = p.Total
 	}
-	now := time.Now()
+	a.updateTaskSpeed(t, time.Now())
+}
+
+func (a *App) applyBatchProgress(t *downloadTask, imagesDone int, written int64) {
+	if t.Phase != dlActive || t.removed {
+		return
+	}
+	if imagesDone > t.ImagesDone {
+		t.ImagesDone = imagesDone
+	}
+	if written > t.Written {
+		t.Written = written
+	}
+	a.updateTaskSpeed(t, time.Now())
+}
+
+func (a *App) updateTaskSpeed(t *downloadTask, now time.Time) {
 	if t.lastAt.IsZero() {
 		t.lastAt, t.lastBytes = now, t.Written
 		return
 	}
 	dt := now.Sub(t.lastAt)
-	if dt < 300*time.Millisecond {
+	minWindow := 250 * time.Millisecond
+	if t.Speed == 0 && t.Written > t.lastBytes {
+		minWindow = 100 * time.Millisecond
+	}
+	if dt < minWindow {
 		return
 	}
 	if delta := t.Written - t.lastBytes; delta >= 0 && dt > 0 {
@@ -658,6 +764,12 @@ func (a *App) finishDownloadTask(t *downloadTask, err error) {
 	t.cancel = nil
 	t.Speed = 0
 	t.lastAt = time.Time{}
+	if t.removed {
+		t.paused = false
+		t.browserClosed = false
+		a.pumpDownloads()
+		return
+	}
 	switch {
 	case errors.Is(err, download.ErrFiltered):
 		t.Phase = dlDone
@@ -674,19 +786,26 @@ func (a *App) finishDownloadTask(t *downloadTask, err error) {
 			t.Written = t.Total
 		}
 	case errors.Is(err, context.Canceled):
-		if t.paused {
+		if t.browserClosed {
+			t.Phase = dlFailed
+			t.Err = "指纹浏览器已关闭，请重新打开后重试"
+		} else if t.paused {
 			t.Phase = dlPaused
 		} else {
 			t.Phase = dlCanceled
 			t.Written = 0
 			t.Total = 0
+			t.ImagesDone = 0
+			t.ImagesTotal = 0
+			t.ImagesFiltered = 0
 		}
 	default:
 		t.Phase = dlFailed
-		t.Err = err.Error()
+		t.Err = normalizeDownloadBrowserErr(err.Error())
 		logging.Log.Warning("下载失败 %s：%v", compactURL(t.URL), err)
 	}
 	t.paused = false
+	t.browserClosed = false
 	a.saveDownloadRecords()
 	a.pumpDownloads()
 }
@@ -709,6 +828,16 @@ func (a *App) pauseTask(t *downloadTask) {
 		t.paused = true
 		if t.cancel != nil {
 			t.cancel()
+		} else {
+			if a.dlBrowserTask == t {
+				a.dlBrowserTask = nil
+			}
+			t.Phase = dlPaused
+			t.Speed = 0
+			t.paused = false
+			a.saveDownloadRecords()
+			a.pumpDownloads()
+			a.maybeInstallPending()
 		}
 	case dlQueued:
 		t.Phase = dlPaused
@@ -718,7 +847,7 @@ func (a *App) pauseTask(t *downloadTask) {
 }
 
 func (a *App) resumeTask(t *downloadTask) {
-	if t == nil || t.Phase == dlActive {
+	if t == nil || t.Phase != dlPaused {
 		return
 	}
 	t.Phase = dlQueued
@@ -736,11 +865,30 @@ func (a *App) cancelTask(t *downloadTask) {
 		t.paused = false
 		if t.cancel != nil {
 			t.cancel()
+		} else {
+			if a.dlBrowserTask == t {
+				a.dlBrowserTask = nil
+			}
+			t.Phase = dlCanceled
+			t.Written = 0
+			t.Total = 0
+			t.Speed = 0
+			t.Err = ""
+			t.ImagesDone = 0
+			t.ImagesTotal = 0
+			t.ImagesFiltered = 0
+			a.saveDownloadRecords()
+			a.pumpDownloads()
 		}
-	case dlQueued, dlPaused:
+	case dlQueued, dlPaused, dlFailed:
 		t.Phase = dlCanceled
 		t.Written = 0
 		t.Total = 0
+		t.Speed = 0
+		t.Err = ""
+		t.ImagesDone = 0
+		t.ImagesTotal = 0
+		t.ImagesFiltered = 0
 		a.saveDownloadRecords()
 		a.pumpDownloads()
 	}
@@ -749,6 +897,9 @@ func (a *App) cancelTask(t *downloadTask) {
 func (a *App) retryTask(t *downloadTask) {
 	if t == nil || !t.Phase.terminal() {
 		return
+	}
+	if t.Phase == dlFailed && !t.Rendered && a.dlBrowser != nil && a.dlBrowser.Alive() && a.dlBrowserURL == t.URL {
+		t.Rendered = true
 	}
 	a.requeueDownloadTask(t, t.Phase == dlDone)
 }
@@ -762,10 +913,16 @@ func (a *App) requeueDownloadTask(t *downloadTask, overwrite bool) {
 	t.Err = ""
 	if !t.IsPage {
 		t.Path = ""
+	} else if t.Path != "" {
+		if _, err := os.Stat(t.Path); os.IsNotExist(err) {
+			t.Path = ""
+		}
 	}
 	t.Written = 0
 	t.Total = 0
 	t.ImagesDone = 0
+	t.ImagesTotal = 0
+	t.ImagesFiltered = 0
 	t.Speed = 0
 	a.saveDownloadRecords()
 	a.pumpDownloads()
@@ -775,11 +932,16 @@ func (a *App) removeTask(t *downloadTask) {
 	if t == nil {
 		return
 	}
+	t.removed = true
 	if t.Phase == dlActive {
 		t.paused = false
 		if t.cancel != nil {
 			t.cancel()
+		} else if a.dlBrowserTask == t {
+			a.dlBrowserTask = nil
 		}
+	} else if a.dlBrowserTask == t {
+		a.dlBrowserTask = nil
 	}
 	out := a.dlTasks[:0]
 	for _, item := range a.dlTasks {
@@ -805,6 +967,7 @@ func (a *App) pauseAllDownloads() {
 	}
 	if n > 0 {
 		logging.Log.Info("已暂停 %d 个下载任务", n)
+		a.pushToast("info", fmt.Sprintf("已暂停 %d 个下载任务", n))
 	}
 }
 
@@ -813,6 +976,7 @@ func (a *App) resumeAllDownloads() {
 	for _, t := range a.dlTasks {
 		if t.Phase == dlPaused {
 			t.Phase = dlQueued
+			t.Err = ""
 			n++
 		}
 	}
@@ -820,6 +984,7 @@ func (a *App) resumeAllDownloads() {
 		a.saveDownloadRecords()
 		a.pumpDownloads()
 		logging.Log.Info("已继续 %d 个下载任务", n)
+		a.pushToast("info", fmt.Sprintf("已继续 %d 个下载任务", n))
 	}
 }
 
@@ -829,6 +994,9 @@ func (a *App) pruneDownloads() int {
 	removed := 0
 	for _, t := range a.dlTasks {
 		if t.Phase == dlDone || t.Phase == dlFailed {
+			if a.dlSelectedID == t.ID {
+				a.dlSelectedID = 0
+			}
 			removed++
 			continue
 		}
@@ -838,6 +1006,9 @@ func (a *App) pruneDownloads() int {
 	if removed > 0 {
 		a.saveDownloadRecords()
 		logging.Log.Info("已清理 %d 条下载记录", removed)
+		a.pushToast("info", fmt.Sprintf("已清理 %d 条下载记录", removed))
+	} else {
+		a.pushToast("info", "没有可清理的已完成或失败记录")
 	}
 	return removed
 }
@@ -847,6 +1018,9 @@ func (a *App) clearDownloadTrash() int {
 	removed := 0
 	for _, t := range a.dlTasks {
 		if t.Phase == dlCanceled {
+			if a.dlSelectedID == t.ID {
+				a.dlSelectedID = 0
+			}
 			removed++
 			continue
 		}
@@ -856,6 +1030,9 @@ func (a *App) clearDownloadTrash() int {
 	if removed > 0 {
 		a.saveDownloadRecords()
 		logging.Log.Info("回收站已清空：%d 条", removed)
+		a.pushToast("info", fmt.Sprintf("回收站已清空（%d 条）", removed))
+	} else {
+		a.pushToast("info", "回收站已经为空")
 	}
 	return removed
 }
@@ -987,6 +1164,12 @@ func (a *App) loadDownloadRecords() {
 		// 上一轮没跑完的，重新打开时按暂停放在队列里，等用户点继续。
 		if t.Phase == dlActive || t.Phase == dlQueued {
 			t.Phase = dlPaused
+		}
+		// 清理历史失败的 0 图网页任务遗留的不存在本地路径，避免详情区显示无效打开/定位按钮。
+		if t.IsPage && t.Phase == dlFailed && t.ImagesDone == 0 && t.ImagesTotal == 0 && t.Path != "" {
+			if _, err := os.Stat(t.Path); os.IsNotExist(err) {
+				t.Path = ""
+			}
 		}
 		if t.Site == "" {
 			t.Site = dlSite(t.URL)

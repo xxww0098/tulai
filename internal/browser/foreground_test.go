@@ -40,9 +40,6 @@ func TestTaskVisibleToggle(t *testing.T) {
 	if !m.TaskVisible() {
 		t.Fatal("SetTaskVisible(true) not kept")
 	}
-	if m.LoadedAddon(1) != "" {
-		t.Fatal("no browser running, addon must be empty")
-	}
 	var nilManager *Manager
 	nilManager.SetTaskVisible(true)
 	if nilManager.TaskVisible() {

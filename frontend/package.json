@@ -1,0 +1,43 @@
+{
+  "name": "tulai-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@radix-ui/react-checkbox": "^1.3.1",
+    "@radix-ui/react-context-menu": "^2.2.12",
+    "@radix-ui/react-dialog": "^1.1.11",
+    "@radix-ui/react-dropdown-menu": "^2.1.12",
+    "@radix-ui/react-select": "^2.2.2",
+    "@radix-ui/react-slider": "^1.3.2",
+    "@radix-ui/react-switch": "^1.2.2",
+    "@radix-ui/react-tooltip": "^1.2.4",
+    "@tanstack/react-virtual": "^3.13.6",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.511.0",
+    "mygo-runtime": "0.10.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwind-merge": "^3.7.1",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "jsdom": "^26.1.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.2"
+  }
+}

@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -161,7 +161,7 @@ func TestXiaohongshuImageHost(t *testing.T) {
 
 func TestXiaohongshuRenderedState(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	const id = "676a35670000000013002578"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,7 +215,7 @@ func TestXiaohongshuRenderedState(t *testing.T) {
 
 func TestXiaohongshuCaptureCurrentNoteOnly(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -239,13 +239,13 @@ window.__INITIAL_STATE__ = {note:{noteDetailMap:{
   "ffffffffffffffffffffffff":{note:{imageList:[{urlDefault:"https://sns-webpic-qc.xhscdn.com/other-note"}]}}
 }}};</script></head><body><img src="https://unrelated.invalid/recommendation.jpg"></body></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && (paused.Request.URL == target || paused.Request.URL == targetProfile) {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).
 					WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).
@@ -253,7 +253,7 @@ window.__INITIAL_STATE__ = {note:{noteDetailMap:{
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -266,7 +266,7 @@ window.__INITIAL_STATE__ = {note:{noteDetailMap:{
 	}
 	start, _ := url.Parse(target)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(target)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -282,7 +282,7 @@ window.__INITIAL_STATE__ = {note:{noteDetailMap:{
 			t.Fatalf("captured image referer = %q", ref)
 		}
 	}
-	if err := session.run(ctx, camoufox.Navigate(targetProfile)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(targetProfile)); err != nil {
 		t.Fatal(err)
 	}
 	profileNote, err := session.Capture(ctx)
@@ -298,7 +298,7 @@ window.__INITIAL_STATE__ = {note:{noteDetailMap:{
 
 func TestXiaohongshuCaptureProfileInSeparateTab(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	const profileID = "5f2e12340000000001008400"
 	const first = "676a35670000000013002578"
@@ -372,10 +372,10 @@ document.getElementById('userPostedFeeds').insertAdjacentHTML('beforeend', '<sec
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String()), chromedp.Evaluate(`window.scrollTo(0, 100)`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String()), chromedp.Evaluate(`window.scrollTo(0, 100)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	var originalY float64
@@ -443,7 +443,7 @@ document.getElementById('userPostedFeeds').insertAdjacentHTML('beforeend', '<sec
 	case <-time.After(15 * time.Second):
 		t.Fatal("second synthetic note was not requested for navigation test")
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String()+"?tab=note")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String()+"?tab=note")); err != nil {
 		t.Fatal(err)
 	}
 	releaseSecond <- struct{}{}

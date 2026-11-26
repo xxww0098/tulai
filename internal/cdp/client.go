@@ -1,17 +1,14 @@
-// Package cdp provides tulai's page API for managed Camoufox and Chrome CDP sessions.
+// Package cdp provides tulai's page API for managed Fingerprint sessions.
 // 标签页管理、DOM 查询、JS 执行、文件上传、截图、状态探测与 Go↔页面桥。
 package cdp
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,14 +18,14 @@ import (
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
 // Client 对应一个已启动的受管浏览器进程。
 type Client struct {
-	proc     *camoufox.Process
+	proc     *fingerprint.Process
 	alloc    context.Context
 	allocCan context.CancelFunc
 	wsURL    string
@@ -36,7 +33,7 @@ type Client struct {
 
 // NewClient 按账号标识查找应用管理的浏览器。
 func NewClient(endpoint string) (*Client, error) {
-	proc, err := camoufox.Find(endpoint)
+	proc, err := fingerprint.Find(endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +52,6 @@ type Session struct {
 	target       string
 	unsubscribe  func()
 	client       *Client
-	ego          *egoTransport
 	ctx          context.Context
 	cancel       context.CancelFunc
 	mu           sync.Mutex
@@ -72,6 +68,9 @@ type Session struct {
 	navigateHook string
 	hide         atomic.Bool
 	parkMu       sync.Mutex
+	mouseX       float64
+	mouseY       float64
+	hasMouse     bool
 }
 
 // NewSession 在浏览器上新建标签页并打开 url。
@@ -179,7 +178,7 @@ func consoleArgText(arg *runtime.RemoteObject) string {
 
 func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, target string, onLog func(string)) (*Session, error) {
 	s := &Session{client: c, ctx: ctx, cancel: cancel, target: target, hooks: map[string]func(string) string{}, onLog: onLog}
-	s.unsubscribe = c.proc.Subscribe(func(event camoufox.Event) {
+	s.unsubscribe = c.proc.Subscribe(func(event fingerprint.Event) {
 		if event.Target != target {
 			return
 		}
@@ -211,7 +210,7 @@ func (c *Client) finishSession(ctx context.Context, cancel context.CancelFunc, t
 // PresentForCaptcha 把这个账号的窗口拿回屏幕并抢到前台。
 // 出图过程中只有等人完成验证码可以走这里。
 func (s *Session) PresentForCaptcha() {
-	if s == nil || s.ego != nil || s.client == nil || s.client.wsURL == "" {
+	if s == nil || s.client == nil || s.client.wsURL == "" {
 		return
 	}
 	// 先占住前台，这次显示完成前不要再写屏幕外坐标。
@@ -232,7 +231,7 @@ var presentForCaptcha = func(endpoint string) {
 // KeepOffscreen 出图期间把窗口留在屏幕外，并把焦点还给 tulai。
 // 登录或验证码占着前台时不动。已经藏好就不再 setWindowBounds。
 func (s *Session) KeepOffscreen() {
-	if s == nil || s.ego != nil {
+	if s == nil {
 		return
 	}
 	if s.client != nil {
@@ -251,7 +250,7 @@ func (s *Session) armPark() { s.placeOffscreen() }
 
 // placeOffscreen 只在「显示着 → 藏起来」这一下改坐标。重复调用直接返回。
 func (s *Session) placeOffscreen() {
-	if s == nil || s.ego != nil || s.client == nil || s.ctx == nil {
+	if s == nil || s.client == nil || s.ctx == nil {
 		return
 	}
 	if frontHeld(s.client.wsURL) {
@@ -264,7 +263,7 @@ func (s *Session) placeOffscreen() {
 }
 
 func (s *Session) parkNow() {
-	if s == nil || s.ctx == nil || s.ego != nil || s.client == nil || !s.hide.Load() {
+	if s == nil || s.ctx == nil || s.client == nil || !s.hide.Load() {
 		return
 	}
 	if frontHeld(s.client.wsURL) {
@@ -298,11 +297,6 @@ func (s *Session) Close() {
 	}
 	s.closed = true
 	s.mu.Unlock()
-	if s.ego != nil {
-		s.cancel()
-		s.ego.close()
-		return
-	}
 	if s.client != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = s.client.proc.Call(ctx, s.target, "Page.close", nil, nil)
@@ -321,10 +315,7 @@ func (s *Session) Ctx() context.Context { return s.ctx }
 func (s *Session) exec(fn func(ec context.Context) error) error {
 	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	defer cancel()
-	if s.ego != nil {
-		return fn(cdprotoCDP.WithExecutor(ctx, s.ego))
-	}
-	return fn(cdprotoCDP.WithExecutor(ctx, camoufoxExecutor{proc: s.client.proc, target: s.target}))
+	return fn(cdprotoCDP.WithExecutor(ctx, fingerprintExecutor{proc: s.client.proc, target: s.target}))
 }
 
 // Handle 注册桥命令处理函数（页面 JS: tulaiBridge({cmd, id, data})）。
@@ -362,6 +353,8 @@ func (s *Session) dispatchBridge(payload string) {
 	var result string
 	if msg.Cmd == "mouseClick" {
 		result = s.bridgeMouseClick(msg.Data)
+	} else if msg.Cmd == "mouseMove" {
+		result = s.bridgeMouseMove(msg.Data)
 	} else if msg.Cmd == "keyEnter" {
 		result = s.bridgeKeyEnter()
 	} else if fn != nil {
@@ -441,40 +434,23 @@ func (s *Session) EvaluateInt(expr string) int {
 func (s *Session) Navigate(url string) error {
 	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	defer cancel()
-	if s.ego != nil {
-		return s.ego.request(ctx, "goto", map[string]any{"url": url}, nil)
-	}
 	err := s.client.proc.Call(ctx, s.target, "Page.navigate", map[string]any{"url": url}, nil)
 	s.StayBack()
 	return err
 }
 
-// RenewPage 为旧版注入迁移建立干净页面；ego lite 保留旧页及浏览器登录态。
+// RenewPage 为旧版注入迁移建立干净页面。
 func (s *Session) RenewPage() error {
-	if s.ego != nil {
-		ctx, cancel := context.WithTimeout(s.ctx, 75*time.Second)
-		defer cancel()
-		select {
-		case egoInit <- struct{}{}:
-			defer func() { <-egoInit }()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		if err := s.ego.request(ctx, "renew", nil, nil); err != nil {
-			return err
-		}
-	} else {
-		out, err := s.Evaluate(`location.href`)
-		if err != nil {
-			return err
-		}
-		var url string
-		if err := ParseJSValue(out, &url); err != nil {
-			return err
-		}
-		if err := s.Navigate(url); err != nil {
-			return err
-		}
+	out, err := s.Evaluate(`location.href`)
+	if err != nil {
+		return err
+	}
+	var url string
+	if err := ParseJSValue(out, &url); err != nil {
+		return err
+	}
+	if err := s.Navigate(url); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	s.newDoc = nil
@@ -487,9 +463,6 @@ func (s *Session) RenewPage() error {
 func (s *Session) WaitForSelector(sel string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	defer cancel()
-	if s.ego != nil {
-		return s.ego.request(ctx, "wait", map[string]any{"selector": sel, "timeout": timeout.Milliseconds()}, nil)
-	}
 	return s.client.proc.Call(ctx, s.target, "wait", map[string]any{"selector": sel, "timeout": timeout.Milliseconds()}, nil)
 }
 
@@ -576,7 +549,7 @@ func (s *Session) bindLog() func() {
 // KeepOnePage 关掉同一站点多出来的标签，只留当前这一张。
 // 每单新开一页又不关，窗口里会堆上好几张豆包。关的是别的标签，不激活窗口。
 func (s *Session) KeepOnePage(rawURL string) {
-	if s == nil || s.ego != nil || s.client == nil {
+	if s == nil || s.client == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
@@ -617,7 +590,10 @@ if(e instanceof HTMLInputElement&&!['text','search','email','tel','url','passwor
 if(e instanceof HTMLInputElement||e instanceof HTMLTextAreaElement){
   e.focus();e.select();
 }else if(e.isContentEditable){
-  e.focus();const r=document.createRange();r.selectNodeContents(e);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(r);
+  e.focus();const r=document.createRange();
+  const locked=Array.from(e.querySelectorAll('[contenteditable="false"],[data-testid="skill_input_exit_button"]')).filter(n=>{for(let p=n.parentElement;p&&p!==e;p=p.parentElement){if(p.getAttribute('contenteditable')==='false'||p.getAttribute('data-testid')==='skill_input_exit_button')return false;}return true;});
+  if(locked.length){const last=locked[locked.length-1];r.setStartAfter(last);if(last.parentNode&&last.parentNode!==e&&last.parentNode===e.lastChild)r.setEnd(last.parentNode,last.parentNode.childNodes.length);else r.setEnd(e,e.childNodes.length);}else{r.selectNodeContents(e);}
+  const selection=window.getSelection();selection.removeAllRanges();selection.addRange(r);
 }else throw new Error('元素不可编辑');
 if(document.activeElement!==e&&!e.contains(document.activeElement))throw new Error('无法聚焦输入框');
 return true;
@@ -625,35 +601,16 @@ return true;
 	if err != nil {
 		return err
 	}
-	for _, part := range typeChunks(text) {
-		if err := pauseHuman(s.ctx, 35*time.Millisecond, 55*time.Millisecond); err != nil {
-			return err
-		}
-		part := part
-		if err := s.exec(func(ec context.Context) error { return input.InsertText(part).Do(ec) }); err != nil {
-			return err
-		}
+	if err := s.exec(func(ec context.Context) error { return input.InsertText(text).Do(ec) }); err != nil {
+		return err
 	}
 	s.StayBack()
 	return nil
 }
 
-// typeChunks 把一次整段 insertText 拆开。整段瞬间写完是自动化痕迹，空串仍要写一次用来清空。
+// typeChunks 保留整段一次写入，避免按 8 字拆段造成数秒级提示词输入延迟；空串仍写一次用来清空。
 func typeChunks(text string) []string {
-	if text == "" {
-		return []string{""}
-	}
-	const size = 8
-	runes := []rune(text)
-	out := make([]string, 0, (len(runes)+size-1)/size)
-	for i := 0; i < len(runes); i += size {
-		j := i + size
-		if j > len(runes) {
-			j = len(runes)
-		}
-		out = append(out, string(runes[i:j]))
-	}
-	return out
+	return []string{text}
 }
 
 // pauseHuman 停一小会儿，区间是 [base, base+span)。ctx 取消时马上返回。
@@ -682,40 +639,10 @@ func pauseHuman(ctx context.Context, base, span time.Duration) error {
 }
 
 // SetUploadFilesNth 给第 n 个 input[type=file] 设置文件，由浏览器发送输入事件。
-func randomUploadAttr() (string, error) {
-	var buf [8]byte
-	if _, err := crand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return "data-" + hex.EncodeToString(buf[:]), nil
-}
-
 func (s *Session) SetUploadFilesNth(n int, files []string) error {
-	if s.ego == nil {
-		ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
-		defer cancel()
-		return s.client.proc.Call(ctx, s.target, "upload", map[string]any{"index": n, "files": files}, nil)
-	}
-	attr, err := randomUploadAttr()
-	if err != nil {
-		return err
-	}
-	if _, err := s.Evaluate(fmt.Sprintf(`tulaiMarkFileInput(%d, %q)`, n, attr)); err != nil {
-		return err
-	}
-	defer func() {
-		_, _ = s.Evaluate(fmt.Sprintf(`tulaiUnmarkFileInput(%q)`, attr))
-	}()
 	ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	defer cancel()
-	paths := make([]string, len(files))
-	for i, file := range files {
-		paths[i], err = filepath.Abs(file)
-		if err != nil {
-			return err
-		}
-	}
-	return s.ego.request(ctx, "upload", map[string]any{"selector": fmt.Sprintf(`input[type=file][%s="1"]`, attr), "files": paths}, nil)
+	return s.client.proc.Call(ctx, s.target, "upload", map[string]any{"index": n, "files": files}, nil)
 }
 
 // CaptureScreenshotRect 截取页面坐标区域（CSS 像素），返回 PNG 字节。
@@ -777,12 +704,12 @@ func (s *Session) KeepAlive(ctx context.Context, interval time.Duration) {
 	}()
 }
 
-// camoufoxExecutor translates the existing typed page commands into the private launcher pipe.
-type camoufoxExecutor struct {
-	proc   *camoufox.Process
+// fingerprintExecutor translates the existing typed page commands into the private launcher pipe.
+type fingerprintExecutor struct {
+	proc   *fingerprint.Process
 	target string
 }
 
-func (e camoufoxExecutor) Execute(ctx context.Context, method string, params, result any) error {
+func (e fingerprintExecutor) Execute(ctx context.Context, method string, params, result any) error {
 	return e.proc.Call(ctx, e.target, method, params, result)
 }

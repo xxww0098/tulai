@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
-	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 )
@@ -73,12 +71,13 @@ func TestAccountRejectsInvalidGlobalProxy(t *testing.T) {
 	SetProxy("ftp://127.0.0.1:21")
 	m := NewManager()
 	m.configDir = t.TempDir()
-	b := store.Browser{ID: 1, Name: "account", UserDataDir: t.TempDir()}
-	if _, err := m.Start(b, t.TempDir(), KindCamoufox, "", true); err == nil || !strings.Contains(err.Error(), "全局代理地址无效") {
+	dataRoot := t.TempDir()
+	b := store.Browser{ID: 1, Name: "account", UserDataDir: ProfileDir(dataRoot, KindFingerprint, "account")}
+	if _, err := m.Start(b, dataRoot, KindFingerprint, "", true); err == nil || !strings.Contains(err.Error(), "全局代理地址无效") {
 		t.Fatalf("invalid global proxy should prevent startup: %v", err)
 	}
 	b.Proxy = "http://127.0.0.1:7890"
-	if _, err := m.Start(b, t.TempDir(), KindCamoufox, "", true); err == nil || !strings.Contains(err.Error(), "Camoufox 尚未准备好") {
+	if _, err := m.Start(b, dataRoot, KindFingerprint, "", true); err == nil || !strings.Contains(err.Error(), "Fingerprint 尚未准备好") {
 		t.Fatalf("valid account proxy should override invalid global proxy: %v", err)
 	}
 }
@@ -195,12 +194,12 @@ func TestSamePlatformSharedExit(t *testing.T) {
 		},
 		{
 			name:   "identical normalized proxy URL with credentials flagged",
-			target: store.Browser{ID: 1, Platform: "ChatGPT", Name: "gpt1", Proxy: "socks5h://u1:pw@Proxy.Example.COM:1080/"},
+			target: store.Browser{ID: 1, Platform: "千问", Name: "千问1", Proxy: "socks5h://u1:pw@Proxy.Example.COM:1080/"},
 			browsers: []store.Browser{
-				{ID: 1, Platform: "ChatGPT", Name: "gpt1", Proxy: "socks5h://u1:pw@Proxy.Example.COM:1080/"},
-				{ID: 2, Platform: "ChatGPT", Name: "gpt2", Proxy: "socks5://u1:pw@proxy.example.com:1080"},
+				{ID: 1, Platform: "千问", Name: "千问1", Proxy: "socks5h://u1:pw@Proxy.Example.COM:1080/"},
+				{ID: 2, Platform: "千问", Name: "千问2", Proxy: "socks5://u1:pw@proxy.example.com:1080"},
 			},
-			want: []string{"gpt2"},
+			want: []string{"千问2"},
 		},
 		{
 			name:   "overlapping multi-platform flagged",
@@ -239,15 +238,33 @@ func TestSamePlatformSharedExit(t *testing.T) {
 			want: nil,
 		},
 		{
-			name:   "different platforms and extension accounts ignored",
+			name:   "different platforms ignored",
 			target: store.Browser{ID: 1, Platform: "豆包", Name: "db1"},
 			browsers: []store.Browser{
 				{ID: 2, Platform: "千问", Name: "qw1"},
-				{ID: 3, Platform: "ChatGPT", Name: "gpt1"},
-				{ID: 4, Platform: "Antigravity", Name: "agy1"},
-				{ID: 5, Platform: "豆包", Name: "ext1", ExtAccount: "ext-profile-1"},
+				{ID: 3, Platform: "千问国际", Name: "qi1"},
+				{ID: 4, Platform: "其他", Name: "other"},
 			},
 			want: nil,
+		},
+		{
+			name:   "domestic qianwen and international qwen_intl stay isolated",
+			target: store.Browser{ID: 1, Platform: "千问", Name: "qw1"},
+			browsers: []store.Browser{
+				{ID: 1, Platform: "千问", Name: "qw1"},
+				{ID: 2, Platform: "千问国际", Name: "qi1"},
+			},
+			want: nil,
+		},
+		{
+			name:   "qwen_intl accounts sharing same exit flagged",
+			target: store.Browser{ID: 1, Platform: "千问国际", Name: "qi1"},
+			browsers: []store.Browser{
+				{ID: 1, Platform: "千问国际", Name: "qi1"},
+				{ID: 2, Platform: "千问国际", Name: "qi2"},
+				{ID: 3, Platform: "千问", Name: "qw1"},
+			},
+			want: []string{"qi2"},
 		},
 		{
 			name:   "invalid proxy does not match direct exit",
@@ -271,7 +288,7 @@ func TestSamePlatformSharedExit(t *testing.T) {
 func TestCollisionRootsAndOptionsSerialization(t *testing.T) {
 	base := t.TempDir()
 	dataRoot := filepath.Join(base, "BrowserData")
-	profileDir := filepath.Join(dataRoot, KindCamoufox, "account-1")
+	profileDir := filepath.Join(dataRoot, "Fingerprint", "account-1")
 	configDir := filepath.Join(base, "cfg")
 	st, err := store.Open(filepath.Join(base, "database", "config.db"))
 	if err != nil {
@@ -281,7 +298,7 @@ func TestCollisionRootsAndOptionsSerialization(t *testing.T) {
 
 	roots := collisionRoots(dataRoot, profileDir, configDir, st)
 	want := []string{
-		filepath.Join(dataRoot, KindCamoufox),
+		filepath.Join(dataRoot, "Fingerprint"),
 		filepath.Join(base, "DownloadBrowser"),
 		filepath.Join(configDir, "DownloadBrowser"),
 	}
@@ -289,7 +306,7 @@ func TestCollisionRootsAndOptionsSerialization(t *testing.T) {
 		t.Fatalf("collisionRoots = %v, want %v", roots, want)
 	}
 
-	raw, err := json.Marshal(camoufox.Options{Profile: profileDir, CollisionRoots: roots})
+	raw, err := json.Marshal(fingerprint.Options{Profile: profileDir, CollisionRoots: roots})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +319,7 @@ func TestCollisionRootsAndOptionsSerialization(t *testing.T) {
 		t.Fatalf("collisionRoots JSON = %s", raw)
 	}
 
-	emptyRaw, err := json.Marshal(camoufox.Options{Profile: profileDir})
+	emptyRaw, err := json.Marshal(fingerprint.Options{Profile: profileDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,8 +329,7 @@ func TestCollisionRootsAndOptionsSerialization(t *testing.T) {
 }
 
 func TestManagerStartWarnsOnSharedSamePlatformExit(t *testing.T) {
-	root := t.TempDir()
-	setupMockCamoufoxRuntime(t, root)
+	root := fakeLauncherRuntime(t)
 	t.Setenv("TULAI_BROWSER_PIPE_FIXTURE", "none")
 
 	st, err := store.Open(filepath.Join(root, "database", "config.db"))
@@ -323,11 +339,11 @@ func TestManagerStartWarnsOnSharedSamePlatformExit(t *testing.T) {
 	defer st.Close()
 
 	const sharedProxy = "http://user-secret:pw-secret@127.0.0.1:7890"
-	a1, err := st.AddBrowser("豆包", "豆包主力", filepath.Join(root, "BrowserData", "Camoufox", "a1"))
+	a1, err := st.AddBrowser("豆包", "豆包主力", filepath.Join(root, "BrowserData", "Fingerprint", "a1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	a2, err := st.AddBrowser("豆包", "豆包备用", filepath.Join(root, "BrowserData", "Camoufox", "a2"))
+	a2, err := st.AddBrowser("豆包", "豆包备用", filepath.Join(root, "BrowserData", "Fingerprint", "a2"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +366,7 @@ func TestManagerStartWarnsOnSharedSamePlatformExit(t *testing.T) {
 	manager.SetStore(st)
 	t.Cleanup(manager.StopAll)
 
-	if _, err := manager.Start(a1, filepath.Join(root, "BrowserData"), KindCamoufox, "", true); err != nil {
+	if _, err := manager.Start(a1, filepath.Join(root, "BrowserData"), KindFingerprint, "", true); err != nil {
 		t.Fatalf("shared exit warning must not block start: %v", err)
 	}
 	stdLog := logBuf.String()
@@ -371,57 +387,5 @@ func TestManagerStartWarnsOnSharedSamePlatformExit(t *testing.T) {
 	}
 	if !foundWarning {
 		t.Fatal("expected logging.Log.Warning entry for shared same-platform exit")
-	}
-}
-
-func setupMockCamoufoxRuntime(t *testing.T, root string) {
-	t.Helper()
-	dir := filepath.Join(root, "runtime", "camoufox", camoufox.Version)
-	node := filepath.Join(dir, "node", "bin", "node")
-	if runtime.GOOS == "windows" {
-		node = filepath.Join(dir, "node", "node.exe")
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(executable)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lock, err := os.ReadFile(filepath.Join("..", "camoufox", "driver", "package-lock.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	marker, _ := json.Marshal(map[string]string{
-		"executable": node,
-		"version":    camoufox.Version,
-		"platform":   runtime.GOOS + "/" + runtime.GOARCH,
-	})
-	native := map[string]string{
-		"windows/amd64": "impit-win32-x64-msvc",
-		"darwin/amd64":  "impit-darwin-x64",
-		"darwin/arm64":  "impit-darwin-arm64",
-		"linux/amd64":   "impit-linux-x64-gnu",
-		"linux/arm64":   "impit-linux-arm64-gnu",
-	}[runtime.GOOS+"/"+runtime.GOARCH]
-	impitMeta, _ := json.Marshal(map[string]any{"optionalDependencies": map[string]string{native: "0.14.8"}})
-	files := map[string][]byte{
-		node: data, filepath.Join(dir, "package-lock.json"): lock,
-		filepath.Join(dir, "ready.json"):                               marker,
-		filepath.Join(dir, "node_modules", "camoufox", "package.json"): []byte("{}"),
-		filepath.Join(dir, "node_modules", "impit", "package.json"):    impitMeta,
-		filepath.Join(dir, "node_modules", native, "package.json"):     []byte(`{"version":"0.14.8"}`),
-	}
-	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
-		files[filepath.Join(dir, "node_modules", native, "impit-node.win32-x64-msvc.node")] = []byte("x")
-	}
-	for name, body := range files {
-		if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(name, body, 0o700); err != nil {
-			t.Fatal(err)
-		}
 	}
 }

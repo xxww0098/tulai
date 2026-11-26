@@ -20,7 +20,7 @@ func encodeImage(img *image.NRGBA, format string, quality int) ([]byte, error) {
 	case "jpeg":
 		err = jpeg.Encode(&buf, flattenWhite(img), &jpeg.Options{Quality: quality})
 	case "png":
-		err = png.Encode(&buf, img)
+		err = (&png.Encoder{CompressionLevel: png.BestSpeed}).Encode(&buf, img)
 	case "gif":
 		err = gif.Encode(&buf, img, nil)
 	case "webp":

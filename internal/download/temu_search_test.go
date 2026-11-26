@@ -16,7 +16,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 const temuSearchTestPage = "https://www.temu.com/search_result.html?search_key=lamp&filter=black"
@@ -37,6 +37,7 @@ func TestTemuSearchRoutesAndIdentity(t *testing.T) {
 	}{
 		{temuSearchTestPage, true, false},
 		{"https://temu.com/br/search_result.html?search_key=lamp", true, false},
+		{"https://www.temu.com/zh-hant/search_result.html?search_key=lamp", true, false},
 		{"https://www.temu.com/search_result.html", true, false},
 		{"https://www.temu.com/", false, true},
 		{"https://temu.com/br/", false, true},
@@ -94,6 +95,21 @@ func TestTemuSearchCollectBoundRows(t *testing.T) {
 	if got, err := temuSearchCollect(context.Background(), page, temuSearchSnapshot{URL: temuSearchTestPage, Rows: []temuSearchRow{row}}); err != nil || len(got.Items) != 1 {
 		t.Fatalf("loaded search items=%+v err=%v", got.Items, err)
 	}
+	goodsQueryRow := temuSearchRow{
+		ID:    "601099513224399",
+		Title: "油画",
+		Image: "https://img-us.kwcdn.com/product/paint.jpg?imageView2/2/w/800",
+		Link:  "https://www.temu.com/goods.html?goods_id=601099513224399&refer_page_name=search",
+	}
+	if got, err := temuSearchCollect(context.Background(), page, temuSearchSnapshot{URL: temuSearchTestPage, Rows: []temuSearchRow{goodsQueryRow}}); err != nil || len(got.Items) != 1 || got.Items[0].URL != "https://img-us.kwcdn.com/product/paint.jpg" {
+		t.Fatalf("goods.html search items=%+v err=%v", got.Items, err)
+	}
+	if !temuSearchURLMatches(temuSearchTestPage, "https://www.temu.com/search_result.html?search_key=lamp&filter=black&refer_page_el_sn=123&is_back=1") {
+		t.Fatal("expected temuSearchURLMatches to ignore tracking params")
+	}
+	if temuSearchURLMatches(temuSearchTestPage, "https://www.temu.com/search_result.html?search_key=other&filter=black") {
+		t.Fatal("expected temuSearchURLMatches to reject different search_key")
+	}
 	for _, test := range []struct {
 		name string
 		snap temuSearchSnapshot
@@ -128,18 +144,17 @@ func TestTemuSearchLimit(t *testing.T) {
 func TestTemuSearchRenderedCapture(t *testing.T) {
 	dir := os.Getenv("TULAI_TEMU_TEST_RUNTIME")
 	if dir == "" {
-		t.Skip("set TULAI_TEMU_TEST_RUNTIME to an isolated Camoufox runtime copy")
+		t.Skip("set TULAI_TEMU_TEST_RUNTIME to an isolated Fingerprint runtime copy")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	geo := false
-	process, err := camoufox.Start(ctx, dir, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true, GeoIP: &geo}, nil)
+	process, err := fingerprint.Start(ctx, dir, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(process.Context())
 	start := temuSearchTestURL(t, "https://www.temu.com/")
-	session := &RenderedSession{process: process, tab: camoufox.PageContext(life, process, process.Page), closeTab: closeTab,
+	session := &RenderedSession{process: process, tab: fingerprint.PageContext(life, process, process.Page), closeTab: closeTab,
 		closeAllocator: func() { process.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: start}
 	defer session.Close()
 	const body = `<html><head><title>Search</title></head><body><div class="js-search-goodsList">
@@ -151,7 +166,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 <div class="EKDT7a3v"><div data-tooltip="goodName-601099513224349" data-tooltip-title="Lazy lamp"><a href="https://www.temu.com/item-g-601099513224349.html">Lazy lamp</a></div><img class="goods-img-external" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" data-src="https://img.kwcdn.com/product/lazy.gif"></div>
 </div><img src="https://img.kwcdn.com/product/not-result.gif"></body></html>`
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
@@ -167,7 +182,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 			} else if paused.ResourceType == network.ResourceTypeImage && strings.HasPrefix(paused.Request.URL, "https://img.kwcdn.com/product/") && !strings.Contains(paused.Request.URL, "missing.gif") {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "image/gif"}}).WithBody("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -175,7 +190,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 			}
 		}()
 	})
-	if err := session.run(ctx, fetch.Enable(), camoufox.Navigate("https://www.temu.com/"), camoufox.Navigate(temuSearchTestPage)); err != nil {
+	if err := session.run(ctx, fetch.Enable(), fingerprint.Navigate("https://www.temu.com/"), fingerprint.Navigate(temuSearchTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 30; i++ {
@@ -230,7 +245,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 	if got, err := session.Capture(ctx); err == nil || !strings.Contains(err.Error(), "验证") || len(got.Items) != 0 {
 		t.Fatalf("challenge=%+v err=%v", got.Items, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://www.temu.com/bgn_verification.html")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://www.temu.com/bgn_verification.html")); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := session.Capture(ctx); err == nil || !strings.Contains(err.Error(), "验证") || len(got.Items) != 0 {

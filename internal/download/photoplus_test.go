@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -117,7 +117,7 @@ func TestPhotoplusPermissionsAndList(t *testing.T) {
 
 func TestPhotoplusRenderedAnonymousPagination(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	var leak atomic.Int32
 	var pages atomic.Int32
@@ -180,10 +180,10 @@ let next=false;document.querySelector('.photo-content').onscroll=()=>{if(!next){
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String()+"#/live"), chromedp.Sleep(500*time.Millisecond), chromedp.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String()+"#/live"), chromedp.Sleep(500*time.Millisecond), chromedp.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	testStarted.Store(true)

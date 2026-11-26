@@ -24,7 +24,6 @@ import (
 
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -251,28 +250,31 @@ func TestRunChromeAndEdgeRequireBrowsers(t *testing.T) {
 	}
 }
 
-func TestRunExtensionWithoutConfiguredBrowsers(t *testing.T) {
+func openTaskStore(t *testing.T) *store.Store {
+	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
-	st.Set("browser_backend", "Chrome")
-	st.Set(extbridge.SettingBrowserBackend, "extension")
-	e := NewEngine(st, nil, nil, "")
-	err = e.run(context.Background(), Options{Platforms: []string{"豆包", "千问"}, Prompts: []string{"画一只猫"}}, func(Task) {}, func(Progress) {}, func(context.Context, *Task) error {
-		return nil
-	})
+	t.Cleanup(func() { _ = st.Close() })
+	return st
+}
+
+func repairedPNG(t *testing.T, data []byte, platform string) []byte {
+	t.Helper()
+	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	queue := e.View().Snapshot()
-	if len(queue) != 2 || queue[0].BrowserID != -1 || queue[1].BrowserID != -2 {
-		t.Fatalf("扩展调度占位: %+v", queue)
+	out, changed, err := images.RemoveWatermark(context.Background(), img, platform)
+	if err != nil || !changed {
+		t.Fatalf("RemoveWatermark(%s) changed=%v err=%v", platform, changed, err)
 	}
-	if len(st.Browsers()) != 0 {
-		t.Fatal("扩展路径不应要求本机浏览器记录")
+	encoded, err := images.EncodePNG(out)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return encoded
 }
 
 func addBrowsers(t *testing.T, st *store.Store, platforms ...string) {
@@ -284,7 +286,7 @@ func addBrowsers(t *testing.T, st *store.Store, platforms ...string) {
 	}
 }
 
-func TestLegacyBackendSettingsUseCamoufoxSession(t *testing.T) {
+func TestBackendSettingsUseFingerprintSession(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -292,11 +294,11 @@ func TestLegacyBackendSettingsUseCamoufoxSession(t *testing.T) {
 	defer st.Close()
 	e := NewEngine(st, nil, nil, "")
 	session := &cdp.Session{}
-	e.sessions["Camoufox:豆包:1"] = session
-	for _, legacy := range []string{"Chrome", "Edge", "Builtin", "Camoufox"} {
-		st.Set("browser_backend", legacy)
+	e.sessions["Fingerprint:豆包:1"] = session
+	for _, value := range []string{"", "unknown", "Fingerprint"} {
+		st.Set("browser_backend", value)
 		if got, err := e.session(context.Background(), "豆包", 1, nil); err != nil || got != session {
-			t.Fatalf("%s: %p %v", legacy, got, err)
+			t.Fatalf("%s: %p %v", value, got, err)
 		}
 	}
 }
@@ -599,126 +601,6 @@ func TestExecuteCancellationBeatsVerification(t *testing.T) {
 	})
 	if got.Status != StatusSkipped || got.Attempts != 1 || got.Error != "已停止" || len(got.Results) != 1 {
 		t.Fatalf("cancellation must win and keep previous results: %+v", got)
-	}
-}
-
-type failedSessionFixture struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	ego        bool
-	events     []string
-	handOffErr error
-	onHandOff  func() error
-}
-
-func (s *failedSessionFixture) Ctx() context.Context { return s.ctx }
-func (s *failedSessionFixture) IsEgo() bool          { return s.ego }
-func (s *failedSessionFixture) EgoEvaluate(_ string, _ any) error {
-	s.events = append(s.events, "manual")
-	return s.ctx.Err()
-}
-func (s *failedSessionFixture) HandOff() error {
-	if s.ctx.Err() != nil {
-		return s.ctx.Err()
-	}
-	s.events = append(s.events, "handoff")
-	if s.onHandOff != nil {
-		return s.onHandOff()
-	}
-	return s.handOffErr
-}
-func (s *failedSessionFixture) Close() {
-	s.events = append(s.events, "close")
-	s.cancel()
-}
-
-func TestVerificationHandsOffBeforeSessionCancellation(t *testing.T) {
-	for _, scenario := range []string{"ego", "handoff-error", "canceled", "chrome"} {
-		t.Run(scenario, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			sessionCtx, sessionCancel := context.WithCancel(ctx)
-			sess := &failedSessionFixture{ctx: sessionCtx, cancel: sessionCancel, ego: scenario != "chrome"}
-			failure := errors.New("handoff failed")
-			if scenario == "handoff-error" {
-				sess.handOffErr = failure
-			}
-			if scenario == "canceled" {
-				cancel()
-			}
-			err := closeFailedSession(ctx, sess, captcha.ErrVerificationRequired)
-			want := "manual,handoff,close"
-			if scenario == "canceled" || scenario == "chrome" {
-				want = "close"
-			}
-			if strings.Join(sess.events, ",") != want {
-				t.Fatalf("events=%v want=%s", sess.events, want)
-			}
-			if scenario == "canceled" {
-				if !errors.Is(err, context.Canceled) || errors.Is(err, captcha.ErrVerificationRequired) {
-					t.Fatalf("cancellation must win: %v", err)
-				}
-			} else if !errors.Is(err, captcha.ErrVerificationRequired) || scenario == "handoff-error" && !errors.Is(err, failure) {
-				t.Fatalf("manual and handoff errors must survive Join: %v", err)
-			}
-		})
-	}
-}
-
-func TestVerificationHandOffTimeoutRetainsNeedsUserUnlessParentStops(t *testing.T) {
-	for _, scenario := range []string{"handoff-timeout", "parent-canceled", "parent-deadline"} {
-		t.Run(scenario, func(t *testing.T) {
-			parentLimit := time.Second
-			if scenario == "parent-deadline" {
-				parentLimit = 10 * time.Millisecond
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), parentLimit)
-			defer cancel()
-			sessionCtx, sessionCancel := context.WithCancel(ctx)
-			defer sessionCancel()
-			sess := &failedSessionFixture{ctx: sessionCtx, cancel: sessionCancel, ego: true}
-			sess.onHandOff = func() error {
-				limit := time.Millisecond
-				if scenario == "parent-deadline" {
-					limit = time.Second
-				}
-				bounded, stop := context.WithTimeout(sessionCtx, limit)
-				defer stop()
-				if scenario == "parent-canceled" {
-					cancel()
-				}
-				<-bounded.Done()
-				return bounded.Err()
-			}
-			e := NewEngine(nil, nil, nil, "")
-			e.opts.RetryCount = 3
-			var attemptErr error
-			got := e.execute(ctx, Task{Results: []string{"already-saved.png"}}, func(context.Context, *Task) error {
-				attemptErr = closeFailedSession(ctx, sess, captcha.ErrVerificationRequired)
-				return attemptErr
-			})
-			want := StatusNeedsUser
-			if scenario == "parent-canceled" {
-				want = StatusSkipped
-			}
-			if scenario == "parent-deadline" {
-				want = StatusFailed
-			}
-			if got.Status != want || got.Attempts != 1 || len(got.Results) != 1 || strings.Join(sess.events, ",") != "manual,handoff,close" {
-				t.Fatalf("error=%v task=%+v events=%v", attemptErr, got, sess.events)
-			}
-			if scenario == "handoff-timeout" {
-				if !errors.Is(attemptErr, captcha.ErrVerificationRequired) || errors.Is(attemptErr, context.DeadlineExceeded) || !strings.Contains(got.Error, "交还浏览器超时") {
-					t.Fatalf("private timeout must preserve verification: %v", attemptErr)
-				}
-			} else if scenario == "parent-deadline" {
-				if !errors.Is(attemptErr, context.DeadlineExceeded) || got.Error != "出图超时" {
-					t.Fatalf("整体超时要标成出图超时: error=%v task=%+v", attemptErr, got)
-				}
-			} else if !errors.Is(attemptErr, ctx.Err()) || errors.Is(attemptErr, captcha.ErrVerificationRequired) || got.Error != "已停止" {
-				t.Fatalf("parent cancellation must win: error=%v task=%+v", attemptErr, got)
-			}
-		})
 	}
 }
 
@@ -1681,7 +1563,7 @@ func TestUnmatchedWashKeepsBatchNameWhenAutoNumber(t *testing.T) {
 
 func TestWashConcurrentResultsMatchTheirSources(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set("browserBackend", "camoufox")
+	st.Set("browserBackend", "fingerprint")
 	addNamed(t, st, "豆包", "甲")
 	addNamed(t, st, "豆包", "乙")
 	dir := t.TempDir()
@@ -1745,7 +1627,7 @@ func TestWashConcurrentResultsMatchTheirSources(t *testing.T) {
 
 func TestWashSameNameSourcesKeepTaskAssociation(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set("browserBackend", "camoufox")
+	st.Set("browserBackend", "fingerprint")
 	addNamed(t, st, "豆包", "甲")
 	addNamed(t, st, "豆包", "乙")
 	dir := t.TempDir()

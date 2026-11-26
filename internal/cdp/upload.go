@@ -22,8 +22,5 @@ func (s *Session) UploadFiles(openJS string, files []string) error {
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 	defer cancel()
-	if s.ego != nil {
-		return s.ego.request(ctx, "chooseUpload", map[string]any{"openJS": openJS, "files": paths, "timeout": 25000}, nil)
-	}
 	return s.client.proc.Call(ctx, s.target, "chooseUpload", map[string]any{"openJS": openJS, "files": paths}, nil)
 }

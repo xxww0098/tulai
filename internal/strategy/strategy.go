@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"net/url"
 	"strings"
 	"time"
@@ -45,9 +46,11 @@ type Result struct {
 	Width       int    `json:"w,omitempty"` // 页面上已解码的像素宽
 	Height      int    `json:"h,omitempty"` // 页面上已解码的像素高
 	SourceIndex int    `json:"-"`           // 豆包会话中已核对的源图序号，从 1 起。
-	Data        []byte `json:"-"`           // Ego 官方下载入口返回的原始文件
+	Data        []byte `json:"-"`           // 页面或下载通道直接返回的原始图片字节
 	// WatermarkRemoved 为真表示扩展已下载无水印原图或完成局部修复。
-	WatermarkRemoved bool `json:"-"`
+	WatermarkRemoved bool        `json:"-"`
+	Decoded          image.Image `json:"-"` // 预校验阶段已解码的像素，避免落盘阶段二次解码。
+	Format           string      `json:"-"` // Decoded 对应的原始格式名（png/jpeg/webp/gif）。
 }
 
 // Strategy 平台策略接口（与原 IPlatformStrategy 对齐并工程化）。
@@ -79,8 +82,8 @@ func Factory(platform string) Strategy {
 		return &Doubao{}
 	case "千问":
 		return &Qianwen{}
-	case "ChatGPT":
-		return &ChatGPT{}
+	case "千问国际":
+		return &QwenIntl{}
 	}
 	return nil
 }
@@ -91,32 +94,6 @@ type base struct{}
 
 // InstallHook 注入 hook + composer（平台无关）。
 func (base) InstallHook(s *cdp.Session) error {
-	if s.IsEgo() {
-		if err := captcha.CheckVerificationRequired(s); err != nil {
-			return err
-		}
-		var old bool
-		if err := s.EgoEvaluate(`!!window.__tulaiHookInstalled`, &old); err != nil {
-			return err
-		}
-		if old {
-			if err := captcha.SetManual(s); err != nil {
-				return err
-			}
-			if err := captcha.CheckVerificationRequired(s); err != nil {
-				return err
-			}
-			if err := s.RenewPage(); err != nil {
-				return fmt.Errorf("迁移旧结果脚本页面: %w", err)
-			}
-		}
-		var state egoState
-		if err := egoEvaluate(s, "init", nil, &state); err != nil {
-			return err
-		}
-		logEgoDiagnostic("页面图片", state.Diagnostic)
-		return nil
-	}
 	rawJS := extbundle.DoubaoRawJS()
 	revision := fmt.Sprintf("%x", sha256.Sum256([]byte(rawJS+hookJS)))
 	out, err := s.Evaluate(`JSON.stringify({installed:!!window.__tulaiHookInstalled,revision:window.__tulaiHookRevision||''})`)
@@ -143,23 +120,12 @@ func (base) InstallHook(s *cdp.Session) error {
 
 // MarkTask 标记任务起点。
 func (base) MarkTask(s *cdp.Session) error {
-	if s.IsEgo() {
-		var state egoState
-		if err := egoEvaluate(s, "mark", nil, &state); err != nil {
-			return err
-		}
-		logEgoDiagnostic("任务边界", state.Diagnostic)
-		return nil
-	}
 	_, err := s.Evaluate(`window.__tulaiMarkTask && window.__tulaiMarkTask(), 1`)
 	return err
 }
 
 // UploadFiles 打开真实文件选择器并确认当前输入区附件已就绪。
 func (b base) UploadFiles(s *cdp.Session, files []string) error {
-	if s.IsEgo() {
-		return egoUpload(s, files)
-	}
 	s.EnsureBase()
 	logDiagnostic := func() {
 		out, err := s.Evaluate(`JSON.stringify((window.__tulaiUploadDiagnostic || []).concat(window.tulaiUploadAncestorDiagnostic ? tulaiUploadAncestorDiagnostic() : []))`)
@@ -201,10 +167,10 @@ func (b base) UploadFiles(s *cdp.Session, files []string) error {
 
 // pageAccountFault 读取页面提示条里的额度或限流。没有提示时返回 nil。
 func pageAccountFault(s *cdp.Session) error {
-	if s == nil || s.IsEgo() {
+	if s == nil {
 		return nil
 	}
-	out, err := s.Evaluate(`JSON.stringify(window.tulaiPageState ? tulaiPageState() : {})`)
+	out, err := s.Evaluate(`JSON.stringify(window.tulaiAccountFault ? tulaiAccountFault() : (window.tulaiPageState ? tulaiPageState() : {}))`)
 	if err != nil {
 		return nil
 	}
@@ -230,9 +196,6 @@ func pageAccountFault(s *cdp.Session) error {
 
 // SendPrompt 可信输入后点击一次发送，等待平台清空输入确认接收。
 func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
-	if s.IsEgo() {
-		return egoSend(s, prompt)
-	}
 	s.EnsureBase()
 	out, err := s.Evaluate(`window.tulaiMarkComposer ? tulaiMarkComposer() : false`)
 	if err != nil {
@@ -253,7 +216,7 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if err := cdp.ParseJSValue(out, &actual); err != nil {
 		return fmt.Errorf("解析提示词内容: %w", err)
 	}
-	if strings.TrimSpace(strings.ReplaceAll(actual, "\r\n", "\n")) != strings.TrimSpace(strings.ReplaceAll(prompt, "\r\n", "\n")) {
+	if !composerTextMatches(prompt, actual) {
 		points := []rune(actual)
 		logging.Log.Debugf("提示词校验失败 expectedChars=%d; composerChars=%d; first=%U; last=%U", len([]rune(prompt)), len(points), points[:min(3, len(points))], points[max(0, len(points)-3):])
 		if diagnostic, err := s.Evaluate(`JSON.stringify(window.tulaiComposerDiagnostic ? tulaiComposerDiagnostic(window.__tulaiComposer) : [])`); err == nil {
@@ -269,8 +232,9 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if err := pageAccountFault(s); err != nil {
 		return err
 	}
+	isQwen := pageIsQwen(s)
 	beforeChat := ""
-	if pageIsQwen(s) {
+	if isQwen {
 		beforeChat = chatKey(s)
 	}
 	// 点击与确认之间出错时，不能靠重发判断平台是否已接受消息。
@@ -298,7 +262,7 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 	if result.Attempted != nil && !*result.Attempted {
 		uncertain = false
 	}
-	if pageIsQwen(s) && result.Sent {
+	if isQwen && result.Sent {
 		chat := result.Chat
 		if chat == "" {
 			chat = beforeChat
@@ -315,6 +279,41 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 		return fmt.Errorf("%s", result.Error)
 	}
 	return nil
+}
+
+// composerTextMatches 核对写入输入区的正文是否与期望一致。
+// 富文本编辑器（ProseMirror / Slate）常将段落换行折成多空行或单换行，
+// 因此在完全相等之外，也允许空行数量差异，但所有非空行内容与顺序必须逐字一致。
+func composerTextMatches(expected, actual string) bool {
+	norm := func(s string) string {
+		return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n"))
+	}
+	want, got := norm(expected), norm(actual)
+	if want == got {
+		return true
+	}
+	if want == "" || got == "" {
+		return false
+	}
+	nonEmpty := func(s string) []string {
+		var out []string
+		for _, line := range strings.Split(s, "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				out = append(out, t)
+			}
+		}
+		return out
+	}
+	wl, gl := nonEmpty(want), nonEmpty(got)
+	if len(wl) == 0 || len(wl) != len(gl) {
+		return false
+	}
+	for i := range wl {
+		if wl[i] != gl[i] {
+			return false
+		}
+	}
+	return true
 }
 
 const imageStableFor = 3 * time.Second
@@ -387,13 +386,14 @@ func liveKey(images []Result) string {
 // 重新生成/复制和声明张数在真实豆包页面上经常没有，不能拿它们当门槛。
 // 到点还有实图就交回去保存；一张都没有就明确失败。
 func (base) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
-	return waitForResult(s, timeout, nil)
+	return waitForResultFor(s, "", timeout, nil)
 }
 
 func waitForResult(s *cdp.Session, timeout time.Duration, washAttachments []string) ([]Result, error) {
-	if s.IsEgo() {
-		return egoWaitForResult(s, timeout)
-	}
+	return waitForResultFor(s, "", timeout, washAttachments)
+}
+
+func waitForResultFor(s *cdp.Session, platform string, timeout time.Duration, washAttachments []string) ([]Result, error) {
 	deadline := time.Now().Add(timeout)
 	nextProbe := time.Now().Add(time.Minute)
 	poll := 300 * time.Millisecond
@@ -426,9 +426,10 @@ func waitForResult(s *cdp.Session, timeout time.Duration, washAttachments []stri
 				away := urlID != "" && live.Here != urlID
 				if urlID != "" && !reopened && (away || time.Since(offSince) >= 8*time.Second) {
 					reopened = true
-					logging.Log.Info("千问页面不在对话 %s，打开 /chat/%s", urlID, urlID)
-					if navErr := s.Navigate(qwenChatURL(s, urlID)); navErr != nil {
-						logging.Log.Debugf("打开千问对话 %s", navErr.Error())
+					targetURL := qwenChatURLFor(s, platform, urlID)
+					logging.Log.Info("页面不在对话 %s，打开 %s", urlID, targetURL)
+					if navErr := s.Navigate(targetURL); navErr != nil {
+						logging.Log.Debugf("打开对话 %s", navErr.Error())
 					}
 					applyQwenBind(s)
 					offSince = time.Time{}
@@ -525,7 +526,7 @@ type chatReady struct {
 // FreshChat 每次任务都开一条新对话。复用标签页会留着上一轮的图，标记之前先换对话。
 // 输入框出现而且地址还是上一条对话时不能打字：那是还没换完的旧编辑器。
 func FreshChat(s *cdp.Session) error {
-	if s == nil || s.IsEgo() {
+	if s == nil {
 		return nil
 	}
 	// 同一标签接着出下一句。上一轮的对话 id 留着的话，检测会读旧图，重试也不再发送。
@@ -543,13 +544,24 @@ func FreshChat(s *cdp.Session) error {
 	if via != "ready" {
 		originID = strings.Trim(evalString(s, `window.__tulaiConversationKey ? __tulaiConversationKey(location.href) : ""`), `"`)
 	}
-	deadline := time.Now().Add(freshChatWait)
+	started := time.Now()
+	deadline := started.Add(freshChatWait)
 	stable := 0
 	last := ""
 	seen := chatReady{Why: "missing"}
+	needStable := 3
+	poll := 80 * time.Millisecond
+	if via == "ready" {
+		needStable = 2
+		poll = 50 * time.Millisecond
+	}
 	for time.Now().Before(deadline) {
 		if err := s.Ctx().Err(); err != nil {
 			return err
+		}
+		if via == "spa" && time.Since(started) >= 3*time.Second && stable == 0 {
+			_, _ = s.Evaluate(`location.assign('https://www.doubao.com/chat/'), 'url'`)
+			via = "url"
 		}
 		raw, evalErr := s.Evaluate(`JSON.stringify(window.__tulaiChatReady ? __tulaiChatReady() : {ready:false,why:"missing"})`)
 		var st chatReady
@@ -563,7 +575,7 @@ func FreshChat(s *cdp.Session) error {
 					stable = 1
 					last = key
 				}
-				if stable >= 5 {
+				if stable >= needStable {
 					return nil
 				}
 			} else {
@@ -574,7 +586,7 @@ func FreshChat(s *cdp.Session) error {
 		select {
 		case <-s.Ctx().Done():
 			return s.Ctx().Err()
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(poll):
 		}
 	}
 	return freshChatFailure(seen)
@@ -619,7 +631,7 @@ func chatKey(s *cdp.Session) string {
 }
 
 func applyQwenBind(s *cdp.Session) {
-	if s == nil || s.IsEgo() {
+	if s == nil {
 		return
 	}
 	urlID, wrapID := s.BoundChat()
@@ -627,8 +639,15 @@ func applyQwenBind(s *cdp.Session) {
 }
 
 func qwenChatURL(s *cdp.Session, id string) string {
+	return qwenChatURLFor(s, "", id)
+}
+
+func qwenChatURLFor(s *cdp.Session, platform, id string) string {
 	id = strings.TrimSpace(id)
 	fallback := "https://www.qianwen.com/chat/" + id
+	if platform == "千问国际" {
+		fallback = "https://chat.qwen.ai/c/" + id
+	}
 	if s == nil || id == "" {
 		return fallback
 	}
@@ -637,14 +656,26 @@ func qwenChatURL(s *cdp.Session, id string) string {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return fallback
 	}
-	u.Path = "/chat/" + id
+	if platform == "千问国际" || strings.Contains(strings.ToLower(u.Host), "qwen.ai") {
+		if !strings.Contains(strings.ToLower(u.Host), "qwen.ai") {
+			return "https://chat.qwen.ai/c/" + id
+		}
+		u.Path = "/c/" + id
+	} else {
+		u.Path = "/chat/" + id
+	}
 	u.RawQuery, u.Fragment = "", ""
 	return u.String()
 }
 
 // FocusQwenChat 回到发送时的那条对话。已经在这条对话上就不导航。
 func FocusQwenChat(s *cdp.Session, urlID, wrapID string) {
-	if s == nil || s.IsEgo() || strings.TrimSpace(urlID) == "" {
+	FocusQwenChatFor(s, "", urlID, wrapID)
+}
+
+// FocusQwenChatFor 按平台回到发送时的那条对话，避免国内站与国际站互相串跳。
+func FocusQwenChatFor(s *cdp.Session, platform, urlID, wrapID string) {
+	if s == nil || strings.TrimSpace(urlID) == "" {
 		return
 	}
 	s.BindChat(urlID, wrapID)
@@ -657,9 +688,10 @@ func FocusQwenChat(s *cdp.Session, urlID, wrapID string) {
 	if err == nil && cdp.ParseJSValue(raw, &st) == nil && st.On && st.Here == urlID {
 		return
 	}
-	logging.Log.Info("回到千问对话 /chat/%s", urlID)
-	if navErr := s.Navigate(qwenChatURL(s, urlID)); navErr != nil {
-		logging.Log.Debugf("打开千问对话 %s", navErr.Error())
+	targetURL := qwenChatURLFor(s, platform, urlID)
+	logging.Log.Info("回到对话 %s", targetURL)
+	if navErr := s.Navigate(targetURL); navErr != nil {
+		logging.Log.Debugf("打开对话 %s", navErr.Error())
 	}
 	applyQwenBind(s)
 }
@@ -674,9 +706,6 @@ func evalString(s *cdp.Session, expr string) string {
 
 // FetchResultBytes 页面内 fetch 结果 URL（带登录态），base64 回传。
 func (base) FetchResultBytes(s *cdp.Session, url string) ([]byte, error) {
-	if s.IsEgo() {
-		return nil, fmt.Errorf("Ego 结果必须通过网页下载入口获取")
-	}
 	data, pageErr := readPageImage(s, url)
 	if pageErr == nil {
 		return data, nil
@@ -707,8 +736,28 @@ func browserFetch(err error) bool {
 
 func readPageImage(s *cdp.Session, url string) ([]byte, error) {
 	out, err := s.EvaluateAsync(fmt.Sprintf(`(async function(){
+		async function fetchImage(u) {
+			var sameOrigin = false;
+			try { sameOrigin = new URL(u, location.href).origin === location.origin; } catch (e) {}
+			var attempts = sameOrigin
+				? [{credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'}]
+				: [
+					{credentials:'omit', mode:'cors', cache:'no-store'},
+					{credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'}
+				];
+			var lastErr = null, lastResp = null;
+			for (var i = 0; i < attempts.length; i++) {
+				try {
+					var resp = await fetch(u, attempts[i]);
+					if (resp.ok) return resp;
+					lastResp = resp;
+				} catch (e) { lastErr = e; }
+			}
+			if (lastResp) return lastResp;
+			throw lastErr || new Error('fetch failed');
+		}
 		try {
-			var resp = await fetch(%q, {credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'});
+			var resp = await fetchImage(%q);
 			if (!resp.ok) return JSON.stringify({error: 'HTTP ' + resp.status});
 			var blob = await resp.blob();
 			if (blob.size < 1024) return JSON.stringify({error: '结果过小'});
@@ -739,7 +788,7 @@ func readPageImage(s *cdp.Session, url string) ([]byte, error) {
 // FetchResultList 在页面里并行拉取多张结果。一张失败不影响其余。
 func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 	out := make([][]byte, len(urls))
-	if s == nil || len(urls) == 0 || s.IsEgo() {
+	if s == nil || len(urls) == 0 {
 		return out
 	}
 	payload, err := json.Marshal(urls)
@@ -747,10 +796,30 @@ func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 		return out
 	}
 	raw, err := s.EvaluateAsync(fmt.Sprintf(`(async function(){
+		async function fetchImage(u) {
+			var sameOrigin = false;
+			try { sameOrigin = new URL(u, location.href).origin === location.origin; } catch (e) {}
+			var attempts = sameOrigin
+				? [{credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'}]
+				: [
+					{credentials:'omit', mode:'cors', cache:'no-store'},
+					{credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'}
+				];
+			var lastErr = null, lastResp = null;
+			for (var i = 0; i < attempts.length; i++) {
+				try {
+					var resp = await fetch(u, attempts[i]);
+					if (resp.ok) return resp;
+					lastResp = resp;
+				} catch (e) { lastErr = e; }
+			}
+			if (lastResp) return lastResp;
+			throw lastErr || new Error('fetch failed');
+		}
 		var urls = %s;
 		var items = await Promise.all(urls.map(async function(url){
 			try {
-				var resp = await fetch(url, {credentials:'include', referrer:location.href, referrerPolicy:'unsafe-url', cache:'no-store'});
+				var resp = await fetchImage(url);
 				if (!resp.ok) return {error:'HTTP '+resp.status};
 				var blob = await resp.blob();
 				if (blob.size < 1536) return {error:'结果过小'};
@@ -790,8 +859,8 @@ func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 
 // CleanComposer 清理输入区。
 func (base) CleanComposer(s *cdp.Session) error {
-	if s.IsEgo() {
-		return egoClean(s)
+	if s != nil {
+		s.EnsureBase()
 	}
 	_, err := s.EvaluateAsync(`window.tulaiCleanComposer ? tulaiCleanComposer() : false`)
 	return err
@@ -799,13 +868,6 @@ func (base) CleanComposer(s *cdp.Session) error {
 
 // PageState 状态探测。
 func (base) PageState(s *cdp.Session) map[string]any {
-	if s.IsEgo() {
-		var state egoState
-		if egoEvaluate(s, "state", nil, &state) != nil {
-			return map[string]any{}
-		}
-		return map[string]any{"hasComposer": state.Composer != "", "generating": state.Busy}
-	}
 	out, err := s.Evaluate(`window.tulaiPageState ? JSON.stringify(tulaiPageState()) : '{}'`)
 	if err != nil {
 		return map[string]any{}

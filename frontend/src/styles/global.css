@@ -1,0 +1,502 @@
+@import "./tokens.css";
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  :root {
+    color-scheme: light;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+      "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  .dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--bg-paper);
+    color: var(--text-ink);
+    transition: background-color 480ms ease, color 480ms ease;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  input,
+  textarea,
+  select,
+  [contenteditable="true"],
+  .select-text {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  ::selection {
+    background-color: var(--selection-bg);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Tabular numerals for counters, quotas, timestamps, dimensions */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono-console {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+/* Desktop custom titlebar drag regions (MyGo --app-region + WebKit fallback) */
+.app-drag-region {
+  --app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.app-no-drag,
+.app-drag-region button,
+.app-drag-region input,
+.app-drag-region select,
+.app-drag-region textarea,
+.app-drag-region a,
+.app-drag-region [role="button"],
+.app-drag-region [role="tab"],
+.app-drag-region [role="combobox"],
+.app-drag-region [role="switch"],
+.app-drag-region [role="checkbox"] {
+  --app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+/* Subtle Bento surface elevation */
+.bento-shadow {
+  box-shadow: var(--card-shadow);
+}
+
+.float-shadow {
+  box-shadow: var(--float-shadow);
+}
+
+/* Thin themed scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+
+@media (hover: hover) {
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}
+
+.scroll-gutter {
+  scrollbar-gutter: stable;
+}
+
+/* Checkerboard transparency matte for PNG previews and ImageEdit darkroom */
+.bg-checkerboard {
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(45deg, #e2e8f0 25%, transparent 25%),
+    linear-gradient(-45deg, #e2e8f0 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e2e8f0 75%),
+    linear-gradient(-45deg, transparent 75%, #e2e8f0 75%);
+  background-size: 12px 12px;
+  background-position:
+    0 0,
+    0 6px,
+    6px -6px,
+    -6px 0;
+}
+
+.dark .bg-checkerboard,
+.bg-checkerboard-dark {
+  background-color: #151d2b;
+  background-image:
+    linear-gradient(45deg, #1c2638 25%, transparent 25%),
+    linear-gradient(-45deg, #1c2638 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1c2638 75%),
+    linear-gradient(-45deg, transparent 75%, #1c2638 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
+/* Micro-transition keyframes */
+@keyframes tulai-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes tulai-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes tulai-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tulai-preview-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tulai-preview-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tulai-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tulai-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes tulai-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes tulai-page-in {
+  from {
+    opacity: 0.72;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tulai-panel-in {
+  from {
+    opacity: 0.55;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tulai-drawer-right {
+  from {
+    opacity: 0.65;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tulai-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tulai-indicator-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.35);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes tulai-stagger-item {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tulai-live-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.65;
+  }
+  75%,
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+@keyframes tulai-sheen-window {
+  0% {
+    transform: translate3d(calc(var(--sheen-window, 96px) * -1), 0, 0);
+  }
+  100% {
+    transform: translate3d(var(--sheen-travel, 336px), 0, 0);
+  }
+}
+
+@keyframes tulai-sheen-counter {
+  0% {
+    transform: translate3d(var(--sheen-window, 96px), 0, 0);
+  }
+  100% {
+    transform: translate3d(calc(var(--sheen-travel, 336px) * -1), 0, 0);
+  }
+}
+
+.animate-tulai-fade {
+  animation: tulai-fade-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-label-in {
+  animation: tulai-fade-in 140ms cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+
+.animate-tulai-label-out {
+  animation: tulai-fade-out 60ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.animate-tulai-card-in {
+  animation: tulai-card-in 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-tulai-card-out {
+  animation: tulai-fade-out 120ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.animate-tulai-preview-in-right {
+  animation: tulai-preview-in-right 250ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-tulai-preview-in-left {
+  animation: tulai-preview-in-left 250ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-tulai-preview-out {
+  animation: tulai-fade-out 140ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.animate-tulai-swap-fade {
+  animation: tulai-fade-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-dialog,
+.animate-tulai-drawer {
+  animation: tulai-dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-scale-in {
+  animation: tulai-scale-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-toast {
+  animation: tulai-toast-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-page-in {
+  animation: tulai-page-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-panel-in {
+  animation: tulai-panel-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-drawer-right {
+  animation: tulai-drawer-right 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-banner-in {
+  animation: tulai-banner-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-tulai-indicator-in {
+  animation: tulai-indicator-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: center;
+}
+
+.animate-tulai-stagger-item {
+  animation: tulai-stagger-item 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-tulai-live-ring {
+  animation: tulai-live-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.tulai-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 150ms ease;
+}
+
+.tulai-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.tulai-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tulai-sheen-window {
+  will-change: transform;
+  animation: tulai-sheen-window 1.7s linear infinite;
+}
+
+.tulai-sheen-counter {
+  will-change: transform;
+  animation: tulai-sheen-counter 1.7s linear infinite;
+}
+
+/* Keep hover-only row affordances reachable on touch devices */
+@media (hover: none) {
+  .touch-visible {
+    opacity: 1 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-tulai-label-in,
+  .animate-tulai-card-in,
+  .animate-tulai-preview-in-right,
+  .animate-tulai-preview-in-left,
+  .animate-tulai-swap-fade,
+  .animate-tulai-fade,
+  .animate-tulai-page-in,
+  .animate-tulai-panel-in,
+  .animate-tulai-drawer-right,
+  .animate-tulai-banner-in,
+  .animate-tulai-indicator-in,
+  .animate-tulai-stagger-item,
+  .animate-tulai-dialog,
+  .animate-tulai-scale-in,
+  .animate-tulai-drawer,
+  .animate-tulai-toast {
+    animation-name: tulai-fade-in !important;
+    animation-duration: 120ms !important;
+    animation-delay: 0ms !important;
+  }
+
+  .animate-tulai-label-out {
+    animation-name: tulai-fade-out !important;
+    animation-duration: 60ms !important;
+  }
+
+  .animate-tulai-card-out {
+    animation-name: tulai-fade-out !important;
+    animation-duration: 120ms !important;
+  }
+
+  .animate-tulai-preview-out {
+    animation-name: tulai-fade-out !important;
+    animation-duration: 140ms !important;
+  }
+
+  .tulai-collapse {
+    transition: opacity 120ms ease !important;
+  }
+}

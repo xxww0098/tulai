@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
@@ -20,7 +19,6 @@ func TestDoubaoQuotaStopsRemainingWashAfterActiveBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	first := addNamed(t, st, "豆包", "豆包1")
 	second := addNamed(t, st, "豆包", "豆包2")
 	st.ConfirmLogin(first.ID)
@@ -138,7 +136,6 @@ func TestDoubaoQuotaStopRequiresEveryAccountToBeFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	first := addNamed(t, st, "豆包", "豆包1")
 	second := addNamed(t, st, "豆包", "豆包2")
 	e := NewEngine(st, nil, nil, "")
@@ -193,7 +190,6 @@ func TestDoubaoQuotaStopDoesNotCancelOtherPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
 	addNamed(t, st, "豆包", "豆包1")
 	addNamed(t, st, "千问", "千问1")
 	e := NewEngine(st, nil, nil, "")

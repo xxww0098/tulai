@@ -11,7 +11,7 @@ EOF
 chmod +x "$bin/gh"
 
 export PATH="$bin:$PATH" GITHUB_REPOSITORY=example/tulai API_FAILURE=0
-export GITHUB_REF_NAME="v$(awk '/^version:[[:space:]]*/ {sub(/^version:[[:space:]]*/, ""); gsub(/["\047[:space:]]/, ""); print; exit}' cmd/tulai/nsgo.yaml)"
+export GITHUB_REF_NAME="v$(jq -r '.version // empty' mygo.json)"
 sha=$(git rev-parse HEAD)
 valid=$(jq -cn --arg sha "$sha" '{workflow_runs:[{head_sha:$sha,head_branch:"main",event:"push",status:"completed",conclusion:"success"}]}')
 export CI_RUNS="$valid"

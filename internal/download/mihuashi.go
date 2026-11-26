@@ -17,7 +17,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 
 	"golang.org/x/net/html"
 )
@@ -317,18 +317,18 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 	if err := checkCurrent(); err != nil {
 		return result, err
 	}
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, false)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), false)
 	if err != nil {
 		return result, errors.New("无法创建米画师采集标签")
 	}
 	defer closeChild()
 	stopOnCancel := context.AfterFunc(ctx, closeChild)
 	defer stopOnCancel()
-	run := func(actions ...camoufox.Action) error {
+	run := func(actions ...fingerprint.Action) error {
 		op, cancel := context.WithTimeout(child, 30*time.Second)
 		stop := context.AfterFunc(ctx, cancel)
 		defer func() { stop(); cancel() }()
-		if err := camoufox.Run(op, actions...); err != nil {
+		if err := fingerprint.Run(op, actions...); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -350,7 +350,7 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 			overflow.Store(true)
 		}
 	}
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		switch e := event.(type) {
 		case *fetch.EventRequestPaused:
 			allowed := false
@@ -360,11 +360,11 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 				allowed = e.Request.Method == "GET" && err == nil && sameOrigin(page, target) && k == kind && i == id
 			}
 			go func() {
-				var action camoufox.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
+				var action fingerprint.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
 				if allowed {
 					action = fetch.ContinueRequest(e.RequestID)
 				}
-				_ = camoufox.Run(child, action)
+				_ = fingerprint.Run(child, action)
 			}()
 		case *network.EventRequestWillBeSent:
 			if e.RedirectResponse != nil {
@@ -437,7 +437,7 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 		}
 	})
 	initTimeout := time.AfterFunc(30*time.Second, closeChild)
-	err = camoufox.Run(child, network.Enable().WithMaxResourceBufferSize(mihuashiMaxBody).WithMaxTotalBufferSize(4*mihuashiMaxBody).WithMaxPostDataSize(1),
+	err = fingerprint.Run(child, network.Enable().WithMaxResourceBufferSize(mihuashiMaxBody).WithMaxTotalBufferSize(4*mihuashiMaxBody).WithMaxPostDataSize(1),
 		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}}))
 	initTimeout.Stop()
 	if err != nil {
@@ -446,7 +446,7 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 		}
 		return result, errors.New("无法监听米画师页面")
 	}
-	if err := run(camoufox.Navigate(page.String())); err != nil {
+	if err := run(fingerprint.Navigate(page.String())); err != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}

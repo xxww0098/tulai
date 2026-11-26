@@ -374,6 +374,307 @@ func TestQianwenShellCountsAsFresh(t *testing.T) {
 	}
 }
 
+func TestQianwenSetOutputRatioFixture(t *testing.T) {
+	client := newFixtureClient(t)
+	html := `<!doctype html><html><head><meta charset="utf-8"><style>
+button { width: 96px; height: 32px; }
+[role="menu"] { position: fixed; left: 40px; top: 80px; width: 148px; background: #fff; }
+[role="menuitemcheckbox"] { width: 138px; height: 36px; display: flex; align-items: center; }
+[role="menu"][data-state="closed"] { opacity: 0.4; pointer-events: none; }
+</style></head><body>
+<button id="ratio-btn" type="button">比例 3:4</button>
+<script>
+const ratios = ['9:16', '2:3', '3:4', '1:1', '4:3', '3:2', '16:9'];
+const btn = document.getElementById('ratio-btn');
+let menu = null;
+let closeTimer = null;
+window.__menuCorrupted = false;
+
+function removeMenu() {
+  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+  if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+  menu = null;
+}
+
+function closeMenuAnimated() {
+  if (!menu) return;
+  menu.setAttribute('data-state', 'closed');
+  if (closeTimer) clearTimeout(closeTimer);
+  closeTimer = setTimeout(removeMenu, 300);
+}
+
+function openMenu() {
+  removeMenu();
+  menu = document.createElement('div');
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('data-state', 'open');
+  ratios.forEach(r => {
+    const item = document.createElement('div');
+    item.setAttribute('role', 'menuitemcheckbox');
+    const inner = document.createElement('div');
+    const icon = document.createElement('span');
+    const label = document.createElement('span');
+    label.textContent = r;
+    inner.appendChild(icon);
+    inner.appendChild(label);
+    item.appendChild(inner);
+    item.addEventListener('click', () => {
+      if (menu && menu.getAttribute('data-state') === 'closed') return;
+      btn.textContent = '比例 ' + r;
+      closeMenuAnimated();
+    });
+    menu.appendChild(item);
+  });
+  document.body.appendChild(menu);
+}
+
+btn.addEventListener('click', () => {
+  if (menu && menu.getAttribute('data-state') === 'closed') {
+    window.__menuCorrupted = true;
+    return;
+  }
+  if (menu && menu.getAttribute('data-state') === 'open') {
+    closeMenuAnimated();
+  } else {
+    openMenu();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && menu && menu.getAttribute('data-state') === 'open') {
+    closeMenuAnimated();
+  }
+});
+</script></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
+	}))
+	defer srv.Close()
+
+	sess := openFixture(t, client, srv.URL+"/", "", "")
+	defer sess.Close()
+	qw := Qianwen{}
+
+	// Already selected fast path
+	if ok, why := qw.SetOutputRatio(sess, "3:4"); !ok || why != "" {
+		t.Fatalf("already 3:4 failed: ok=%v why=%q", ok, why)
+	}
+	// Back-to-back switches across all Radix 300ms fade-out transitions
+	for _, want := range []string{"3:2", "2:3", "4:3", "16:9", "1:1", "9:16", "3:4"} {
+		if ok, why := qw.SetOutputRatio(sess, want); !ok {
+			t.Fatalf("back-to-back SetOutputRatio(%q) failed: %q", want, why)
+		}
+		got, _ := sess.Evaluate(`document.getElementById('ratio-btn').textContent`)
+		if strings.Trim(got, `"`) != "比例 "+want {
+			t.Fatalf("after SetOutputRatio(%q), button=%s", want, got)
+		}
+	}
+	if sess.EvaluateBool(`window.__menuCorrupted === true`) {
+		t.Fatal("SetOutputRatio clicked trigger during Radix closing animation")
+	}
+	// Missing option closes menu cleanly and returns explicit error
+	if ok, why := qw.SetOutputRatio(sess, "5:4"); ok || !strings.Contains(why, "5:4") {
+		t.Fatalf("missing ratio 5:4: ok=%v why=%q", ok, why)
+	}
+	if sess.EvaluateBool(`!!document.querySelector('[role="menu"][data-state="open"]')`) {
+		t.Fatal("menu remained open after missing ratio error")
+	}
+	// Invalid format rejected without opening menu
+	if ok, why := qw.SetOutputRatio(sess, "invalid"); ok || why == "" {
+		t.Fatalf("invalid ratio should fail: ok=%v why=%q", ok, why)
+	}
+}
+
+func TestQianwenEnsureImageModeFixture(t *testing.T) {
+	client := newFixtureClient(t)
+
+	t.Run("delayed hydration and idempotent repeat", func(t *testing.T) {
+		html := `<!doctype html><html><head><meta charset="utf-8"><style>
+button { width: 96px; height: 32px; }
+</style></head><body>
+<div data-slate-editor="true" contenteditable="true"></div>
+<div id="bar"></div>
+<script>
+window.__aiClicks = 0;
+setTimeout(() => {
+  const bar = document.getElementById('bar');
+  const wrap = document.createElement('div');
+  wrap.setAttribute('data-overflow-placement', 'inline');
+  const btn = document.createElement('button');
+  btn.id = 'ai-btn';
+  btn.type = 'button';
+  btn.setAttribute('aria-label', 'AI生图');
+  btn.setAttribute('aria-pressed', 'false');
+  btn.textContent = 'AI生图';
+  btn.addEventListener('click', () => {
+    window.__aiClicks++;
+    if (window.__aiClicks === 1) return; // simulate swallowed first click during cold hydration
+    const active = btn.getAttribute('aria-pressed') === 'true';
+    btn.setAttribute('aria-pressed', active ? 'false' : 'true');
+    const existing = document.getElementById('ratio-btn');
+    if (!active && !existing) {
+      const rb = document.createElement('button');
+      rb.id = 'ratio-btn';
+      rb.type = 'button';
+      rb.setAttribute('aria-haspopup', 'menu');
+      rb.textContent = '比例 16:9';
+      bar.appendChild(rb);
+    } else if (active && existing) {
+      existing.remove();
+    }
+  });
+  wrap.appendChild(btn);
+  bar.appendChild(wrap);
+}, 180);
+</script></body></html>`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(html))
+		}))
+		defer srv.Close()
+
+		sess := openFixture(t, client, srv.URL+"/", "", "")
+		defer sess.Close()
+		if err := ensureQianwenImageModeWithTimeout(sess, 6000); err != nil {
+			t.Fatalf("expected delayed AI生图 activation to succeed: %v", err)
+		}
+		if !sess.EvaluateBool(`document.getElementById('ai-btn')?.getAttribute('aria-pressed') === 'true' && !!document.getElementById('ratio-btn')`) {
+			t.Fatal("AI生图 mode not active after first ensure")
+		}
+		clicksBefore := sess.EvaluateBool(`window.__aiClicks === 2`)
+		if !clicksBefore {
+			out, _ := sess.Evaluate(`window.__aiClicks`)
+			t.Fatalf("expected 2 clicks (1 swallowed + 1 retry), got %s", out)
+		}
+		// Repeat call must be an idempotent 0-click no-op and never toggle off
+		if err := ensureQianwenImageModeWithTimeout(sess, 2000); err != nil {
+			t.Fatalf("idempotent ensure failed: %v", err)
+		}
+		if !sess.EvaluateBool(`window.__aiClicks === 2 && document.getElementById('ai-btn')?.getAttribute('aria-pressed') === 'true' && document.getElementById('ratio-btn')?.textContent === '比例 16:9'`) {
+			t.Fatal("repeat ensureQianwenImageMode clicked active chip or altered ratio")
+		}
+	})
+
+	t.Run("exits conflicting mode before entering AI生图", func(t *testing.T) {
+		html := `<!doctype html><html><head><meta charset="utf-8"><style>
+button { width: 96px; height: 32px; }
+</style></head><body>
+<div data-slate-editor="true" contenteditable="true"></div>
+<div id="bar">
+  <div data-overflow-placement="inline"><button id="ppt-btn" type="button" aria-label="PPT创作" aria-pressed="true">PPT创作</button></div>
+</div>
+<script>
+const bar = document.getElementById('bar');
+document.getElementById('ppt-btn').addEventListener('click', () => {
+  bar.innerHTML = '<div data-overflow-placement="inline"><button id="ai-btn" type="button" aria-label="AI生图" aria-pressed="false">AI生图</button></div>';
+  const ai = document.getElementById('ai-btn');
+  ai.addEventListener('click', () => {
+    ai.setAttribute('aria-pressed', 'true');
+    const rb = document.createElement('button');
+    rb.type = 'button';
+    rb.setAttribute('aria-haspopup', 'menu');
+    rb.textContent = '比例 3:4';
+    bar.appendChild(rb);
+  });
+});
+</script></body></html>`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(html))
+		}))
+		defer srv.Close()
+
+		sess := openFixture(t, client, srv.URL+"/", "", "")
+		defer sess.Close()
+		if err := ensureQianwenImageModeWithTimeout(sess, 4000); err != nil {
+			t.Fatalf("failed to exit PPT创作 and enter AI生图: %v", err)
+		}
+		if !sess.EvaluateBool(`document.getElementById('ai-btn')?.getAttribute('aria-pressed') === 'true'`) {
+			t.Fatal("AI生图 not active after exiting PPT创作")
+		}
+	})
+
+	t.Run("opens overflow 更多 menu when AI生图 overflows", func(t *testing.T) {
+		html := `<!doctype html><html><head><meta charset="utf-8"><style>
+button { width: 96px; height: 32px; }
+[role="menu"] { position: fixed; left: 40px; top: 80px; width: 140px; background: #fff; }
+[role="menuitem"] { width: 120px; height: 32px; display: flex; align-items: center; }
+</style></head><body>
+<div data-slate-editor="true" contenteditable="true"></div>
+<div id="bar">
+  <button id="more-inert" type="button" aria-label="更多">更多</button>
+  <button id="more-real" type="button" aria-label="更多" aria-haspopup="menu">更多</button>
+</div>
+<script>
+const bar = document.getElementById('bar');
+document.getElementById('more-real').addEventListener('click', () => {
+  if (document.getElementById('more-menu')) return;
+  const m = document.createElement('div');
+  m.id = 'more-menu';
+  m.setAttribute('role', 'menu');
+  m.setAttribute('data-state', 'open');
+  const item = document.createElement('div');
+  item.setAttribute('role', 'menuitem');
+  item.setAttribute('aria-label', 'AI生图');
+  item.textContent = 'AI生图';
+  item.addEventListener('click', () => {
+    m.remove();
+    bar.innerHTML = '<button id="ai-btn" type="button" aria-label="AI生图" aria-pressed="true">AI生图</button><button type="button" aria-haspopup="menu">比例 3:4</button>';
+  });
+  m.appendChild(item);
+  document.body.appendChild(m);
+});
+</script></body></html>`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(html))
+		}))
+		defer srv.Close()
+
+		sess := openFixture(t, client, srv.URL+"/", "", "")
+		defer sess.Close()
+		if err := ensureQianwenImageModeWithTimeout(sess, 4000); err != nil {
+			t.Fatalf("failed to enter AI生图 via 更多 overflow menu: %v", err)
+		}
+		if !sess.EvaluateBool(`document.getElementById('ai-btn')?.getAttribute('aria-pressed') === 'true'`) {
+			t.Fatal("AI生图 not active after selecting from 更多 menu")
+		}
+	})
+
+	t.Run("missing entry returns explicit error", func(t *testing.T) {
+		html := `<!doctype html><html><body><div data-slate-editor="true" contenteditable="true"></div></body></html>`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(html))
+		}))
+		defer srv.Close()
+
+		sess := openFixture(t, client, srv.URL+"/", "", "")
+		defer sess.Close()
+		err := ensureQianwenImageModeWithTimeout(sess, 400)
+		if err == nil || !strings.Contains(err.Error(), "AI生图") {
+			t.Fatalf("expected explicit AI生图 missing error, got %v", err)
+		}
+	})
+
+	t.Run("login wall without entry reports login error", func(t *testing.T) {
+		html := `<!doctype html><html><head><style>button{width:80px;height:32px;}</style></head><body><button type="button">登录</button></body></html>`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(html))
+		}))
+		defer srv.Close()
+
+		sess := openFixture(t, client, srv.URL+"/", "", "")
+		defer sess.Close()
+		err := ensureQianwenImageModeWithTimeout(sess, 400)
+		if err == nil || !strings.Contains(err.Error(), "请先登录") {
+			t.Fatalf("expected login error on login wall, got %v", err)
+		}
+	})
+}
+
 func staticFixtureKeepJSON(html string) string {
 	html = scriptTag.ReplaceAllStringFunc(html, func(tag string) string {
 		head := tag

@@ -9,7 +9,6 @@ import (
 	"image"
 	"image/png"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,7 +23,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 func TestDownloadAssistantRequiresTokenAndValidPage(t *testing.T) {
@@ -103,7 +102,7 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 <div role="button" aria-label="See more items" id="more" style="width:100px;height:40px">See more</div></div>
 <script>document.getElementById('more').onclick = () => { document.getElementById('old').remove(); document.getElementById('more').remove(); document.querySelector('.js-search-goodsList').insertAdjacentHTML('beforeend', '<div class="EKDT7a3v" id="new"><div data-tooltip="goodName-601099513224344" data-tooltip-title="Second"><a href="https://www.temu.com/item-g-601099513224344.html">Second</a></div><img class="goods-img-external" width="40" height="40" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" data-src="https://img.kwcdn.com/product/second.gif"></div>'); };</script></body></html>`
 	const returnedBody = `<html><head><title>Temu test</title></head><body><div class="js-search-goodsList"><div class="EKDT7a3v"><div data-tooltip="goodName-601099513224344" data-tooltip-title="Second"><a href="https://www.temu.com/item-g-601099513224344.html">Second</a></div><img class="goods-img-external" width="40" height="40" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" data-src="https://img.kwcdn.com/product/second.gif"></div></div></body></html>`
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
@@ -124,10 +123,10 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 					action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(html)))
 				}
 			}
-			_ = camoufox.Run(session.tab, action)
+			_ = fingerprint.Run(session.tab, action)
 		}()
 	})
-	if err := session.run(ctx, fetch.Enable(), camoufox.Navigate(page)); err != nil {
+	if err := session.run(ctx, fetch.Enable(), fingerprint.Navigate(page)); err != nil {
 		t.Fatal(err)
 	}
 	type bounds struct {
@@ -194,7 +193,7 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("停止并下载没有提交任务")
 	}
-	if err := session.run(ctx, camoufox.Navigate(login), camoufox.Navigate(returned)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(login), fingerprint.Navigate(returned)); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(20 * time.Second)
@@ -267,16 +266,6 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 	dir := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "profile")
 	if err := os.Mkdir(profile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	proxyAddress := proxy.Listener.Addr().(*net.TCPAddr)
-	prefs := fmt.Sprintf(`user_pref("network.proxy.type", 1);
-user_pref("network.proxy.http", %q);
-user_pref("network.proxy.http_port", %d);
-user_pref("network.proxy.no_proxies_on", "");
-user_pref("network.proxy.allow_hijacking_localhost", true);
-`, proxyAddress.IP.String(), proxyAddress.Port)
-	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(prefs), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	handler := func(ctx context.Context, session *RenderedSession, rawURL, marker string) error {
@@ -375,17 +364,17 @@ user_pref("network.proxy.allow_hijacking_localhost", true);
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, false)
-	if err := session.run(ctx, camoufox.Navigate(server.URL+"/gallery")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(server.URL+"/gallery")); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, true)
 
-	second, closePage, err := camoufox.NewPage(ctx, session.tab, false)
+	second, closePage, err := fingerprint.NewPage(ctx, session.tab, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closePage()
-	if err := runRendered(ctx, second, camoufox.Navigate(server.URL+"/gallery")); err != nil {
+	if err := runRendered(ctx, second, fingerprint.Navigate(server.URL+"/gallery")); err != nil {
 		t.Fatal(err)
 	}
 	state := waitButton(ctx, second, true)
@@ -404,7 +393,7 @@ user_pref("network.proxy.allow_hijacking_localhost", true);
 	if !strings.HasSuffix(session.PageURL(), "/gallery") {
 		t.Fatalf("采集的不是点击按钮的页面: %q", session.PageURL())
 	}
-	if err := session.run(ctx, camoufox.Navigate(server.URL+"/empty")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(server.URL+"/empty")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Capture(ctx); err == nil || !strings.Contains(err.Error(), "页面已变化") {
@@ -449,5 +438,148 @@ func TestDownloadAssistantThreadsRandomizedMarkers(t *testing.T) {
 	var unset RenderedSession
 	if got := unset.downloadMarkers(); got.HostAttr == "" || got.RequestAttr == "" || got.SnapshotAttr == "" {
 		t.Fatalf("unset session missing safe fallback markers: %+v", got)
+	}
+}
+
+func TestDownloadAssistantPopupAndMultiTabLifecycle(t *testing.T) {
+	runtimeDir := dedicatedFixtureData(t)
+	var imageData bytes.Buffer
+	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 8, 8))); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/image.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(imageData.Bytes())
+		case "/popup":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(w, `<title>Popup Gallery</title><img src="/image.png">`)
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(w, `<title>Index</title><a id="open" target="_blank" href="/popup">Open</a>`)
+		}
+	}))
+	defer server.Close()
+
+	captured := make(chan Discovery, 1)
+	handler := func(ctx context.Context, session *RenderedSession, rawURL, marker string) error {
+		if err := session.BindCurrent(ctx, rawURL, marker); err != nil {
+			return err
+		}
+		found, err := session.Capture(ctx)
+		if err == nil {
+			captured <- found
+		}
+		return err
+	}
+	session, err := openDedicatedFixture(t, runtimeDir, filepath.Join(t.TempDir(), "profile"), server.URL+"/index", handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+
+	// Open a site-initiated target=_blank popup tab from the index page.
+	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('open').click()`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	var popupTarget string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		var targets struct {
+			Infos []struct {
+				ID   string `json:"targetId"`
+				Type string `json:"type"`
+				URL  string `json:"url"`
+			} `json:"targetInfos"`
+		}
+		if err := session.process.Call(ctx, "", "Target.getTargets", nil, &targets); err == nil {
+			for _, info := range targets.Infos {
+				if info.Type == "page" && strings.HasSuffix(info.URL, "/popup") {
+					popupTarget = info.ID
+					break
+				}
+			}
+		}
+		if popupTarget != "" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if popupTarget == "" {
+		t.Fatal("target=_blank popup tab was not created")
+	}
+
+	// Verify download assistant button injects and works inside the popup tab.
+	popupTab := fingerprint.PageContext(session.life, session.process, popupTarget)
+	markers := session.downloadMarkers()
+	type btn struct {
+		Visible bool
+		X, Y    float64
+	}
+	var state btn
+	deadline = time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		script := fmt.Sprintf(`(() => { const h=document.querySelector(%q); if(!h)return {}; const r=h.getBoundingClientRect(); return {visible:r.width>0&&r.height>0,x:r.x+r.width/2,y:r.y+r.height/2}; })()`, "["+markers.HostAttr+"]")
+		if err := runRendered(ctx, popupTab, chromedp.Evaluate(script, &state)); err == nil && state.Visible {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !state.Visible {
+		t.Fatal("target=_blank 新开标签页未显示下载助手按钮")
+	}
+	for _, kind := range []string{"mousePressed", "mouseReleased"} {
+		if err := runRendered(ctx, popupTab, chromedp.ActionFunc(func(ec context.Context) error {
+			return cdp.Execute(ec, "Input.dispatchMouseEvent", map[string]any{"type": kind, "x": state.X, "y": state.Y, "button": "left", "clickCount": 1}, nil)
+		})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case found := <-captured:
+		if len(found.Items) != 1 || !strings.HasSuffix(found.Items[0].URL, "/image.png") {
+			t.Fatalf("popup capture unexpected: %+v", found)
+		}
+	case <-ctx.Done():
+		t.Fatal("popup download button did not trigger capture")
+	}
+
+	// Closing the bound popup tab while the index tab is still open must NOT kill the session.
+	if err := session.process.Call(ctx, popupTarget, "Page.close", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	if !session.Alive() {
+		t.Fatal("关闭其中一个标签页后误杀了整个浏览器会话")
+	}
+	select {
+	case <-session.Done():
+		t.Fatal("仍有标签页存活时不应关闭 session.Done()")
+	default:
+	}
+	// Focus and OpenTarget must still succeed on the surviving tab.
+	if err := session.Focus(ctx); err != nil {
+		t.Fatalf("Focus after closing popup tab failed: %v", err)
+	}
+	if err := session.OpenTarget(ctx, server.URL+"/popup"); err != nil {
+		t.Fatalf("OpenTarget after closing popup tab failed: %v", err)
+	}
+
+	// Closing the last remaining tab MUST end the session and close Done().
+	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+		return cdp.Execute(ec, "Page.close", nil, nil)
+	})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-session.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("关闭最后一个标签页后未触发 session.Done()")
+	}
+	if session.Alive() {
+		t.Fatal("关闭最后一个标签页后 session.Alive() 仍为 true")
 	}
 }

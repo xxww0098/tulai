@@ -20,11 +20,15 @@ const (
 	DeferMessage = "任务进行中，结束后将自动更新"
 )
 
-// DefaultMirrors are tried, in order, after the official GitHub URL fails.
-// A settings value replaces this list; "off" uses GitHub only.
+// DefaultMirrors are tried in multi-source racing and failover for GitHub Releases.
+// A settings value replaces the top preference; "off" uses GitHub only.
 var DefaultMirrors = []string{
+	"https://edgeone.gh-proxy.org/",
+	"https://cdn.gh-proxy.org/",
+	"https://gh-proxy.org/",
 	"https://ghfast.top/",
 	"https://gh-proxy.com/",
+	"https://ghproxy.net/",
 }
 
 // KV is the settings store. *store.Store implements it.
@@ -43,23 +47,54 @@ func AutoOn(value string) bool {
 	}
 }
 
-// MirrorSetting turns the settings value into prefixes tried after GitHub.
+// HasExplicitMirror reports whether setting configures one or more explicit mirror prefixes.
+func HasExplicitMirror(setting string) bool {
+	setting = strings.TrimSpace(setting)
+	switch strings.ToLower(setting) {
+	case "", "__custom__", "off", "direct", "-", "github", "none", "关闭":
+		return false
+	default:
+		for _, part := range strings.Split(setting, ",") {
+			if strings.TrimSpace(part) != "" {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// MirrorSetting turns the settings value into mirror prefixes.
 // Empty keeps the defaults. "off" (and a few aliases) disables mirrors.
-// A custom prefix is tried first, then the defaults, so one dead proxy is not the end.
+// Custom prefixes (single or comma-separated) are placed first, followed by defaults.
 func MirrorSetting(setting string, defaults []string) []string {
 	setting = strings.TrimSpace(setting)
 	switch strings.ToLower(setting) {
 	case "off", "direct", "-", "github", "none", "关闭":
 		return nil
-	case "":
+	case "", "__custom__":
 		return append([]string{}, defaults...)
 	default:
-		out := []string{setting}
-		custom := strings.TrimRight(setting, "/")
-		for _, item := range defaults {
-			if strings.TrimRight(strings.TrimSpace(item), "/") == custom {
+		out := make([]string, 0, len(defaults)+2)
+		seen := make(map[string]bool, len(defaults)+2)
+		for _, part := range strings.Split(setting, ",") {
+			item := strings.TrimSpace(part)
+			if item == "" {
 				continue
 			}
+			key := strings.TrimRight(item, "/")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, item)
+		}
+		for _, item := range defaults {
+			trimmed := strings.TrimSpace(item)
+			key := strings.TrimRight(trimmed, "/")
+			if trimmed == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
 			out = append(out, item)
 		}
 		return out

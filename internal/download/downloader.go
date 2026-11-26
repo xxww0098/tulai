@@ -582,6 +582,7 @@ func (d *Downloader) stream(ctx context.Context, body io.Reader, out *os.File, p
 	buf := make([]byte, chunk)
 	var written int64
 	var lastSent int64
+	lastSentAt := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
 			return written, err
@@ -604,11 +605,12 @@ func (d *Downloader) stream(ctx context.Context, body io.Reader, out *os.File, p
 				return written, &LocalError{Err: err}
 			}
 			written += int64(n)
-			if written-lastSent >= 256*1024 {
+			if written-lastSent >= 64*1024 || (written > lastSent && time.Since(lastSentAt) >= 250*time.Millisecond) {
 				send(ctx, progress, Progress{
 					URL: url, Filename: filename, Stage: "writing", BytesWritten: written + base, Total: total,
 				})
 				lastSent = written
+				lastSentAt = time.Now()
 			}
 		}
 		if readErr != nil {

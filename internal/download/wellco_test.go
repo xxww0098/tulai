@@ -19,7 +19,7 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 const wellcoTestPage = "https://wellco.ca/products/example"
@@ -259,42 +259,42 @@ func TestWellcoPublicCategory(t *testing.T) {
 func TestWellcoRenderedCapture(t *testing.T) {
 	runtime := os.Getenv("TULAI_WELLCO_BROWSER_RUNTIME")
 	if runtime == "" {
-		t.Skip("set TULAI_WELLCO_BROWSER_RUNTIME to an isolated Camoufox runtime")
+		t.Skip("set TULAI_WELLCO_BROWSER_RUNTIME to an isolated Fingerprint runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	proc, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	proc, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(proc.Context())
-	tab := camoufox.PageContext(life, proc, proc.Page)
+	tab := fingerprint.PageContext(life, proc, proc.Page)
 	start, _ := url.Parse(wellcoTestPage)
 	s := &RenderedSession{process: proc, tab: tab, closeTab: closeTab, closeAllocator: func() { proc.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: start}
 	defer s.Close()
 	other := "https://wellco.ca/products/other"
-	camoufox.ListenTarget(tab, func(event any) {
+	fingerprint.ListenTarget(tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if paused.ResourceType == network.ResourceTypeDocument && (paused.Request.URL == wellcoTestPage || paused.Request.URL == other) {
 				body := wellcoProductFixture(paused.Request.URL, wellcoTestImage)
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 			}
-			_ = camoufox.Run(tab, action)
+			_ = fingerprint.Run(tab, action)
 		}()
 	})
-	if err := s.run(ctx, fetch.Enable(), camoufox.Navigate(wellcoTestPage)); err != nil {
+	if err := s.run(ctx, fetch.Enable(), fingerprint.Navigate(wellcoTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Capture(ctx)
 	if err != nil || len(got.Items) != 1 || got.Items[0].URL != wellcoTestImage {
 		t.Fatalf("capture images=%d err=%v", len(got.Items), err)
 	}
-	if err := s.run(ctx, camoufox.Navigate(other)); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate(other)); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.Capture(ctx); err == nil || len(got.Items) != 0 {

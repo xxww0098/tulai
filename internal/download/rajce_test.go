@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net"
 	"net/http"
@@ -198,7 +198,7 @@ func TestRajceRedirectIdentity(t *testing.T) {
 
 func TestRajceRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	png := filterPNG(t, 1, 1)
 	var imageRequests, badRequests atomic.Int32
@@ -259,10 +259,10 @@ func TestRajceRenderedCapture(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -275,21 +275,21 @@ func TestRajceRenderedCapture(t *testing.T) {
 	if imageRequests.Load() != 1 || badRequests.Load() != 0 {
 		t.Fatalf("image requests=%d bad=%d", imageRequests.Load(), badRequests.Load())
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://www.rajce.idnes.cz/alice/album/other")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://www.rajce.idnes.cz/alice/album/other")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
 	if err == nil || len(got.Items) != 2 || !strings.Contains(err.Error(), "视频") {
 		t.Fatalf("current album=%+v err=%v", got, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://www.rajce.idnes.cz/mallory/album/trip")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://www.rajce.idnes.cz/mallory/album/trip")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
 	if err == nil || len(got.Items) != 0 {
 		t.Fatalf("different owner=%+v err=%v", got, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://www.rajce.idnes.cz/login")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://www.rajce.idnes.cz/login")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

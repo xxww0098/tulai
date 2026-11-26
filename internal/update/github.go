@@ -8,12 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/net/http/httpproxy"
 )
 
 const (
@@ -69,38 +74,123 @@ type Client struct {
 	Version     string
 	HTTP        *http.Client
 	DownloadDir string
-	// Mirrors are ghproxy-style prefixes tried after the official URL fails.
+	// Mirrors are ghproxy-style prefixes used for multi-source racing and fallback.
 	Mirrors []string
-	// OnProgress is optional and may be called from the download goroutine.
+	// PreferMirror puts configured Mirrors ahead of direct GitHub requests.
+	PreferMirror bool
+	// ProxyURL optionally configures an HTTP or SOCKS5 proxy when HTTP is nil.
+	ProxyURL string
+	// OnProgress is optional and may be called concurrently from download workers.
 	OnProgress func(Progress)
+
+	clientMu    sync.Mutex
+	cachedHTTP  *http.Client
+	cachedProxy string
 }
+
+var errReleaseNotEligible = errors.New("release not eligible")
 
 // NewClient returns a client for the public tulai releases.
 func NewClient(version string) *Client {
 	return &Client{API: DefaultAPI, Owner: Owner, Repo: Repo, Version: version}
 }
 
-// Latest reads /repos/{owner}/{repo}/releases/latest.
+// Latest reads /repos/{owner}/{repo}/releases/latest via API mirrors/direct,
+// falling back to github.com/{owner}/{repo}/releases/latest when API rate limits occur.
 func (c *Client) Latest(ctx context.Context) (Release, error) {
+	rel, err := c.latestFromAPI(ctx)
+	if err == nil {
+		return rel, nil
+	}
+	if errors.Is(err, errReleaseNotEligible) || c.api() != DefaultAPI || ctx.Err() != nil {
+		return Release{}, err
+	}
+	webRel, webErr := c.latestFromWeb(ctx)
+	if webErr == nil {
+		return webRel, nil
+	}
+	return Release{}, err
+}
+
+func (c *Client) latestFromAPI(ctx context.Context) (Release, error) {
 	endpoint := strings.TrimRight(c.api(), "/") + path.Join("/repos", c.owner(), c.repo(), "releases/latest")
-	body, err := c.get(ctx, endpoint, "application/vnd.github+json", maxReleaseJSON)
+	var parsed Release
+	_, err := c.getValidated(ctx, endpoint, "application/vnd.github+json", maxReleaseJSON, func(body []byte, _ string) error {
+		var rel Release
+		if err := json.Unmarshal(body, &rel); err != nil {
+			return fmt.Errorf("解析 GitHub 发布失败: %w", err)
+		}
+		if strings.TrimSpace(rel.Tag) == "" {
+			return errors.New("发布响应缺少标签")
+		}
+		if rel.Draft {
+			return fmt.Errorf("%w: 最新发布仍是草稿", errReleaseNotEligible)
+		}
+		if rel.Prerelease {
+			return fmt.Errorf("%w: 最新发布是预发布版本", errReleaseNotEligible)
+		}
+		if _, err := rel.Version(); err != nil {
+			return fmt.Errorf("%w: %v", errReleaseNotEligible, err)
+		}
+		parsed = rel
+		return nil
+	})
 	if err != nil {
 		return Release{}, err
 	}
-	var rel Release
-	if err := json.Unmarshal(body, &rel); err != nil {
-		return Release{}, fmt.Errorf("解析 GitHub 发布失败: %w", err)
-	}
-	if rel.Draft {
-		return Release{}, errors.New("最新发布仍是草稿")
-	}
-	if rel.Prerelease {
-		return Release{}, errors.New("最新发布是预发布版本")
-	}
-	if _, err := rel.Version(); err != nil {
+	return parsed, nil
+}
+
+func (c *Client) latestFromWeb(ctx context.Context) (Release, error) {
+	latestURL := fmt.Sprintf("https://github.com/%s/%s/releases/latest", c.owner(), c.repo())
+	tag, err := c.discoverLatestTag(ctx, latestURL)
+	if err != nil {
 		return Release{}, err
 	}
-	return rel, nil
+	ver, err := ParseVersion(tag)
+	if err != nil {
+		return Release{}, err
+	}
+	downloadBase := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/", c.owner(), c.repo(), tag)
+	sumsURL := downloadBase + "SHA256SUMS"
+	var sums map[string]string
+	sumsBody, err := c.getValidated(ctx, sumsURL, "text/plain, */*", maxChecksums, func(body []byte, _ string) error {
+		parsed, err := ParseChecksums(string(body))
+		if err != nil {
+			return err
+		}
+		sums = parsed
+		return nil
+	})
+	if err != nil {
+		return Release{}, err
+	}
+	sumsDigest := sha256.Sum256(sumsBody)
+	assets := make([]Asset, 0, len(sums)+1)
+	assets = append(assets, Asset{
+		Name:               "SHA256SUMS",
+		BrowserDownloadURL: sumsURL,
+		Size:               int64(len(sumsBody)),
+		Digest:             "sha256:" + hex.EncodeToString(sumsDigest[:]),
+		State:              "uploaded",
+	})
+	for name, digest := range sums {
+		if name == "SHA256SUMS" || name == "SHA256SUMS.txt" {
+			continue
+		}
+		assets = append(assets, Asset{
+			Name:               name,
+			BrowserDownloadURL: downloadBase + name,
+			Digest:             "sha256:" + digest,
+			State:              "uploaded",
+		})
+	}
+	return Release{
+		Tag:     tag,
+		Name:    "tulai " + ver,
+		HTMLURL: fmt.Sprintf("https://github.com/%s/%s/releases/tag/%s", c.owner(), c.repo(), tag),
+		Assets:  assets,
+	}, nil
 }
 
 // Prepare downloads the asset for mode when latest is newer than current.
@@ -173,10 +263,10 @@ func (c *Client) checksums(ctx context.Context, rel Release) (map[string]string,
 	}
 	dest := filepath.Join(dir, "SHA256SUMS")
 	if digest, ok := digestHex(sumsAsset.Digest); ok {
-		if err := c.downloadVerified(ctx, rel.Tag, sumsAsset, dest, digest); err != nil {
+		if err := c.downloadChecked(ctx, rel.Tag, sumsAsset, dest, checkChecksumsFile, digest); err != nil {
 			return nil, fmt.Errorf("SHA256SUMS: %w", err)
 		}
-	} else if err := c.downloadFile(ctx, rel.Tag, sumsAsset, dest); err != nil {
+	} else if err := c.downloadChecked(ctx, rel.Tag, sumsAsset, dest, checkChecksumsFile); err != nil {
 		return nil, err
 	}
 	defer os.Remove(dest)
@@ -210,18 +300,75 @@ func (c *Client) userAgent() string {
 }
 
 func (c *Client) http() *http.Client {
-	base := c.HTTP
-	if base == nil {
-		base = &http.Client{}
-	}
-	clone := *base
-	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return errors.New("重定向过多")
+	if c.HTTP != nil {
+		clone := *c.HTTP
+		clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("重定向过多")
+			}
+			return c.allow(req.URL)
 		}
-		return c.allow(req.URL)
+		return &clone
 	}
-	return &clone
+	proxyKey := strings.TrimSpace(c.ProxyURL)
+	c.clientMu.Lock()
+	defer c.clientMu.Unlock()
+	if c.cachedHTTP != nil && c.cachedProxy == proxyKey {
+		return c.cachedHTTP
+	}
+	tr := &http.Transport{
+		Proxy:                 updateProxyFunc(proxyKey),
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 12 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	c.cachedProxy = proxyKey
+	c.cachedHTTP = &http.Client{
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("重定向过多")
+			}
+			return c.allow(req.URL)
+		},
+	}
+	return c.cachedHTTP
+}
+
+func updateProxyFunc(raw string) func(*http.Request) (*url.URL, error) {
+	if raw == "" {
+		return http.ProxyFromEnvironment
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return http.ProxyFromEnvironment
+	}
+	config := httpproxy.Config{
+		HTTPProxy:  parsed.String(),
+		HTTPSProxy: parsed.String(),
+		NoProxy:    httpproxy.FromEnvironment().NoProxy,
+	}
+	proxyForURL := config.ProxyFunc()
+	return func(req *http.Request) (*url.URL, error) {
+		return proxyForURL(req.URL)
+	}
+}
+
+func (c *Client) hasProxy() bool {
+	if strings.TrimSpace(c.ProxyURL) != "" {
+		return true
+	}
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) allowAssetURL(raw, tag, name string) error {

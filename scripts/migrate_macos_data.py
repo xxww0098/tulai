@@ -16,7 +16,7 @@ import tempfile
 
 def require_stopped(target):
     result = subprocess.run(["ps", "-axo", "comm="], capture_output=True, text=True, check=True)
-    runtime = str(target / "runtime" / "camoufox") + os.sep
+    runtime = str(target / "runtime") + os.sep
     for line in result.stdout.splitlines():
         executable = line.strip()
         if Path(executable).name == "tulai" or executable.startswith(runtime):
@@ -75,8 +75,9 @@ def relocate_json(value, old, new):
 def rewrite_database(db, source, target, move_output):
     profile_root = source / "BrowserData"
     columns = {row[1] for row in db.execute("PRAGMA table_info(browsers)")}
-    rows = db.execute("SELECT id, platform, user_data_dir, legacy_user_data_dir, is_logged_in, COALESCE(ext_account,'') FROM browsers").fetchall() if "legacy_user_data_dir" in columns else ()
-    for account_id, platform, current, legacy, logged_in, ext_account in rows:
+    ext_expr = "COALESCE(ext_account,'')" if "ext_account" in columns else "''"
+    rows = db.execute(f"SELECT id, platform, user_data_dir, is_logged_in, {ext_expr} FROM browsers").fetchall() if "user_data_dir" in columns else ()
+    for account_id, platform, current, logged_in, ext_account in rows:
         if platform not in ("豆包", "千问") or ext_account:
             continue
         if current:
@@ -97,11 +98,9 @@ def rewrite_database(db, source, target, move_output):
                             except ValueError as error:
                                 raise RuntimeError(f"账号 {account_id} 的资料链接指向浏览器目录外，未迁移") from error
             current = str(Path("BrowserData") / relative)
-        elif logged_in and not (profile_root / "Camoufox" / f"account-{account_id}").is_dir():
+        elif logged_in and not (profile_root / "Fingerprint" / f"account-{account_id}").is_dir():
             raise RuntimeError(f"账号 {account_id} 的登录资料目录不存在，未迁移")
-        if legacy and os.path.isabs(legacy):
-            legacy = relocated_path(legacy, profile_root, Path("BrowserData"))
-        db.execute("UPDATE browsers SET user_data_dir=?, legacy_user_data_dir=? WHERE id=?", (current, legacy, account_id))
+        db.execute("UPDATE browsers SET user_data_dir=? WHERE id=?", (current, account_id))
 
     if not move_output:
         row = db.execute("SELECT value FROM settings WHERE key='output_path'").fetchone()

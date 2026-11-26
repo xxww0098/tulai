@@ -16,13 +16,30 @@ const (
 	PageWash = "wash"
 	// PageFission 是裂变图片页的会话。
 	PageFission = "fission"
+	// PageGenQianwen 是千问自由生图页的独立会话。
+	PageGenQianwen = "qianwen:gen"
+	// PageWashQianwen 是千问批量洗图页的独立会话。
+	PageWashQianwen = "qianwen:wash"
+	// PageFissionQianwen 是千问裂变图片页的独立会话。
+	PageFissionQianwen = "qianwen:fission"
+	// PageGenQwenIntl 是千问国际自由生图页的独立会话。
+	PageGenQwenIntl = "qwen_intl:gen"
+	// PageWashQwenIntl 是千问国际批量洗图页的独立会话。
+	PageWashQwenIntl = "qwen_intl:wash"
+	// PageFissionQwenIntl 是千问国际裂变图片页的独立会话。
+	PageFissionQwenIntl = "qwen_intl:fission"
 )
 
 func validSessionPage(page string) bool {
-	return page == PageGen || page == PageWash || page == PageFission
+	switch page {
+	case PageGen, PageWash, PageFission,
+		PageGenQianwen, PageWashQianwen, PageFissionQianwen,
+		PageGenQwenIntl, PageWashQwenIntl, PageFissionQwenIntl:
+		return true
+	default:
+		return false
+	}
 }
-
-const historyLimit = 100
 
 // Session 是某一页的一份工作区：提示词、参考图或源图、进度。
 type Session struct {
@@ -63,6 +80,7 @@ type SessionTask struct {
 	At           int64
 	ElapsedMS    int64
 	Undispatched bool
+	QualityNote  string
 }
 
 // SaveActive 写入这一页的当前会话并把它标成活动。同页其他会话收起。
@@ -115,32 +133,46 @@ func (s *Store) SaveActive(sess Session, items []SessionTask) (int64, error) {
 	if _, err = tx.Exec(`DELETE FROM session_sources WHERE session_id=?`, id); err != nil {
 		return 0, fmt.Errorf("保存洗图进度失败: %w", err)
 	}
-	for i, item := range items {
-		ord := item.Ord
-		if ord <= 0 {
-			ord = i + 1
-		}
-		undispatched := 0
-		if item.Undispatched {
-			undispatched = 1
-		}
-		if _, err = tx.Exec(`INSERT INTO session_tasks(session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix, elapsed_ms, undispatched)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			id, ord, item.Prompt, item.Source, item.Platform, item.AccountID, item.AccountName, item.Status, item.Outputs, item.Error, item.At, item.ElapsedMS, undispatched); err != nil {
+	if len(items) > 0 {
+		taskStmt, err := tx.Prepare(`INSERT INTO session_tasks(session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix, elapsed_ms, undispatched, quality_note)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		if err != nil {
 			return 0, fmt.Errorf("保存任务记录失败: %w", err)
 		}
+		defer taskStmt.Close()
+		for i, item := range items {
+			ord := item.Ord
+			if ord <= 0 {
+				ord = i + 1
+			}
+			undispatched := 0
+			if item.Undispatched {
+				undispatched = 1
+			}
+			if _, err = taskStmt.Exec(
+				id, ord, item.Prompt, item.Source, item.Platform, item.AccountID, item.AccountName, item.Status, item.Outputs, item.Error, item.At, item.ElapsedMS, undispatched, item.QualityNote); err != nil {
+				return 0, fmt.Errorf("保存任务记录失败: %w", err)
+			}
+		}
 	}
-	for _, item := range sess.Sources {
-		if strings.TrimSpace(item.Path) == "" {
-			continue
-		}
-		washed := 0
-		if item.Washed {
-			washed = 1
-		}
-		if _, err = tx.Exec(`INSERT OR REPLACE INTO session_sources(session_id, path, washed, output, updated_at)
-			VALUES(?,?,?,?,?)`, id, item.Path, washed, item.Output, now); err != nil {
+	if len(sess.Sources) > 0 {
+		srcStmt, err := tx.Prepare(`INSERT OR REPLACE INTO session_sources(session_id, path, washed, output, updated_at)
+			VALUES(?,?,?,?,?)`)
+		if err != nil {
 			return 0, fmt.Errorf("保存洗图进度失败: %w", err)
+		}
+		defer srcStmt.Close()
+		for _, item := range sess.Sources {
+			if strings.TrimSpace(item.Path) == "" {
+				continue
+			}
+			washed := 0
+			if item.Washed {
+				washed = 1
+			}
+			if _, err = srcStmt.Exec(id, item.Path, washed, item.Output, now); err != nil {
+				return 0, fmt.Errorf("保存洗图进度失败: %w", err)
+			}
 		}
 	}
 	if err = tx.Commit(); err != nil {
@@ -188,38 +220,6 @@ func (s *Store) ActiveSession(page string) (Session, []SessionTask, bool, error)
 	return sess, items, true, nil
 }
 
-// History 是这一页已经收起的会话，新的在前，最多 100 条。不含任务正文。
-func (s *Store) History(page string) ([]Session, error) {
-	if s == nil {
-		return nil, fmt.Errorf("配置库未打开")
-	}
-	if !validSessionPage(page) {
-		return nil, fmt.Errorf("任务页无效")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, page, created_at, updated_at, prompts, images, progress, prog_text, active,
-		(SELECT COUNT(*) FROM session_tasks t WHERE t.session_id = sessions.id)
-		FROM sessions WHERE page=? AND active=0 ORDER BY updated_at DESC LIMIT ?`, page, historyLimit)
-	if err != nil {
-		return nil, fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	defer rows.Close()
-	var out []Session
-	for rows.Next() {
-		sess, n, err := scanCounted(rows)
-		if err != nil {
-			return nil, fmt.Errorf("读取任务记录失败: %w", err)
-		}
-		sess.Tasks = n
-		out = append(out, sess)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	return out, nil
-}
-
 // Session 按 id 读取会话和任务。
 func (s *Store) Session(id int64) (Session, []SessionTask, error) {
 	if s == nil {
@@ -259,108 +259,9 @@ func (s *Store) Session(id int64) (Session, []SessionTask, error) {
 	return sess, items, nil
 }
 
-// ArchiveSession 收起一条会话，只改记录，不删图片。
-func (s *Store) ArchiveSession(id int64) error {
-	if s == nil {
-		return fmt.Errorf("配置库未打开")
-	}
-	if id <= 0 {
-		return fmt.Errorf("任务记录不存在")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := mustSession(s.db, id); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`UPDATE sessions SET active=0, updated_at=? WHERE id=?`, time.Now().Unix(), id); err != nil {
-		return fmt.Errorf("收起当前任务失败: %w", err)
-	}
-	return nil
-}
-
-// ActivateSession 把一条会话重新标成这一页的当前会话。
-func (s *Store) ActivateSession(id int64) error {
-	if s == nil {
-		return fmt.Errorf("配置库未打开")
-	}
-	if id <= 0 {
-		return fmt.Errorf("任务记录不存在")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	defer tx.Rollback()
-	var page string
-	if err := tx.QueryRow(`SELECT page FROM sessions WHERE id=?`, id).Scan(&page); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("任务记录不存在")
-		}
-		return fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	now := time.Now().Unix()
-	if _, err = tx.Exec(`UPDATE sessions SET active=0 WHERE page=? AND id<>?`, page, id); err != nil {
-		return fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	if _, err = tx.Exec(`UPDATE sessions SET active=1, updated_at=? WHERE id=?`, now, id); err != nil {
-		return fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	return nil
-}
-
-// DeleteSession 删掉会话和任务记录。不碰磁盘上的图片。
-func (s *Store) DeleteSession(id int64) error {
-	if s == nil {
-		return fmt.Errorf("配置库未打开")
-	}
-	if id <= 0 {
-		return fmt.Errorf("任务记录不存在")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("删除历史记录失败: %w", err)
-	}
-	defer tx.Rollback()
-	if err := mustSession(tx, id); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(`DELETE FROM session_tasks WHERE session_id=?`, id); err != nil {
-		return fmt.Errorf("删除历史记录失败: %w", err)
-	}
-	if _, err = tx.Exec(`DELETE FROM session_sources WHERE session_id=?`, id); err != nil {
-		return fmt.Errorf("删除历史记录失败: %w", err)
-	}
-	if _, err = tx.Exec(`DELETE FROM sessions WHERE id=?`, id); err != nil {
-		return fmt.Errorf("删除历史记录失败: %w", err)
-	}
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("删除历史记录失败: %w", err)
-	}
-	return nil
-}
-
 type rowQuery interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
-}
-
-func mustSession(q rowQuery, id int64) error {
-	var one int
-	err := q.QueryRow(`SELECT 1 FROM sessions WHERE id=?`, id).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("任务记录不存在")
-	}
-	if err != nil {
-		return fmt.Errorf("读取任务记录失败: %w", err)
-	}
-	return nil
 }
 
 func scanOne(q rowQuery, query string, args ...any) (Session, error) {
@@ -371,16 +272,8 @@ func scanOne(q rowQuery, query string, args ...any) (Session, error) {
 	return sess, err
 }
 
-func scanCounted(rows *sql.Rows) (Session, int, error) {
-	var sess Session
-	var active, n int
-	err := rows.Scan(&sess.ID, &sess.Page, &sess.Created, &sess.Updated, &sess.Prompts, &sess.Images, &sess.Progress, &sess.ProgText, &active, &n)
-	sess.Active = active != 0
-	return sess, n, err
-}
-
 func loadTasks(q rowQuery, sessionID int64) ([]SessionTask, error) {
-	rows, err := q.Query(`SELECT id, session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix, COALESCE(elapsed_ms,0), COALESCE(undispatched,0)
+	rows, err := q.Query(`SELECT id, session_id, ord, prompt, source, platform, account_id, account_name, status, outputs, error, at_unix, COALESCE(elapsed_ms,0), COALESCE(undispatched,0), COALESCE(quality_note,'')
 		FROM session_tasks WHERE session_id=? ORDER BY ord, id`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("读取任务记录失败: %w", err)
@@ -390,7 +283,7 @@ func loadTasks(q rowQuery, sessionID int64) ([]SessionTask, error) {
 	for rows.Next() {
 		var item SessionTask
 		var undispatched int
-		if err := rows.Scan(&item.ID, &item.SessionID, &item.Ord, &item.Prompt, &item.Source, &item.Platform, &item.AccountID, &item.AccountName, &item.Status, &item.Outputs, &item.Error, &item.At, &item.ElapsedMS, &undispatched); err != nil {
+		if err := rows.Scan(&item.ID, &item.SessionID, &item.Ord, &item.Prompt, &item.Source, &item.Platform, &item.AccountID, &item.AccountName, &item.Status, &item.Outputs, &item.Error, &item.At, &item.ElapsedMS, &undispatched, &item.QualityNote); err != nil {
 			return nil, fmt.Errorf("读取任务记录失败: %w", err)
 		}
 		item.Undispatched = undispatched != 0

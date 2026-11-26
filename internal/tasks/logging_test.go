@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
@@ -19,8 +18,6 @@ func TestConcurrentWashLogsProgressElapsedAndFailures(t *testing.T) {
 	}
 	defer logging.Close()
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	first := addNamed(t, st, "豆包", "甲")
 	second := addNamed(t, st, "豆包", "乙")
 	e := NewEngine(st, nil, nil, "")

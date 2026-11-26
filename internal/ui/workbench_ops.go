@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -10,8 +11,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/xxww0098/tulai/internal/agy"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/encoding/unicode"
+
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/images"
@@ -54,7 +58,7 @@ var washStyles = []washStylePreset{
 	{"复古版画", "使用版画式刻线、有限色彩和轻微复古纸感，呈现二维复古版画。"},
 }
 
-var doubaoOutputRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
+var outputRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
 
 type outputPresetSpec struct {
 	label  string
@@ -63,16 +67,35 @@ type outputPresetSpec struct {
 	height int
 }
 
-var doubaoOutputPresets = []outputPresetSpec{
+var outputPresets = []outputPresetSpec{
 	{label: "原比例"},
 	{label: "1:1（正方形）", ratio: "1:1"},
 	{label: "4:3（标准横）", ratio: "4:3"},
 	{label: "3:4（标准竖）", ratio: "3:4"},
 	{label: "16:9（宽屏）", ratio: "16:9"},
 	{label: "9:16（竖屏）", ratio: "9:16"},
+	{label: "3:2（相机横）", ratio: "3:2"},
+	{label: "2:3（海报竖）", ratio: "2:3"},
 	{label: "1024×1024", width: 1024, height: 1024},
 	{label: "2048×2048", width: 2048, height: 2048},
 	{label: "自定义尺寸"},
+}
+
+type outputSizePrefs struct {
+	mode   string
+	preset string
+	ratio  string
+	width  string
+	height string
+	crop   bool
+}
+
+func outputPresetLabels() []string {
+	labels := make([]string, 0, len(outputPresets))
+	for _, p := range outputPresets {
+		labels = append(labels, p.label)
+	}
+	return labels
 }
 
 func washStyleLabels() []string {
@@ -108,97 +131,240 @@ func (a *App) saveWashStyle() {
 	a.store.Set("wash_style", a.washStyle)
 }
 
-func (a *App) loadOutputSize() {
-	if a.store == nil {
-		a.outputSizeMode = outputOriginal
-		a.outputSizePreset = "原比例"
+func (a *App) outputPrefsFor(platform string) *outputSizePrefs {
+	switch platform {
+	case "千问":
+		a.qianwenOutput.ensureInit()
+		return &a.qianwenOutput
+	case "千问国际":
+		a.qwenIntlOutput.ensureInit()
+		return &a.qwenIntlOutput
+	default:
+		a.doubaoOutput.ensureInit()
+		return &a.doubaoOutput
+	}
+}
+
+func (a *App) activeOutputPrefs() *outputSizePrefs {
+	return a.outputPrefsFor(a.selectedPlatform())
+}
+
+func outputStorePrefix(platform string) string {
+	switch platform {
+	case "千问":
+		return "qianwen_output_"
+	case "千问国际":
+		return "qwen_intl_output_"
+	default:
+		return "doubao_output_"
+	}
+}
+
+func (p *outputSizePrefs) ensureInit() {
+	if p.mode == "" {
+		p.mode = outputOriginal
+	}
+	if p.preset == "" {
+		p.syncPreset()
+	}
+}
+
+func loadPlatformOutputPrefs(s *store.Store, platform string) outputSizePrefs {
+	if s == nil {
+		return outputSizePrefs{mode: outputOriginal, preset: outputOriginal}
+	}
+	prefix := outputStorePrefix(platform)
+	rawMode := s.Get(prefix + "size_mode")
+	ratio := s.Get(prefix + "ratio")
+	// Migrate legacy qianwen_output_ratio when qianwen_output_size_mode has not been stored yet.
+	if platform == "千问" && rawMode == "" && ratio != "" {
+		if picked := pickStr(ratio, "", outputRatios); picked != "" {
+			rawMode = outputRatio
+			ratio = picked
+		} else {
+			ratio = ""
+		}
+	}
+	p := outputSizePrefs{
+		mode:   pickStr(rawMode, outputOriginal, []string{outputOriginal, outputRatio, outputPixels}),
+		ratio:  ratio,
+		width:  s.Get(prefix + "width"),
+		height: s.Get(prefix + "height"),
+		crop:   s.GetBool(prefix + "crop"),
+	}
+	p.syncPreset()
+	return p
+}
+
+func savePlatformOutputPrefs(s *store.Store, platform string, p outputSizePrefs) {
+	if s == nil {
 		return
 	}
-	s := a.store
-	a.outputSizeMode = pickStr(s.Get("doubao_output_size_mode"), outputOriginal, []string{outputOriginal, outputRatio, outputPixels})
-	a.outputRatio = s.Get("doubao_output_ratio")
-	a.outputWidth = s.Get("doubao_output_width")
-	a.outputHeight = s.Get("doubao_output_height")
-	a.outputCrop = s.GetBool("doubao_output_crop")
-	a.syncOutputSizePreset()
+	prefix := outputStorePrefix(platform)
+	p.ensureInit()
+	s.Set(prefix+"size_mode", p.mode)
+	s.Set(prefix+"ratio", p.ratio)
+	s.Set(prefix+"width", p.width)
+	s.Set(prefix+"height", p.height)
+	s.SetInt(prefix+"crop", boolInt(p.crop))
+}
+
+func (a *App) loadOutputSize() {
+	a.doubaoOutput = loadPlatformOutputPrefs(a.store, "豆包")
+	a.qianwenOutput = loadPlatformOutputPrefs(a.store, "千问")
+	a.qwenIntlOutput = loadPlatformOutputPrefs(a.store, "千问国际")
 }
 
 func (a *App) saveOutputSize() {
-	if a.store == nil {
-		return
-	}
-	s := a.store
-	s.Set("doubao_output_size_mode", a.outputSizeMode)
-	s.Set("doubao_output_ratio", a.outputRatio)
-	s.Set("doubao_output_width", a.outputWidth)
-	s.Set("doubao_output_height", a.outputHeight)
-	s.SetInt("doubao_output_crop", boolInt(a.outputCrop))
+	savePlatformOutputPrefs(a.store, "豆包", a.doubaoOutput)
+	savePlatformOutputPrefs(a.store, "千问", a.qianwenOutput)
+	savePlatformOutputPrefs(a.store, "千问国际", a.qwenIntlOutput)
 }
 
-func (a *App) syncOutputSizePreset() {
-	switch a.outputSizeMode {
+func (p *outputSizePrefs) syncPreset() {
+	switch p.mode {
 	case outputRatio:
-		for _, p := range doubaoOutputPresets {
-			if p.ratio != "" && p.ratio == a.outputRatio {
-				a.outputSizePreset = p.label
+		for _, spec := range outputPresets {
+			if spec.ratio != "" && spec.ratio == p.ratio {
+				p.preset = spec.label
 				return
 			}
 		}
-		a.outputSizePreset = "自定义尺寸"
+		p.preset = "自定义尺寸"
 	case outputPixels:
-		w, _ := strconv.Atoi(strings.TrimSpace(a.outputWidth))
-		h, _ := strconv.Atoi(strings.TrimSpace(a.outputHeight))
-		for _, p := range doubaoOutputPresets {
-			if p.width > 0 && p.width == w && p.height == h {
-				a.outputSizePreset = p.label
+		w, _ := strconv.Atoi(strings.TrimSpace(p.width))
+		h, _ := strconv.Atoi(strings.TrimSpace(p.height))
+		for _, spec := range outputPresets {
+			if spec.width > 0 && spec.width == w && spec.height == h {
+				p.preset = spec.label
 				return
 			}
 		}
-		a.outputSizePreset = "自定义尺寸"
+		p.preset = "自定义尺寸"
 	default:
-		a.outputSizePreset = "原比例"
+		p.mode = outputOriginal
+		p.preset = outputOriginal
 	}
 }
 
-func (a *App) applyOutputSizePreset(label string) {
-	a.outputSizePreset = label
-	for _, p := range doubaoOutputPresets {
-		if p.label != label {
+func (p *outputSizePrefs) applyPreset(label string) {
+	p.preset = label
+	for _, spec := range outputPresets {
+		if spec.label != label {
 			continue
 		}
 		switch {
-		case p.ratio != "":
-			a.outputSizeMode = outputRatio
-			a.outputRatio = p.ratio
-		case p.width > 0 && p.height > 0:
-			a.outputSizeMode = outputPixels
-			a.outputWidth = strconv.Itoa(p.width)
-			a.outputHeight = strconv.Itoa(p.height)
+		case spec.ratio != "":
+			p.mode = outputRatio
+			p.ratio = spec.ratio
+		case spec.width > 0 && spec.height > 0:
+			p.mode = outputPixels
+			p.width = strconv.Itoa(spec.width)
+			p.height = strconv.Itoa(spec.height)
 		case label == "自定义尺寸":
-			if a.outputSizeMode == outputOriginal {
-				a.outputSizeMode = outputPixels
-			}
+			p.mode = outputPixels
 		default:
-			a.outputSizeMode = outputOriginal
+			p.mode = outputOriginal
 		}
 		return
 	}
 }
 
-func (a *App) doubaoOutputSize() tasks.OutputSize {
-	w, _ := strconv.Atoi(strings.TrimSpace(a.outputWidth))
-	h, _ := strconv.Atoi(strings.TrimSpace(a.outputHeight))
-	switch a.outputSizeMode {
+func (p *outputSizePrefs) update(preset, mode, ratio, width, height string, crop bool) {
+	p.ensureInit()
+	if preset != "" && preset != p.preset {
+		p.applyPreset(preset)
+		return
+	}
+	switch mode {
+	case "ratio":
+		mode = outputRatio
+	case "pixels":
+		mode = outputPixels
+	case "original":
+		mode = outputOriginal
+	}
+	if mode != "" {
+		p.mode = mode
+	}
+	p.ratio = ratio
+	p.width = width
+	p.height = height
+	p.crop = crop
+	p.syncPreset()
+}
+
+func (p outputSizePrefs) taskOutputSize() tasks.OutputSize {
+	w, _ := strconv.Atoi(strings.TrimSpace(p.width))
+	h, _ := strconv.Atoi(strings.TrimSpace(p.height))
+	switch p.mode {
 	case outputRatio:
-		return tasks.OutputSize{Ratio: strings.TrimSpace(a.outputRatio), Crop: a.outputCrop}
+		return tasks.OutputSize{Ratio: strings.TrimSpace(p.ratio), Crop: p.crop}
 	case outputPixels:
-		return tasks.OutputSize{Width: w, Height: h, Crop: a.outputCrop}
+		return tasks.OutputSize{Width: w, Height: h, Crop: p.crop}
 	default:
 		return tasks.OutputSize{}
 	}
 }
 
+func (a *App) outputSizeFor(platform string) tasks.OutputSize {
+	return a.outputPrefsFor(platform).taskOutputSize()
+}
+
 // ---- Page switching & session management ----
+
+func platformSettingKey(platform, base string) string {
+	switch platform {
+	case "千问":
+		return base + "_qianwen"
+	case "千问国际":
+		return base + "_qwen_intl"
+	default:
+		return base
+	}
+}
+
+func defaultWashPromptFor(platform string) string {
+	if platform == "豆包" {
+		return prompts.DoubaoWashPrompt
+	}
+	return DefaultWashPrompt
+}
+
+func defaultPageStateFor(platform string, page int) pageState {
+	st := pageState{srcSel: -1}
+	if page == pageWash {
+		st.prompts = defaultWashPromptFor(platform)
+	} else if page == pageFission {
+		st.prompts = DefaultFissionPrompt
+	}
+	return st
+}
+
+func defaultPlatformWorkspace(platform string) platformWorkspace {
+	return platformWorkspace{
+		pages: map[int]pageState{
+			pageHome:    defaultPageStateFor(platform, pageHome),
+			pageWash:    defaultPageStateFor(platform, pageWash),
+			pageFission: defaultPageStateFor(platform, pageFission),
+		},
+		batchMode:           batchText,
+		genPromptChoice:     choosePromptLabel,
+		imgGenPromptChoice:  choosePromptLabel,
+		washPromptChoice:    choosePromptLabel,
+		fissionPromptChoice: choosePromptLabel,
+		textRepeat:          1,
+		imageRepeat:         1,
+		imagePromptMode:     "unified",
+	}
+}
+
+func workspacePageState(ws platformWorkspace, platform string, page int) pageState {
+	if st, ok := ws.pages[page]; ok {
+		return st
+	}
+	return defaultPageStateFor(platform, page)
+}
 
 func (a *App) capturePage() pageState {
 	return pageState{
@@ -214,6 +380,315 @@ func (a *App) restorePage(s pageState) {
 	a.flowPin, a.skipImages = s.flowPin, s.skipImages
 }
 
+func (a *App) capturePlatformWorkspace() platformWorkspace {
+	pages := make(map[int]pageState, len(a.parked)+1)
+	for p, st := range a.parked {
+		pages[p] = st
+	}
+	pages[a.statePage] = a.capturePage()
+	return platformWorkspace{
+		pages:               pages,
+		batchMode:           a.batchMode,
+		textPrompts:         a.resolvedTextPrompts(),
+		imgPrompts:          a.resolvedImagePrompts(),
+		freeformPrompts:     a.freeformPrompts,
+		imgFreeformPrompts:  a.imgFreeformPrompts,
+		promptPick:          a.promptPick,
+		imgPromptPick:       a.imgPromptPick,
+		promptChoice:        a.promptChoice,
+		genPromptChoice:     a.genPromptChoice,
+		imgGenPromptChoice:  a.imgGenPromptChoice,
+		washPromptChoice:    a.washPromptChoice,
+		fissionPromptChoice: a.fissionPromptChoice,
+		textRepeat:          clampRepeat(a.textRepeat),
+		imageRepeat:         clampRepeat(a.imageRepeat),
+		imagePromptMode:     normalizeImagePromptMode(a.imagePromptMode),
+		genSession:          a.genSession,
+		washSession:         a.washSession,
+		fissionSession:      a.fissionSession,
+		rewashCounts:        a.rewashCounts,
+		rewashUndo:          a.rewashUndo,
+		resultsDoneOpen:     a.resultsDoneOpen,
+		gallerySelected:     a.gallerySelected,
+		fissionRetryBase:    a.fissionRetryBase,
+	}
+}
+
+func (a *App) restorePlatformWorkspace(ws platformWorkspace, platform string) {
+	parked := make(map[int]pageState, len(ws.pages))
+	for p, st := range ws.pages {
+		if p != a.statePage {
+			parked[p] = st
+		}
+	}
+	a.parked = parked
+	a.restorePage(workspacePageState(ws, platform, a.statePage))
+	a.batchMode = ws.batchMode
+	a.textPrompts = ws.textPrompts
+	a.imgPrompts = ws.imgPrompts
+	a.freeformPrompts = ws.freeformPrompts
+	a.imgFreeformPrompts = ws.imgFreeformPrompts
+	a.promptPick = ws.promptPick
+	a.imgPromptPick = ws.imgPromptPick
+	a.promptChoice = ws.promptChoice
+	a.genPromptChoice = ws.genPromptChoice
+	a.imgGenPromptChoice = ws.imgGenPromptChoice
+	a.washPromptChoice = ws.washPromptChoice
+	a.fissionPromptChoice = ws.fissionPromptChoice
+	a.textRepeat = clampRepeat(ws.textRepeat)
+	a.imageRepeat = clampRepeat(ws.imageRepeat)
+	a.imagePromptMode = normalizeImagePromptMode(ws.imagePromptMode)
+	a.genSession = ws.genSession
+	a.washSession = ws.washSession
+	a.fissionSession = ws.fissionSession
+	a.rewashCounts = ws.rewashCounts
+	a.rewashUndo = ws.rewashUndo
+	a.resultsDoneOpen = ws.resultsDoneOpen
+	a.gallerySelected = ws.gallerySelected
+	a.fissionRetryBase = ws.fissionRetryBase
+}
+
+func clampRepeat(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > 10 {
+		return 10
+	}
+	return n
+}
+
+func normalizeImagePromptMode(mode string) string {
+	if strings.TrimSpace(mode) == "per_line" {
+		return "per_line"
+	}
+	return "unified"
+}
+
+func (a *App) homePrompts() string {
+	if a.statePage == pageHome {
+		return a.prompts
+	}
+	if gen, ok := a.parked[pageHome]; ok {
+		return gen.prompts
+	}
+	return ""
+}
+
+func (a *App) setHomePrompts(v string) {
+	if a.statePage == pageHome {
+		a.prompts = v
+		return
+	}
+	if a.parked == nil {
+		a.parked = map[int]pageState{}
+	}
+	gen, ok := a.parked[pageHome]
+	if !ok {
+		gen = defaultPageStateFor(a.selectedPlatform(), pageHome)
+	}
+	gen.prompts = v
+	a.parked[pageHome] = gen
+}
+
+func (a *App) resolvedTextPrompts() string {
+	if a.batchMode == batchText {
+		return a.homePrompts()
+	}
+	return a.textPrompts
+}
+
+func (a *App) resolvedImagePrompts() string {
+	if a.batchMode == batchImage {
+		return a.homePrompts()
+	}
+	return a.imgPrompts
+}
+
+func (a *App) switchBatchMode(next int, carryIfEmpty bool) bool {
+	if next != batchImage {
+		next = batchText
+	}
+	if a.batchMode == next {
+		return false
+	}
+	cur := a.homePrompts()
+	if a.batchMode == batchText {
+		a.textPrompts = cur
+		if carryIfEmpty && strings.TrimSpace(a.imgPrompts) == "" && strings.TrimSpace(cur) != "" {
+			a.imgPrompts = cur
+		}
+		a.batchMode = batchImage
+		a.setHomePrompts(a.imgPrompts)
+	} else {
+		a.imgPrompts = cur
+		a.batchMode = batchText
+		a.setHomePrompts(a.textPrompts)
+	}
+	if a.store != nil {
+		plat := a.selectedPlatform()
+		key := platformSettingKey(plat, "batch_mode")
+		if a.batchMode == batchImage {
+			a.store.Set(key, "image")
+		} else {
+			a.store.Set(key, "text")
+		}
+		a.store.Set(platformSettingKey(plat, "prompts"), a.resolvedTextPrompts())
+		a.store.Set(platformSettingKey(plat, "img_prompts"), a.resolvedImagePrompts())
+	}
+	return true
+}
+
+func (a *App) currentRepeatCount() int {
+	if a.statePage != pageHome {
+		return 1
+	}
+	if a.batchMode == batchImage {
+		return clampRepeat(a.imageRepeat)
+	}
+	return clampRepeat(a.textRepeat)
+}
+
+func (a *App) plannedTaskCount() (units, total int) {
+	switch a.statePage {
+	case pageWash:
+		n := len(a.washPendingPaths())
+		return n, n
+	case pageFission:
+		if a.skipImages {
+			if len(a.taskPromptList()) == 4 {
+				return 4, 4
+			}
+			return 0, 0
+		}
+		if len(a.batchImages()) == 1 {
+			return 4, 4
+		}
+		return 0, 0
+	default:
+		repeat := a.currentRepeatCount()
+		if a.batchMode == batchImage {
+			n := len(a.batchImages())
+			return n, n * repeat
+		}
+		n := len(a.taskPromptList())
+		if n == 0 && strings.TrimSpace(a.promptExtras(pageHome, a.currentPromptParts())) != "" {
+			n = 1
+		}
+		return n, n * repeat
+	}
+}
+
+const maxPromptTextImportBytes = 2 << 20
+
+func decodePromptTextBytes(data []byte) (string, error) {
+	if len(data) >= 2 && ((data[0] == 0xFF && data[1] == 0xFE) || (data[0] == 0xFE && data[1] == 0xFF)) {
+		decoded, err := unicode.UTF16(unicode.LittleEndian, unicode.ExpectBOM).NewDecoder().Bytes(data)
+		if err != nil || !utf8.Valid(decoded) {
+			return "", fmt.Errorf("提示词文本 UTF-16 编码无效")
+		}
+		return string(decoded), nil
+	}
+	trimmed := bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	if utf8.Valid(trimmed) {
+		return string(trimmed), nil
+	}
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data)
+	if err != nil || !utf8.Valid(decoded) || bytes.Contains(decoded, []byte("\xef\xbf\xbd")) {
+		return "", fmt.Errorf("提示词文本编码无效，请保存为 UTF-8 或 GBK")
+	}
+	return string(decoded), nil
+}
+
+func readPromptTextFiles(paths []string) (string, int, error) {
+	var allLines []string
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			return "", 0, fmt.Errorf("无法读取提示词文件: %w", err)
+		}
+		if info.IsDir() {
+			return "", 0, fmt.Errorf("请选择文本文件，而不是文件夹")
+		}
+		if info.Size() > maxPromptTextImportBytes {
+			return "", 0, fmt.Errorf("提示词文件超过 2 MB 上限")
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return "", 0, fmt.Errorf("读取提示词文件失败: %w", err)
+		}
+		text, err := decodePromptTextBytes(data)
+		if err != nil {
+			return "", 0, err
+		}
+		imported := prompts.ImportText(text)
+		allLines = append(allLines, splitLines(imported)...)
+	}
+	if len(allLines) == 0 {
+		return "", 0, fmt.Errorf("文件中没有可用提示词")
+	}
+	return strings.Join(allLines, "\n"), len(allLines), nil
+}
+
+func (a *App) applyImportedPrompts(platform, imported string, count int) {
+	if a == nil || count <= 0 || strings.TrimSpace(imported) == "" {
+		return
+	}
+	a.onWorkspace(platform, pageHome, func() {
+		if a.batchMode != batchText {
+			a.switchBatchMode(batchText, false)
+		}
+		a.promptPick = ""
+		a.promptChoice = ""
+		a.genPromptChoice = choosePromptLabel
+		existing := strings.TrimSpace(a.prompts)
+		if existing == "" {
+			a.prompts = imported
+		} else {
+			a.prompts = existing + "\n" + imported
+		}
+		a.textPrompts = a.prompts
+		a.freeformPrompts = a.prompts
+		if a.store != nil {
+			a.store.Set(platformSettingKey(platform, "prompts"), a.textPrompts)
+			a.store.Set(platformSettingKey(platform, "prompts_freeform"), a.freeformPrompts)
+			a.store.Set(platformSettingKey(platform, "prompt_pick"), "")
+		}
+	})
+	a.persistWorkspaceFor(platform, pageHome)
+	a.pushToast("success", fmt.Sprintf("已导入 %d 条提示词到文生图", count))
+	a.emit("workbench")
+}
+
+func (a *App) importPromptTextFiles(platform string, paths []string) error {
+	imported, count, err := readPromptTextFiles(paths)
+	if err != nil {
+		return err
+	}
+	a.applyImportedPrompts(platform, imported, count)
+	return nil
+}
+
+func (a *App) importPromptTextFile(platform, path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return a.importPromptTextFiles(platform, []string{path})
+}
+
+func (a *App) workspaceSnapshotIfPresent(platform string) (platformWorkspace, bool) {
+	if platform == a.selectedPlatform() {
+		a.syncPage()
+		return a.capturePlatformWorkspace(), true
+	}
+	ws, ok := a.platformSpaces[platform]
+	return ws, ok
+}
+
 func (a *App) syncPage() {
 	if !isWorkPage(a.tab) || a.statePage == a.tab {
 		return
@@ -224,32 +699,31 @@ func (a *App) syncPage() {
 	a.parked[a.statePage] = a.capturePage()
 	next, ok := a.parked[a.tab]
 	if !ok {
-		next = pageState{srcSel: -1}
-		if a.tab == pageWash {
-			next.prompts = a.defaultWashPrompt()
-		} else if a.tab == pageFission {
-			next.prompts = DefaultFissionPrompt
-		}
+		next = defaultPageStateFor(a.selectedPlatform(), a.tab)
 	}
 	a.statePage = a.tab
 	a.restorePage(next)
 }
 
 func (a *App) stateOf(page int) pageState {
+	return a.stateOfFor(a.selectedPlatform(), page)
+}
+
+func (a *App) stateOfFor(platform string, page int) pageState {
 	a.syncPage()
-	if page == a.statePage {
-		return a.capturePage()
+	if platform == a.selectedPlatform() {
+		if page == a.statePage {
+			return a.capturePage()
+		}
+		if s, ok := a.parked[page]; ok {
+			return s
+		}
+		return defaultPageStateFor(platform, page)
 	}
-	if s, ok := a.parked[page]; ok {
-		return s
+	if ws, ok := a.platformSpaces[platform]; ok {
+		return workspacePageState(ws, platform, page)
 	}
-	s := pageState{srcSel: -1}
-	if page == pageWash {
-		s.prompts = a.defaultWashPrompt()
-	} else if page == pageFission {
-		s.prompts = DefaultFissionPrompt
-	}
-	return s
+	return defaultPageStateFor(platform, page)
 }
 
 func (a *App) onPage(page int, fn func()) {
@@ -268,12 +742,7 @@ func (a *App) onPage(page int, fn func()) {
 	a.parked[prev] = a.capturePage()
 	cur, ok := a.parked[page]
 	if !ok {
-		cur = pageState{srcSel: -1}
-		if page == pageWash {
-			cur.prompts = a.defaultWashPrompt()
-		} else if page == pageFission {
-			cur.prompts = DefaultFissionPrompt
-		}
+		cur = defaultPageStateFor(a.selectedPlatform(), page)
 	}
 	a.statePage = page
 	a.restorePage(cur)
@@ -281,6 +750,35 @@ func (a *App) onPage(page int, fn func()) {
 	a.parked[page] = a.capturePage()
 	a.statePage = prev
 	a.restorePage(a.parked[prev])
+}
+
+func (a *App) onWorkspace(platform string, page int, fn func()) {
+	if fn == nil {
+		return
+	}
+	if platform == "" || platform == a.selectedPlatform() {
+		a.onPage(page, fn)
+		return
+	}
+	a.syncPage()
+	prevPlatform := a.selectedPlatform()
+	prevDoubao, prevQianwen, prevQwenIntl := a.platDoubao, a.platQianwen, a.platQwenIntl
+	if a.platformSpaces == nil {
+		a.platformSpaces = map[string]platformWorkspace{}
+	}
+	a.platformSpaces[prevPlatform] = a.capturePlatformWorkspace()
+	targetWS, ok := a.platformSpaces[platform]
+	if !ok {
+		targetWS = defaultPlatformWorkspace(platform)
+	}
+	a.platDoubao = platform == "豆包"
+	a.platQianwen = platform == "千问"
+	a.platQwenIntl = platform == "千问国际"
+	a.restorePlatformWorkspace(targetWS, platform)
+	a.onPage(page, fn)
+	a.platformSpaces[platform] = a.capturePlatformWorkspace()
+	a.platDoubao, a.platQianwen, a.platQwenIntl = prevDoubao, prevQianwen, prevQwenIntl
+	a.restorePlatformWorkspace(a.platformSpaces[prevPlatform], prevPlatform)
 }
 
 func isWorkPage(tab int) bool {
@@ -325,7 +823,43 @@ func workspacePageKey(page int) string {
 	return store.PageGen
 }
 
+func workspacePageKeyFor(platform string, page int) string {
+	switch platform {
+	case "千问":
+		if page == pageFission {
+			return store.PageFissionQianwen
+		}
+		if page == pageWash {
+			return store.PageWashQianwen
+		}
+		return store.PageGenQianwen
+	case "千问国际":
+		if page == pageFission {
+			return store.PageFissionQwenIntl
+		}
+		if page == pageWash {
+			return store.PageWashQwenIntl
+		}
+		return store.PageGenQwenIntl
+	}
+	return workspacePageKey(page)
+}
+
 func (a *App) sessionID(page int) int64 {
+	return a.sessionIDFor(a.selectedPlatform(), page)
+}
+
+func (a *App) sessionIDFor(platform string, page int) int64 {
+	if platform != a.selectedPlatform() {
+		ws := a.platformSpaces[platform]
+		if page == pageFission {
+			return ws.fissionSession
+		}
+		if page == pageWash {
+			return ws.washSession
+		}
+		return ws.genSession
+	}
 	if page == pageFission {
 		return a.fissionSession
 	}
@@ -336,6 +870,28 @@ func (a *App) sessionID(page int) int64 {
 }
 
 func (a *App) setSessionID(page int, id int64) {
+	a.setSessionIDFor(a.selectedPlatform(), page, id)
+}
+
+func (a *App) setSessionIDFor(platform string, page int, id int64) {
+	if platform != a.selectedPlatform() {
+		if a.platformSpaces == nil {
+			a.platformSpaces = map[string]platformWorkspace{}
+		}
+		ws, ok := a.platformSpaces[platform]
+		if !ok {
+			ws = defaultPlatformWorkspace(platform)
+		}
+		if page == pageFission {
+			ws.fissionSession = id
+		} else if page == pageWash {
+			ws.washSession = id
+		} else {
+			ws.genSession = id
+		}
+		a.platformSpaces[platform] = ws
+		return
+	}
 	if page == pageFission {
 		a.fissionSession = id
 		return
@@ -347,69 +903,159 @@ func (a *App) setSessionID(page int, id int64) {
 	a.genSession = id
 }
 
-func promptMeansContent(page int, rawPrompts string) bool {
-	p := strings.TrimSpace(rawPrompts)
-	if page == pageWash {
-		return p != "" && p != DefaultWashPrompt && p != prompts.DoubaoWashPrompt
-	}
-	if page == pageFission {
-		return p != "" && p != DefaultFissionPrompt
-	}
-	return p != ""
-}
-
-func (a *App) workspaceHasContent(page int) bool {
-	st := a.stateOf(page)
-	return len(st.sources) > 0 || promptMeansContent(page, st.prompts) || len(st.queue) > 0
-}
-
 func (a *App) persistWorkspace(page int) bool {
+	return a.persistWorkspaceFor(a.selectedPlatform(), page)
+}
+
+func (a *App) persistWorkspaceFor(platform string, page int) bool {
 	if a == nil || a.store == nil {
 		return false
 	}
 	if a.persistDeferral > 0 {
 		if a.dirtyWorkspace == nil {
-			a.dirtyWorkspace = map[int]struct{}{}
+			a.dirtyWorkspace = map[workspaceSlot]struct{}{}
 		}
-		a.dirtyWorkspace[page] = struct{}{}
+		a.dirtyWorkspace[workspaceSlot{platform: platform, page: page}] = struct{}{}
 		return true
 	}
-	return a.writeWorkspace(page)
+	return a.writeWorkspaceFor(platform, page)
 }
 
 func (a *App) writeDirtyWorkspaces() {
 	if a == nil || a.store == nil || len(a.dirtyWorkspace) == 0 {
 		return
 	}
-	pages := make([]int, 0, len(a.dirtyWorkspace))
-	for p := range a.dirtyWorkspace {
-		pages = append(pages, p)
+	slots := make([]workspaceSlot, 0, len(a.dirtyWorkspace))
+	for sl := range a.dirtyWorkspace {
+		slots = append(slots, sl)
 	}
 	clear(a.dirtyWorkspace)
-	for _, p := range pages {
-		a.writeWorkspace(p)
+	for _, sl := range slots {
+		a.writeWorkspaceFor(sl.platform, sl.page)
 	}
 }
 
+func (a *App) stopRunPersistTimer() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	if a.runPersistTimer != nil {
+		a.runPersistTimer.Stop()
+		a.runPersistTimer = nil
+	}
+	a.mu.Unlock()
+}
+
+func (a *App) ensureRunPersistTimer() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	if a.quitting || a.runPersistTimer != nil {
+		a.mu.Unlock()
+		return
+	}
+	wait := runPersistCoalesceWindow
+	if wait <= 0 {
+		wait = time.Millisecond
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(wait, func() {
+		a.mu.Lock()
+		if a.runPersistTimer == timer {
+			a.runPersistTimer = nil
+		}
+		quitting := a.quitting
+		a.mu.Unlock()
+		if !quitting {
+			a.postUI(a.flushRunWorkspaceUpdate)
+		}
+	})
+	a.runPersistTimer = timer
+	a.mu.Unlock()
+}
+
+func (a *App) scheduleRunWorkspaceUpdate(page int) {
+	a.scheduleRunWorkspaceUpdateFor(a.selectedPlatform(), page)
+}
+
+func (a *App) scheduleRunWorkspaceUpdateFor(platform string, page int) {
+	if a == nil {
+		return
+	}
+	if a.runPersistDirty == nil {
+		a.runPersistDirty = map[workspaceSlot]struct{}{}
+	}
+	a.runPersistDirty[workspaceSlot{platform: platform, page: page}] = struct{}{}
+	a.runEmitPending = true
+	if a.inFlush.Load() {
+		a.flushEmitted.Store(true)
+	}
+}
+
+func (a *App) flushRunWorkspaceUpdate() {
+	if a == nil {
+		return
+	}
+	a.stopRunPersistTimer()
+	if a.isQuitting() {
+		return
+	}
+	if len(a.runPersistDirty) > 0 {
+		slots := make([]workspaceSlot, 0, len(a.runPersistDirty))
+		for sl := range a.runPersistDirty {
+			slots = append(slots, sl)
+		}
+		slices.SortFunc(slots, func(x, y workspaceSlot) int {
+			if x.platform != y.platform {
+				return strings.Compare(x.platform, y.platform)
+			}
+			return x.page - y.page
+		})
+		clear(a.runPersistDirty)
+		for _, sl := range slots {
+			a.persistWorkspaceFor(sl.platform, sl.page)
+		}
+	}
+	if a.runEmitPending {
+		a.runEmitPending = false
+		a.emit("workbench")
+	}
+}
+
+func (a *App) cancelRunWorkspaceUpdate() {
+	if a == nil {
+		return
+	}
+	a.stopRunPersistTimer()
+	clear(a.runPersistDirty)
+	a.runEmitPending = false
+}
+
 func (a *App) writeWorkspace(page int) bool {
+	return a.writeWorkspaceFor(a.selectedPlatform(), page)
+}
+
+func (a *App) writeWorkspaceFor(platform string, page int) bool {
 	a.workspaceWrites++
-	st := a.stateOf(page)
+	st := a.stateOfFor(platform, page)
 	sess := store.Session{
-		ID:       a.sessionID(page),
-		Page:     workspacePageKey(page),
+		ID:       a.sessionIDFor(platform, page),
+		Page:     workspacePageKeyFor(platform, page),
 		Prompts:  st.prompts,
 		Sources:  a.washSourcesForSave(page, st),
 		Progress: st.progress,
 		ProgText: st.progText,
 		Updated:  time.Now().Unix(),
 	}
-	items := a.tasksForSession(page, a.tasksToSave(page))
+	items := a.tasksForSession(page, a.tasksToSaveFor(platform, page))
 	id, err := a.store.SaveActive(sess, items)
 	if err != nil {
 		logging.Log.Warning("保存工作区失败: %v", err)
 		return false
 	}
-	a.setSessionID(page, id)
+	a.setSessionIDFor(platform, page, id)
 	return true
 }
 
@@ -433,43 +1079,49 @@ func (a *App) washSourcesForSave(page int, st pageState) []store.SessionSource {
 }
 
 func (a *App) restoreWorkspace(page int) {
+	a.restoreWorkspaceFor(a.selectedPlatform(), page)
+}
+
+func (a *App) restoreWorkspaceFor(platform string, page int) {
 	if a == nil || a.store == nil {
 		return
 	}
-	sess, items, ok, err := a.store.ActiveSession(workspacePageKey(page))
+	sess, items, ok, err := a.store.ActiveSession(workspacePageKeyFor(platform, page))
 	if err != nil || !ok {
 		return
 	}
-	a.applySession(page, sess, items, false)
+	a.applySessionFor(platform, page, sess, items)
 }
 
-func (a *App) applySession(page int, sess store.Session, items []store.SessionTask, resetPick bool) {
-	a.setSessionID(page, sess.ID)
+func (a *App) applySession(page int, sess store.Session, items []store.SessionTask) {
+	a.applySessionFor(a.selectedPlatform(), page, sess, items)
+}
+
+func (a *App) applySessionFor(platform string, page int, sess store.Session, items []store.SessionTask) {
+	a.setSessionIDFor(platform, page, sess.ID)
 	if page == pageWash {
-		a.onPage(page, func() { a.applyWashSession(sess, items) })
+		a.onWorkspace(platform, page, func() { a.applyWashSession(sess, items) })
 		return
 	}
 	q := queueFromSession(items)
-	if page == pageHome {
-		if resetPick {
-			a.promptPick = ""
-			a.promptChoice = ""
-			a.genPromptChoice = choosePromptLabel
-		}
-	}
-	a.onPage(page, func() {
+	a.onWorkspace(platform, page, func() {
 		a.prompts = sess.Prompts
-		if page == pageFission && strings.TrimSpace(a.prompts) == "" {
-			a.prompts = DefaultFissionPrompt
+		if page == pageFission {
+			a.fissionPromptChoice = choosePromptLabel
+			if !a.skipImages && strings.TrimSpace(a.prompts) == "" {
+				a.prompts = DefaultFissionPrompt
+			}
 		}
 		if len(sess.Sources) > 0 {
 			a.sources = make([]sourceImage, 0, len(sess.Sources))
 			for _, src := range sess.Sources {
-				if data, err := os.ReadFile(src.Path); err == nil {
-					a.sources = append(a.sources, sourceImage{Path: src.Path, Hash: images.SHA256(data)})
-				} else {
-					a.sources = append(a.sources, sourceImage{Path: src.Path})
+				if page == pageHome {
+					if hash, ok := hashImageFile(src.Path); ok {
+						a.sources = append(a.sources, sourceImage{Path: src.Path, Hash: hash})
+						continue
+					}
 				}
+				a.sources = append(a.sources, sourceImage{Path: src.Path})
 			}
 		}
 		a.srcSel = -1
@@ -502,90 +1154,12 @@ func (a *App) applyWashSession(sess store.Session, items []store.SessionTask) {
 	a.progText = sess.ProgText
 }
 
-func (a *App) newWorkspace() {
-	if a.running {
-		return
-	}
-	page := a.statePage
-	if a.store != nil && a.workspaceHasContent(page) {
-		a.persistWorkspace(page)
-		if err := a.store.ArchiveSession(a.sessionID(page)); err != nil {
-			logging.Log.Warning("归档当前工作区失败: %v", err)
-			return
-		}
-	}
-	a.clearWorkspace(page)
-	a.historyOpen = false
-	a.emit("workbench")
-}
-
-func (a *App) clearWorkspace(page int) {
-	a.setSessionID(page, 0)
-	a.rewashUndo = nil
-	a.rewashCounts = nil
-	a.onPage(page, func() {
-		a.sources = nil
-		a.srcSel = -1
-		a.queue = nil
-		a.progress = 0
-		a.progText = ""
-		a.skipImages = false
-		switch page {
-		case pageWash:
-			a.prompts = a.defaultWashPrompt()
-			a.washPromptChoice = choosePromptLabel
-		case pageFission:
-			a.prompts = DefaultFissionPrompt
-		default:
-			a.prompts = ""
-			a.freeformPrompts = ""
-			a.promptPick = ""
-			a.promptChoice = ""
-			a.genPromptChoice = choosePromptLabel
-		}
-	})
-	a.dropStamps(page)
-}
-
-func (a *App) reopenSession(id int64) {
-	if a.running || a.store == nil || id <= 0 {
-		return
-	}
-	page := a.statePage
-	if id == a.sessionID(page) {
-		a.persistWorkspace(page)
-		a.historyOpen = false
-		return
-	}
-	sess, items, err := a.store.Session(id)
-	if err != nil {
-		logging.Log.Warning("读取历史会话失败: %v", err)
-		return
-	}
-	if !a.persistWorkspace(page) {
-		return
-	}
-	if err := a.store.ActivateSession(id); err != nil {
-		logging.Log.Warning("切换历史会话失败: %v", err)
-		return
-	}
-	a.rewashUndo = nil
-	a.rewashCounts = nil
-	a.applySession(page, sess, items, true)
-	a.historyOpen = false
-}
-
-func (a *App) deleteSession(id int64) {
-	if a.store == nil || id <= 0 {
-		return
-	}
-	if err := a.store.DeleteSession(id); err != nil {
-		logging.Log.Warning("删除历史会话失败: %v", err)
-	}
-}
-
 func (a *App) tasksToSave(page int) []tasks.Task {
-	if a.running && a.runPage == page && a.engine != nil {
+	return a.tasksToSaveFor(a.selectedPlatform(), page)
+}
+
+func (a *App) tasksToSaveFor(platform string, page int) []tasks.Task {
+	if a.running && a.runPage == page && (a.runPlatform == "" || a.runPlatform == platform) && a.engine != nil {
 		if view := a.engine.View(); view != nil {
 			items := view.Snapshot()
 			if page == pageFission && len(a.fissionRetryBase) > 0 {
@@ -594,7 +1168,7 @@ func (a *App) tasksToSave(page int) []tasks.Task {
 			return items
 		}
 	}
-	return a.stateOf(page).queue
+	return a.stateOfFor(platform, page).queue
 }
 
 func (a *App) tasksForSession(page int, items []tasks.Task) []store.SessionTask {
@@ -618,6 +1192,7 @@ func (a *App) tasksForSession(page int, items []tasks.Task) []store.SessionTask 
 			ElapsedMS:    t.Elapsed.Milliseconds(),
 			At:           finishedAt,
 			Undispatched: t.Undispatched,
+			QualityNote:  t.QualityNote,
 		})
 	}
 	a.rememberStamps(page, out)
@@ -652,6 +1227,7 @@ func queueFromSession(items []store.SessionTask) []tasks.Task {
 			Error:        item.Error,
 			Elapsed:      time.Duration(item.ElapsedMS) * time.Millisecond,
 			Undispatched: item.Undispatched,
+			QualityNote:  item.QualityNote,
 		}
 		if item.Source != "" {
 			t.Images = []string{item.Source}
@@ -681,15 +1257,6 @@ func (a *App) rememberStamps(page int, items []store.SessionTask) {
 	for _, it := range items {
 		key := stampKey(page, it.Ord, it.Status, it.Source, it.Outputs)
 		a.stamps[key] = it.At
-	}
-}
-
-func (a *App) dropStamps(page int) {
-	prefix := fmt.Sprintf("%d:", page)
-	for k := range a.stamps {
-		if strings.HasPrefix(k, prefix) {
-			delete(a.stamps, k)
-		}
 	}
 }
 
@@ -813,30 +1380,20 @@ func sameFissionSource(a, b string) bool {
 }
 
 func (a *App) promptExtras(page int, parts *promptParts) string {
-	effective := a.effectivePromptParts(page, parts)
-	extra := strings.TrimSpace(effective.text())
+	extra := ""
+	if parts != nil {
+		extra = strings.TrimSpace(parts.text())
+	}
 	if page == pageWash {
 		style := washStyleInstruction(a.washStyle)
 		if style != "" && extra != "" {
-			return style + "\n" + extra
+			return extra + "\n" + style
 		}
 		if style != "" {
 			return style
 		}
 	}
 	return extra
-}
-
-func (a *App) effectivePromptParts(page int, parts *promptParts) promptParts {
-	if parts == nil {
-		return promptParts{}
-	}
-	out := *parts
-	if page == pageWash && a.washStyle != "" && a.washStyle != washStyleOriginal {
-		// 特定洗图风格优先于冲突条目时保留用户明确开启项。
-		_ = pageWash
-	}
-	return out
 }
 
 // ---- Platform & Quota helpers ----
@@ -847,10 +1404,8 @@ func (a *App) selectedPlatform() string {
 		return "豆包"
 	case a.platQianwen:
 		return "千问"
-	case a.platAntigravity:
-		return agy.Platform
-	case a.platChatGPT:
-		return "ChatGPT"
+	case a.platQwenIntl:
+		return "千问国际"
 	default:
 		return "豆包"
 	}
@@ -858,22 +1413,37 @@ func (a *App) selectedPlatform() string {
 
 func (a *App) setSinglePlatform(platform string) bool {
 	switch platform {
-	case "豆包", "千问", agy.Platform, "ChatGPT":
-		previousDefault := a.defaultWashPrompt()
+	case "豆包", "千问", "千问国际":
+		hadPlatform := a.platDoubao || a.platQianwen || a.platQwenIntl
+		prevPlatform := a.selectedPlatform()
+		if !hadPlatform {
+			a.platDoubao = platform == "豆包"
+			a.platQianwen = platform == "千问"
+			a.platQwenIntl = platform == "千问国际"
+			a.platformAuto = false
+			return true
+		}
+		if prevPlatform == platform {
+			a.platformAuto = false
+			return true
+		}
+		a.syncPage()
+		if a.platformSpaces == nil {
+			a.platformSpaces = map[string]platformWorkspace{}
+		}
+		a.platformSpaces[prevPlatform] = a.capturePlatformWorkspace()
 		a.platDoubao = platform == "豆包"
 		a.platQianwen = platform == "千问"
-		a.platAntigravity = platform == agy.Platform
-		a.platChatGPT = platform == "ChatGPT"
+		a.platQwenIntl = platform == "千问国际"
 		a.platformAuto = false
-		// Switch only untouched defaults; custom requirements belong to the user.
-		if a.statePage == pageWash {
-			if prompts.SameText(a.prompts, previousDefault) {
-				a.prompts = a.defaultWashPrompt()
-			}
-		} else if wash, ok := a.parked[pageWash]; ok && prompts.SameText(wash.prompts, previousDefault) {
-			wash.prompts = a.defaultWashPrompt()
-			a.parked[pageWash] = wash
+		a.galleryOn = false
+		a.previewOn = false
+		a.previewPath = ""
+		nextWS, ok := a.platformSpaces[platform]
+		if !ok {
+			nextWS = defaultPlatformWorkspace(platform)
 		}
+		a.restorePlatformWorkspace(nextWS, platform)
 		return true
 	default:
 		return false
@@ -901,10 +1471,8 @@ func (a *App) stageEnabled(platform string) bool {
 		return a.platDoubao
 	case "千问":
 		return a.platQianwen
-	case agy.Platform:
-		return a.platAntigravity
-	case "ChatGPT":
-		return a.platChatGPT
+	case "千问国际":
+		return a.platQwenIntl
 	}
 	return false
 }
@@ -919,13 +1487,9 @@ func (a *App) shownDailyCapFor(platform string) int {
 		if a.dailyCapQianwenSet {
 			return clampInt(int(a.dailyCapQianwen), 0, 200)
 		}
-	case agy.Platform:
-		if a.dailyCapAgySet {
-			return clampInt(int(a.dailyCapAgy), 0, 200)
-		}
-	case "ChatGPT":
-		if a.dailyCapChatGPTSet {
-			return clampInt(int(a.dailyCapChatGPT), 0, 200)
+	case "千问国际":
+		if a.dailyCapQwenIntlSet {
+			return clampInt(int(a.dailyCapQwenIntl), 0, 200)
 		}
 	}
 	return a.shownDailyCap()
@@ -933,18 +1497,46 @@ func (a *App) shownDailyCapFor(platform string) int {
 
 func (a *App) dailyCaps() map[string]int {
 	return map[string]int{
-		"豆包":         a.shownDailyCap(),
-		"千问":         a.shownDailyCapFor("千问"),
-		agy.Platform: a.shownDailyCapFor(agy.Platform),
-		"ChatGPT":    a.shownDailyCapFor("ChatGPT"),
+		"豆包":   a.shownDailyCap(),
+		"千问":   a.shownDailyCapFor("千问"),
+		"千问国际": a.shownDailyCapFor("千问国际"),
 	}
 }
 
-func (a *App) taskConcurrency() int {
-	if a.concurrencyAuto {
-		return 0
+func (a *App) concurrencyAutoFor(platform string) bool {
+	switch platform {
+	case "千问":
+		return a.concurrencyAutoQianwen
+	case "千问国际":
+		return a.concurrencyAutoQwenIntl
+	default:
+		return a.concurrencyAuto
 	}
-	return 1
+}
+
+func (a *App) concurrencyMaxFor(platform string) int {
+	raw := a.concurrencyMax
+	switch platform {
+	case "千问":
+		raw = a.concurrencyMaxQianwen
+	case "千问国际":
+		raw = a.concurrencyMaxQwenIntl
+	}
+	return clampInt(int(raw), tasks.PlatformInFlight, tasks.MaxPlatformInFlight)
+}
+
+func (a *App) taskConcurrencyFor(platform string) int {
+	if !a.concurrencyAutoFor(platform) {
+		return 1
+	}
+	if maxN := a.concurrencyMaxFor(platform); maxN > tasks.PlatformInFlight {
+		return maxN
+	}
+	return 0
+}
+
+func (a *App) taskConcurrency() int {
+	return a.taskConcurrencyFor(a.selectedPlatform())
 }
 
 // ---- Workbench task execution ----
@@ -952,35 +1544,48 @@ func (a *App) taskConcurrency() int {
 func (a *App) workbenchPlan(rows []store.Browser) WorkbenchPlan {
 	promptList := a.taskPromptList()
 	var sources []string
-	if a.statePage == pageWash {
+	hasImages := false
+	hasPrompts := false
+	switch a.statePage {
+	case pageWash:
 		sources = a.washPendingPaths()
-	} else if a.statePage != pageHome || a.batchMode == batchImage {
-		sources = a.batchImages()
+		hasImages = len(sources) > 0
+	case pageFission:
+		if a.skipImages {
+			hasPrompts = len(promptList) == 4
+		} else {
+			sources = a.batchImages()
+			hasImages = len(sources) == 1
+		}
+	default:
+		if a.batchMode == batchImage {
+			sources = a.batchImages()
+			hasImages = len(sources) > 0
+		} else {
+			hasPrompts = len(promptList) > 0 || strings.TrimSpace(a.promptExtras(pageHome, a.currentPromptParts())) != ""
+		}
 	}
 	var snaps []AccountSnap
 	for _, b := range rows {
 		snaps = append(snaps, AccountSnap{
 			Platform:  b.Platform,
 			LoggedIn:  b.IsLoggedIn,
-			Extension: b.ExtAccount != "",
 			Disabled:  b.Disabled,
 			Health:    b.Health,
 			CoolUntil: b.CoolUntil,
 		})
 	}
 	return PlanWorkbench(WorkbenchInput{
-		Running:         a.running,
-		HasImages:       len(sources) > 0,
-		HasPrompts:      len(promptList) > 0,
-		AutoPlatform:    false,
-		OnlyPlatform:    a.selectedPlatform(),
-		WantDoubao:      a.platDoubao,
-		WantQianwen:     a.platQianwen,
-		WantAntigravity: a.platAntigravity,
-		WantChatGPT:     a.platChatGPT,
-		ExtensionMode:   a.extensionTasks(),
-		Accounts:        snaps,
-		Now:             time.Now(),
+		Running:      a.running,
+		HasImages:    hasImages,
+		HasPrompts:   hasPrompts,
+		AutoPlatform: false,
+		OnlyPlatform: a.selectedPlatform(),
+		WantDoubao:   a.platDoubao,
+		WantQianwen:  a.platQianwen,
+		WantQwenIntl: a.platQwenIntl,
+		Accounts:     snaps,
+		Now:          time.Now(),
 	})
 }
 
@@ -995,6 +1600,12 @@ func (a *App) startTasks() {
 	paths := a.batchImages()
 	if a.washing() {
 		paths = a.washPendingPaths()
+	} else if a.fissioning() {
+		if a.skipImages {
+			paths = nil
+		} else if len(paths) > 1 {
+			paths = paths[:1]
+		}
 	} else if a.statePage == pageHome && a.batchMode == batchText {
 		paths = nil
 	}
@@ -1005,16 +1616,27 @@ func (a *App) retryTasks(items []tasks.Task) {
 	if a.running || len(items) == 0 || a.engine == nil {
 		return
 	}
+	var paths []string
 	if a.fissioning() {
-		if len(a.sources) != 1 {
-			a.progText = "请先添加该结果对应的母图"
-			return
-		}
+		hasImageTask := false
 		for _, task := range items {
-			if len(task.Images) != 1 || !sameFissionSource(task.Images[0], a.sources[0].Path) {
-				a.progText = "请切换到该结果对应的母图再重新生成"
+			if len(task.Images) > 0 {
+				hasImageTask = true
+				break
+			}
+		}
+		if hasImageTask {
+			if len(a.sources) != 1 {
+				a.progText = "请先添加该结果对应的母图"
 				return
 			}
+			for _, task := range items {
+				if len(task.Images) != 1 || !sameFissionSource(task.Images[0], a.sources[0].Path) {
+					a.progText = "请切换到该结果对应的母图再重新生成"
+					return
+				}
+			}
+			paths = []string{a.sources[0].Path}
 		}
 	}
 	var platforms []string
@@ -1027,10 +1649,6 @@ func (a *App) retryTasks(items []tasks.Task) {
 		}
 		promptList = append(promptList, t.Prompt)
 	}
-	var paths []string
-	if a.statePage == pageFission && len(a.sources) == 1 {
-		paths = []string{a.sources[0].Path}
-	}
 	a.runQueue(platforms, promptList, paths, items)
 }
 
@@ -1039,49 +1657,42 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		return
 	}
 	if retry == nil && !a.fissioning() {
-		effective := a.effectivePromptParts(a.statePage, a.currentPromptParts())
-		if err := effective.validate(); err != nil {
+		if err := a.currentPromptParts().validate(); err != nil {
 			a.progText = err.Error()
 			logging.Log.Errorf("%s", a.progText)
 			return
 		}
 	}
 	for _, platform := range platforms {
-		if platform == "豆包" {
-			if err := a.doubaoOutputSize().Validate(); err != nil {
-				a.progText = "豆包输出尺寸：" + err.Error()
+		if platform == "豆包" || platform == "千问" || platform == "千问国际" {
+			if err := a.outputSizeFor(platform).Validate(); err != nil {
+				a.progText = platform + "输出尺寸：" + err.Error()
 				logging.Log.Errorf("%s", a.progText)
 				return
 			}
 			break
 		}
 	}
-	if !a.extensionTasks() {
-		rows := a.configuredBrowsers()
-		for _, platform := range platforms {
-			if platform != "豆包" && platform != "千问" && platform != "ChatGPT" {
-				continue
+	rows := a.configuredBrowsers()
+	for _, platform := range platforms {
+		if platform != "豆包" && platform != "千问" && platform != "千问国际" {
+			continue
+		}
+		kinds := browser.AccountEngines(rows, platform, a.browserBackend)
+		ready := false
+		for _, kind := range kinds {
+			if _, ready = browser.InstalledRuntime(browser.ConfigDir(), kind); ready {
+				break
 			}
-			kinds := browser.AccountEngines(rows, platform, a.browserBackend)
-			ready := false
-			for _, kind := range kinds {
-				if _, ready = browser.InstalledRuntime(browser.ConfigDir(), kind); ready {
-					break
-				}
+		}
+		if !ready {
+			a.refreshDetected()
+			if !a.runtimeBusy && browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, a.browserBackend) {
+				a.runtimeStatus = "请先安装 " + browser.CanonicalBackend(a.browserBackend) + "，再返回任务页重试"
 			}
-			if !ready {
-				if !slices.Contains(kinds, browser.CanonicalBackend(a.browserBackend)) {
-					a.progText = "请在「浏览器」页选择「" + kinds[0] + " 账号环境」并安装，再返回重试"
-					return
-				}
-				a.refreshDetected()
-				if !a.camoufoxBusy && browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, a.browserBackend) {
-					a.camoufoxStatus = "请先安装 " + browser.CanonicalBackend(a.browserBackend) + "，再返回任务页重试"
-				}
-				a.tab = pageBrowser
-				a.emit("shell", "browsers")
-				return
-			}
+			a.tab = pageBrowser
+			a.emit("shell", "browsers")
+			return
 		}
 	}
 	dir, err := EnsureOutputDir(DefaultOutputDir(a.outputPath, mustWd()))
@@ -1102,12 +1713,23 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	a.fissionRetryBase = nil
 	if page == pageFission && retry != nil {
 		a.fissionRetryBase = append([]tasks.Task(nil), previous.queue...)
+		retrying := make(map[string]bool, len(retry))
+		for _, item := range retry {
+			retrying[item.Platform+"\x00"+item.Prompt] = true
+		}
+		for _, item := range previous.queue {
+			if item.Status == tasks.StatusSuccess && len(item.Results) == 1 && !retrying[item.Platform+"\x00"+item.Prompt] {
+				opts.FissionKeepPaths = append(opts.FissionKeepPaths, item.Results[0])
+			}
+		}
 	}
-	previousRunPage, previousUseRunView := a.runPage, a.useRunView
+	previousRunPage, previousRunPlatform, previousUseRunView := a.runPage, a.runPlatform, a.useRunView
+	runPlatform := a.selectedPlatform()
 	a.runPage = page
+	a.runPlatform = runPlatform
 	a.running = true
 	a.useRunView = false
-	a.resultsDoneOpen = false
+	a.resultsDoneOpen = true
 	a.rewashUndo = nil
 	if page == pageWash {
 		a.onPage(page, func() { a.beginWashRun() })
@@ -1130,14 +1752,14 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		a.progress = 0
 		a.progText = ""
 	}
-	if !a.persistWorkspace(page) {
+	if !a.persistWorkspaceFor(runPlatform, page) {
 		a.onPage(page, func() {
 			a.queue, a.progress = previous.queue, previous.progress
 			a.progText = "保存任务记录失败，未开始任务，请检查配置数据库"
 		})
 		a.running = false
 		a.fissionRetryBase = nil
-		a.runPage, a.useRunView = previousRunPage, previousUseRunView
+		a.runPage, a.runPlatform, a.useRunView = previousRunPage, previousRunPlatform, previousUseRunView
 		return
 	}
 	a.engine.SetSolver(captcha.Build(a.captchaConfig()))
@@ -1147,23 +1769,21 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 			a.postUI(func() {
 				a.useRunView = true
 				if page == pageWash {
-					a.onPage(page, func() { a.applyWashTask(task) })
+					a.onWorkspace(runPlatform, page, func() { a.applyWashTask(task) })
 				}
-				a.persistWorkspace(page)
-				a.emit("workbench")
+				a.scheduleRunWorkspaceUpdateFor(runPlatform, page)
 			})
 		}
 		onProgress := func(p tasks.Progress) {
 			a.postUI(func() {
 				a.useRunView = true
-				a.onPage(page, func() {
+				a.onWorkspace(runPlatform, page, func() {
 					if p.Total > 0 {
 						a.progress = float64(p.Done) / float64(p.Total)
 					}
 					a.progText = fmt.Sprintf("%d / %d", p.Done, p.Total)
 				})
-				a.persistWorkspace(page)
-				a.emit("workbench")
+				a.scheduleRunWorkspaceUpdateFor(runPlatform, page)
 			})
 		}
 		var runErr error
@@ -1191,12 +1811,10 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 			}
 			if a.manager != nil {
 				for i := range a.browserRows {
-					if a.browserRows[i].ExtAccount == "" {
-						a.browserRows[i].IsRunning = a.manager.IsRunning(a.browserRows[i].ID)
-					}
+					a.browserRows[i].IsRunning = a.manager.IsRunning(a.browserRows[i].ID)
 				}
 			}
-			a.onPage(page, func() {
+			a.onWorkspace(runPlatform, page, func() {
 				if page == pageFission && checked != nil {
 					a.queue = checked
 				} else if view := a.engine.View(); view != nil && view != previousView {
@@ -1214,7 +1832,8 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 					a.progText = taskResultSummary(a.queue)
 				}
 			})
-			a.persistWorkspace(page)
+			a.cancelRunWorkspaceUpdate()
+			a.persistWorkspaceFor(runPlatform, page)
 			a.maybeInstallPending()
 			a.emit("workbench", "shell", "browsers")
 		})
@@ -1233,18 +1852,36 @@ func (a *App) batchImages() []string {
 }
 
 func (a *App) addLoaded(page int, loaded []sourceImage) {
+	a.addLoadedFor(a.selectedPlatform(), page, loaded)
+}
+
+func (a *App) addLoadedFor(platform string, page int, loaded []sourceImage) {
 	if len(loaded) == 0 {
 		return
 	}
-	a.onPage(page, func() {
+	switchedToImage := false
+	a.onWorkspace(platform, page, func() {
 		if page == pageFission {
 			a.sources = loaded[:1]
 			a.srcSel = 0
+			a.skipImages = false
+			if a.store != nil {
+				a.store.SetInt(platformSettingKey(platform, "fission_skip_images"), 0)
+			}
 		} else {
 			a.appendSources(loaded, page == pageWash)
+			if page == pageHome {
+				switchedToImage = a.switchBatchMode(batchImage, true)
+				if !switchedToImage && a.store != nil {
+					a.store.Set(platformSettingKey(platform, "batch_mode"), "image")
+				}
+			}
 		}
 	})
-	a.persistWorkspace(page)
+	a.persistWorkspaceFor(platform, page)
+	if switchedToImage {
+		a.pushToast("info", fmt.Sprintf("已导入 %d 张参考图，已切换至图生图", len(loaded)))
+	}
 	a.emit("workbench")
 }
 
@@ -1283,7 +1920,7 @@ type resultAccountBucket struct {
 }
 
 func (a *App) currentQueueItems() []tasks.Task {
-	if a.running && a.runPage == a.statePage && a.useRunView && a.engine != nil {
+	if a.running && a.runPage == a.statePage && (a.runPlatform == "" || a.runPlatform == a.selectedPlatform()) && a.useRunView && a.engine != nil {
 		if view := a.engine.View(); view != nil {
 			items := view.Snapshot()
 			if a.statePage == pageFission && len(a.fissionRetryBase) > 0 {
@@ -1300,19 +1937,16 @@ func (a *App) queueItems() []tasks.Task {
 }
 
 func (a *App) classifyResultRows(items []tasks.Task, cols int) (activeRows, issueRows []resultRow, doneTiles []resultTile, doneTasks int) {
+	return a.classifyResultRowsWithBrowsers(items, cols, a.configuredBrowsers())
+}
+
+func (a *App) classifyResultRowsWithBrowsers(items []tasks.Task, cols int, browsers []store.Browser) (activeRows, issueRows []resultRow, doneTiles []resultTile, doneTasks int) {
 	if cols < 1 {
 		cols = 1
 	}
-	browsers := a.configuredBrowsers()
 	byID := make(map[int64]string, len(browsers))
 	for _, b := range browsers {
-		title := accountLabel(b)
-		if b.Platform == agy.Platform && strings.TrimSpace(b.UserDataDir) != "" {
-			if email := strings.TrimSpace(agy.Email(b.UserDataDir)); email != "" {
-				title = email
-			}
-		}
-		byID[b.ID] = title
+		byID[b.ID] = accountLabel(b)
 	}
 	var order []string
 	buckets := map[string]*resultAccountBucket{}
@@ -1523,7 +2157,7 @@ func tileFailure(task tasks.Task) (reason, action string, retry []tasks.Task) {
 		}
 		return hint.Sentence, label, []tasks.Task{task}
 	case tasks.StatusAwaitUser:
-		return "请在弹出的窗口里完成验证", "", nil
+		return "点击「去验证」在内置浏览器中完成验证", "", nil
 	default:
 		return "", "", nil
 	}
@@ -1542,34 +2176,21 @@ func (a *App) accountBoard(rows []store.Browser) tasks.Board {
 	if a == nil {
 		return tasks.Board{}
 	}
-	caps := tasks.CapsFrom(a.dailyCaps(), tasks.DefaultDailyCap)
-	var board tasks.Board
-	if a.engine != nil {
-		board = a.engine.AccountBoardCaps(time.Now(), caps)
-	} else {
-		board = tasks.BoardFromCaps(a.laneBrowsers(), a.queue, caps, time.Now())
+	if rows == nil {
+		rows = a.configuredBrowsers()
 	}
-	return a.attachAgyLanes(board, rows)
+	caps := tasks.CapsFrom(a.dailyCaps(), tasks.DefaultDailyCap)
+	if a.engine != nil {
+		return a.engine.AccountBoardRows(rows, time.Now(), caps)
+	}
+	return tasks.BoardFromCaps(rows, a.queue, caps, time.Now())
 }
 
 func (a *App) laneBrowsers() []store.Browser {
-	rows := a.configuredBrowsers()
-	if a.extensionTasks() {
-		return rows
-	}
-	out := make([]store.Browser, 0, len(rows))
-	for _, b := range rows {
-		if b.ExtAccount == "" {
-			out = append(out, b)
-		}
-	}
-	return out
+	return a.configuredBrowsers()
 }
 
 func laneAccountTitle(ln tasks.AccountLane) string {
-	if ln.Platform == agy.Platform && strings.TrimSpace(ln.Email) != "" {
-		return strings.TrimSpace(ln.Email)
-	}
 	if name := strings.TrimSpace(ln.Name); name != "" {
 		return name
 	}
@@ -1620,6 +2241,7 @@ func (a *App) replaceCardImage(taskIndex int, replacementPath string) error {
 		items[i].Results = []string{dst}
 		items[i].Status = tasks.StatusSuccess
 		items[i].Error = ""
+		items[i].QualityNote = ""
 		if a.statePage == pageWash {
 			a.applyWashTask(items[i])
 		}

@@ -7,226 +7,200 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/core"
-	"github.com/nsgo-dev/nsgo/tsx"
-
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/logging"
-	"github.com/xxww0098/tulai/internal/wizard"
 )
 
-func init() {
-	tsx.RegisterFunctions("tulai/backend", map[string]any{
-		"watchEvents":   watchEventsBridge,
-		"getShellState": getShellStateBridge,
-		"setTab":        setTabBridge,
-		"setDarkTheme":  setDarkThemeBridge,
-		"setNavFolded":  setNavFoldedBridge,
-		"setLogOpen":    setLogOpenBridge,
-		"getLogsState":  getLogsStateBridge,
-		"setLogFilter":  setLogFilterBridge,
-		"toggleLogItem": toggleLogItemBridge,
-		"clearLogs":     clearLogsBridge,
-		"exportLogs":    exportLogsBridge,
-		"copyText":      copyTextBridge,
-		"openPath":      openPathBridge,
-		"revealPath":    revealPathBridge,
-		"pickFiles":     pickFilesBridge,
-		"pickFolder":    pickFolderBridge,
-		"wizardState":   wizardStateBridge,
-		"wizardAction":  wizardActionBridge,
-		"openWizard":    openWizardBridge,
-		"finishWizard":  finishWizardBridge,
-		"updateAction":  updateActionBridge,
-		"quitApp":       quitAppBridge,
-	})
+// CoreService exposes shell, logging, desktop OS helpers, onboarding wizard,
+// updater, and lifecycle IPCs to the MyGo frontend.
+type CoreService struct {
+	app *App
 }
 
+// NavBadgeDTO describes a compact numeric badge.
 type NavBadgeDTO struct {
-	Count int
-	Tone  string
+	Count int    `json:"count"`
+	Tone  string `json:"tone"`
 }
 
+// UpdateStateDTO describes the in-app release updater state.
 type UpdateStateDTO struct {
-	Visible      bool
-	Version      string
-	Current      string
-	Checking     bool
-	Downloading  bool
-	Fraction     float64
-	ProgressText string
-	Notes        string
-	DetailsOpen  bool
-	NotesOpen    bool
-	Err          string
-	Installed    string
-	Deferred     bool
+	Visible      bool    `json:"visible"`
+	Version      string  `json:"version"`
+	Current      string  `json:"current"`
+	Checking     bool    `json:"checking"`
+	Downloading  bool    `json:"downloading"`
+	Fraction     float64 `json:"fraction"`
+	ProgressText string  `json:"progressText"`
+	Notes        string  `json:"notes"`
+	DetailsOpen  bool    `json:"detailsOpen"`
+	NotesOpen    bool    `json:"notesOpen"`
+	Err          string  `json:"err"`
+	Installed    string  `json:"installed"`
+	Deferred     bool    `json:"deferred"`
 }
 
+// PoolSummaryDTO summarizes account readiness across platforms.
 type PoolSummaryDTO struct {
-	Ready   int
-	Busy    int
-	Issue   int
-	Total   int
-	Summary string
+	Ready   int    `json:"ready"`
+	Busy    int    `json:"busy"`
+	Issue   int    `json:"issue"`
+	Total   int    `json:"total"`
+	Summary string `json:"summary"`
 }
 
+// PlatformNavDTO summarizes account status for one provider in the sidebar.
+type PlatformNavDTO struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Ready int    `json:"ready"`
+	Busy  int    `json:"busy"`
+	Total int    `json:"total"`
+}
+
+// ShellStateDTO is the top-level shell snapshot pushed to the frontend.
 type ShellStateDTO struct {
-	Tab          int
-	Dark         bool
-	NavCollapsed bool
-	NavManual    bool
-	LogOpen      bool
-	WizardOn     bool
-	Running      bool
-	RunPage      int
-	ProgText     string
-	Progress     float64
-	LogTotal     int
-	LogWarnings  int
-	LogErrors    int
-	Pool         PoolSummaryDTO
-	Update       UpdateStateDTO
-	ToastSeq     int
-	ToastText    string
-	ToastLevel   string
-	Version      string
-	OS           string
+	Tab          int              `json:"tab"`
+	Platform     string           `json:"platform"`
+	Platforms    []PlatformNavDTO `json:"platforms"`
+	Dark         bool             `json:"dark"`
+	NavCollapsed bool             `json:"navCollapsed"`
+	NavManual    bool             `json:"navManual"`
+	LogOpen      bool             `json:"logOpen"`
+	WizardOn     bool             `json:"wizardOn"`
+	Running      bool             `json:"running"`
+	RunPage      int              `json:"runPage"`
+	ProgText     string           `json:"progText"`
+	Progress     float64          `json:"progress"`
+	LogTotal     int              `json:"logTotal"`
+	LogWarnings  int              `json:"logWarnings"`
+	LogErrors    int              `json:"logErrors"`
+	Pool         PoolSummaryDTO   `json:"pool"`
+	Update       UpdateStateDTO   `json:"update"`
+	ToastSeq     int              `json:"toastSeq"`
+	ToastText       string           `json:"toastText"`
+	ToastLevel      string           `json:"toastLevel"`
+	Version         string           `json:"version"`
+	OS              string           `json:"os"`
+	MediaOrigin     string           `json:"mediaOrigin"`
+	DotMatrixEffect string           `json:"dotMatrixEffect"`
 }
 
+// LogEntryDTO represents a single entry in the log drawer.
 type LogEntryDTO struct {
-	Seq      int
-	Time     string
-	Level    string
-	Code     string
-	Source   string
-	Text     string
-	Detail   string
-	Elapsed  string
-	Expanded bool
+	Seq      int    `json:"seq"`
+	Time     string `json:"time"`
+	Level    string `json:"level"`
+	Code     string `json:"code"`
+	Source   string `json:"source"`
+	Text     string `json:"text"`
+	Detail   string `json:"detail"`
+	Elapsed  string `json:"elapsed"`
+	Expanded bool   `json:"expanded"`
 }
 
+// LogsStateDTO represents the filtered state of the log drawer.
 type LogsStateDTO struct {
-	Open       bool
-	Pick       int
-	Query      string
-	Source     string
-	Paused     bool
-	Sources    []string
-	Total      int
-	Shown      int
-	CountAll   int
-	CountDebug int
-	CountInfo  int
-	CountWarn  int
-	CountError int
-	LastAt     string
-	Entries    []LogEntryDTO
+	Open       bool          `json:"open"`
+	Pick       int           `json:"pick"`
+	Query      string        `json:"query"`
+	Source     string        `json:"source"`
+	Paused     bool          `json:"paused"`
+	Sources    []string      `json:"sources"`
+	Total      int           `json:"total"`
+	Shown      int           `json:"shown"`
+	CountAll   int           `json:"countAll"`
+	CountDebug int           `json:"countDebug"`
+	CountInfo  int           `json:"countInfo"`
+	CountWarn  int           `json:"countWarn"`
+	CountError int           `json:"countError"`
+	LastAt     string        `json:"lastAt"`
+	Entries    []LogEntryDTO `json:"entries"`
 }
 
+// WizardStepDTO represents one step in the first-run onboarding wizard.
 type WizardStepDTO struct {
-	ID    string
-	Title string
-	State string // upcoming / current / done
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	State string `json:"state"` // upcoming / current / done
 }
 
+// WizardStateDTO represents the first-run onboarding wizard snapshot.
 type WizardStateDTO struct {
-	On           bool
-	Step         string
-	Choice       string
-	First        bool
-	Steps        []WizardStepDTO
-	Phase        string
-	Note         string
-	Err          string
-	NavFailed    bool
-	AccountID    int64
-	AccountName  string
-	PlanBackend  string
-	PlanKind     string
-	PlanTitle    string
-	PlanDetail   string
-	PlanCanNext  bool
-	PlanBlocked  string
-	PlanNeedsDL  bool
-	CamBusy      bool
-	CamPercent   float64
-	CamStatus    string
-	AgyFound     bool
-	AgyPath      string
-	AgyCopied    bool
-	AgyCmd       string
-	AgyShell     string
-	AgyPageURL   string
-	AgyChooserOn bool
-	AgyChooser   AgyChooserDTO
-	AgyLoginOn   bool
-	AgyLogin     AgyLoginDTO
+	On             bool            `json:"on"`
+	Step           string          `json:"step"`
+	Choice         string          `json:"choice"`
+	First          bool            `json:"first"`
+	Steps          []WizardStepDTO `json:"steps"`
+	Phase          string          `json:"phase"`
+	Note           string          `json:"note"`
+	Err            string          `json:"err"`
+	NavFailed      bool            `json:"navFailed"`
+	AccountID      int64           `json:"accountId"`
+	AccountName    string          `json:"accountName"`
+	PlanBackend    string          `json:"planBackend"`
+	PlanKind       string          `json:"planKind"`
+	PlanTitle      string          `json:"planTitle"`
+	PlanDetail     string          `json:"planDetail"`
+	PlanCanNext    bool            `json:"planCanNext"`
+	PlanBlocked    string          `json:"planBlocked"`
+	PlanNeedsDL    bool            `json:"planNeedsDl"`
+	RuntimeBusy    bool            `json:"runtimeBusy"`
+	RuntimePercent float64         `json:"runtimePercent"`
+	RuntimeStatus  string          `json:"runtimeStatus"`
 }
 
-func watchEventsBridge(ctx context.Context, onEvent func(topic string)) error {
-	a := getApp()
-	if a == nil || onEvent == nil {
-		<-ctx.Done()
-		return nil
-	}
-	id, ch := a.subscribeEvents()
-	defer a.unsubscribeEvents(id)
-	for {
-		var first string
-		var ok bool
-		select {
-		case <-ctx.Done():
-			return nil
-		case first, ok = <-ch:
-			if !ok {
-				return nil
-			}
-		}
-
-		seen := map[string]bool{first: true}
-		order := []string{first}
-
-		for {
-			select {
-			case next, ok := <-ch:
-				if !ok {
-					onEvent(strings.Join(order, ","))
-					return nil
-				}
-				if !seen[next] {
-					seen[next] = true
-					order = append(order, next)
-				}
-			default:
-				goto sendBatch
-			}
-		}
-	sendBatch:
-		onEvent(strings.Join(order, ","))
+func defaultPlatformNavs() []PlatformNavDTO {
+	return []PlatformNavDTO{
+		{ID: "doubao", Name: "豆包"},
+		{ID: "qianwen", Name: "千问"},
+		{ID: "qwen_intl", Name: "千问国际"},
 	}
 }
 
-func getShellStateBridge() ShellStateDTO {
-	a := getApp()
+func (a *App) buildShellState() ShellStateDTO {
 	if a == nil {
-		return ShellStateDTO{OS: runtime.GOOS}
+		return ShellStateDTO{
+			Platform:        "豆包",
+			Platforms:       defaultPlatformNavs(),
+			Version:         currentVersion(),
+			OS:              runtime.GOOS,
+			MediaOrigin:     MediaOrigin(),
+			DotMatrixEffect: defaultDotMatrixEffect,
+		}
 	}
 	counts := logging.Log.Counts()
 	now := time.Now()
 	ready, busy, issue, total := 0, 0, 0, 0
-	activeAccounts := a.engine.ActiveAccounts()
+	platforms := defaultPlatformNavs()
+	platIndex := make(map[string]int, len(platforms))
+	for i, p := range platforms {
+		platIndex[p.Name] = i
+	}
+	var activeAccounts map[int64]bool
+	if a.engine != nil {
+		activeAccounts = a.engine.ActiveAccounts()
+	}
 	for _, b := range a.laneBrowsers() {
 		total++
+		idx, hasPlat := platIndex[b.Platform]
+		if hasPlat {
+			platforms[idx].Total++
+		}
 		if activeAccounts[b.ID] {
 			busy++
+			if hasPlat {
+				platforms[idx].Busy++
+			}
 			continue
 		}
-		if b.Disabled || !b.Usable(now) || (!b.IsLoggedIn && b.ExtAccount == "") {
+		if b.Disabled || !b.Usable(now) || !b.IsLoggedIn {
 			issue++
 			continue
 		}
 		ready++
+		if hasPlat {
+			platforms[idx].Ready++
+		}
 	}
 	summary := fmt.Sprintf("就绪 %d / %d", ready, total)
 	if busy > 0 {
@@ -236,6 +210,8 @@ func getShellStateBridge() ShellStateDTO {
 	}
 	return ShellStateDTO{
 		Tab:          a.tab,
+		Platform:     a.selectedPlatform(),
+		Platforms:    platforms,
 		Dark:         a.darkTheme,
 		NavCollapsed: a.navCollapsed,
 		NavManual:    a.navManual,
@@ -270,69 +246,103 @@ func getShellStateBridge() ShellStateDTO {
 			Installed:    a.updateInstalled,
 			Deferred:     a.updateDeferred,
 		},
-		ToastSeq:   a.toastSeq,
-		ToastText:  a.toastText,
-		ToastLevel: a.toastLevel,
-		Version:    currentVersion(),
-		OS:         runtime.GOOS,
+		ToastSeq:    a.toastSeq,
+		ToastText:   a.toastText,
+		ToastLevel:  a.toastLevel,
+		Version:         currentVersion(),
+		OS:              runtime.GOOS,
+		MediaOrigin:     a.ensureMedia().Origin(),
+		DotMatrixEffect: a.resolvedDotMatrixEffect(),
 	}
 }
 
-func setTabBridge(tab int) {
-	a := getApp()
-	if a == nil {
-		return
+// GetShellState returns the global shell, navigation, toast, pool, and update state.
+func (s *CoreService) GetShellState(ctx context.Context) ShellStateDTO {
+	if s.app == nil {
+		return (*App)(nil).buildShellState()
 	}
-	a.tab = tab
-	if isWorkPage(tab) {
-		a.syncPage()
-		a.noteWorkspacePage()
+	out, err := callValue(s.app, ctx, func() ShellStateDTO {
+		return s.app.buildShellState()
+	})
+	if err != nil {
+		return (*App)(nil).buildShellState()
 	}
-	if tab == pageBrowser {
-		// Navigation reads the shell and the destination together.
-		a.loadBrowserRows()
-	}
+	return out
 }
 
-func setDarkThemeBridge(dark bool) {
-	a := getApp()
-	if a == nil {
+// SetTab switches the active workspace or module tab.
+func (s *CoreService) SetTab(ctx context.Context, tab int) {
+	if s.app == nil {
 		return
 	}
-	a.darkTheme = dark
-	if a.store != nil {
-		if dark {
-			a.store.Set("ui_theme", "dark")
-		} else {
-			a.store.Set("ui_theme", "light")
+	_ = s.app.call(ctx, func() {
+		s.app.tab = tab
+		if isWorkPage(tab) {
+			s.app.syncPage()
+			s.app.noteWorkspacePage()
 		}
-	}
+		if tab == pageBrowser {
+			s.app.loadBrowserRows()
+		}
+		s.app.emit("shell")
+	})
 }
 
-func setNavFoldedBridge(folded bool) {
-	a := getApp()
-	if a == nil {
+// SetDarkTheme toggles dark mode, persists it to SQLite, and synchronizes native window chrome.
+func (s *CoreService) SetDarkTheme(ctx context.Context, dark bool) {
+	if s.app == nil {
 		return
 	}
-	a.navCollapsed = folded
-	a.navManual = true
+	_ = s.app.call(ctx, func() {
+		s.app.darkTheme = dark
+		if s.app.store != nil {
+			if dark {
+				s.app.store.Set("ui_theme", "dark")
+			} else {
+				s.app.store.Set("ui_theme", "light")
+			}
+		}
+		s.app.emit("shell")
+	})
+	if h := s.app.desktopHost(); h != nil {
+		h.SetDarkTheme(dark)
+	}
 }
 
-func setLogOpenBridge(open bool) {
-	a := getApp()
-	if a == nil {
+// SetNavFolded sets whether the sidebar navigation rail is folded.
+func (s *CoreService) SetNavFolded(ctx context.Context, folded bool) {
+	if s.app == nil {
 		return
 	}
-	a.logOpen = open
+	_ = s.app.call(ctx, func() {
+		s.app.navCollapsed = folded
+		s.app.navManual = true
+		s.app.emit("shell")
+	})
 }
 
-func getLogsStateBridge() LogsStateDTO {
-	a := getApp()
+// SetLogOpen opens or closes the floating log console drawer.
+func (s *CoreService) SetLogOpen(ctx context.Context, open bool) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.logOpen = open
+		s.app.emit("logs", "shell")
+	})
+}
+
+func (a *App) buildLogsState() LogsStateDTO {
 	if a == nil {
-		return LogsStateDTO{}
+		return LogsStateDTO{Sources: []string{}, Entries: []LogEntryDTO{}}
 	}
 	if !a.logOpen {
-		return LogsStateDTO{Open: false, Total: logging.Log.Counts().All}
+		return LogsStateDTO{
+			Open:    false,
+			Total:   logging.Log.Counts().All,
+			Sources: []string{},
+			Entries: []LogEntryDTO{},
+		}
 	}
 	all := logging.Log.Entries()
 	counts := logging.CountLevels(all)
@@ -378,13 +388,17 @@ func getLogsStateBridge() LogsStateDTO {
 	if len(all) > 0 {
 		lastAt = all[len(all)-1].Time.Local().Format("15:04:05.000")
 	}
+	sources := logging.Sources(all)
+	if sources == nil {
+		sources = []string{}
+	}
 	return LogsStateDTO{
 		Open:       true,
 		Pick:       a.logPick,
 		Query:      a.logQuery,
 		Source:     a.logSource,
 		Paused:     a.logPaused,
-		Sources:    logging.Sources(all),
+		Sources:    sources,
 		Total:      len(all),
 		Shown:      totalShown,
 		CountAll:   counts.All,
@@ -397,133 +411,179 @@ func getLogsStateBridge() LogsStateDTO {
 	}
 }
 
-func setLogFilterBridge(pick int, query, source string, paused bool) {
-	a := getApp()
-	if a == nil {
-		return
+// GetLogsState returns the current log drawer entries and filter counts.
+func (s *CoreService) GetLogsState(ctx context.Context) LogsStateDTO {
+	if s.app == nil {
+		return (*App)(nil).buildLogsState()
 	}
-	a.logPick = pick
-	a.logQuery = query
-	a.logSource = source
-	a.logPaused = paused
-	a.emit("logs")
+	out, err := callValue(s.app, ctx, func() LogsStateDTO {
+		return s.app.buildLogsState()
+	})
+	if err != nil {
+		return (*App)(nil).buildLogsState()
+	}
+	return out
 }
 
-func toggleLogItemBridge(seq int) {
-	a := getApp()
-	if a == nil {
+// SetLogFilter updates log drawer level, search query, source filter, and paused state.
+func (s *CoreService) SetLogFilter(ctx context.Context, pick int, query, source string, paused bool) {
+	if s.app == nil {
 		return
 	}
-	if a.logExpanded == nil {
-		a.logExpanded = map[int]bool{}
-	}
-	a.logExpanded[seq] = !a.logExpanded[seq]
-	a.emit("logs")
+	_ = s.app.call(ctx, func() {
+		s.app.logPick = pick
+		s.app.logQuery = query
+		s.app.logSource = source
+		s.app.logPaused = paused
+		s.app.emit("logs")
+	})
 }
 
-func clearLogsBridge() {
+// ToggleLogItem expands or collapses a log entry detail block.
+func (s *CoreService) ToggleLogItem(ctx context.Context, seq int) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		if s.app.logExpanded == nil {
+			s.app.logExpanded = map[int]bool{}
+		}
+		s.app.logExpanded[seq] = !s.app.logExpanded[seq]
+		s.app.emit("logs")
+	})
+}
+
+// ClearLogs empties the in-memory log buffer.
+func (s *CoreService) ClearLogs(ctx context.Context) {
 	logging.Log.Clear()
-	a := getApp()
-	if a != nil {
-		a.logExpanded = nil
-		a.emit("logs", "shell")
+	if s.app == nil {
+		return
 	}
+	_ = s.app.call(ctx, func() {
+		s.app.logExpanded = nil
+		s.app.emit("logs", "shell")
+	})
 }
 
-func exportLogsBridge(ctx context.Context) error {
-	a := getApp()
-	if a == nil {
+// ExportLogs prompts the user with a native save dialog and writes filtered logs to disk.
+func (s *CoreService) ExportLogs(ctx context.Context) error {
+	if s.app == nil {
 		return nil
 	}
-	text := logging.ExportText(logging.Filter(logging.Log.Entries(), logging.View{Query: a.logQuery, Source: a.logSource}))
+	view, err := callValue(s.app, ctx, func() logging.View {
+		return logging.View{Query: s.app.logQuery, Source: s.app.logSource}
+	})
+	if err != nil {
+		return err
+	}
+	text := logging.ExportText(logging.Filter(logging.Log.Entries(), view))
 	name := "tulai-log-" + time.Now().Format("20060102-150405") + ".log"
-	saved, path, err := a.saveFileAsync(ctx, name, "text/plain", []byte(text))
+	saved, path, err := s.app.saveFileAsync(ctx, name, "text/plain", []byte(text))
 	if err != nil {
 		return err
 	}
 	if saved && path != "" {
-		a.pushToast("success", "日志已导出")
+		_ = s.app.call(ctx, func() {
+			s.app.pushToast("success", "日志已导出")
+		})
 	}
 	return nil
 }
 
-func copyTextBridge(text string) {
-	a := getApp()
-	if a != nil {
-		a.copyText(text)
+// CopyText writes plain text to the system clipboard.
+func (s *CoreService) CopyText(_ context.Context, text string) {
+	if s.app != nil {
+		s.app.copyText(text)
 	}
 }
 
-func openPathBridge(ctx context.Context, path string) error {
-	a := getApp()
-	if a == nil {
+// CopyImage writes a local image file to the system clipboard as PNG.
+func (s *CoreService) CopyImage(_ context.Context, path string) error {
+	if s.app == nil {
 		return nil
 	}
-	return a.openPath(path)
+	return s.app.copyImage(path)
 }
 
-func revealPathBridge(ctx context.Context, path string) error {
-	a := getApp()
-	if a == nil {
+// OpenPath opens a local file or folder with the OS default application.
+func (s *CoreService) OpenPath(_ context.Context, path string) error {
+	if s.app == nil {
 		return nil
 	}
-	return a.revealPath(path)
+	return s.app.openPath(path)
 }
 
-func pickFilesBridge(ctx context.Context, title string, multiple bool, extensions []string) ([]string, error) {
-	a := getApp()
-	if a == nil {
-		return nil, nil
+// RevealPath reveals a local file in Finder / Explorer / file manager.
+func (s *CoreService) RevealPath(_ context.Context, path string) error {
+	if s.app == nil {
+		return nil
 	}
-	return a.pickFilesAsync(ctx, title, multiple, extensions, "选择文件")
+	return s.app.revealPath(path)
 }
 
-func pickFolderBridge(ctx context.Context, title string, multiple bool) ([]string, error) {
-	a := getApp()
-	if a == nil {
-		return nil, nil
+// PickFiles opens a native file picker dialog.
+func (s *CoreService) PickFiles(ctx context.Context, title string, multiple bool, extensions []string) ([]string, error) {
+	if s.app == nil {
+		return []string{}, nil
 	}
-	return a.pickDirsAsync(ctx, title, multiple)
+	paths, err := s.app.pickFilesAsync(ctx, title, multiple, extensions, "选择文件")
+	if err != nil {
+		return nil, err
+	}
+	if paths == nil {
+		return []string{}, nil
+	}
+	return paths, nil
 }
 
-func wizardStepID(s wizard.Step) string {
+// PickFolder opens a native directory picker dialog.
+func (s *CoreService) PickFolder(ctx context.Context, title string, multiple bool) ([]string, error) {
+	if s.app == nil {
+		return []string{}, nil
+	}
+	paths, err := s.app.pickDirsAsync(ctx, title, multiple)
+	if err != nil {
+		return nil, err
+	}
+	if paths == nil {
+		return []string{}, nil
+	}
+	return paths, nil
+}
+
+func wizardStepID(s wizardStep) string {
 	switch s {
-	case wizard.StepPlatform:
+	case wizardStepPlatform:
 		return "platform"
-	case wizard.StepInstall:
-		return "install"
-	case wizard.StepBrowser:
+	case wizardStepBrowser:
 		return "browser"
-	case wizard.StepAccount:
+	case wizardStepAccount:
 		return "account"
-	case wizard.StepDone:
+	case wizardStepDone:
 		return "done"
 	default:
 		return fmt.Sprintf("%d", int(s))
 	}
 }
 
-func wizardStepTitle(s wizard.Step) string {
+func wizardStepTitle(s wizardStep) string {
 	switch s {
-	case wizard.StepPlatform:
+	case wizardStepPlatform:
 		return "选择平台"
-	case wizard.StepInstall:
-		return "安装 agy"
-	case wizard.StepBrowser:
+	case wizardStepBrowser:
 		return "账号环境"
-	case wizard.StepAccount:
+	case wizardStepAccount:
 		return "登录账号"
-	case wizard.StepDone:
+	case wizardStepDone:
 		return "完成"
 	default:
 		return wizardStepID(s)
 	}
 }
 
-func wizardStateBridge() WizardStateDTO {
-	a := getApp()
+func (a *App) buildWizardState() WizardStateDTO {
 	if a == nil {
-		return WizardStateDTO{}
+		return WizardStateDTO{Steps: []WizardStepDTO{}}
 	}
 	flow := a.wizardFlow()
 	curIdx := a.wizardStepIndex(a.wizardStep)
@@ -541,95 +601,74 @@ func wizardStateBridge() WizardStateDTO {
 			State: st,
 		})
 	}
-	dto := WizardStateDTO{
-		On:          a.wizardOn,
-		Step:        wizardStepID(a.wizardStep),
-		Choice:      a.wizardChoice,
-		First:       a.wizardFirst,
-		Steps:       steps,
-		Phase:       a.wizardPhase,
-		Note:        a.wizardNote,
-		Err:         a.wizardErr,
-		NavFailed:   a.wizardNavFailed,
-		AccountID:   a.wizardAccount.ID,
-		AccountName: a.wizardAccount.Name,
-		PlanBackend: a.wizardPlan.Backend,
-		PlanKind:    a.wizardPlan.Kind,
-		PlanTitle:   a.wizardPlan.Title,
-		PlanDetail:  a.wizardPlan.Detail,
-		PlanCanNext: a.wizardPlan.CanNext,
-		PlanBlocked: a.wizardPlan.Blocked,
-		PlanNeedsDL: a.wizardPlan.NeedsDownload,
-		CamBusy:     a.camoufoxBusy,
-		CamPercent:  a.camoufoxPercent,
-		CamStatus:   a.camoufoxStatus,
-		AgyFound:    a.wizardAgy.found,
-		AgyPath:     a.wizardAgy.path,
-		AgyCopied:   a.wizardAgy.copied,
-		AgyCmd:      agy.InstallCommand(runtime.GOOS),
-		AgyShell:    agy.InstallShell(runtime.GOOS),
-		AgyPageURL:  agy.InstallPage,
+	return WizardStateDTO{
+		On:             a.wizardOn,
+		Step:           wizardStepID(a.wizardStep),
+		Choice:         a.wizardChoice,
+		First:          a.wizardFirst,
+		Steps:          steps,
+		Phase:          a.wizardPhase,
+		Note:           a.wizardNote,
+		Err:            a.wizardErr,
+		NavFailed:      a.wizardNavFailed,
+		AccountID:      a.wizardAccount.ID,
+		AccountName:    a.wizardAccount.Name,
+		PlanBackend:    a.wizardPlan.Backend,
+		PlanKind:       a.wizardPlan.Kind,
+		PlanTitle:      a.wizardPlan.Title,
+		PlanDetail:     a.wizardPlan.Detail,
+		PlanCanNext:    a.wizardPlan.CanNext,
+		PlanBlocked:    a.wizardPlan.Blocked,
+		PlanNeedsDL:    a.wizardPlan.NeedsDownload,
+		RuntimeBusy:    a.runtimeBusy,
+		RuntimePercent: a.runtimePercent,
+		RuntimeStatus:  a.runtimeStatus,
 	}
-	if a.agyChooser != nil {
-		dto.AgyChooserOn = true
-		dto.AgyChooser = AgyChooserDTO{
-			Hint:      a.agyChooser.hint,
-			Home:      a.agyChooser.home,
-			Email:     a.agyChooser.email,
-			CanImport: a.agyChooser.canImport,
-			Keychain:  a.agyChooser.keychain,
-			Busy:      a.agyChooser.busy,
-			Retry:     a.agyChooser.retry,
-			Err:       a.agyChooser.err,
-			Status:    a.agyChooser.status,
-		}
-	}
-	if a.agyLogin != nil {
-		dto.AgyLoginOn = true
-		dto.AgyLogin = AgyLoginDTO{
-			ID:      a.agyLogin.id,
-			Name:    a.agyLogin.name,
-			URL:     a.agyLogin.url,
-			Busy:    a.agyLogin.busy,
-			Retry:   a.agyLogin.retry,
-			Err:     a.agyLogin.err,
-			Copied:  a.agyLogin.copied,
-			Opening: a.agyLogin.opening,
-		}
-	}
-	return dto
 }
 
-func openWizardBridge() {
-	a := getApp()
-	if a == nil {
+// WizardState returns the onboarding wizard snapshot.
+func (s *CoreService) WizardState(ctx context.Context) WizardStateDTO {
+	if s.app == nil {
+		return (*App)(nil).buildWizardState()
+	}
+	out, err := callValue(s.app, ctx, func() WizardStateDTO {
+		return s.app.buildWizardState()
+	})
+	if err != nil {
+		return (*App)(nil).buildWizardState()
+	}
+	return out
+}
+
+// OpenWizard re-opens the onboarding wizard.
+func (s *CoreService) OpenWizard(ctx context.Context) {
+	if s.app == nil {
 		return
 	}
-	a.openWizard()
-	a.emit("wizard", "shell")
+	_ = s.app.call(ctx, func() {
+		s.app.openWizard()
+		s.app.emit("wizard", "shell")
+	})
 }
 
-func finishWizardBridge() {
-	a := getApp()
-	if a == nil {
+// FinishWizard completes and dismisses the onboarding wizard.
+func (s *CoreService) FinishWizard(ctx context.Context) {
+	if s.app == nil {
 		return
 	}
-	a.wizardFinish()
+	_ = s.app.call(ctx, func() {
+		s.app.wizardFinish()
+	})
 }
 
-func wizardActionBridge(ctx context.Context, action, value string) error {
-	a := getApp()
-	if a == nil {
+// WizardAction executes a step action inside the onboarding wizard.
+func (s *CoreService) WizardAction(ctx context.Context, action, value string) error {
+	if s.app == nil {
 		return nil
 	}
-	if action == "pickAgyBin" {
-		paths, err := a.pickFilesAsync(ctx, "选择 agy 可执行文件", false, nil, "可执行文件")
-		if err != nil || len(paths) == 0 {
-			return nil
-		}
-		value = paths[0]
-	}
-	return a.onScope(ctx, func() { a.applyWizardAction(action, value) })
+	return s.app.call(ctx, func() {
+		s.app.applyWizardAction(action, value)
+	})
 }
 
 func (a *App) applyWizardAction(action, value string) {
@@ -639,55 +678,27 @@ func (a *App) applyWizardAction(action, value string) {
 		a.wizardErr = ""
 	case "nextPlatform":
 		a.wizardNextFromPlatform()
-	case "selectEngine":
-		a.selectAccountEngine(value)
 	case "installBrowser":
-		a.installCamoufox()
+		a.installBrowserRuntime()
 	case "nextBrowser":
 		a.wizardEnterWebAccount(false)
 	case "back":
 		switch a.wizardStep {
-		case wizard.StepBrowser, wizard.StepInstall:
-			a.goWizard(wizard.StepPlatform)
-		case wizard.StepAccount:
+		case wizardStepBrowser, wizardStepAccount:
 			a.stopWizardLoop()
-			if a.wizardChoice == agy.Platform {
-				a.abandonAgyAccount()
-				if a.wizardAgy.found {
-					a.goWizard(wizard.StepPlatform)
-				} else {
-					a.goWizard(wizard.StepInstall)
-				}
-			} else {
-				a.goWizard(wizard.StepPlatform)
-			}
-		case wizard.StepDone:
-			a.goWizard(wizard.StepPlatform)
+			a.goWizard(wizardStepPlatform)
+		case wizardStepDone:
+			a.goWizard(wizardStepPlatform)
 		}
 	case "recheck":
 		a.wizardRecheck()
 	case "addMore":
-		if a.wizardChoice == agy.Platform {
-			a.wizardEnterAgyAccount(true)
-		} else {
-			a.wizardEnterWebAccount(true)
-		}
-	case "checkAgy":
-		a.checkAgyInstall()
-	case "copyAgyCmd":
-		a.copyText(agy.InstallCommand(runtime.GOOS))
-		a.wizardAgy.copied = true
-	case "pickAgyBin":
-		a.agyBin = value
-		a.checkAgyInstall()
-	case "enterAgyAccount":
-		a.wizardEnterAgyAccount(false)
+		a.wizardEnterWebAccount(true)
 	case "skip":
 		a.stopWizardLoop()
-		a.abandonAgyAccount()
 		a.wizardOn = false
 		if a.store != nil {
-			a.store.Set(wizard.KeyComplete, wizard.CompleteYes)
+			a.store.Set(WizardKeyComplete, WizardCompleteYes)
 		}
 		a.emit("wizard", "shell")
 		return
@@ -698,30 +709,74 @@ func (a *App) applyWizardAction(action, value string) {
 	a.emit("wizard", "shell", "browsers")
 }
 
-func updateActionBridge(action string) {
-	a := getApp()
-	if a == nil {
+// UpdateAction handles release update actions (check, install, dismiss, skip, toggleDetails, toggleNotes).
+func (s *CoreService) UpdateAction(ctx context.Context, action string) {
+	if s.app == nil {
 		return
 	}
-	switch action {
-	case "check":
-		a.checkForUpdates()
-	case "install":
-		a.applyUpdate()
-	case "dismiss":
-		a.dismissUpdate()
-	case "skip":
-		a.skipUpdate()
-	case "toggleDetails":
-		a.updateDetailsOpen = !a.updateDetailsOpen
-	case "toggleNotes":
-		a.updateNotesOpen = !a.updateNotesOpen
-	}
-	a.emit("update", "shell")
+	_ = s.app.call(ctx, func() {
+		switch strings.TrimSpace(action) {
+		case "check":
+			s.app.checkForUpdates()
+		case "install":
+			s.app.applyUpdate()
+		case "dismiss":
+			s.app.dismissUpdate()
+		case "skip":
+			s.app.skipUpdate()
+		case "toggleDetails":
+			s.app.updateDetailsOpen = !s.app.updateDetailsOpen
+		case "toggleNotes":
+			s.app.updateNotesOpen = !s.app.updateNotesOpen
+		}
+		s.app.emit("update", "shell")
+	})
 }
 
-func quitAppBridge(cx *core.Scope) {
-	if cx != nil {
-		cx.Quit()
+// QuitApp requests a clean application exit.
+func (s *CoreService) QuitApp(_ context.Context) {
+	if s.app == nil {
+		return
 	}
+	if h := s.app.desktopHost(); h != nil {
+		h.Quit()
+	}
+}
+
+// ---- Test bridge wrappers (preserve internal/ui/*_test.go compatibility) ----
+
+func getShellStateBridge() ShellStateDTO {
+	return (&CoreService{app: getApp()}).GetShellState(context.Background())
+}
+
+func setTabBridge(tab int) {
+	(&CoreService{app: getApp()}).SetTab(context.Background(), tab)
+}
+
+func setDarkThemeBridge(dark bool) {
+	(&CoreService{app: getApp()}).SetDarkTheme(context.Background(), dark)
+}
+
+func setNavFoldedBridge(folded bool) {
+	(&CoreService{app: getApp()}).SetNavFolded(context.Background(), folded)
+}
+
+func setLogOpenBridge(open bool) {
+	(&CoreService{app: getApp()}).SetLogOpen(context.Background(), open)
+}
+
+func getLogsStateBridge() LogsStateDTO {
+	return (&CoreService{app: getApp()}).GetLogsState(context.Background())
+}
+
+func wizardStateBridge() WizardStateDTO {
+	return (&CoreService{app: getApp()}).WizardState(context.Background())
+}
+
+func finishWizardBridge() {
+	(&CoreService{app: getApp()}).FinishWizard(context.Background())
+}
+
+func wizardActionBridge(ctx context.Context, action, value string) error {
+	return (&CoreService{app: getApp()}).WizardAction(ctx, action, value)
 }

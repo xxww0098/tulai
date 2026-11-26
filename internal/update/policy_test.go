@@ -79,12 +79,22 @@ func TestMirrorSettingAndCheckDue(t *testing.T) {
 	if got := MirrorSetting("", DefaultMirrors); len(got) != len(DefaultMirrors) {
 		t.Fatalf("defaults: %v", got)
 	}
+	if HasExplicitMirror("") || HasExplicitMirror("off") || HasExplicitMirror("__custom__") {
+		t.Fatal("non-explicit setting flagged as explicit")
+	}
+	if !HasExplicitMirror("https://example.test/proxy/") {
+		t.Fatal("explicit mirror not detected")
+	}
 	if got := MirrorSetting("off", DefaultMirrors); got != nil {
 		t.Fatalf("off: %v", got)
 	}
 	got := MirrorSetting("https://example.test/proxy/", DefaultMirrors)
 	if len(got) != 1+len(DefaultMirrors) || got[0] != "https://example.test/proxy/" {
 		t.Fatalf("custom: %v", got)
+	}
+	multi := MirrorSetting("https://a.example/, https://ghfast.top, https://b.example/", DefaultMirrors)
+	if len(multi) != len(DefaultMirrors)+2 || multi[0] != "https://a.example/" || multi[1] != "https://ghfast.top" || multi[2] != "https://b.example/" {
+		t.Fatalf("multi custom: %v", multi)
 	}
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	if !CheckDue(time.Time{}, now, CheckEvery) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"image"
 	"io"
 	"net/http"
@@ -194,7 +194,7 @@ func (fn soImagesRoundTripper) RoundTrip(r *http.Request) (*http.Response, error
 
 func TestSOImagesRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -212,19 +212,19 @@ func TestSOImagesRenderedCapture(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/javascript"}}, Body: io.NopCloser(strings.NewReader(soImagesPageTwo)), Request: r}, nil
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == soImagesSearch {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(soImagesFixture)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -237,7 +237,7 @@ func TestSOImagesRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(soImagesSearch)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(soImagesSearch)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(soImagesSearch)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

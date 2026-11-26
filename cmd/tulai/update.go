@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/core"
-
+	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/ui"
 	"github.com/xxww0098/tulai/internal/update"
 )
 
@@ -43,7 +43,7 @@ func handleCommand(args []string) bool {
 }
 
 func runningVersion() string {
-	return runningVersionFrom(core.App().Version)
+	return runningVersionFrom(ui.PackagedVersion())
 }
 
 func runningVersionFrom(packaged string) string {
@@ -110,7 +110,11 @@ func runUpdateWith(args []string, run updateRun) int {
 		}
 		run.Executable = exe
 	}
-	run.Client.ApplyMirrorSetting(configuredMirror(run.GOOS, run.Executable))
+	mirror, proxy := configuredUpdateNetwork(run.GOOS, run.Executable)
+	run.Client.ApplyMirrorSetting(mirror)
+	if run.Client.ProxyURL == "" && proxy != "" {
+		run.Client.ProxyURL = proxy
+	}
 	current := run.Client.Version
 	if current == "" {
 		current = runningVersion()
@@ -192,22 +196,32 @@ func runUpdateWith(args []string, run updateRun) int {
 }
 
 func configuredMirror(goos, executable string) string {
-	if v := strings.TrimSpace(os.Getenv("TULAI_UPDATE_MIRROR")); v != "" {
-		return v
-	}
+	mirror, _ := configuredUpdateNetwork(goos, executable)
+	return mirror
+}
+
+func configuredUpdateNetwork(goos, executable string) (mirror, proxy string) {
+	mirror = strings.TrimSpace(os.Getenv("TULAI_UPDATE_MIRROR"))
 	path := filepath.Join("database", "config.db")
 	if dir, err := packagedDataDir(goos, executable); err == nil && dir != "" {
 		path = filepath.Join(dir, "database", "config.db")
 	}
 	if _, err := os.Stat(path); err != nil {
-		return ""
+		return mirror, browser.ProxyServer("", os.Getenv)
 	}
 	st, err := store.Open(path)
 	if err != nil {
-		return ""
+		return mirror, browser.ProxyServer("", os.Getenv)
 	}
 	defer st.Close()
-	return st.Get(update.KeyMirror)
+	if mirror == "" {
+		mirror = st.Get(update.KeyMirror)
+	}
+	customProxy := ""
+	if st.Get("proxy_mode") == "custom" {
+		customProxy = st.Get("proxy_server")
+	}
+	return mirror, browser.ProxyServer(customProxy, os.Getenv)
 }
 
 func printRelease(w io.Writer, current string, rel update.Release) int {

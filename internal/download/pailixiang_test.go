@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -151,7 +151,7 @@ func mapsClone(in map[string]any) map[string]any {
 
 func TestPailixiangRenderedAnonymous(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	var mode, leaks, pages, redirected atomic.Int32
 	var started atomic.Bool
@@ -241,10 +241,10 @@ post('AlbumGetView',{ID:'123'}); const list=(n)=>post('AlbumSearchPhoto',{AlbumI
 	defer s.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.run(ctx, camoufox.Navigate(page.String()), chromedp.Sleep(500*time.Millisecond), chromedp.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate(page.String()), chromedp.Sleep(500*time.Millisecond), chromedp.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	started.Store(true)

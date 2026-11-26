@@ -58,7 +58,7 @@ func (s *renameState) init() {
 		return
 	}
 	s.ready = true
-	s.rules = []renameRule{{Count: 1, Offset: 1}}
+	s.rules = []renameRule{{Count: 1, Offset: 0}}
 	s.insertKind, s.position = "文本", "末尾"
 	s.index, s.numStart = 1, 1
 	s.numFormat, s.sortBy = "阿拉伯数字", "名称升序"

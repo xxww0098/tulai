@@ -27,16 +27,17 @@ const (
 	HealthExhausted = "exhausted"
 )
 
-// Browser 一行 browsers 表。一行是一个账号：Chrome / Edge 的独立 profile，或一条扩展会话。
-const EngineChromeCDP = "Chrome CDP"
+// EngineFingerprint 标识由 tulai 管理的 fingerprint-chromium 指纹浏览器账号运行环境。
+const EngineFingerprint = "Fingerprint"
 
+// Browser 一行 browsers 表。一行是一个受管 Fingerprint 浏览器账号的独立 profile。
 type Browser struct {
 	ID          int64
 	Platform    string
 	Name        string
 	Port        int
 	UserDataDir string
-	Engine      string // Empty on existing Camoufox and non-browser accounts.
+	Engine      string // Fingerprint or empty on legacy accounts.
 	Proxy       string // 空值继承全局代理，非空时只用于这个网页账号。
 	IsRunning   bool
 	IsLoggedIn  bool
@@ -45,7 +46,6 @@ type Browser struct {
 	CoolUntil   int64 // Unix 秒。0 表示不会自动恢复。
 	LastUsed    int64
 	LastError   string
-	ExtAccount  string // 扩展 hello 里的 profile id。空字符串表示本机启动的浏览器。
 	DayKey      string // 本地日期 2006-01-02。换日之后 UsedToday 归零。
 	DayCount    int
 	DaySuccess  int
@@ -59,8 +59,8 @@ type Store struct {
 	path string
 }
 
-// defaults 是新库的初始设置。除 browserBackend、extBridgePort、extBridgeToken、concurrency 外，键与原软件 settings 表实测默认值对应。
-// browserBackend 默认使用绑定账号的 Firefox 页面桥，也可选择直接控制或手动扩展。
+// defaults 是新库的初始设置。除 browser_backend、concurrency 外，键与原软件 settings 表实测默认值对应。
+// 账号统一使用受管 Fingerprint 浏览器。
 // concurrency 为 0 时按当前可用账号数自动调度；正数是手动上限。
 var defaults = map[string]string{
 	"selected_platforms":      "豆包",
@@ -97,10 +97,7 @@ var defaults = map[string]string{
 	"captcha_ikunocr_track":   "dom2",
 	"minimize_browser":        "0",
 	"sent_count_total":        "0",
-	"browserBackend":          "camoufox_extension",
-	"browser_backend":         "Camoufox",
-	"extBridgePort":           "18765",
-	"extBridgeToken":          "dev-token",
+	"browser_backend":         EngineFingerprint,
 	"auto_check_updates":      "1",
 	"update_mirror":           "",
 	"update_skipped_version":  "",
@@ -108,14 +105,10 @@ var defaults = map[string]string{
 	"proxy_server":            "",
 	"daily_cap":               "0",
 	"daily_cap_qianwen":       "100",
-	"daily_cap_agy":           "100",
-	"daily_cap_chatgpt":       "100",
+	"daily_cap_qwen_intl":     "100",
 	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
-	"agy_bin":                 "",
-	"agy_home_root":           "",
-	"agy_model":               "gemini-3.8-flash",
-	"agy_timeout_seconds":     "360",
-	"chatgpt_model":           "gpt-image-2",
+	"dot_matrix_effect":       "grain",
+	"auto_delete_history":     "0",
 }
 
 const schema = `
@@ -167,7 +160,8 @@ CREATE TABLE IF NOT EXISTS session_tasks (
 	error TEXT NOT NULL DEFAULT '',
 	at_unix INTEGER NOT NULL DEFAULT 0,
 	elapsed_ms INTEGER NOT NULL DEFAULT 0,
-	undispatched INTEGER NOT NULL DEFAULT 0
+	undispatched INTEGER NOT NULL DEFAULT 0,
+	quality_note TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_session_tasks_session ON session_tasks(session_id, ord);
 CREATE TABLE IF NOT EXISTS session_sources (
@@ -192,7 +186,7 @@ func Open(path string) (*Store, error) {
 	// Reserve the writer before a transaction reads state it will later update.
 	// A deferred read-to-write upgrade can fail with SQLITE_BUSY_SNAPSHOT even
 	// when busy_timeout is set and another Store instance has already committed.
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +263,7 @@ func checkIntegrity(path string) error {
 			return fmt.Errorf("配置数据库设置表校验失败: %s", result)
 		}
 		rows, err := probe.Query(`SELECT key,value FROM settings WHERE key IN
-			('daily_cap','daily_cap_qianwen','daily_cap_agy','daily_cap_chatgpt')`)
+			('daily_cap','daily_cap_qianwen','daily_cap_qwen_intl')`)
 		if err != nil {
 			return fmt.Errorf("检查每日上限: %w", err)
 		}
@@ -309,12 +303,18 @@ func initSettings(db *sql.DB) error {
 	}
 	hasLegacy := err == nil
 	for k, v := range defaults {
-		if hasLegacy && (k == "daily_cap_qianwen" || k == "daily_cap_agy" || k == "daily_cap_chatgpt") {
+		if hasLegacy && k == "daily_cap_qianwen" {
 			v = legacy
 		}
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)`, k, v); err != nil {
 			return fmt.Errorf("初始化设置 %s: %w", k, err)
 		}
+	}
+	if _, err := tx.Exec(`DELETE FROM settings WHERE key IN ('browserBackend', 'extBridgePort', 'extBridgeToken')`); err != nil {
+		return fmt.Errorf("清理旧扩展桥设置: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE settings SET value=? WHERE key='browser_backend'`, EngineFingerprint); err != nil {
+		return fmt.Errorf("统一浏览器引擎设置: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("保存初始设置: %w", err)
@@ -492,30 +492,54 @@ func (s *Store) Browsers() []Browser {
 }
 
 func (s *Store) browsersLocked() ([]Browser, error) {
+	now := time.Now()
 	rows, err := s.db.Query(`SELECT id, platform, name, port, COALESCE(user_data_dir,''), is_running, is_logged_in,
-		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''), COALESCE(ext_account,''),
+		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''),
 		COALESCE(day_key,''), COALESCE(day_count,0), COALESCE(day_success,0), COALESCE(day_failed,0), COALESCE(proxy,''), COALESCE(disabled,0), COALESCE(browser_engine,'')
 		FROM browsers ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Browser
+	var recovered []int64
 	for rows.Next() {
 		var b Browser
 		var run, login, disabled int
-		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.ExtAccount, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled, &b.Engine); err != nil {
+		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled, &b.Engine); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		b.IsRunning = run != 0
 		b.IsLoggedIn = login != 0
 		b.Disabled = disabled != 0
+		// 换日之后，昨天的额度用尽已经到期。读的时候收成就绪，不让旧的错误提示一直挂着。
+		if fixed, ok := b.Recover(now); ok {
+			b = fixed
+			recovered = append(recovered, b.ID)
+		}
 		out = append(out, b)
 	}
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
 		return nil, err
 	}
+	// 恢复也写回库里，下次读和别的界面看到的是同一份状态。
+	s.saveRecoveredLocked(recovered, now.Unix())
 	return out, nil
+}
+
+// saveRecoveredLocked 把到期的冷却和额度挂起写回就绪。
+// 只清恢复时间已经过去的行，读的间隙里新记下的故障不会被一起抹掉。
+func (s *Store) saveRecoveredLocked(ids []int64, now int64) {
+	for _, id := range ids {
+		if _, err := s.db.Exec(`UPDATE browsers SET health=?, cool_until=0, last_error=''
+			WHERE id=? AND health IN (?, ?) AND cool_until > 0 AND cool_until <= ?`,
+			HealthReady, id, HealthCooling, HealthExhausted, now); err != nil {
+			logging.Log.Errorf("保存账号 %d 的恢复状态失败: %v", id, err)
+			return
+		}
+	}
 }
 
 // SetBrowserDisabled 只更改账号是否参与任务，不改登录或健康状态。
@@ -534,6 +558,20 @@ func (s *Store) SetBrowserDisabled(id int64, disabled bool) error {
 	return nil
 }
 
+// IsBrowserDisabled 单行查询账号是否处于禁用状态，避免热路径全表扫描。
+func (s *Store) IsBrowserDisabled(id int64) bool {
+	if s == nil || id <= 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var disabled int
+	if err := s.db.QueryRow(`SELECT COALESCE(disabled,0) FROM browsers WHERE id=?`, id).Scan(&disabled); err != nil {
+		return false
+	}
+	return disabled != 0
+}
+
 // Usable 只判断账号健康状态；冷却或额度到期后自动恢复。
 func (b Browser) Usable(now time.Time) bool {
 	switch b.Health {
@@ -546,16 +584,34 @@ func (b Browser) Usable(now time.Time) bool {
 	}
 }
 
+// Expired 表示冷却或额度用尽已经过了恢复时间。这种挂起是过去的事，不是现在还在挡着账号。
+// 恢复时间为 0 的挂起（例如未登录）要等用户处理，不会自己到期。
+func (b Browser) Expired(now time.Time) bool {
+	switch b.Health {
+	case HealthCooling, HealthExhausted:
+		return b.CoolUntil > 0 && !now.Before(time.Unix(b.CoolUntil, 0))
+	default:
+		return false
+	}
+}
+
+// Recover 把已经到期的冷却或额度挂起收成就绪：状态回到可调度，额度错误提示一起清掉。
+// 第二个返回值表示有没有改动。
+func (b Browser) Recover(now time.Time) (Browser, bool) {
+	if !b.Expired(now) {
+		return b, false
+	}
+	b.Health, b.CoolUntil, b.LastError = HealthReady, 0, ""
+	return b, true
+}
+
 // AddBrowser 新增浏览器（端口从 9333 起自动分配）。
 func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
 	return s.AddManagedBrowser(platform, name, dataDir, "")
 }
 
 func (s *Store) AddManagedBrowser(platform, name, dataDir, engine string) (Browser, error) {
-	if engine == "Camoufox" {
-		engine = ""
-	}
-	if engine != "" && (engine != EngineChromeCDP || (platform != "千问" && platform != "豆包" && platform != "ChatGPT")) {
+	if engine != "" && (engine != EngineFingerprint || (platform != "千问" && platform != "千问国际" && platform != "豆包")) {
 		return Browser{}, fmt.Errorf("服务商 %s 不支持浏览器 %s", platform, engine)
 	}
 	s.mu.Lock()
@@ -565,7 +621,7 @@ func (s *Store) AddManagedBrowser(platform, name, dataDir, engine string) (Brows
 		return Browser{}, err
 	}
 	defer tx.Rollback()
-	b, err := addBrowserTx(tx, platform, name, dataDir, "", false, engine)
+	b, err := addBrowserTx(tx, platform, name, dataDir, false, engine)
 	if err != nil {
 		return Browser{}, err
 	}
@@ -576,7 +632,7 @@ func (s *Store) AddManagedBrowser(platform, name, dataDir, engine string) (Brows
 }
 
 // addBrowserTx allocates the port and inserts the account under one writer lock.
-func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, loggedIn bool, engine string) (Browser, error) {
+func addBrowserTx(tx *sql.Tx, platform, name, dataDir string, loggedIn bool, engine string) (Browser, error) {
 	var maxPort int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(port), 9332) FROM browsers`).Scan(&maxPort); err != nil {
 		return Browser{}, err
@@ -589,8 +645,8 @@ func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, logged
 	if loggedIn {
 		login = 1
 	}
-	res, err := tx.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, ext_account, browser_engine) VALUES(?,?,?,?,?,?,?,?)`,
-		platform, name, port, dataDir, login, login, extAccount, engine)
+	res, err := tx.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, browser_engine) VALUES(?,?,?,?,?,?,?)`,
+		platform, name, port, dataDir, login, login, engine)
 	if err != nil {
 		return Browser{}, err
 	}
@@ -600,7 +656,7 @@ func addBrowserTx(tx *sql.Tx, platform, name, dataDir, extAccount string, logged
 	}
 	return Browser{
 		ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir, Engine: engine,
-		IsRunning: loggedIn, IsLoggedIn: loggedIn, ExtAccount: extAccount, Health: HealthReady,
+		IsRunning: loggedIn, IsLoggedIn: loggedIn, Health: HealthReady,
 	}, nil
 }
 
@@ -694,7 +750,7 @@ func (s *Store) ConfirmLogin(id int64) bool {
 }
 
 // DropUnloggedLocal 只删除 confirmedOut 里、且库里仍是未登录的本机账号。
-// 不在列表里的行留下：is_logged_in=0 本身不能当退出。扩展行不在这里删。
+// 不在列表里的行留下：is_logged_in=0 本身不能当退出。
 func (s *Store) DropUnloggedLocal(confirmedOut []int64) []Browser {
 	if s == nil {
 		return nil
@@ -707,7 +763,7 @@ func (s *Store) DropUnloggedLocal(confirmedOut []int64) []Browser {
 	}
 	var candidates []Browser
 	for _, b := range s.Browsers() {
-		if b.ExtAccount != "" || b.IsLoggedIn {
+		if b.IsLoggedIn {
 			continue
 		}
 		if _, ok := allow[b.ID]; !ok {
@@ -722,7 +778,7 @@ func (s *Store) DropUnloggedLocal(confirmedOut []int64) []Browser {
 	defer s.mu.Unlock()
 	var dropped []Browser
 	for _, b := range candidates {
-		res, err := s.db.Exec(`DELETE FROM browsers WHERE id=? AND is_logged_in=0 AND COALESCE(ext_account,'')=''`, b.ID)
+		res, err := s.db.Exec(`DELETE FROM browsers WHERE id=? AND is_logged_in=0`, b.ID)
 		if err != nil {
 			continue
 		}
@@ -732,21 +788,6 @@ func (s *Store) DropUnloggedLocal(confirmedOut []int64) []Browser {
 		}
 	}
 	return dropped
-}
-
-// DeleteByExtensionAccount 删掉这个配置文件标识在各平台上的扩展账号。
-// 空标识不能用：本地浏览器的 ext_account 就是空字符串，一刀会把它们全删掉。
-func (s *Store) DeleteByExtensionAccount(account string) {
-	if s == nil {
-		return
-	}
-	account = strings.TrimSpace(account)
-	if account == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.db.Exec(`DELETE FROM browsers WHERE ext_account=?`, account)
 }
 
 // UpdateBrowserHealth 记下额度、限流、验证码或登录失败。coolUntil 为 0 时不会自动恢复。
@@ -822,121 +863,6 @@ func (s *Store) TouchBrowser(id int64, now time.Time) {
 	s.db.Exec(`UPDATE browsers SET last_used=? WHERE id=?`, now.Unix(), id)
 }
 
-// SaveLoggedInExtension 记下一个已经确认登录的扩展账号。豆包和千问同一规则。
-// 只是连上页面桥还不调用这里。已有行的冷却和今日次数保留，登录挂起会清掉。
-func (s *Store) SaveLoggedInExtension(platform, account, name string) (Browser, error) {
-	b, err := s.upsertExtension(platform, account, name, true)
-	if err != nil {
-		return Browser{}, err
-	}
-	s.ConfirmLogin(b.ID)
-	for _, row := range s.Browsers() {
-		if row.ID == b.ID {
-			return row, nil
-		}
-	}
-	b.IsLoggedIn = true
-	if b.Health == "" {
-		b.Health = HealthReady
-	}
-	return b, nil
-}
-
-// DropExtensionAccount 删掉这个平台上的一条扩展账号。空标识不能用。
-func (s *Store) DropExtensionAccount(platform, account string) {
-	if s == nil {
-		return
-	}
-	platform = strings.TrimSpace(platform)
-	account = strings.TrimSpace(account)
-	if platform == "" || account == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.db.Exec(`DELETE FROM browsers WHERE platform=? AND ext_account=?`, platform, account)
-}
-
-// DeleteExtensionAccounts 删掉全部扩展账号行，返回删掉的行数。
-// 本机浏览器账号的 ext_account 是空字符串，不受影响。
-func (s *Store) DeleteExtensionAccounts() int64 {
-	if s == nil {
-		return 0
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	res, err := s.db.Exec(`DELETE FROM browsers WHERE COALESCE(ext_account,'') <> ''`)
-	if err != nil {
-		return 0
-	}
-	n, _ := res.RowsAffected()
-	return n
-}
-
-// UpsertExtensionAccount 按扩展 profile id 登记或取回账号。
-// 同一配置文件重连不会清掉冷却状态。hello 只是连上时不要调用它；
-// 确认登录后走 SaveLoggedInExtension。
-func (s *Store) UpsertExtensionAccount(platform, account, name string) (Browser, error) {
-	return s.upsertExtension(platform, account, name, false)
-}
-
-func (s *Store) upsertExtension(platform, account, name string, loggedIn bool) (Browser, error) {
-	if s == nil {
-		return Browser{}, fmt.Errorf("没有配置库")
-	}
-	platform = strings.TrimSpace(platform)
-	account = strings.TrimSpace(account)
-	name = strings.TrimSpace(name)
-	if platform == "" || account == "" {
-		return Browser{}, fmt.Errorf("扩展账号缺少平台或标识")
-	}
-	if name == "" {
-		short := account
-		if len(short) > 4 {
-			short = short[:4]
-		}
-		name = "扩展账号" + short
-	}
-	id, err := func() (int64, error) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		tx, err := s.db.Begin()
-		if err != nil {
-			return 0, err
-		}
-		defer tx.Rollback()
-		var id int64
-		err = tx.QueryRow(`SELECT id FROM browsers WHERE platform=? AND ext_account=?`, platform, account).Scan(&id)
-		switch {
-		case err == nil:
-			if _, err := tx.Exec(`UPDATE browsers SET name=? WHERE id=? AND name LIKE '扩展账号%'`, name, id); err != nil {
-				return 0, err
-			}
-		case errors.Is(err, sql.ErrNoRows):
-			b, err := addBrowserTx(tx, platform, name, "", account, loggedIn, "")
-			if err != nil {
-				return 0, err
-			}
-			id = b.ID
-		default:
-			return 0, err
-		}
-		if err := tx.Commit(); err != nil {
-			return 0, err
-		}
-		return id, nil
-	}()
-	if err != nil {
-		return Browser{}, err
-	}
-	for _, b := range s.Browsers() {
-		if b.ID == id {
-			return b, nil
-		}
-	}
-	return Browser{}, fmt.Errorf("扩展账号 %d 读取失败", id)
-}
-
 func migrateBrowsers(db *sql.DB) error {
 	alters := []string{
 		`ALTER TABLE browsers ADD COLUMN health TEXT DEFAULT 'ready'`,
@@ -949,7 +875,6 @@ func migrateBrowsers(db *sql.DB) error {
 		`ALTER TABLE browsers ADD COLUMN day_success INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE browsers ADD COLUMN day_failed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE browsers ADD COLUMN proxy TEXT DEFAULT ''`,
-		`ALTER TABLE browsers ADD COLUMN legacy_user_data_dir TEXT DEFAULT ''`,
 		`ALTER TABLE browsers ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE browsers ADD COLUMN browser_engine TEXT NOT NULL DEFAULT ''`,
 	}
@@ -958,8 +883,8 @@ func migrateBrowsers(db *sql.DB) error {
 			return fmt.Errorf("升级 browsers 表: %w", err)
 		}
 	}
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS browsers_ext_account ON browsers(platform, ext_account) WHERE ext_account <> ''`); err != nil {
-		return fmt.Errorf("升级 browsers 索引: %w", err)
+	if _, err := db.Exec(`DELETE FROM browsers WHERE COALESCE(ext_account,'') <> ''`); err != nil {
+		return fmt.Errorf("清理旧扩展账号: %w", err)
 	}
 	return nil
 }
@@ -968,6 +893,7 @@ func migrateSessions(db *sql.DB) error {
 	alters := []string{
 		`ALTER TABLE session_tasks ADD COLUMN elapsed_ms INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_tasks ADD COLUMN undispatched INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_tasks ADD COLUMN quality_note TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alters {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

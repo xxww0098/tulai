@@ -8,9 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/tasks"
-	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 const (
@@ -43,7 +41,6 @@ const (
 type AccountSnap struct {
 	Platform  string
 	LoggedIn  bool
-	Extension bool
 	Disabled  bool
 	Health    string
 	CoolUntil int64
@@ -51,18 +48,16 @@ type AccountSnap struct {
 
 // WorkbenchInput 是主页默认值和开始按钮需要的输入。
 type WorkbenchInput struct {
-	Running         bool
-	HasImages       bool
-	HasPrompts      bool
-	AutoPlatform    bool
-	WantDoubao      bool
-	WantQianwen     bool
-	WantAntigravity bool
-	WantChatGPT     bool
-	OnlyPlatform    string
-	ExtensionMode   bool
-	Accounts        []AccountSnap
-	Now             time.Time
+	Running      bool
+	HasImages    bool
+	HasPrompts   bool
+	AutoPlatform bool
+	WantDoubao   bool
+	WantQianwen  bool
+	WantQwenIntl bool
+	OnlyPlatform string
+	Accounts     []AccountSnap
+	Now          time.Time
 }
 
 // WorkbenchPlan 是这一次开始按钮的决定。
@@ -84,22 +79,20 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 			return platform == only
 		}
 		if in.AutoPlatform {
-			return wizard.Valid(platform)
+			return wizardValidPlatform(platform)
 		}
 		switch platform {
 		case "豆包":
 			return in.WantDoubao
 		case "千问":
 			return in.WantQianwen
-		case agy.Platform:
-			return in.WantAntigravity
-		case "ChatGPT":
-			return in.WantChatGPT
+		case "千问国际":
+			return in.WantQwenIntl
 		default:
 			return false
 		}
 	}
-	platforms := platformsFromAccounts(in.Accounts, in.ExtensionMode, in.Now, want)
+	platforms := platformsFromAccounts(in.Accounts, in.Now, want)
 	if len(platforms) == 0 {
 		return WorkbenchPlan{Action: StartNone}
 	}
@@ -118,23 +111,22 @@ func ConcurrencyCaption(auto bool, slots int) string {
 	return "并发已关闭，一次运行 1 批任务"
 }
 
-func (a AccountSnap) carries(extensionMode bool, now time.Time) bool {
-	if a.Disabled || ((a.Platform == "豆包" || a.Platform == "千问") && a.Extension != extensionMode) || (a.Platform == "ChatGPT" && a.Extension) {
+func (a AccountSnap) carries(now time.Time) bool {
+	if a.Disabled {
 		return false
 	}
-	return wizard.KeepsClosed(wizard.Account{
+	return wizardKeepsClosed(wizardAccount{
 		Platform:  a.Platform,
 		LoggedIn:  a.LoggedIn,
-		Extension: a.Extension,
 		Health:    a.Health,
 		CoolUntil: a.CoolUntil,
 	}, now)
 }
 
-func platformsFromAccounts(accounts []AccountSnap, extensionMode bool, now time.Time, want func(string) bool) []string {
+func platformsFromAccounts(accounts []AccountSnap, now time.Time, want func(string) bool) []string {
 	has := map[string]bool{}
 	for _, account := range accounts {
-		if account.carries(extensionMode, now) && want(account.Platform) {
+		if account.carries(now) && want(account.Platform) {
 			has[account.Platform] = true
 		}
 	}
@@ -145,11 +137,8 @@ func platformsFromAccounts(accounts []AccountSnap, extensionMode bool, now time.
 	if has["千问"] {
 		out = append(out, "千问")
 	}
-	if has[agy.Platform] {
-		out = append(out, agy.Platform)
-	}
-	if has["ChatGPT"] {
-		out = append(out, "ChatGPT")
+	if has["千问国际"] {
+		out = append(out, "千问国际")
 	}
 	return out
 }
@@ -390,7 +379,7 @@ func RunSummary(images int, prompts bool) string {
 }
 
 // FormatProgressTally 是一个平台的进度。并发上限写在同一行，不再另起一条「同时出图」。
-// limit 是这一页实际能同时跑的账号数；Antigravity 一次只跑一个。没有可用账号时不写。
+// limit 是这一页实际能同时跑的账号数。没有可用账号时不写。
 func FormatProgressTally(done, running, queued, failed, needs, review, stopped, active, limit int) string {
 	parts := []string{
 		fmt.Sprintf("完成 %d", done),
@@ -488,7 +477,7 @@ func ProgressCards(items []tasks.Task) []ProgressCard {
 				card.Reason = HumanReason(waiting)
 			}
 		} else if card.Status == "需要人工验证" {
-			card.Reason = "请在弹出的窗口里完成验证"
+			card.Reason = "点击「去验证」在内置浏览器中完成验证"
 		} else if card.Status == "待验证" {
 			hint := tasks.ClassifyFailure(tasks.StatusNeedsUser, failed.Error)
 			card.Reason = hint.Sentence
@@ -583,9 +572,9 @@ func HumanReason(raw string) string {
 		return "正在出图，请稍候"
 	case strings.Contains(s, "发送状态未确认"):
 		return "发送结果不确定，请看网页后再试"
-	case strings.Contains(s, "额度") || strings.Contains(lower, "quota"):
+	case strings.Contains(s, "额度") || strings.Contains(lower, "quota") || strings.Contains(lower, "not enough credits") || strings.Contains(lower, "insufficient credits") || strings.Contains(lower, "out of credits") || strings.Contains(lower, "daily free allowance") || strings.Contains(lower, "chat limit"):
 		return "账号额度已用完"
-	case strings.Contains(s, "频繁") || strings.Contains(lower, "rate limit") || strings.Contains(lower, "too many"):
+	case strings.Contains(s, "频繁") || strings.Contains(lower, "rate limit") || strings.Contains(lower, "too many") || strings.Contains(lower, "too frequent"):
 		return "请求太频繁，请稍后再试"
 	case strings.Contains(s, "未登录") || strings.Contains(s, "请先登录") || strings.Contains(s, "登录已失效") || strings.Contains(s, "登录状态"):
 		return "账号未登录，请先登录"

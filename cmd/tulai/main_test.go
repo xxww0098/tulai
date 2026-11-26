@@ -4,59 +4,31 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"go.yaml.in/yaml/v3"
 
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
 func TestProductVersionMatchesConfig(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("nsgo.yaml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "mygo.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var cfg struct {
-		Version string `yaml:"version"`
-		Release struct {
-			GitHub string `yaml:"github"`
-		} `yaml:"release"`
+		Name       string `json:"name"`
+		Slug       string `json:"slug"`
+		Identifier string `json:"identifier"`
+		Version    string `json:"version"`
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Version != ProductVersion {
-		t.Fatalf("cmd/tulai/nsgo.yaml version = %q, ProductVersion = %q", cfg.Version, ProductVersion)
+		t.Fatalf("mygo.json version = %q, ProductVersion = %q", cfg.Version, ProductVersion)
 	}
-	if cfg.Release.GitHub != "xxww0098/tulai" {
-		t.Fatalf("invalid release configuration: %+v", cfg.Release)
-	}
-}
-
-func TestExtensionHelloVersionMatchesManifest(t *testing.T) {
-	root := filepath.Join("..", "..")
-	data, err := os.ReadFile(filepath.Join(root, "extension", "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	if manifest.Version == "" {
-		t.Fatal("extension manifest has no version")
-	}
-	src, err := os.ReadFile(filepath.Join(root, "extension", "protocol.js"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	needle := "version: '" + manifest.Version + "'"
-	if !strings.Contains(string(src), needle) {
-		t.Fatalf("extension/protocol.js hello payload has no %s", needle)
+	if cfg.Identifier != "dev.tulai.app" || cfg.Slug != "tulai" {
+		t.Fatalf("invalid app metadata in mygo.json: %+v", cfg)
 	}
 }
 
@@ -135,7 +107,7 @@ func TestDevelopmentAndInstalledShareData(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			profile := browser.ProfileDir(filepath.Join(installedDir, "BrowserData"), browser.KindCamoufox, "account-test")
+			profile := browser.ProfileDir(filepath.Join(installedDir, "BrowserData"), browser.KindFingerprint, "account-test")
 			account, err := installedDB.AddBrowser("豆包", "共享账号", profile)
 			if err != nil {
 				installedDB.Close()

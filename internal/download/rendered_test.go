@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 	"io"
 	"net"
 	"net/http"
@@ -185,6 +185,53 @@ func TestOpenRenderedRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestRenderedURLMatchingAndTemuVerificationPaths(t *testing.T) {
+	for _, tc := range []struct {
+		raw, observed string
+		allowAlias    bool
+		want          bool
+	}{
+		{"https://example.com/gallery", "https://example.com/gallery#photo-2", false, true},
+		{"https://example.com/gallery#top", "https://example.com/gallery", false, true},
+		{"https://example.com/gallery", "https://example.com/other", false, false},
+		{"https://www.szwego.com/static/index.html#/shop_detail/1", "https://www.szwego.com/static/index.html#/shop_detail/2", false, false},
+		{"https://www.szwego.com/static/index.html#/shop_detail/1", "https://www.szwego.com/static/index.html#/shop_detail/1", false, true},
+		{"https://a20240101000000000001.szwego.com/static/index.html#/shop_detail/1", "https://a20240101000000000001.szwego.com/static/index.html#/shop_detail/2", false, false},
+		{"https://www.temu.com/search_result.html?search_key=lamp", "https://www.temu.com/search_result.html?search_key=lamp&refer_page_id=123", false, true},
+		{"https://www.temu.com/search_result.html?search_key=lamp", "https://www.temu.com/search_result.html?search_key=desk", false, false},
+		{"https://www.pinterest.com/search/pins/?q=cats", "https://www.pinterest.com/search/pins/?q=cats&rs=typed", true, true},
+	} {
+		start, err := crawlInputURL(tc.raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := renderedURLMatches(tc.raw, tc.observed, start, tc.allowAlias); got != tc.want {
+			t.Errorf("renderedURLMatches(%q, %q, alias=%v) = %v, want %v", tc.raw, tc.observed, tc.allowAlias, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"/bgn_verification.html", true},
+		{"/zh-hant/bgn_verification.html", true},
+		{"/en/bgn_verification.html", true},
+		{"/a/b/bgn_verification.html", false},
+		{"/search_result.html", false},
+	} {
+		if got := isTemuVerificationPath(tc.path); got != tc.want {
+			t.Errorf("isTemuVerificationPath(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+	zeroLimiter := NewBandwidthLimiter(0)
+	if err := zeroLimiter.WaitN(context.Background(), 1024); err != nil {
+		t.Fatalf("zero bandwidth limiter WaitN failed: %v", err)
+	}
+	if got := zeroLimiter.ReadSize(4096); got != 4096 {
+		t.Fatalf("zero bandwidth limiter ReadSize = %d, want 4096", got)
+	}
+}
+
 func TestSafeDownloadDial(t *testing.T) {
 	for _, tc := range []struct {
 		addr string
@@ -232,9 +279,9 @@ func TestSafeDownloadDial(t *testing.T) {
 
 func TestRenderedBrowserIntegration(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
-	runtimeDir := camoufoxtest.ConfigDir(t)
+	runtimeDir := fingerprinttest.ConfigDir(t)
 	var crossCookie, redirectCookie, sourceCookie, privateCookie, rangeHeader, ifRangeHeader, crossReferer string
 	var mu sync.Mutex
 	var privateHits atomic.Int32
@@ -453,13 +500,13 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 	session.pageURL, session.pageIP = savedPage, savedIP
 	session.mu.Unlock()
 
-	if err := session.run(ctx, camoufox.Navigate(other.URL)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(other.URL)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Capture(ctx); err == nil || session.PageURL() != "" {
 		t.Fatalf("captured a different local site: %v, %q", err, session.PageURL())
 	}
-	if err := session.run(ctx, camoufox.Navigate(source.URL)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(source.URL)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Capture(ctx); err != nil {
@@ -560,7 +607,7 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 
 func TestRenderedLocalHostnameIntegration(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `<img src="/image.png">`)

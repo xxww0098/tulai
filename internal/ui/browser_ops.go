@@ -1,44 +1,91 @@
 package ui
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"image"
 	"maps"
 	"net/url"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
-	"github.com/xxww0098/tulai/internal/camoufox"
 	"github.com/xxww0098/tulai/internal/cdp"
-	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 	"github.com/xxww0098/tulai/internal/tasks"
-	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 type browserOperation struct {
 	stopping bool
+	kind     string // "starting" | "stopping" | "clearing" | "syncing"
 	batch    *browserBatchRun
+}
+
+func (o browserOperation) opKind() string {
+	if o.kind != "" {
+		return o.kind
+	}
+	if o.stopping {
+		return "stopping"
+	}
+	return "starting"
 }
 
 type browserBatchRun struct {
 	stopping                     bool
+	kind                         string // "starting" | "stopping" | "clearing" | "syncing"
+	fast                         bool
 	total, done, failed, skipped int
+	deleted                      int
+	updated                      int
+	current                      string
+}
+
+func (b *browserBatchRun) opKind() string {
+	if b == nil {
+		return ""
+	}
+	if b.kind != "" {
+		return b.kind
+	}
+	if b.stopping {
+		return "stopping"
+	}
+	return "starting"
 }
 
 func (b *browserBatchRun) text() string {
+	if b.opKind() == "clearing" {
+		mode := "清理历史"
+		if b.fast {
+			mode = "极速清理历史"
+		}
+		if b.done >= b.total {
+			return fmt.Sprintf("%s完成：%d/%d（共删 %d 条），失败 %d，跳过 %d", mode, b.done, b.total, b.deleted, b.failed, b.skipped)
+		}
+		base := fmt.Sprintf("正在%s：%d/%d（已删 %d 条）", mode, b.done, b.total, b.deleted)
+		if b.current != "" {
+			base += " · 当前：" + b.current
+		}
+		return base
+	}
+	if b.opKind() == "syncing" {
+		if b.done >= b.total {
+			return fmt.Sprintf("同步用户名完成：%d/%d（已更新 %d），失败 %d，跳过 %d", b.done, b.total, b.updated, b.failed, b.skipped)
+		}
+		base := fmt.Sprintf("正在同步用户名：%d/%d（已更新 %d）", b.done, b.total, b.updated)
+		if b.current != "" {
+			base += " · 当前：" + b.current
+		}
+		return base
+	}
 	verb := "启动"
 	if b.stopping {
 		verb = "停止"
@@ -51,48 +98,21 @@ func (b *browserBatchRun) text() string {
 }
 
 type browserDrawerState struct {
-	row           store.Browser
-	cancel        context.CancelFunc
+	row             store.Browser
+	startedByDrawer bool
+	cancel          context.CancelFunc
 	done          chan struct{}
 	inputs        chan cdp.PageInput
 	held          atomic.Bool
+	lastInput     atomic.Int64
 	resuming      bool
 	loading       bool
 	err           string
 	title, url    string
-	rgba          *image.RGBA
 	frameVersion  uint64
 	width, height float64
 	copyText      string
 	copyReady     bool
-}
-
-type agyChooserState struct {
-	hint      string
-	home      string
-	email     string
-	canImport bool
-	keychain  bool
-	busy      bool
-	retry     bool
-	err       string
-	status    string
-}
-
-type agyLoginState struct {
-	id      int64
-	home    string
-	name    string
-	url     string
-	code    string
-	err     string
-	busy    bool
-	retry   bool
-	copied  bool
-	opening bool
-	sess    *agy.Login
-	cancel  context.CancelFunc
-	gen     int
 }
 
 type loginShot struct {
@@ -106,101 +126,95 @@ func (a *App) refreshDetected() {
 	}
 	kind := browser.CanonicalBackend(a.browserBackend)
 	rt, ok := browser.InstalledRuntime(browser.ConfigDir(), kind)
-	a.camoufoxReady = ok
+	a.runtimeReady = ok
 	a.detectedDetail = rt.Path
 	if ok {
 		a.detectedNote = kind + " 已安装"
-		a.camoufoxStatus = kind + " 就绪"
+		a.runtimeStatus = kind + " 就绪"
+	} else if !browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, kind) {
+		a.detectedNote = "当前架构不支持 " + kind
+		a.runtimeStatus = planAccountBrowser(kind, false, false).Blocked
 	} else {
 		a.detectedNote = kind + " 未安装"
-		a.camoufoxStatus = "安装后即可添加服务商账号"
+		a.runtimeStatus = "安装后即可添加服务商账号"
 	}
 }
 
-func (a *App) selectAccountEngine(choice string) {
-	next := browser.NormalizeStoredBackend(runtime.GOOS, choice)
-	a.browserBackend = next
-	a.browserChoice = browser.ChoiceLabel(next)
-	if a.store != nil {
-		a.store.Set("browser_backend", next)
-	}
-	a.refreshDetected()
-	a.refreshWizardPlan()
-	a.emit("browsers", "wizard", "workbench")
-}
-
-func (a *App) camoufoxRuntimeBadge() (string, string) {
-	if a.camoufoxBusy {
+func (a *App) runtimeBadge() (string, string) {
+	if a.runtimeBusy {
 		return "下载中", "accent"
 	}
-	if a.camoufoxReady {
+	if a.runtimeReady {
 		return "已安装", "success"
 	}
-	if strings.HasPrefix(a.camoufoxStatus, "安装失败") {
+	if !browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, a.browserBackend) {
+		return "暂不支持", "neutral"
+	}
+	if strings.HasPrefix(a.runtimeStatus, "安装失败") {
 		return "安装失败", "danger"
 	}
 	return "未安装", "warning"
 }
 
-func (a *App) applyCamoufoxProgress(p camoufox.Progress) {
-	a.applyCamoufoxProgressAt(time.Now(), p)
+func (a *App) applyRuntimeProgress(p fingerprint.Progress) {
+	a.applyRuntimeProgressAt(time.Now(), p)
 }
 
-func (a *App) applyCamoufoxProgressAt(now time.Time, p camoufox.Progress) {
+func (a *App) applyRuntimeProgressAt(now time.Time, p fingerprint.Progress) {
 	if p.Text != "" {
-		a.camoufoxStatus = p.Text
+		a.runtimeStatus = p.Text
 	}
-	if p.Stage != "" && p.Stage != a.camoufoxStage {
-		a.camoufoxStage = p.Stage
-		a.camoufoxPercent = -1
-		a.camoufoxDone, a.camoufoxTotal = 0, 0
-		a.camoufoxSpeed, a.camoufoxLast = 0, 0
-		a.camoufoxAt = time.Time{}
+	if p.Stage != "" && p.Stage != a.runtimeStage {
+		a.runtimeStage = p.Stage
+		a.runtimePercent = -1
+		a.runtimeDone, a.runtimeTotal = 0, 0
+		a.runtimeSpeed, a.runtimeLast = 0, 0
+		a.runtimeAt = time.Time{}
 	}
 	if p.Done > 0 || p.Total > 0 {
-		a.camoufoxDone, a.camoufoxTotal = p.Done, p.Total
+		a.runtimeDone, a.runtimeTotal = p.Done, p.Total
 		if p.Total > 0 {
-			a.camoufoxPercent = min(1, float64(p.Done)/float64(p.Total))
+			a.runtimePercent = min(1, float64(p.Done)/float64(p.Total))
 		} else {
-			a.camoufoxPercent = -1
+			a.runtimePercent = -1
 		}
-		a.trackCamoufoxSpeed(now, p.Done)
+		a.trackRuntimeSpeed(now, p.Done)
 	}
 	if p.Total > 0 && p.Done >= p.Total {
-		a.camoufoxSpeed = 0
+		a.runtimeSpeed = 0
 	}
 }
 
-func (a *App) trackCamoufoxSpeed(now time.Time, done int64) {
-	if a.camoufoxAt.IsZero() {
-		a.camoufoxAt, a.camoufoxLast = now, done
+func (a *App) trackRuntimeSpeed(now time.Time, done int64) {
+	if a.runtimeAt.IsZero() {
+		a.runtimeAt, a.runtimeLast = now, done
 		return
 	}
-	dt := now.Sub(a.camoufoxAt)
+	dt := now.Sub(a.runtimeAt)
 	if dt < 300*time.Millisecond {
 		return
 	}
-	if delta := done - a.camoufoxLast; delta >= 0 {
+	if delta := done - a.runtimeLast; delta >= 0 {
 		instant := int64(float64(delta) / dt.Seconds())
-		if a.camoufoxSpeed == 0 {
-			a.camoufoxSpeed = instant
+		if a.runtimeSpeed == 0 {
+			a.runtimeSpeed = instant
 		} else {
-			a.camoufoxSpeed = (a.camoufoxSpeed*2 + instant) / 3
+			a.runtimeSpeed = (a.runtimeSpeed*2 + instant) / 3
 		}
 	}
-	a.camoufoxAt, a.camoufoxLast = now, done
+	a.runtimeAt, a.runtimeLast = now, done
 }
 
-func (a *App) tickCamoufoxProgress(now time.Time) {
-	if !a.camoufoxBusy || a.camoufoxSpeed <= 0 || a.camoufoxAt.IsZero() {
+func (a *App) tickRuntimeProgress(now time.Time) {
+	if !a.runtimeBusy || a.runtimeSpeed <= 0 || a.runtimeAt.IsZero() {
 		return
 	}
-	if now.Sub(a.camoufoxAt) >= 2*time.Second {
-		a.camoufoxSpeed = 0
+	if now.Sub(a.runtimeAt) >= 2*time.Second {
+		a.runtimeSpeed = 0
 	}
 }
 
-func (a *App) camoufoxTick(done <-chan struct{}) {
+func (a *App) runtimeTick(done <-chan struct{}) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -209,55 +223,55 @@ func (a *App) camoufoxTick(done <-chan struct{}) {
 			return
 		case now := <-ticker.C:
 			a.syncUI(func() {
-				a.tickCamoufoxProgress(now)
+				a.tickRuntimeProgress(now)
 				a.emit("browsers", "wizard")
 			})
 		}
 	}
 }
 
-func (a *App) installCamoufox() {
-	if a.camoufoxBusy || a.running || a.renameUpdateActive() {
+func (a *App) installBrowserRuntime() {
+	if a.runtimeBusy || a.running || a.renameUpdateActive() {
 		return
 	}
-	a.camoufoxBusy = true
+	a.runtimeBusy = true
 	kind := browser.ChoiceLabel(a.browserBackend)
-	a.camoufoxStatus = "正在准备 " + kind + "…"
-	a.camoufoxPercent = -1
-	a.camoufoxDone, a.camoufoxTotal, a.camoufoxSpeed, a.camoufoxLast = 0, 0, 0, 0
-	a.camoufoxAt = time.Time{}
-	a.camoufoxStage = ""
+	a.runtimeStatus = "正在准备 " + kind + "…"
+	a.runtimePercent = -1
+	a.runtimeDone, a.runtimeTotal, a.runtimeSpeed, a.runtimeLast = 0, 0, 0, 0
+	a.runtimeAt = time.Time{}
+	a.runtimeStage = ""
 	a.pushProxy()
-	a.emit("browsers", "wizard")
+	a.emit("browsers", "wizard", "download")
 	go func() {
 		done := make(chan struct{})
-		go a.camoufoxTick(done)
+		go a.runtimeTick(done)
 		defer close(done)
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
-		_, err := browser.EnsureRuntime(ctx, browser.ConfigDir(), kind, func(p camoufox.Progress) {
+		_, err := browser.EnsureRuntime(ctx, browser.ConfigDir(), kind, func(p fingerprint.Progress) {
 			a.syncUI(func() {
-				a.applyCamoufoxProgress(p)
+				a.applyRuntimeProgress(p)
 				a.emit("browsers", "wizard")
 			})
 		})
 		a.syncUI(func() {
-			a.camoufoxBusy = false
+			a.runtimeBusy = false
 			defer a.maybeInstallPending()
 			if err != nil {
-				a.camoufoxStatus = "安装失败：" + err.Error()
+				a.runtimeStatus = "安装失败：" + err.Error()
 			} else {
 				a.refreshDetected()
 				a.refreshWizardPlan()
 			}
-			a.emit("browsers", "wizard", "workbench")
+			a.emit("browsers", "wizard", "workbench", "download")
 		})
 	}()
 }
 
 func (a *App) refreshBrowsers() {
 	a.loadBrowserRows()
-	a.emit("browsers", "workbench")
+	a.emit("browsers", "workbench", "shell")
 }
 
 func (a *App) loadBrowserRows() {
@@ -268,7 +282,7 @@ func (a *App) loadBrowserRows() {
 	missing := maps.Clone(a.browserChecked)
 	for i := range rows {
 		delete(missing, rows[i].ID)
-		if a.manager != nil && rows[i].ExtAccount == "" {
+		if a.manager != nil {
 			rows[i].IsRunning = a.manager.IsRunning(rows[i].ID)
 		}
 	}
@@ -305,17 +319,17 @@ func (a *App) createBrowser(platform, name string) {
 	if platform == "" {
 		platform = "豆包"
 	}
-	if platform == agy.Platform {
-		a.addAgyAccount()
+	if platform != "豆包" && platform != "千问" && platform != "千问国际" {
 		return
 	}
+	explicitName := strings.TrimSpace(name) != ""
 	name = strings.TrimSpace(name)
 	if name == "" {
 		var existing []string
 		for _, r := range a.configuredBrowsers() {
 			existing = append(existing, r.Name)
 		}
-		name = wizard.NextInstanceName(platform, existing)
+		name = nextInstanceName(platform, existing)
 	}
 	kind := browser.CanonicalBackend(a.browserBackend)
 	dir := ""
@@ -328,6 +342,9 @@ func (a *App) createBrowser(platform, name string) {
 		return
 	}
 	a.markFreshLogin(row.ID)
+	if !explicitName {
+		a.markAutoName(row.ID, row.Name)
+	}
 	a.refreshBrowsers()
 	a.selectBrowserID(row.ID)
 	a.launchBrowserInstance(row, nil)
@@ -355,6 +372,7 @@ func (a *App) commitRename() {
 	if id <= 0 || name == "" || a.store == nil {
 		return
 	}
+	a.clearAutoName(id)
 	a.store.RenameBrowser(id, name)
 	for i := range a.browserRows {
 		if a.browserRows[i].ID == id {
@@ -373,7 +391,7 @@ func (a *App) cancelRename() {
 }
 
 func (a *App) browserOperationAllowed(b store.Browser, stopping bool) bool {
-	if a.running || b.ID <= 0 || b.ExtAccount != "" || b.IsRunning != stopping {
+	if a.running || b.ID <= 0 || b.IsRunning != stopping {
 		return false
 	}
 	if _, pending := a.browserPending[b.ID]; pending {
@@ -438,6 +456,551 @@ func (a *App) runBrowserBatch(stopping bool) {
 	}
 }
 
+func (a *App) clearHistoryAllowed(b store.Browser) bool {
+	if a.running || b.ID <= 0 || (b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际") {
+		return false
+	}
+	if _, pending := a.browserPending[b.ID]; pending {
+		return false
+	}
+	return a.engine == nil || !a.engine.ActiveAccounts()[b.ID]
+}
+
+func (a *App) clearBrowserHistory(ids []int64, keepRecent int, fastMode bool) error {
+	if a.running {
+		return errors.New("任务运行中，请先停止任务后再清理聊天记录")
+	}
+	if a.clearHistoryCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "clearing") {
+		return errors.New("正在清理聊天历史，请等待完成或先停止")
+	}
+	if a.syncNamesCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "syncing") {
+		return errors.New("正在同步账号用户名，请等待完成或先停止")
+	}
+	keepRecent = clampInt(keepRecent, 0, 500)
+	var requested []store.Browser
+	seen := map[int64]bool{}
+	if len(ids) > 0 {
+		for _, id := range ids {
+			if id <= 0 || seen[id] {
+				continue
+			}
+			if row, ok := a.browserByID(id); ok {
+				seen[id] = true
+				requested = append(requested, row)
+			}
+		}
+	} else {
+		for _, row := range a.browserRows {
+			if a.browserChecked[row.ID] && !seen[row.ID] {
+				seen[row.ID] = true
+				requested = append(requested, row)
+			}
+		}
+	}
+	if len(requested) == 0 {
+		return errors.New("请先选择要清理聊天记录的账号")
+	}
+	var targets []store.Browser
+	for _, row := range requested {
+		if a.clearHistoryAllowed(row) {
+			targets = append(targets, row)
+		}
+	}
+	if len(targets) == 0 {
+		return errors.New("所选账号当前不可清理（可能正在操作中或不支持）")
+	}
+	if a.clearHistoryFn == nil && a.manager == nil {
+		return errors.New("没有受管浏览器管理器，无法清理聊天历史")
+	}
+	if a.browserPending == nil {
+		a.browserPending = map[int64]browserOperation{}
+	}
+	batch := &browserBatchRun{
+		kind:    "clearing",
+		fast:    fastMode,
+		total:   len(targets),
+		skipped: len(requested) - len(targets),
+	}
+	for _, row := range targets {
+		a.browserPending[row.ID] = browserOperation{kind: "clearing", batch: batch}
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	a.browserBatch = batch
+	a.clearHistoryCancel = cancel
+	a.emit("browsers", "workbench")
+
+	// 按平台分组并行清理（豆包与千问互不等待，同平台内仍串行以降低同出口风控）。
+	groups := map[string][]store.Browser{}
+	var order []string
+	for _, row := range targets {
+		if _, ok := groups[row.Platform]; !ok {
+			order = append(order, row.Platform)
+		}
+		groups[row.Platform] = append(groups[row.Platform], row)
+	}
+
+	go func() {
+		defer func() {
+			cancel()
+			a.postUI(func() {
+				if a.browserBatch == batch {
+					a.browserBatch = nil
+				}
+				a.clearHistoryCancel = nil
+				for _, row := range targets {
+					if op, ok := a.browserPending[row.ID]; ok && op.batch == batch {
+						delete(a.browserPending, row.ID)
+					}
+				}
+				a.refreshBrowsers()
+				a.emit("browsers", "workbench")
+			})
+		}()
+
+		var totalDeleted atomic.Int64
+		var wg sync.WaitGroup
+		for _, plat := range order {
+			rows := groups[plat]
+			wg.Add(1)
+			go func(list []store.Browser) {
+				defer wg.Done()
+				for _, row := range list {
+					if runCtx.Err() != nil {
+						a.postUI(func() {
+							a.finishBrowserOperation(row.ID, context.Canceled)
+							a.emit("browsers")
+						})
+						continue
+					}
+					label := fmt.Sprintf("%s/%s", row.Platform, accountLabel(row))
+					a.postUI(func() {
+						batch.current = label
+						a.emit("browsers")
+					})
+					lastCount := 0
+					opts := strategy.ClearHistoryOptions{
+						KeepRecent: keepRecent,
+						FastMode:   fastMode,
+						OnProgress: func(deleted int, title string) {
+							delta := deleted - lastCount
+							if delta < 0 {
+								delta = 0
+							}
+							lastCount = deleted
+							a.postUI(func() {
+								batch.deleted += delta
+								a.emit("browsers")
+							})
+						},
+					}
+					res, err := a.clearOneBrowserHistory(runCtx, row, opts)
+					if res.Deleted > lastCount {
+						extra := res.Deleted - lastCount
+						a.postUI(func() {
+							batch.deleted += extra
+							a.emit("browsers")
+						})
+					} else if res.Deleted < lastCount {
+						// 若极速模式首轮核对回滚了未生效计数，同步修正进度条显示。
+						revert := lastCount - res.Deleted
+						a.postUI(func() {
+							batch.deleted = max(0, batch.deleted-revert)
+							a.emit("browsers")
+						})
+					}
+					totalDeleted.Add(int64(res.Deleted))
+					switch {
+					case errors.Is(err, context.Canceled):
+						logging.Log.Info("账号[%s] 聊天历史清理已停止（本次已删 %d 条）", label, res.Deleted)
+					case err != nil:
+						logging.Log.Warning("账号[%s] 清理聊天历史中断（已删 %d 条）：%v", label, res.Deleted, err)
+					case res.FastDeleted > 0:
+						logging.Log.Success("账号[%s] 极速清理完成：共删 %d 条（快删 %d 条），剩余 %d 条", label, res.Deleted, res.FastDeleted, res.Remaining)
+					default:
+						logging.Log.Success("账号[%s] 聊天历史清理完成：已删 %d 条，剩余 %d 条", label, res.Deleted, res.Remaining)
+					}
+					a.postUI(func() {
+						a.finishBrowserOperation(row.ID, err)
+						a.emit("browsers")
+					})
+				}
+			}(rows)
+		}
+		wg.Wait()
+		if runCtx.Err() == nil {
+			logging.Log.Info("本批聊天历史清理结束：共处理 %d 个账号，累计删除 %d 条对话", len(targets), totalDeleted.Load())
+		}
+	}()
+	return nil
+}
+
+func (a *App) stopClearBrowserHistory() {
+	if a.clearHistoryCancel != nil {
+		a.clearHistoryCancel()
+		logging.Log.Info("已请求停止聊天历史清理")
+	}
+}
+
+func (a *App) clearOneBrowserHistory(ctx context.Context, b store.Browser, opts strategy.ClearHistoryOptions) (strategy.ClearHistoryResult, error) {
+	if a.clearHistoryFn != nil {
+		return a.clearHistoryFn(ctx, b, opts)
+	}
+	plat := strategy.Factory(b.Platform)
+	if plat == nil {
+		return strategy.ClearHistoryResult{}, fmt.Errorf("不支持的平台：%s", b.Platform)
+	}
+	cleaner, ok := plat.(strategy.HistoryCleaner)
+	if !ok {
+		return strategy.ClearHistoryResult{}, fmt.Errorf("平台 %s 暂不支持历史清理", b.Platform)
+	}
+	if a.manager == nil {
+		return strategy.ClearHistoryResult{}, errors.New("受管浏览器管理器未初始化")
+	}
+	a.pushProxy()
+	wasRunning := a.manager.IsRunning(b.ID)
+	ws, err := a.manager.StartView(ctx, b, a.dataRoot, plat.HomeURL())
+	if err != nil {
+		return strategy.ClearHistoryResult{}, fmt.Errorf("打开受管浏览器失败: %w", err)
+	}
+	if !wasRunning {
+		defer func() {
+			a.manager.Stop(b.ID)
+			if a.store != nil {
+				a.store.SetRunning(b.ID, a.manager.IsRunning(b.ID))
+			}
+		}()
+	}
+	client, err := cdp.NewClient(ws)
+	if err != nil {
+		return strategy.ClearHistoryResult{}, fmt.Errorf("连接受管浏览器失败: %w", err)
+	}
+	defer client.Close()
+	sess, err := client.NewBackgroundSession(plat.HomeURL(), nil)
+	if err != nil {
+		return strategy.ClearHistoryResult{}, fmt.Errorf("打开平台页面失败: %w", err)
+	}
+	defer sess.Close()
+	strategy.WaitHistorySidebarReady(ctx, sess, b.Platform)
+	return cleaner.ClearHistory(ctx, sess, opts)
+}
+
+func (a *App) syncAccountUsernames(ids []int64) error {
+	if a.running {
+		return errors.New("任务运行中，请先停止任务后再同步用户名")
+	}
+	if a.syncNamesCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "syncing") {
+		return errors.New("正在同步账号用户名，请等待完成或先停止")
+	}
+	if a.clearHistoryCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "clearing") {
+		return errors.New("正在清理聊天历史，请等待完成后再同步用户名")
+	}
+	var requested []store.Browser
+	seen := map[int64]bool{}
+	if len(ids) > 0 {
+		for _, id := range ids {
+			if id <= 0 || seen[id] {
+				continue
+			}
+			if row, ok := a.browserByID(id); ok {
+				seen[id] = true
+				requested = append(requested, row)
+			}
+		}
+	} else {
+		for _, row := range a.browserRows {
+			if a.browserChecked[row.ID] && !seen[row.ID] {
+				seen[row.ID] = true
+				requested = append(requested, row)
+			}
+		}
+	}
+	if len(requested) == 0 {
+		return errors.New("请先选择要同步用户名的账号")
+	}
+	var targets []store.Browser
+	for _, row := range requested {
+		if a.clearHistoryAllowed(row) {
+			targets = append(targets, row)
+		}
+	}
+	if len(targets) == 0 {
+		return errors.New("所选账号当前不可同步（可能正在操作中或不支持）")
+	}
+	if a.syncAccountNameFn == nil && a.manager == nil {
+		return errors.New("没有受管浏览器管理器，无法同步用户名")
+	}
+	if a.browserPending == nil {
+		a.browserPending = map[int64]browserOperation{}
+	}
+	batch := &browserBatchRun{
+		kind:    "syncing",
+		total:   len(targets),
+		skipped: len(requested) - len(targets),
+	}
+	for _, row := range targets {
+		a.browserPending[row.ID] = browserOperation{kind: "syncing", batch: batch}
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	a.browserBatch = batch
+	a.syncNamesCancel = cancel
+	a.emit("browsers", "workbench")
+
+	groups := map[string][]store.Browser{}
+	var order []string
+	for _, row := range targets {
+		if _, ok := groups[row.Platform]; !ok {
+			order = append(order, row.Platform)
+		}
+		groups[row.Platform] = append(groups[row.Platform], row)
+	}
+
+	go func() {
+		defer func() {
+			cancel()
+			a.postUI(func() {
+				if a.browserBatch == batch {
+					a.browserBatch = nil
+				}
+				a.syncNamesCancel = nil
+				for _, row := range targets {
+					if op, ok := a.browserPending[row.ID]; ok && op.batch == batch {
+						delete(a.browserPending, row.ID)
+					}
+				}
+				a.refreshBrowsers()
+				a.emit("browsers", "workbench", "shell")
+			})
+		}()
+
+		var totalUpdated atomic.Int64
+		var wg sync.WaitGroup
+		for _, plat := range order {
+			rows := groups[plat]
+			wg.Add(1)
+			go func(list []store.Browser) {
+				defer wg.Done()
+				for _, row := range list {
+					if runCtx.Err() != nil {
+						a.postUI(func() {
+							a.finishBrowserOperation(row.ID, context.Canceled)
+							a.emit("browsers")
+						})
+						continue
+					}
+					label := fmt.Sprintf("%s/%s", row.Platform, accountLabel(row))
+					a.postUI(func() {
+						batch.current = label
+						a.emit("browsers")
+					})
+					scraped, err := a.syncOneAccountUsername(runCtx, row)
+					if err == nil {
+						scraped = cdp.SanitizeAccountUsername(scraped)
+						if scraped == "" {
+							err = errors.New("未能从页面识别到用户名")
+						}
+					}
+					var renamed string
+					var changed bool
+					if err == nil {
+						a.syncUI(func() {
+							renamed, changed = a.applySyncedAccountName(row.ID, scraped)
+							if changed {
+								batch.updated++
+							}
+							a.finishBrowserOperation(row.ID, nil)
+							a.emit("browsers", "workbench", "shell")
+						})
+						if changed {
+							totalUpdated.Add(1)
+							logging.Log.Success("账号[%s] 已同步用户名：%s", label, renamed)
+						} else {
+							logging.Log.Info("账号[%s] 用户名已是最新：%s", label, renamed)
+						}
+						continue
+					}
+					switch {
+					case errors.Is(err, context.Canceled):
+						logging.Log.Info("账号[%s] 用户名同步已停止", label)
+					default:
+						logging.Log.Warning("账号[%s] 同步用户名失败：%v", label, err)
+					}
+					a.postUI(func() {
+						a.finishBrowserOperation(row.ID, err)
+						a.emit("browsers")
+					})
+				}
+			}(rows)
+		}
+		wg.Wait()
+		if runCtx.Err() == nil {
+			logging.Log.Info("本批用户名同步结束：共处理 %d 个账号，更新 %d 个名称", len(targets), totalUpdated.Load())
+		}
+	}()
+	return nil
+}
+
+func (a *App) stopSyncAccountUsernames() {
+	if a.syncNamesCancel != nil {
+		a.syncNamesCancel()
+		logging.Log.Info("已请求停止同步账号用户名")
+	}
+}
+
+func (a *App) syncOneAccountUsername(ctx context.Context, b store.Browser) (string, error) {
+	if a.syncAccountNameFn != nil {
+		return a.syncAccountNameFn(ctx, b)
+	}
+	plat := strategy.Factory(b.Platform)
+	if plat == nil {
+		return "", fmt.Errorf("不支持的平台：%s", b.Platform)
+	}
+	if a.manager == nil {
+		return "", errors.New("受管浏览器管理器未初始化")
+	}
+	a.pushProxy()
+	wasRunning := a.manager.IsRunning(b.ID)
+	ws, err := a.manager.StartView(ctx, b, a.dataRoot, plat.HomeURL())
+	if err != nil {
+		return "", fmt.Errorf("打开内置浏览器失败: %w", err)
+	}
+	if !wasRunning {
+		defer func() {
+			a.manager.Stop(b.ID)
+			if a.store != nil {
+				a.store.SetRunning(b.ID, a.manager.IsRunning(b.ID))
+			}
+		}()
+	}
+	openCtx, openCancel := context.WithTimeout(ctx, 20*time.Second)
+	err = cdp.OpenURLBackground(openCtx, ws, plat.HomeURL())
+	openCancel()
+	if err != nil {
+		return "", fmt.Errorf("打开平台页面失败: %w", err)
+	}
+	return a.pollSyncedAccountUsername(ctx, ws)
+}
+
+func (a *App) pollSyncedAccountUsername(ctx context.Context, endpoint string) (string, error) {
+	a.mu.Lock()
+	nameWait := a.accountNameWait
+	poll := a.accountNamePoll
+	a.mu.Unlock()
+	if nameWait <= 0 {
+		nameWait = 4 * time.Second
+	}
+	if poll <= 0 {
+		poll = 300 * time.Millisecond
+	}
+	overallDeadline := time.Now().Add(15 * time.Second)
+	var inSince time.Time
+	outCount := 0
+	for {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		state, err := cdp.ProbeLogin(probeCtx, endpoint)
+		if err == nil {
+			state = cdp.NormalizeLoginState(state)
+			switch state {
+			case "out":
+				outCount++
+				if outCount >= 2 {
+					cancel()
+					return "", errors.New("账号未登录，请先打开登录")
+				}
+			case cdp.RegionBlocked:
+				cancel()
+				return "", errors.New("当前地区受限，请检查代理设置")
+			case "challenge":
+				cancel()
+				return "", errors.New("触发安全验证，请先打开账号处理验证")
+			case "in":
+				outCount = 0
+				if inSince.IsZero() {
+					inSince = time.Now()
+				}
+				name, nameErr := cdp.ProbeAccountUsername(probeCtx, endpoint)
+				cancel()
+				if nameErr == nil {
+					if clean := cdp.SanitizeAccountUsername(name); clean != "" {
+						return clean, nil
+					}
+				}
+				if time.Since(inSince) >= nameWait {
+					return "", errors.New("未能从页面识别到用户名")
+				}
+				goto waitNext
+			}
+		}
+		cancel()
+	waitNext:
+		remaining := time.Until(overallDeadline)
+		if remaining <= 0 {
+			if !inSince.IsZero() {
+				return "", errors.New("未能从页面识别到用户名")
+			}
+			return "", errors.New("页面加载超时，未能读取用户名")
+		}
+		timer := time.NewTimer(min(poll, remaining))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (a *App) applySyncedAccountName(id int64, rawName string) (string, bool) {
+	if a == nil || id <= 0 || a.store == nil {
+		return "", false
+	}
+	rows := a.store.Browsers()
+	var target store.Browser
+	found := false
+	for _, r := range rows {
+		if r.ID == id {
+			target = r
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.clearAutoName(id)
+		return "", false
+	}
+	var samePlatform []string
+	for _, r := range rows {
+		if r.ID != id && r.Platform == target.Platform {
+			samePlatform = append(samePlatform, r.Name)
+		}
+	}
+	finalName := uniqueAccountName(rawName, samePlatform)
+	if finalName == "" {
+		return target.Name, false
+	}
+	a.clearAutoName(id)
+	if finalName == strings.TrimSpace(target.Name) {
+		return finalName, false
+	}
+	a.store.RenameBrowser(id, finalName)
+	for i := range a.browserRows {
+		if a.browserRows[i].ID == id {
+			a.browserRows[i].Name = finalName
+		}
+	}
+	if a.wizardAccount.ID == id {
+		a.wizardAccount.Name = finalName
+		a.wizardName = finalName
+	}
+	if a.browserDrawer != nil && a.browserDrawer.row.ID == id {
+		a.browserDrawer.row.Name = finalName
+		a.emit("browserDrawer")
+	}
+	return finalName, true
+}
+
 func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
 	if !a.beginBrowserOperation(b, false, batch) {
 		return
@@ -465,7 +1028,7 @@ func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
 	a.pushProxy()
 	a.refreshDetected()
 	fresh := !b.IsLoggedIn && a.loginIsFresh(b.ID)
-	a.emit("browsers")
+	a.emit("browsers", "workbench")
 	go func() {
 		var operationErr error
 		cleanupFresh := false
@@ -494,6 +1057,10 @@ func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
 			a.watchLogin(b, loginEndpoint(b))
 			return
 		}
+		if a.store != nil {
+			a.store.SetRunning(b.ID, true)
+		}
+		a.postUI(func() { a.refreshBrowsers() })
 		err = cdp.OpenURLContext(context.Background(), ws, platform.HomeURL())
 		if isClosedBrowserError(err) {
 			if a.manager != nil {
@@ -501,9 +1068,6 @@ func (a *App) launchBrowserInstance(b store.Browser, batch *browserBatchRun) {
 			}
 			cleanupFresh = a.noteClosedLoginBrowser(b, fresh)
 			return
-		}
-		if a.store != nil {
-			a.store.SetRunning(b.ID, true)
 		}
 		if err == nil || errors.Is(err, cdp.ErrDebugUnavailable) {
 			a.watchLogin(b, ws)
@@ -539,7 +1103,7 @@ func isClosedBrowserError(err error) bool {
 	return strings.Contains(lower, "target page, context or browser has been closed") ||
 		strings.Contains(lower, "browser has been closed") ||
 		strings.Contains(lower, "target closed") ||
-		strings.Contains(lower, "camoufox driver closed") ||
+		strings.Contains(lower, "browser driver closed") ||
 		strings.Contains(lower, "账号窗口已关闭") ||
 		strings.Contains(lower, "账号浏览器已关闭")
 }
@@ -548,6 +1112,7 @@ func (a *App) stopBrowserInstance(b store.Browser, batch *browserBatchRun) {
 	if !a.beginBrowserOperation(b, true, batch) {
 		return
 	}
+	a.emit("browsers", "workbench")
 	if a.manager == nil || !a.manager.IsRunning(b.ID) {
 		a.finishStopBrowser(b)
 		return
@@ -615,18 +1180,15 @@ func (a *App) deleteBrowser() {
 }
 
 func (a *App) deleteBrowserByRow(b store.Browser) {
-	ids := a.pairedProfileIDs(b)
 	if a.browserDrawer != nil && a.browserDrawer.row.ID == b.ID {
 		a.closeBrowserDrawer()
 	}
 	if a.manager != nil {
 		a.manager.Stop(b.ID)
 	}
+	a.clearAutoName(b.ID)
 	if a.store != nil {
 		a.store.DeleteBrowser(b.ID)
-		for _, id := range ids {
-			a.store.DeleteByExtensionAccount(id)
-		}
 	}
 	if err := browser.RemoveProfile(a.dataRoot, a.browserBackend, b); err != nil {
 		logging.Log.Warning("删除账号 %s 的配置目录失败：%v", accountLabel(b), err)
@@ -634,13 +1196,6 @@ func (a *App) deleteBrowserByRow(b store.Browser) {
 	logging.Log.Info("浏览器[%s] 已删除", b.Name)
 	a.browserSel = -1
 	a.refreshBrowsers()
-}
-
-func (a *App) pairedProfileIDs(b store.Browser) []string {
-	if id := strings.TrimSpace(b.ExtAccount); id != "" {
-		return []string{id}
-	}
-	return nil
 }
 
 func (a *App) saveAccountProxy(id int64, raw string) error {
@@ -656,35 +1211,6 @@ func (a *App) saveAccountProxy(id int64, raw string) error {
 	}
 	a.refreshBrowsers()
 	return nil
-}
-
-func (a *App) regenerateExtensionToken() {
-	if a.store == nil {
-		return
-	}
-	token, err := extbridge.NewToken()
-	if err != nil {
-		a.extTokenNote = "生成令牌失败：" + err.Error()
-		return
-	}
-	a.extToken = token
-	a.store.Set(extbridge.SettingExtToken, token)
-	a.extTokenNote = "已重新生成令牌，请在扩展设置中更新"
-	a.emit("browsers")
-}
-
-func (a *App) bridgePairLabel() string {
-	if a.engine == nil {
-		return "自动对接未启动，可复制令牌手动填写"
-	}
-	listening, paired := a.engine.PairState()
-	if !listening {
-		return "自动对接未启动，可复制令牌手动填写"
-	}
-	if paired {
-		return "已自动对接"
-	}
-	return "等待扩展自动对接，也可复制令牌手动填写"
 }
 
 func accountHealthLabel(b store.Browser, active, signedIn bool, now time.Time) string {
@@ -713,7 +1239,7 @@ func accountReadyLabel(b store.Browser, active bool) string {
 	if active {
 		return "使用中"
 	}
-	if b.IsRunning && b.ExtAccount == "" {
+	if b.IsRunning {
 		return "运行中"
 	}
 	return "就绪"
@@ -755,6 +1281,159 @@ func (a *App) loginIsFresh(id int64) bool {
 	return ok
 }
 
+func (a *App) markAutoName(id int64, placeholder string) {
+	if a == nil || id <= 0 {
+		return
+	}
+	a.mu.Lock()
+	if a.loginAutoName == nil {
+		a.loginAutoName = map[int64]string{}
+	}
+	a.loginAutoName[id] = strings.TrimSpace(placeholder)
+	a.mu.Unlock()
+}
+
+func (a *App) clearAutoName(id int64) {
+	if a == nil || id <= 0 {
+		return
+	}
+	a.mu.Lock()
+	delete(a.loginAutoName, id)
+	a.mu.Unlock()
+}
+
+func (a *App) autoNamePlaceholder(id int64) (string, bool) {
+	if a == nil || id <= 0 {
+		return "", false
+	}
+	a.mu.Lock()
+	placeholder, ok := a.loginAutoName[id]
+	a.mu.Unlock()
+	return placeholder, ok
+}
+
+func (a *App) needsAutoAccountName(id int64, fallback store.Browser) bool {
+	if a == nil || id <= 0 {
+		return false
+	}
+	if _, ok := a.autoNamePlaceholder(id); ok {
+		return true
+	}
+	if a.store != nil {
+		for _, row := range a.store.Browsers() {
+			if row.ID == id {
+				return !row.IsLoggedIn && isDefaultPlatformName(row.Platform, row.Name)
+			}
+		}
+		return false
+	}
+	return !fallback.IsLoggedIn && isDefaultPlatformName(fallback.Platform, fallback.Name)
+}
+
+func (a *App) probeAccountUsername(ctx context.Context, endpoint string) (string, error) {
+	if a == nil {
+		return "", nil
+	}
+	if a.accountNameProbe != nil {
+		return a.accountNameProbe(ctx, endpoint)
+	}
+	if a.wizardProbe != nil {
+		return "", nil
+	}
+	return cdp.ProbeAccountUsername(ctx, endpoint)
+}
+
+func (a *App) waitAccountUsername(endpoint string, stale func() bool) string {
+	if a == nil || endpoint == "" {
+		return ""
+	}
+	if a.accountNameProbe == nil && a.wizardProbe != nil {
+		return ""
+	}
+	a.mu.Lock()
+	waitBudget := a.accountNameWait
+	poll := a.accountNamePoll
+	a.mu.Unlock()
+	if waitBudget <= 0 {
+		waitBudget = 4 * time.Second
+	}
+	if poll <= 0 {
+		poll = 300 * time.Millisecond
+	}
+	deadline := time.Now().Add(waitBudget)
+	for {
+		if stale != nil && stale() {
+			return ""
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		raw, err := a.probeAccountUsername(ctx, endpoint)
+		cancel()
+		if err == nil {
+			if name := cdp.SanitizeAccountUsername(raw); name != "" {
+				return name
+			}
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return ""
+		}
+		time.Sleep(min(poll, remaining))
+	}
+}
+
+func (a *App) applyAutoAccountName(id int64, rawName string) string {
+	if a == nil || id <= 0 || a.store == nil {
+		return ""
+	}
+	rows := a.store.Browsers()
+	var target store.Browser
+	found := false
+	for _, r := range rows {
+		if r.ID == id {
+			target = r
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.clearAutoName(id)
+		return ""
+	}
+	if placeholder, tracked := a.autoNamePlaceholder(id); tracked {
+		if strings.TrimSpace(target.Name) != placeholder {
+			a.clearAutoName(id)
+			return ""
+		}
+	} else if !isDefaultPlatformName(target.Platform, target.Name) {
+		return ""
+	}
+	var samePlatform []string
+	for _, r := range rows {
+		if r.ID != id && r.Platform == target.Platform {
+			samePlatform = append(samePlatform, r.Name)
+		}
+	}
+	finalName := uniqueAccountName(rawName, samePlatform)
+	if finalName == "" {
+		return ""
+	}
+	a.store.RenameBrowser(id, finalName)
+	for i := range a.browserRows {
+		if a.browserRows[i].ID == id {
+			a.browserRows[i].Name = finalName
+		}
+	}
+	if a.wizardAccount.ID == id {
+		a.wizardAccount.Name = finalName
+		a.wizardName = finalName
+	}
+	a.clearAutoName(id)
+	if finalName != target.Name {
+		logging.Log.Info("账号[%s] 已自动识别用户名：%s", target.Name, finalName)
+	}
+	return finalName
+}
+
 func (a *App) clearLoginHold(id int64) {
 	a.mu.Lock()
 	delete(a.loginHold, id)
@@ -770,7 +1449,19 @@ func (a *App) setLoginShot(id int64, state, hint string) {
 	a.mu.Unlock()
 }
 
+func accountNeedsLogin(b store.Browser) bool {
+	if !b.IsLoggedIn {
+		return true
+	}
+	return (b.Health == store.HealthExhausted || b.Health == store.HealthCooling) &&
+		strings.Contains(b.LastError, "登录")
+}
+
 func (a *App) acceptLogin(id int64) {
+	a.confirmLogin(id, true)
+}
+
+func (a *App) confirmLogin(id int64, wake bool) {
 	if a == nil || id <= 0 {
 		return
 	}
@@ -784,7 +1475,8 @@ func (a *App) acceptLogin(id int64) {
 		a.store.ConfirmLogin(id)
 	}
 	a.setLoginShot(id, "in", "已登录")
-	if a.engine != nil {
+	if wake && a.engine != nil {
+		a.engine.NoteLoginConfirmed(id)
 		a.engine.Wake()
 	}
 	a.refreshBrowsers()
@@ -796,6 +1488,7 @@ func (a *App) abandonUnlogged(b store.Browser) {
 	}
 	a.mu.Lock()
 	delete(a.loginFresh, b.ID)
+	delete(a.loginAutoName, b.ID)
 	a.mu.Unlock()
 	if a.manager != nil {
 		a.manager.Stop(b.ID)
@@ -805,6 +1498,9 @@ func (a *App) abandonUnlogged(b store.Browser) {
 	a.refreshBrowsers()
 }
 
+// watchLogin 轮询打开的浏览器登录状态。
+// 新建账号、未登录/登录失效账号，或页面持续处于未登录态并在扫码后完成登录的窗口会自动关闭；
+// 手动打开且本就已登录的健康账号保持打开。
 func (a *App) watchLogin(b store.Browser, endpoint string) {
 	if a == nil || b.ID <= 0 || endpoint == "" {
 		return
@@ -820,7 +1516,9 @@ func (a *App) watchLogin(b store.Browser, endpoint string) {
 	if poll <= 0 {
 		poll = 2 * time.Second
 	}
+	needsLogin := accountNeedsLogin(b)
 	go func() {
+		outCount := 0
 		for {
 			time.Sleep(poll)
 			a.mu.Lock()
@@ -830,17 +1528,62 @@ func (a *App) watchLogin(b store.Browser, endpoint string) {
 				return
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			state, err := cdp.ProbeLogin(ctx, endpoint)
+			state, err := a.probeWizardLogin(ctx, endpoint)
 			cancel()
-			if err == nil && state == "in" {
-				a.postUI(func() {
-					a.acceptLogin(b.ID)
-					if a.loginFollow != nil {
-						a.loginFollow(b, endpoint)
-					}
+			if err != nil {
+				continue
+			}
+			state = cdp.NormalizeLoginState(state)
+			if state == "out" {
+				outCount++
+				continue
+			}
+			if state != "in" {
+				continue
+			}
+			var scraped string
+			if a.needsAutoAccountName(b.ID, b) {
+				scraped = a.waitAccountUsername(endpoint, func() bool {
+					a.mu.Lock()
+					s := a.quitting || a.loginWatchGen[b.ID] != gen
+					a.mu.Unlock()
+					return s
 				})
+			}
+			var accepted, closeAfterLogin bool
+			a.syncUI(func() {
+				a.mu.Lock()
+				stale := a.quitting || a.loginWatchGen[b.ID] != gen
+				a.mu.Unlock()
+				if stale {
+					return
+				}
+				accepted = true
+				if scraped != "" {
+					if renamed := a.applyAutoAccountName(b.ID, scraped); renamed != "" {
+						b.Name = renamed
+					}
+				}
+				closeAfterLogin = a.loginIsFresh(b.ID) || needsLogin || outCount >= 2
+				if closeAfterLogin {
+					a.clearAutoName(b.ID)
+				}
+				a.confirmLogin(b.ID, !closeAfterLogin)
+				if a.loginFollow != nil {
+					a.loginFollow(b, endpoint)
+				}
+			})
+			if !accepted {
 				return
 			}
+			if closeAfterLogin {
+				a.closeLoginWindow(b)
+				if a.engine != nil {
+					a.engine.NoteLoginConfirmed(b.ID)
+					a.engine.Wake()
+				}
+			}
+			return
 		}
 	}()
 }
@@ -849,20 +1592,22 @@ func (a *App) watchLogin(b store.Browser, endpoint string) {
 
 func (a *App) openBrowserDrawer(row store.Browser) {
 	home := accountHomeURL(row)
-	if row.ExtAccount != "" || home == "" {
+	if home == "" {
 		return
 	}
 	previous := a.browserDrawer
 	if previous != nil && previous.row.ID == row.ID && previous.err == "" {
 		return
 	}
+	wasRunning := a.manager != nil && a.manager.IsRunning(row.ID)
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &browserDrawerState{
-		row:     row,
-		cancel:  cancel,
-		done:    make(chan struct{}),
-		inputs:  make(chan cdp.PageInput, 128),
-		loading: true,
+		row:             row,
+		startedByDrawer: !wasRunning,
+		cancel:          cancel,
+		done:            make(chan struct{}),
+		inputs:          make(chan cdp.PageInput, 128),
+		loading:         true,
 	}
 	a.browserDrawer = s
 	a.mu.Lock()
@@ -890,6 +1635,10 @@ func (a *App) openBrowserDrawer(row store.Browser) {
 		}
 		endpoint, err := a.startDrawerBrowser(ctx, row, root, home)
 		if ctx.Err() != nil {
+			if err == nil && s.startedByDrawer && a.manager != nil {
+				a.manager.Stop(row.ID)
+				a.postUI(func() { a.refreshBrowsers() })
+			}
 			return
 		}
 		if err != nil {
@@ -924,11 +1673,11 @@ func (a *App) startDrawerBrowser(ctx context.Context, row store.Browser, root, h
 	if a.manager == nil {
 		return "", errors.New("没有浏览器管理器")
 	}
-	addon, err := a.engine.BoundAddonDir(row)
-	if err != nil {
-		logging.Log.Warning("账号[%s] 未能预装页面桥：%v", row.Name, err)
+	endpoint, err := a.manager.StartView(ctx, row, root, home)
+	if err == nil {
+		a.postUI(func() { a.refreshBrowsers() })
 	}
-	return a.manager.StartView(ctx, row, root, home, addon)
+	return endpoint, err
 }
 
 func (s *browserDrawerState) releaseManual(engine *tasks.Engine) {
@@ -951,6 +1700,7 @@ func (a *App) closeBrowserDrawer() {
 		return
 	}
 	a.browserDrawer = nil
+	a.setDrawerFrame(nil)
 	a.mu.Lock()
 	if a.browserViewingID == s.row.ID {
 		a.browserViewingID = 0
@@ -958,6 +1708,29 @@ func (a *App) closeBrowserDrawer() {
 	a.mu.Unlock()
 	s.stop(a.engine)
 	a.emit("browserDrawer")
+}
+
+// closeBrowserDrawerByUser closes the preview drawer after an explicit user action
+// and stops any idle headless browser that has no visible OS window left.
+func (a *App) closeBrowserDrawerByUser() {
+	s := a.browserDrawer
+	if s == nil {
+		return
+	}
+	id := s.row.ID
+	a.closeBrowserDrawer()
+	if a.running || a.manager == nil || !a.manager.IsHeadless(id) {
+		return
+	}
+	if a.engine != nil && a.engine.ActiveAccounts()[id] {
+		return
+	}
+	target, ok := a.browserByID(id)
+	if !ok {
+		target = s.row
+	}
+	target.IsRunning = true
+	a.stopBrowserInstance(target, nil)
 }
 
 func (a *App) browserDrawerUpdate(s *browserDrawerState, fn func()) {
@@ -978,10 +1751,40 @@ func (a *App) browserDrawerBusy(id int64) bool {
 	return ok
 }
 
+const (
+	drawerFastInterval = 85 * time.Millisecond
+	drawerIdleInterval = 250 * time.Millisecond
+	drawerFastWindow   = 1500 * time.Millisecond
+)
+
+func (a *App) drawerFrameInterval(s *browserDrawerState) time.Duration {
+	if s == nil {
+		return drawerIdleInterval
+	}
+	if a != nil && a.engine != nil && a.engine.AccountAwaitingUser(s.row.ID) {
+		return drawerFastInterval
+	}
+	if ts := s.lastInput.Load(); ts > 0 && time.Since(time.Unix(0, ts)) < drawerFastWindow {
+		return drawerFastInterval
+	}
+	return drawerIdleInterval
+}
+
 func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page *cdp.PageView) {
-	tick := time.NewTicker(250 * time.Millisecond)
-	defer tick.Stop()
+	rowSnap := s.row
+	timer := time.NewTimer(10 * time.Millisecond)
+	defer timer.Stop()
 	lastProbe := time.Time{}
+	lastFrame := time.Time{}
+	resetTimer := func(d time.Duration) {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(d)
+	}
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
@@ -992,9 +1795,10 @@ func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page 
 				a.browserDrawerUpdate(s, func() { s.resuming = false })
 				continue
 			}
-			if ctx.Err() != nil || !s.held.Load() || a.browserDrawerBusy(s.row.ID) {
+			if ctx.Err() != nil || !s.held.Load() || a.browserDrawerBusy(rowSnap.ID) {
 				continue
 			}
+			s.lastInput.Store(time.Now().UnixNano())
 			opCtx, stop := context.WithTimeout(ctx, 3*time.Second)
 			text, err := page.Input(opCtx, in)
 			stop()
@@ -1008,13 +1812,12 @@ func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page 
 					s.copyText, s.copyReady = text, true
 				})
 			}
-		case <-tick.C:
+			if (in.Kind == "mousePressed" || in.Kind == "mouseReleased") && time.Since(lastFrame) >= 50*time.Millisecond {
+				resetTimer(12 * time.Millisecond)
+			}
+		case <-timer.C:
 			frameCtx, stop := context.WithTimeout(ctx, 20*time.Second)
 			frame, err := page.Frame(frameCtx)
-			var img image.Image
-			if err == nil {
-				img, _, err = image.Decode(bytes.NewReader(frame.JPEG))
-			}
 			if err != nil {
 				stop()
 				a.browserDrawerUpdate(s, func() { s.loading, s.err = false, "浏览器连接已断开，请重新连接："+err.Error() })
@@ -1023,26 +1826,231 @@ func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page 
 			if time.Since(lastProbe) >= 2*time.Second {
 				lastProbe = time.Now()
 				if state, err := page.LoginState(frameCtx); err == nil && state == "in" {
-					a.acceptLogin(s.row.ID)
+					if a.needsAutoAccountName(rowSnap.ID, rowSnap) {
+						if name, err := page.AccountUsername(frameCtx); err == nil && name != "" {
+							a.postUI(func() {
+								if renamed := a.applyAutoAccountName(rowSnap.ID, name); renamed != "" {
+									if a.browserDrawer == s {
+										s.row.Name = renamed
+										a.emit("browserDrawer")
+									}
+									a.refreshBrowsers()
+								}
+							})
+						}
+					}
+					a.acceptLogin(rowSnap.ID)
 				}
 			}
 			stop()
-			rgba := toRGBA(img)
+			lastFrame = time.Now()
+			jpegBytes := append([]byte(nil), frame.JPEG...)
 			a.browserDrawerUpdate(s, func() {
-				s.rgba = rgba
-				s.frameVersion++
+				if len(jpegBytes) > 0 {
+					a.setDrawerFrame(jpegBytes)
+					s.frameVersion++
+				}
 				s.width, s.height = frame.Width, frame.Height
 				s.title, s.url, s.loading = frame.Title, frame.URL, false
 			})
+			resetTimer(a.drawerFrameInterval(s))
 		}
 	}
 }
 
-func (a *App) showAccountWindow(row store.Browser) {
-	if row.Platform == agy.Platform {
-		a.openAgyLane(row)
-		return
+// BrowserInputDTO is a framework-free pointer/wheel/keyboard event sent from
+// the frontend BrowserStage component to the active CDP PageView.
+type BrowserInputDTO struct {
+	Kind    string  `json:"kind"` // mousePressed | mouseReleased | mouseMoved | mouseWheel | keyDown | text | copy | cut
+	Button  string  `json:"button,omitempty"`
+	Buttons int64   `json:"buttons,omitempty"`
+	X       float64 `json:"x,omitempty"`
+	Y       float64 `json:"y,omitempty"`
+	DX      float64 `json:"dx,omitempty"`
+	DY      float64 `json:"dy,omitempty"`
+	Clicks  int     `json:"clicks,omitempty"`
+	Key     string  `json:"key,omitempty"`
+	Text    string  `json:"text,omitempty"`
+	Alt     bool    `json:"alt,omitempty"`
+	Control bool    `json:"control,omitempty"`
+	Meta    bool    `json:"meta,omitempty"`
+	Shift   bool    `json:"shift,omitempty"`
+}
+
+// BrowserKeyInput is a framework-free keyboard input used by handleBrowserDrawerKey.
+type BrowserKeyInput struct {
+	Key     string
+	Alt     bool
+	Control bool
+	Meta    bool
+	Shift   bool
+}
+
+func (a *App) browserDrawerSend(s *browserDrawerState, in cdp.PageInput) bool {
+	if s == nil || s.inputs == nil {
+		return false
 	}
+	select {
+	case s.inputs <- in:
+		return true
+	default:
+		return false
+	}
+}
+
+func cdpModifiersFromFlags(alt, control, meta, shift bool) int64 {
+	var flags int64
+	if alt {
+		flags |= 1
+	}
+	if control {
+		flags |= 2
+	}
+	if meta {
+		flags |= 4
+	}
+	if shift {
+		flags |= 8
+	}
+	return flags
+}
+
+func cdpButtonMask(btn string) int64 {
+	switch btn {
+	case "right":
+		return 2
+	case "middle":
+		return 4
+	default:
+		return 1
+	}
+}
+
+func (a *App) handleBrowserDrawerInput(in BrowserInputDTO) bool {
+	s := a.browserDrawer
+	if s == nil {
+		return false
+	}
+	switch in.Kind {
+	case "keyDown":
+		return a.handleBrowserDrawerKey(BrowserKeyInput{
+			Key:     in.Key,
+			Alt:     in.Alt,
+			Control: in.Control,
+			Meta:    in.Meta,
+			Shift:   in.Shift,
+		})
+	case "mousePressed", "mouseReleased", "mouseMoved", "mouseWheel":
+		if !s.held.Load() {
+			return false
+		}
+		btn := in.Button
+		if btn == "" && (in.Kind == "mousePressed" || in.Kind == "mouseReleased") {
+			btn = "left"
+		}
+		buttons := in.Buttons
+		if in.Kind == "mousePressed" && buttons == 0 {
+			buttons = cdpButtonMask(btn)
+		}
+		clicks := in.Clicks
+		if clicks == 0 && (in.Kind == "mousePressed" || in.Kind == "mouseReleased") {
+			clicks = 1
+		}
+		return a.browserDrawerSend(s, cdp.PageInput{
+			Kind:      in.Kind,
+			Button:    btn,
+			Buttons:   buttons,
+			X:         in.X,
+			Y:         in.Y,
+			DX:        in.DX,
+			DY:        in.DY,
+			Clicks:    clicks,
+			Modifiers: cdpModifiersFromFlags(in.Alt, in.Control, in.Meta, in.Shift),
+		})
+	case "text":
+		if !s.held.Load() || in.Text == "" {
+			return false
+		}
+		return a.browserDrawerSend(s, cdp.PageInput{Kind: "text", Text: in.Text})
+	case "copy", "cut":
+		if !s.held.Load() {
+			return false
+		}
+		return a.browserDrawerSend(s, cdp.PageInput{Kind: in.Kind})
+	default:
+		return false
+	}
+}
+
+func (a *App) handleBrowserDrawerKey(ev BrowserKeyInput) bool {
+	s := a.browserDrawer
+	if s == nil {
+		return false
+	}
+	keyName := strings.TrimSpace(ev.Key)
+	if ev.Key == " " {
+		keyName = " "
+	}
+	if strings.EqualFold(keyName, "escape") || strings.EqualFold(keyName, "esc") {
+		a.closeBrowserDrawerByUser()
+		return true
+	}
+	if !s.held.Load() || keyName == "" {
+		return false
+	}
+	if (ev.Control || ev.Meta) && strings.EqualFold(keyName, "c") {
+		return a.browserDrawerSend(s, cdp.PageInput{Kind: "copy"})
+	}
+	if (ev.Control || ev.Meta) && strings.EqualFold(keyName, "x") {
+		return a.browserDrawerSend(s, cdp.PageInput{Kind: "cut"})
+	}
+	if len([]rune(keyName)) == 1 && !ev.Alt && !ev.Control && !ev.Meta {
+		return a.browserDrawerSend(s, cdp.PageInput{Kind: "text", Text: keyName})
+	}
+	mods := cdpModifiersFromFlags(ev.Alt, ev.Control, ev.Meta, ev.Shift)
+	cdpKey, code := mapKeyToCDP(keyName)
+	if cdpKey != "" {
+		a.browserDrawerSend(s, cdp.PageInput{Kind: "keyDown", Key: cdpKey, VirtualKey: code, Modifiers: mods})
+		a.browserDrawerSend(s, cdp.PageInput{Kind: "keyUp", Key: cdpKey, VirtualKey: code, Modifiers: mods})
+		return true
+	}
+	return false
+}
+
+func mapKeyToCDP(k string) (string, int) {
+	switch strings.ToLower(k) {
+	case "enter", "return":
+		return "Enter", 13
+	case "backspace":
+		return "Backspace", 8
+	case "tab":
+		return "Tab", 9
+	case "space", " ":
+		return " ", 32
+	case "left", "arrowleft":
+		return "ArrowLeft", 37
+	case "up", "arrowup":
+		return "ArrowUp", 38
+	case "right", "arrowright":
+		return "ArrowRight", 39
+	case "down", "arrowdown":
+		return "ArrowDown", 40
+	case "delete":
+		return "Delete", 46
+	case "home":
+		return "Home", 36
+	case "end":
+		return "End", 35
+	case "pageup":
+		return "PageUp", 33
+	case "pagedown":
+		return "PageDown", 34
+	default:
+		return k, 0
+	}
+}
+
+func (a *App) showAccountWindow(row store.Browser) {
 	if a.accountOpen != nil {
 		if err := a.accountOpen(row); err != nil {
 			logging.Log.Errorf("%s 打开窗口失败: %v", accountLabel(row), err)
@@ -1052,541 +2060,3 @@ func (a *App) showAccountWindow(row store.Browser) {
 	a.selectBrowserID(row.ID)
 	a.launchBrowserInstance(row, nil)
 }
-
-// ---- Antigravity ops ----
-
-func (a *App) agySignature() string {
-	if a == nil {
-		return ""
-	}
-	return strings.TrimSpace(a.agyBin) + "\n" + strings.TrimSpace(a.agyHomeRoot) + "\n" + strings.TrimSpace(a.agyModel) + "\n" + fmt.Sprintf("%d", a.agyTimeoutSec())
-}
-
-func (a *App) agyTimeoutSec() int {
-	m := 6.0
-	if a != nil && a.agyTimeoutMin > 0 {
-		m = a.agyTimeoutMin
-	}
-	sec := int(m * 60)
-	if sec < 60 {
-		sec = 60
-	}
-	if sec > 3600 {
-		sec = 3600
-	}
-	return sec
-}
-
-func (a *App) persistAgySettings() {
-	if a == nil || a.store == nil {
-		return
-	}
-	sig := a.agySignature()
-	if sig == a.agySaved {
-		return
-	}
-	a.agySaved = sig
-	bin := strings.TrimSpace(a.agyBin)
-	if bin == agy.DefaultBin() {
-		bin = ""
-	}
-	root := strings.TrimSpace(a.agyHomeRoot)
-	if root == agy.HomeRoot("", a.store.File()) {
-		root = ""
-	}
-	model := strings.TrimSpace(a.agyModel)
-	if model == agy.DefaultModel {
-		model = ""
-	}
-	a.store.Set("agy_bin", bin)
-	a.store.Set("agy_home_root", root)
-	a.store.Set("agy_model", model)
-	a.store.SetInt("agy_timeout_seconds", a.agyTimeoutSec())
-}
-
-func (a *App) attachAgyLanes(board tasks.Board, rows []store.Browser) tasks.Board {
-	if a == nil || len(board.Lanes) == 0 {
-		return board
-	}
-	byID := map[int64]store.Browser{}
-	for _, b := range rows {
-		byID[b.ID] = b
-	}
-	for i := range board.Lanes {
-		ln := &board.Lanes[i]
-		b, ok := byID[ln.ID]
-		if !ok || b.Platform != agy.Platform {
-			continue
-		}
-		if strings.TrimSpace(b.UserDataDir) != "" {
-			ln.Email = agy.Email(b.UserDataDir)
-		}
-		ln.CoolUntil = b.CoolUntil
-		if strings.TrimSpace(b.UserDataDir) != "" && !b.IsLoggedIn && !b.Disabled && ln.State != tasks.LaneRunning {
-			ln.State = tasks.LaneLogin
-			ln.Action = "去登录"
-		}
-	}
-	return board
-}
-
-func (a *App) agyPauseLine(now time.Time) string {
-	pauseAt, paused := tasksAgyPaused(a.configuredBrowsers(), now, a.shownDailyCapFor(agy.Platform))
-	if !paused || pauseAt.IsZero() {
-		return ""
-	}
-	return "Antigravity 全部限流，预计恢复 " + pauseAt.Local().Format("15:04:05")
-}
-
-func tasksAgyPaused(rows []store.Browser, now time.Time, capN int) (time.Time, bool) {
-	return pausedAgy(rows, now, capN)
-}
-
-func pausedAgy(rows []store.Browser, now time.Time, capN int) (time.Time, bool) {
-	var total int
-	var earliest time.Time
-	for _, b := range rows {
-		if b.Platform != agy.Platform || b.Disabled {
-			continue
-		}
-		total++
-		if b.Usable(now) && (capN <= 0 || b.UsedToday(now) < capN) {
-			return time.Time{}, false
-		}
-		if b.Health == store.HealthCooling && b.CoolUntil > 0 {
-			coolAt := time.Unix(b.CoolUntil, 0)
-			if coolAt.After(now) && (earliest.IsZero() || coolAt.Before(earliest)) {
-				earliest = coolAt
-			}
-		}
-	}
-	return earliest, total > 0 && !earliest.IsZero()
-}
-
-func newAgyChooser() *agyChooserState {
-	s := &agyChooserState{}
-	det := agy.DetectLocal()
-	s.hint = det.Hint
-	s.home = det.Home
-	s.email = det.Email
-	s.canImport = det.CanImport()
-	s.keychain = det.Keychain
-	return s
-}
-
-func (a *App) addAgyAccount() {
-	if a == nil || a.running {
-		return
-	}
-	a.closeAgyLogin()
-	a.agyChooser = newAgyChooser()
-	a.emit("browsers")
-}
-
-func (a *App) startAgyOAuth() {
-	if a == nil || a.running {
-		return
-	}
-	if a.agyChooser != nil && a.agyChooser.busy {
-		return
-	}
-	if a.store == nil {
-		logging.Log.Errorf("还没有配置库，无法添加 Antigravity 账号")
-		return
-	}
-	root := a.agyAccountRoot()
-	dir, name, err := agy.NextAccountDir(root)
-	if err != nil {
-		logging.Log.Errorf("创建 Antigravity 账号目录失败: %v", err)
-		return
-	}
-	row, err := a.store.AddBrowser(agy.Platform, name, dir)
-	if err != nil {
-		logging.Log.Errorf("添加 Antigravity 账号失败: %v", err)
-		_ = os.RemoveAll(dir)
-		return
-	}
-	if a.wizardOn {
-		a.wizardAgy.created = row.ID
-	}
-	a.agyChooser = nil
-	a.refreshBrowsers()
-	a.beginAgyLogin(row)
-	a.emit("browsers", "wizard")
-}
-
-func (a *App) agyAccountRoot() string {
-	root := ""
-	if a != nil {
-		root = strings.TrimSpace(a.agyHomeRoot)
-	}
-	if root == "" && a != nil && a.store != nil {
-		root = agy.HomeRoot("", a.store.File())
-	}
-	if root == "" {
-		root = "agy-homes"
-	}
-	return root
-}
-
-func (a *App) agyEmails() []string {
-	if a == nil {
-		return nil
-	}
-	var out []string
-	for _, b := range a.configuredBrowsers() {
-		if b.Platform != agy.Platform || strings.TrimSpace(b.UserDataDir) == "" {
-			continue
-		}
-		if email := agy.Email(b.UserDataDir); email != "" {
-			out = append(out, email)
-		}
-	}
-	return out
-}
-
-func (a *App) agySelectImportFolder(folder string) {
-	if a == nil || a.agyChooser == nil || a.agyChooser.busy {
-		return
-	}
-	det := agy.DetectAt(folder)
-	a.agyChooser.home = det.Home
-	a.agyChooser.email = det.Email
-	a.agyChooser.hint = det.Hint
-	a.agyChooser.canImport = det.CanImport()
-	a.agyChooser.keychain = det.Keychain
-	a.agyChooser.err = ""
-	a.emit("browsers", "wizard")
-}
-
-func (a *App) startAgyImport() {
-	if a == nil || a.running || a.agyChooser == nil || a.agyChooser.busy {
-		return
-	}
-	s := a.agyChooser
-	if !s.canImport || strings.TrimSpace(s.home) == "" {
-		s.err = agy.MsgNotFound
-		s.status = ""
-		return
-	}
-	if a.store == nil {
-		logging.Log.Errorf("还没有配置库，无法添加 Antigravity 账号")
-		return
-	}
-	if agy.WithinAccountRoot(s.home, a.agyAccountRoot()) || agy.EmailUsed(s.email, a.agyEmails()) {
-		s.err = agy.ErrAlreadyImported.Error()
-		s.retry = false
-		return
-	}
-	s.busy = true
-	s.err = ""
-	s.status = ""
-	s.retry = false
-	req := agy.ImportRequest{
-		SourceHome:        s.home,
-		AccountRoot:       a.agyAccountRoot(),
-		ExistingEmails:    a.agyEmails(),
-		Bin:               strings.TrimSpace(a.agyBin),
-		Model:             strings.TrimSpace(a.agyModel),
-		Timeout:           agy.VerifyTimeout,
-		AllowMissingToken: s.keychain,
-	}
-	a.emit("browsers", "wizard")
-	go func() {
-		res, err := agy.Import(context.Background(), req)
-		a.postUI(func() { a.finishAgyImport(res, err) })
-	}()
-}
-
-func (a *App) finishAgyImport(res agy.ImportResult, err error) {
-	if a == nil {
-		if err == nil && res.Home != "" {
-			_ = os.RemoveAll(res.Home)
-		}
-		return
-	}
-	if err != nil {
-		if a.agyChooser != nil {
-			a.agyChooser.busy = false
-			a.agyChooser.retry = true
-			a.agyChooser.status = ""
-			a.agyChooser.err = err.Error()
-		}
-		a.emit("browsers", "wizard")
-		return
-	}
-	if a.store == nil {
-		_ = os.RemoveAll(res.Home)
-		if a.agyChooser != nil {
-			a.agyChooser.busy = false
-			a.agyChooser.retry = true
-			a.agyChooser.err = "还没有配置库，无法添加 Antigravity 账号"
-		}
-		a.emit("browsers", "wizard")
-		return
-	}
-	row, addErr := a.store.AddBrowser(agy.Platform, res.Name, res.Home)
-	if addErr != nil {
-		_ = os.RemoveAll(res.Home)
-		logging.Log.Errorf("添加 Antigravity 账号失败: %v", addErr)
-		if a.agyChooser != nil {
-			a.agyChooser.busy = false
-			a.agyChooser.retry = true
-			a.agyChooser.err = "添加 Antigravity 账号失败"
-		}
-		a.emit("browsers", "wizard")
-		return
-	}
-	a.resetAgyUsage(row.ID)
-	a.refreshBrowsers()
-	if a.engine != nil {
-		a.engine.Wake()
-	}
-	who := strings.TrimSpace(res.Email)
-	if who == "" {
-		who = res.Name
-	}
-	logging.Log.Success("%s：%s", agy.MsgImported, who)
-	a.agyChooser = nil
-	a.agyAccountAdded()
-	a.emit("browsers", "wizard")
-}
-
-func (a *App) beginAgyLogin(row store.Browser) {
-	if a == nil || row.ID <= 0 {
-		return
-	}
-	if a.agyLogin != nil && a.agyLogin.sess != nil {
-		a.agyLogin.sess.Close()
-	}
-	if a.agyLogin != nil && a.agyLogin.cancel != nil {
-		a.agyLogin.cancel()
-	}
-	gen := 1
-	if a.agyLogin != nil {
-		gen = a.agyLogin.gen + 1
-	}
-	state := &agyLoginState{
-		id:   row.ID,
-		home: row.UserDataDir,
-		name: row.Name,
-		gen:  gen,
-		busy: true,
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	state.cancel = cancel
-	a.agyLogin = state
-	bin := strings.TrimSpace(a.agyBin)
-	model := strings.TrimSpace(a.agyModel)
-	if bin == "" {
-		bin = agy.DefaultBin()
-	}
-	if _, err := os.Stat(bin); err != nil {
-		cancel()
-		state.err = "找不到 agy：" + bin
-		state.busy = false
-		state.retry = true
-		a.emit("browsers", "wizard")
-		return
-	}
-	a.emit("browsers", "wizard")
-	go func() {
-		sess, err := agy.StartLogin(ctx, bin, row.UserDataDir, model)
-		a.postUI(func() {
-			if a.agyLogin != state {
-				if sess != nil {
-					go sess.Close()
-				}
-				return
-			}
-			state.busy = false
-			if err != nil {
-				state.err, state.retry = err.Error(), true
-				a.emit("browsers", "wizard")
-				return
-			}
-			state.sess = sess
-			a.emit("browsers", "wizard")
-			go a.watchAgyLogin(gen, sess, row.ID, row.Name, row.UserDataDir)
-		})
-	}()
-}
-
-func (a *App) watchAgyLogin(gen int, sess *agy.Login, id int64, name, home string) {
-	if sess == nil {
-		return
-	}
-	deadline := time.Now().Add(agy.LoginTimeout)
-	for time.Now().Before(deadline) {
-		rawURL := sess.URL()
-		if rawURL != "" {
-			a.syncUI(func() {
-				if a.agyLogin != nil && a.agyLogin.gen == gen && a.agyLogin.sess == sess && a.agyLogin.url == "" {
-					a.agyLogin.url = rawURL
-					a.emit("browsers", "wizard")
-				}
-			})
-			break
-		}
-		select {
-		case <-sess.Done():
-			deadline = time.Time{}
-		case <-time.After(80 * time.Millisecond):
-		}
-		if deadline.IsZero() {
-			break
-		}
-	}
-	err := sess.Wait()
-	ok := err == nil && agy.LoggedIn(home)
-	a.syncUI(func() {
-		if a.agyLogin == nil || a.agyLogin.gen != gen || a.agyLogin.sess != sess {
-			return
-		}
-		if ok {
-			a.finishAgyLogin(id, name)
-			return
-		}
-		a.agyLogin.busy = false
-		a.agyLogin.retry = true
-		if err != nil {
-			a.agyLogin.err = err.Error()
-		} else {
-			a.agyLogin.err = "登录未完成，请点重试"
-		}
-		a.emit("browsers", "wizard")
-	})
-}
-
-func (a *App) finishAgyLogin(id int64, name string) {
-	if a.store != nil {
-		a.store.ConfirmLogin(id)
-	}
-	a.resetAgyUsage(id)
-	a.agyLogin = nil
-	a.wizardAgy.created = 0
-	if a.engine != nil {
-		a.engine.Wake()
-	}
-	logging.Log.Success("Antigravity 账号 %s 已登录", name)
-	a.refreshBrowsers()
-	a.agyAccountAdded()
-	a.emit("browsers", "wizard")
-}
-
-func (a *App) submitAgyCode(code string) {
-	st := a.agyLogin
-	if st == nil || st.sess == nil || st.busy {
-		return
-	}
-	code = strings.TrimSpace(code)
-	if code == "" {
-		st.err = "请先粘贴授权码或回调链接"
-		a.emit("browsers", "wizard")
-		return
-	}
-	st.busy = true
-	st.err = ""
-	st.code = ""
-	a.emit("browsers", "wizard")
-	go func() {
-		err := st.sess.Submit(code)
-		a.postUI(func() {
-			if a.agyLogin != st {
-				return
-			}
-			st.busy = false
-			if err != nil {
-				st.err = err.Error()
-			}
-			a.emit("browsers", "wizard")
-		})
-	}()
-}
-
-func (a *App) openAgyAuthURL() {
-	st := a.agyLogin
-	if st == nil || strings.TrimSpace(st.url) == "" || st.opening {
-		return
-	}
-	if a.manager == nil {
-		st.err = "没有浏览器管理器，无法打开授权页"
-		a.emit("browsers", "wizard")
-		return
-	}
-	st.opening = true
-	rawURL := st.url
-	row := store.Browser{
-		ID:       st.id,
-		Platform: agy.Platform,
-		Name:     st.name,
-		Engine:   browser.KindCamoufox,
-	}
-	if existing, ok := a.browserByID(st.id); ok {
-		row = existing
-		row.Engine = browser.KindCamoufox
-	}
-	a.emit("browsers", "wizard")
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		ws, err := a.manager.Start(row, a.dataRoot, browser.KindCamoufox, rawURL, false)
-		if err == nil && ws != "" {
-			_ = cdp.OpenURLContext(ctx, ws, rawURL)
-		}
-		a.postUI(func() {
-			if a.agyLogin == st {
-				st.opening = false
-				if err != nil && !errors.Is(err, browser.ErrDebugPort) {
-					st.err = "打开授权页失败：" + err.Error()
-				}
-				a.emit("browsers", "wizard")
-			}
-		})
-	}()
-}
-
-func (a *App) retryAgyLogin() {
-	st := a.agyLogin
-	if st == nil {
-		return
-	}
-	if row, ok := a.browserByID(st.id); ok {
-		a.beginAgyLogin(row)
-	}
-}
-
-func (a *App) openAgyLane(row store.Browser) {
-	a.selectBrowserID(row.ID)
-	a.beginAgyLogin(row)
-}
-
-func formatAgyUsageView(uv agy.UsageView) (string, int, string) {
-	switch uv.State {
-	case agy.UsageOK:
-		pct := int(uv.Usage.FiveHour.Remaining*100 + 0.5)
-		if pct < 0 {
-			pct = 0
-		}
-		if pct > 100 {
-			pct = 100
-		}
-		label := fmt.Sprintf("5h %d%%", pct)
-		if !uv.Usage.Weekly.Reset.IsZero() || uv.Usage.Weekly.Remaining > 0 {
-			wk := int(uv.Usage.Weekly.Remaining*100 + 0.5)
-			label = fmt.Sprintf("5h %d%% · 周 %d%%", pct, wk)
-		}
-		return label, pct, ""
-	case agy.UsageNeedLogin:
-		return "未登录", 0, uv.Reason
-	case agy.UsageFailed:
-		return "读取失败", 0, uv.Reason
-	default:
-		if strings.TrimSpace(uv.Reason) != "" {
-			return uv.Reason, 0, ""
-		}
-		return "读取中…", 0, ""
-	}
-}
-
-var _ = filepath.Join

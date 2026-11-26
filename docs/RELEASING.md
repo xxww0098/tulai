@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.38
+# 发布 tulai 0.1.39
 
-当前桌面端版本是 **0.1.38**，标签 **`v0.1.38`**，随附页面桥 **0.3.24**。扩展版本独立编号。
+当前桌面端版本是 **0.1.39**，标签 **`v0.1.39`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+
+## 0.1.39
+
+桌面端架构迁移至 MyGo v0.10.0（React 19 前端 + 单协程 Actor IPC + `tulaimedia` 本地媒体协议）；受管浏览器统一迁移至项目托管的 Fingerprint（`fingerprint-chromium`，私有 CDP 管道与隔离世界页面桥），移除 Camoufox、Chrome for Testing、外部扩展桥及 Antigravity / ChatGPT；新增「千问国际」平台、自由生图文生图/图生图独立草稿与原生比例菜单、洗图画质校验、账号聊天历史批量清理与自动删除、下载浏览器书签栏、三栏暗房图片编辑及多源并发分段自动更新。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.38
 
@@ -8,7 +12,7 @@
 
 ## 0.1.37
 
-重整图片生成工作台，分区展示待洗、账号加工和已完成结果，支持清空已洗素材及折叠提示词。豆包默认词强化单幅主画提取、去框、二维重绘和满幅输出；改进过期账号提示及下载内存开销。桌面界面框架升级到 NSGo 0.3.0，安装包和免安装程序附带第三方许可证声明 `THIRD_PARTY_NOTICES.txt`。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
+重整图片生成工作台，分区展示待洗、账号加工和已完成结果，支持清空已洗素材及折叠提示词。豆包默认词强化单幅主画提取、去框、二维重绘和满幅输出；改进过期账号提示及下载内存开销。升级桌面端运行时版本并附带第三方许可证声明 `THIRD_PARTY_NOTICES.txt`。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.36
 
@@ -20,7 +24,7 @@
 
 ## 0.1.34
 
-桌面界面迁移到 NSGo。网页账号可在创建时选择受管 Camoufox 或 Chrome CDP。旧 MyGo 安装版用户请退出 tulai，下载对应架构的 Windows 安装器并安装到原目录。便携版可使用应用内更新。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
+桌面端架构升级。网页账号可在创建时选择受管 Camoufox 或 Chrome CDP。旧版安装用户请退出 tulai，下载对应架构的 Windows 安装器并安装到原目录。便携版可使用应用内更新。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.33
 
@@ -172,31 +176,25 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 - **登录检测和自动恢复（#35）**。掉线、浏览器崩溃或页面卡住时自动恢复，工作台写出提示。账号退出登录会提示重新扫码；在列表里点「恢复选中」后回到轮换。
 - **自动更新（#36）**。启动时以及之后大约每 6 小时静默检查，设置里的「自动检查更新」默认开着。有新版本时显示横幅「发现新版本 x.y.z」，可以「立即更新」「稍后」或「跳过此版本」。按当前系统选择安装包，用发布里的 `SHA256SUMS` 校验。GitHub 连不上时再试镜像前缀。出图任务还在跑时不打断，结束后再装。新程序起不来会回到上一版。页面桥扩展不随桌面端更新。
 
-## 三个编号
+## 版本号
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.38` | `cmd/tulai/nsgo.yaml` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
-| Go 模块 | `v0.1.38` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
-| 页面桥扩展 | `0.3.24` | `extension/manifest.json` 和 `extension/firefox/manifest.json`，以及 `extension/protocol.js` 里 hello 的 `payload.version` | 页面桥扩展自己的版本。hello 里的字符串必须和清单一致。 |
-| 协议信封 | `1` | `internal/extbridge` 的 `Version`，扩展里的 `TULAI.version` | WebSocket 信封的 `v`。和上面两个产品编号都不是一回事。 |
-
-扩展在桌面端第一次打安装包之前已经迭代到 0.3.4，0.1.2 发布时是 0.3.6，0.1.3 发布时是 0.3.7，0.3.8 改技术 id，0.3.9 可以按桌面端要求重新加载。0.3.24 在桌面端确认图片传输后释放下载缓存。0.3.23 修复豆包对话地址切换后的结果补取。0.3.22 新增从豆包原对话补取洗图结果。此前 0.3.15 新增 setRatio 页面命令，0.3.16 放宽多图批次的收工窗口并扩大「图像生成」入口识别，0.3.17 支持部分返回的源图关联、网络流状态和更宽的额度提示，0.3.18 缩短已解码且稳定的结果的等待，0.3.19 改进页面桥隔离、豆包原图捕获和千问文件选择，0.3.20 适配豆包新版技能栏并改进审核拒绝识别，0.3.21 支持绑定页面桥在显示窗口模式下不抢焦点。桌面端版本和扩展版本各自走。发布时扩展 zip 应使用对应的扩展版本号。
+| 桌面端 | `0.1.39` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.39` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
 
 ## 流水线
 
 `.github/workflows/ci.yml`：
 
-- pull request 和 `main`：在 Linux 运行全部 Go 短测试，在 Windows 原生测试下载、ChatGPT 和后台命令，另跑扩展及 Camoufox 浏览器测试，并打出 Windows 安装包。浏览器基础测试（含 ChatGPT 传输）与策略测试分开并行；`main` 测试 Windows 浏览器，pull request 额外测试 macOS。产物在 Actions 的 artifacts 里保留 14 天。
-- 标签 `v*` 必须匹配 `cmd/tulai/nsgo.yaml` 的版本，且标签指向的提交必须有通过的 `main` CI。标签流水线重新打包并上传 Windows 安装器、便携版、扩展 zip 和 `SHA256SUMS`。
+- pull request 和 `main`：在 Linux 运行 `go test ./... -short -race -timeout 20m`、`go vet ./...`、`go build ./cmd/...`，校验 `go tool mygo generate` 无绑定漂移（`git diff --exit-code frontend/src/mygo.ts`）以及 `bun run --cwd frontend typecheck` / `bun run --cwd frontend test` / `bun run --cwd frontend build`，运行指纹策略测试（`node --test internal/fingerprint/driver/*.test.mjs`）、内置脚本测试与发布脚本测试（`bash scripts/check-release-ci.test.sh` 等）；在 Windows 原生测试浏览器、运行环境、下载与更新器；另跑 Fingerprint 集成测试，并打出 Windows 安装包。浏览器基础测试与策略测试分开并行；`main` 测试 Windows 浏览器，pull request 额外测试 macOS Apple Silicon。产物在 Actions 的 artifacts 里保留 14 天。
+- 标签 `v*` 经由 `scripts/check-release-ci.sh` 校验：必须匹配 `mygo.json` 的版本，且标签指向的提交必须有通过的 `main` CI。标签流水线重新打包并上传 Windows 安装器、便携版和 `SHA256SUMS`。
 
-Windows 安装器在 Ubuntu 上用 NSIS 交叉制作，同时提供 amd64 和 arm64。构建使用 `CGO_ENABLED=0 go tool nsgo build -target windows_x64,windows_arm64 ./cmd/tulai`。发布仓库由 `cmd/tulai/nsgo.yaml` 的 `release.github` 指定。macOS 和 Linux 用户可自行构建源码或使用历史发布包。
-
-NSGo 0.3.0 起，打包前会检查依赖的许可证，并把各依赖的许可证文本写进安装目录的 `THIRD_PARTY_NOTICES.txt`。有依赖的许可证文本无法识别时构建失败，检测到 copyleft 许可证时给出警告。已人工核对过的模块列在 `cmd/tulai/nsgo.yaml` 的 `licenses.allow`；新增依赖触发检查时，先核对它的许可证，再决定是否加入该列表。`nsgo check` 和 `go test` 不做这项检查，到打包时才会发现。
+Windows 安装器在 Ubuntu 上用 NSIS 交叉制作，同时提供 amd64 和 arm64。构建前会通过 Bun 编译 `frontend/`（React 19 + Vite 6 + Tailwind CSS v4 + TypeScript 5）并以 `-overlay` 嵌入二进制，构建使用 `CGO_ENABLED=0 GOFLAGS="-tags=tulai_fingerprint_bundle" go tool mygo build -platform windows/amd64,windows/arm64`，随后由 `scripts/collect-dist.sh windows` 将 `build/windows-<arch>/tulai-setup-<ver>-<arch>.exe` 与 `tulai.exe` 收集为发布附件。本地 Windows x64 构建可运行 `build-windows.cmd`；macOS 和 Linux 用户可自行运行 `./build.sh` 构建源码或使用历史发布包。
 
 ## 发布新版本
 
-在 `cmd/tulai/nsgo.yaml` 和 `ProductVersion` 中填入相同版本，并在 `CHANGELOG.md` 添加对应的 `## X.Y.Z` 段落。推送 `main` 后，等该提交的 CI 通过再推送标签。GitHub Release 正文从这一段读取。
+在根目录 `mygo.json` 和 `cmd/tulai/version.go` 的 `ProductVersion` 中填入相同版本，并在 `CHANGELOG.md` 添加对应的 `## X.Y.Z` 段落。推送 `main` 后，等该提交的 CI 通过再推送标签。GitHub Release 正文从这一段读取。
 
 ```sh
 git checkout main
@@ -215,9 +213,8 @@ git push origin vX.Y.Z
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows 安装器 | `tulai.Setup.0.1.38.amd64.exe`、`tulai.Setup.0.1.38.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
-| Windows 便携版 | `tulai-0.1.38-windows-amd64.exe`、`tulai-0.1.38-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
-| 页面桥 | `tulai-extension-0.3.24.zip` | 独立扩展包。绑定的 Camoufox 账号由 tulai 加载内置页面桥。 |
+| Windows 安装器 | `tulai.Setup.0.1.39.amd64.exe`、`tulai.Setup.0.1.39.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.39-windows-amd64.exe`、`tulai-0.1.39-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
 
 `SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。
 
@@ -235,7 +232,7 @@ git push origin vX.Y.Z
 
 Windows 专版成为最新正式版后，旧 macOS 和 Linux 客户端仍会检查该版本；它们可能提示发现更新或检查失败，但无法安装其中的 Windows 包。可在设置中关闭自动检查，并继续使用历史版本。
 
-检查地址是：
+检查地址优先通过默认镜像与 GitHub API 并发测速选优（并在 API 限流时自动回退至 `github.com/xxww0098/tulai/releases/latest` 与 `SHA256SUMS`）：
 
 ```text
 GET https://api.github.com/repos/xxww0098/tulai/releases/latest
@@ -250,12 +247,12 @@ GET https://api.github.com/repos/xxww0098/tulai/releases/latest
 | 启动后，以及大约每 6 小时 | 静默检查。设置里的「启动时自动检查更新」默认开着。发现新版本时只在侧栏底部显示提示，不弹窗。关掉之后不再后台检查。 |
 | 侧栏「新版本」 | 「查看」打开更新设置，「忽略」收起提示。 |
 | 任务还在跑 | 点击「更新到」后，桌面端等任务结束再安装。 |
-| 「设置 → 关于与更新」 | 显示当前版本、检查更新、安装新版和选择更新策略。 |
-| `tulai update` | 终端里检查并安装。GitHub 连不上时同样走镜像。 |
+| 「设置 → 关于与更新」 | 显示当前版本、检查更新、安装新版和选择更新策略（含下载进度、来源和实时速度）。 |
+| `tulai update` | 终端里检查并安装。自动多源测速与并发分段加速。 |
 | `tulai update --check` | 只打印当前版本和最新版本。 |
 | `tulai version` | 打印桌面端版本。 |
 
-下载先请求 GitHub。请求失败或可用的 SHA256 摘要对不上时，再试镜像。镜像前缀保存在配置项 `update_mirror`：留空时依次使用内置的 `https://ghfast.top/` 和 `https://gh-proxy.com/`，填 `off` 时只用 GitHub，自定义前缀排在内置镜像之前。「设置 → 关于与更新」的「更新策略」下拉框提供「GitHub 直连」和「镜像加速 (gh-proxy)」两项，两者目前效果相同：都是先请求 GitHub，失败后再依次尝试内置镜像。
+下载采用多源并发测速选优 + 6 路并发 HTTP Range 分段下载与断流/低速自动切换（实现见 [`internal/update/policy.go`](../internal/update/policy.go)、[`internal/update/fetch.go`](../internal/update/fetch.go) 与 [`internal/update/race.go`](../internal/update/race.go)），同时遵循「设置 → 浏览器与网络」中的全局代理或系统代理。镜像前缀保存在配置项 `update_mirror`（CLI 可用 `TULAI_UPDATE_MIRROR` 覆盖）：留空时自动在内置默认镜像（`edgeone.gh-proxy.org`、`cdn.gh-proxy.org`、`gh-proxy.org`、`ghfast.top`、`gh-proxy.com`、`ghproxy.net`）与直连源之间测速选优（配置了代理时直连优先）；填 `off` 时仅直连 GitHub；选择或输入自定义前缀（支持逗号分隔多个）时优先尝试指定镜像并在异常时自动回退其余线路。「设置 → 关于与更新」的「更新下载线路」提供自动测速、多组常用加速节点、仅 GitHub 直连以及自定义镜像前缀输入。
 
 Windows 安装版使用安装器更新，便携版通过退出后的 PowerShell 替换 exe。发布流水线在上传前生成 `SHA256SUMS`。桌面更新器只比较桌面端的 `x.y.z` 版本。扩展 zip 独立编号和更新。
 
@@ -263,7 +260,7 @@ Windows 安装版使用安装器更新，便携版通过退出后的 PowerShell 
 
 | 系统 | 怎么判断 | 下载 | 装到哪里 |
 |---|---|---|---|
-| Linux，普通或 `~/.local` | 不是下面的 deb 或 AppImage | `tulai-<版本>-linux-<架构>.tar.gz` | `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令。和 `install.sh` 同一位置。 |
+| Linux，普通或 `~/.local` | 不是下面的 deb 或 AppImage | `tulai-<版本>-linux-<架构>.tar.gz` | `~/.local/tulai.app`，并在 `~/.local/bin/tulai` 放命令（与历史用户安装脚本位置一致）。 |
 | Linux，AppImage | 正在跑的文件名以 `.AppImage` 结尾 | 先找 `tulai-<版本>-linux-<架构>.AppImage`，没有就用上一行的 tar.gz | 这份发布不附带 AppImage，所以走 tar.gz，装到 `~/.local`。 |
 | Linux，deb | 正在跑 `/usr/bin/tulai` 或 `/opt/tulai/` | `tulai_<版本>_<架构>.deb` | 不申请管理员权限。校验后把 `sudo dpkg -i …` 印出来，并打开已下载的包。 |
 | Windows，安装器或开发运行 | 路径里有 `\Programs\`、`Program Files` 或 `go-build` | `tulai.Setup.<版本>.<架构>.exe`（收集发布附件时转换为带空格的旧名称） | 退出后打开 NSIS 安装器。 |
@@ -292,6 +289,4 @@ Release 说明里的「检查更新」一段由 `.github/workflows/ci.yml` 写�
 
 ## 下一次版本
 
-桌面端要升版本时，同时改 `cmd/tulai/nsgo.yaml` 的 `version` 和 `ProductVersion`，在 `CHANGELOG.md` 记录用户可见的变化。等发布提交通过 `main` CI，再推送 `vX.Y.Z` 标签。
-
-扩展的版本记录在 `extension/manifest.json`、`extension/firefox/manifest.json` 和 `extension/protocol.js` 的 hello 消息里。发布扩展时同步更新三处。
+桌面端要升版本时，同时改 `mygo.json` 的 `version` 和 `ProductVersion`，在 `CHANGELOG.md` 记录用户可见的变化。等发布提交通过 `main` CI，再推送 `vX.Y.Z` 标签。

@@ -23,6 +23,19 @@ func Process(ctx context.Context, source []byte, options Options) (*Result, erro
 	if err != nil {
 		return nil, err
 	}
+	return finalizeProcessed(ctx, img, sourceFormat, options)
+}
+
+// ProcessImage 直接对已解码的 image.Image 按 options 处理并编码，省去重复编码与解码。
+func ProcessImage(ctx context.Context, decoded image.Image, sourceFormat string, options Options) (*Result, error) {
+	img, format, err := renderImage(ctx, decoded, sourceFormat, options)
+	if err != nil {
+		return nil, err
+	}
+	return finalizeProcessed(ctx, img, format, options)
+}
+
+func finalizeProcessed(ctx context.Context, img *image.NRGBA, sourceFormat string, options Options) (*Result, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
@@ -126,6 +139,31 @@ func render(ctx context.Context, source []byte, options Options) (*image.NRGBA, 
 			return nil, "", ErrAnimatedGIF
 		}
 		return nil, "", fmt.Errorf("imageedit: decode: %w", err)
+	}
+	return renderImage(ctx, decoded, meta.format, options)
+}
+
+func renderImage(ctx context.Context, decoded image.Image, sourceFormat string, options Options) (*image.NRGBA, string, error) {
+	if err := checkContext(ctx); err != nil {
+		return nil, "", err
+	}
+	if decoded == nil {
+		return nil, "", errors.New("imageedit: nil image")
+	}
+	n, err := Normalize(options)
+	if err != nil {
+		return nil, "", err
+	}
+	b := decoded.Bounds()
+	srcWidth, srcHeight := b.Dx(), b.Dy()
+	if srcWidth <= 0 || srcHeight <= 0 || srcWidth > MaxPixels/srcHeight {
+		return nil, "", fmt.Errorf("%w: %dx%d", ErrImageTooLarge, srcWidth, srcHeight)
+	}
+	if n.CropWidth > srcWidth || n.CropHeight > srcHeight {
+		return nil, "", fmt.Errorf(
+			"imageedit: crop %dx%d exceeds source %dx%d",
+			n.CropWidth, n.CropHeight, srcWidth, srcHeight,
+		)
 	}
 	img := toNRGBA(decoded)
 	width, height := srcWidth, srcHeight
@@ -232,7 +270,7 @@ func render(ctx context.Context, source []byte, options Options) (*image.NRGBA, 
 	if err := checkContext(ctx); err != nil {
 		return nil, "", err
 	}
-	return img, meta.format, nil
+	return img, sourceFormat, nil
 }
 
 func checkContext(ctx context.Context) error {

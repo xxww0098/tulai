@@ -19,8 +19,8 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"golang.org/x/net/html"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 const goooodPublicArticle = "https://www.gooood.cn/hangzhou-hesheng-mansion-by-9m-design.htm"
@@ -212,9 +212,9 @@ func (fn goooodRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) 
 
 func TestGoooodRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
-	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
+	session, err := openDedicatedFixture(t, fingerprinttest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,19 +228,19 @@ func TestGoooodRenderedCapture(t *testing.T) {
 		return nil, errors.New("unexpected HTTP request")
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == target {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(goooodFixture("a"))))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -253,7 +253,7 @@ func TestGoooodRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(target)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(target)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -391,9 +391,9 @@ func TestGoooodLiveTwoListPages(t *testing.T) {
 
 func TestGoooodRenderedListCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
-	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
+	session, err := openDedicatedFixture(t, fingerprinttest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,19 +419,19 @@ func TestGoooodRenderedListCapture(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/html; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == goooodPublicList {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(first)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -444,7 +444,7 @@ func TestGoooodRenderedListCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(goooodPublicList)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(goooodPublicList)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(goooodPublicList)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -478,9 +478,9 @@ func TestGoooodMissingNextIsPartial(t *testing.T) {
 
 func TestGoooodRenderedLiveList(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" || os.Getenv("TULAI_GOOOOD_LIVE") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_GOOOOD_LIVE=1 for isolated Camoufox and a live article")
+		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_GOOOOD_LIVE=1 for isolated Fingerprint and a live article")
 	}
-	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
+	session, err := openDedicatedFixture(t, fingerprinttest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,19 +489,19 @@ func TestGoooodRenderedLiveList(t *testing.T) {
 	defer cancel()
 	fixture := `<html><a class="article-cover-link" href="/hangzhou-hesheng-mansion-by-9m-design.htm"></a><nav class="pagination"></nav></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == goooodPublicList {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(fixture)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -514,7 +514,7 @@ func TestGoooodRenderedLiveList(t *testing.T) {
 	}
 	start, _ := url.Parse(goooodPublicList)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(goooodPublicList)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(goooodPublicList)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

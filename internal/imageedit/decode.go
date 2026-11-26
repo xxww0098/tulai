@@ -141,14 +141,19 @@ func Info(data []byte) (format string, width, height int, err error) {
 	return meta.format, meta.width, meta.height, nil
 }
 
-// Load 把图片解码成 8 位 RGBA，界面预览和缩略图共用。
-// JPEG、PNG、GIF（首帧）、WebP、AVIF、BMP 都可以读。
-func Load(data []byte) (*image.NRGBA, error) {
+// DecodeImage 解码图片但保持原始像素格式（避免缩略图阶段为 2K/4K 大图分配整幅 NRGBA 副本）。
+func DecodeImage(data []byte) (image.Image, error) {
 	meta, err := inspect(data)
 	if err != nil {
 		return nil, err
 	}
-	img, err := decodeSource(data, meta.format)
+	return decodeSource(data, meta.format)
+}
+
+// Load 把图片解码成 8 位 RGBA，界面预览和缩略图共用。
+// JPEG、PNG、GIF（首帧）、WebP、AVIF、BMP 都可以读。
+func Load(data []byte) (*image.NRGBA, error) {
+	img, err := DecodeImage(data)
 	if err != nil {
 		return nil, err
 	}

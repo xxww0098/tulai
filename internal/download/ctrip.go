@@ -187,11 +187,12 @@ func ctripCollect(ctx context.Context, getter Getter, page *url.URL, doc *html.N
 	var poster Poster
 	if session, ok := getter.(*RenderedSession); ok {
 		// The public cross-origin API gets no browser cookies and keeps the session's safe dialer.
-		if session.tab == nil || session.getter == nil {
+		tab := session.activeTab()
+		if tab == nil || session.getter == nil {
 			return finish(errors.New("携程浏览器会话不可用，结果可能不完整"))
 		}
 		requestCtx, cancel := context.WithCancel(ctx)
-		stop := context.AfterFunc(session.tab, cancel)
+		stop := context.AfterFunc(tab, cancel)
 		defer func() { stop(); cancel() }()
 		ctx = requestCtx
 		poster = session.getter

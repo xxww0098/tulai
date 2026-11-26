@@ -15,7 +15,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -468,18 +468,18 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 	if err := checkOriginal(); err != nil {
 		return result, err
 	}
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, false)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), false)
 	if err != nil {
 		return result, errors.New("无法创建 TikTok 作者主页采集标签")
 	}
 	defer closeChild()
 	stopOnCancel := context.AfterFunc(ctx, closeChild)
 	defer stopOnCancel()
-	run := func(actions ...camoufox.Action) error {
+	run := func(actions ...fingerprint.Action) error {
 		op, cancel := context.WithTimeout(child, 45*time.Second)
 		stop := context.AfterFunc(ctx, cancel)
 		defer func() { stop(); cancel() }()
-		err := camoufox.Run(op, actions...)
+		err := fingerprint.Run(op, actions...)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -487,7 +487,7 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 	}
 	target := &url.URL{Scheme: page.Scheme, Host: page.Host, Path: "/@" + ref.author}
 	var visited atomic.Bool
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
@@ -499,11 +499,11 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 				request.RawQuery == "" && request.Fragment == "" && visited.CompareAndSwap(false, true)
 		}
 		go func() {
-			var action camoufox.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if allowed {
 				action = fetch.ContinueRequest(paused.RequestID)
 			}
-			_ = camoufox.Run(child, action)
+			_ = fingerprint.Run(child, action)
 		}()
 	})
 	if err := run(fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}})); err != nil {
@@ -512,7 +512,7 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 		}
 		return result, errors.New("无法设置 TikTok 作者主页采集标签的访问限制")
 	}
-	if err := run(camoufox.Navigate(target.String())); err != nil {
+	if err := run(fingerprint.Navigate(target.String())); err != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
@@ -647,18 +647,18 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 func (s *RenderedSession) captureTikTokPhotoTarget(ctx context.Context, page *url.URL, checkOriginal func() error) (Discovery, error) {
 	result := Discovery{IsPage: true}
 	ref := tiktokPageRef(page)
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, false)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), false)
 	if err != nil {
 		return result, errors.New("无法创建 TikTok 采集标签")
 	}
 	defer closeChild()
 	stopOnCancel := context.AfterFunc(ctx, closeChild)
 	defer stopOnCancel()
-	run := func(actions ...camoufox.Action) error {
+	run := func(actions ...fingerprint.Action) error {
 		op, cancel := context.WithTimeout(child, 45*time.Second)
 		stop := context.AfterFunc(ctx, cancel)
 		defer func() { stop(); cancel() }()
-		err := camoufox.Run(op, actions...)
+		err := fingerprint.Run(op, actions...)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -666,7 +666,7 @@ func (s *RenderedSession) captureTikTokPhotoTarget(ctx context.Context, page *ur
 	}
 	target := &url.URL{Scheme: page.Scheme, Host: page.Host, Path: "/@" + ref.author + "/video/" + ref.id}
 	var visited atomic.Bool
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
@@ -678,11 +678,11 @@ func (s *RenderedSession) captureTikTokPhotoTarget(ctx context.Context, page *ur
 				request.RawQuery == "" && request.Fragment == "" && visited.CompareAndSwap(false, true)
 		}
 		go func() {
-			var action camoufox.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if allowed {
 				action = fetch.ContinueRequest(paused.RequestID)
 			}
-			_ = camoufox.Run(child, action)
+			_ = fingerprint.Run(child, action)
 		}()
 	})
 	if err := run(fetch.Enable()); err != nil {
@@ -691,7 +691,7 @@ func (s *RenderedSession) captureTikTokPhotoTarget(ctx context.Context, page *ur
 		}
 		return result, errors.New("无法设置 TikTok 采集标签的访问限制")
 	}
-	if err := run(camoufox.Navigate(target.String())); err != nil {
+	if err := run(fingerprint.Navigate(target.String())); err != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}

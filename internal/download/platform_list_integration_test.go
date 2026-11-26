@@ -14,7 +14,7 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 func TestRenderedPageRedirectGuard(t *testing.T) {
@@ -85,9 +85,9 @@ func TestAmazonSearchCompleteListSucceeds(t *testing.T) {
 }
 
 func TestMarketplaceSearchRenderedRoutes(t *testing.T) {
-	dataDir := os.Getenv("TULAI_CAMOUFOX_TEST_DATA")
+	dataDir := os.Getenv("TULAI_FINGERPRINT_TEST_DATA")
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" || dataDir == "" {
-		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_CAMOUFOX_TEST_DATA to a disposable runtime")
+		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_FINGERPRINT_TEST_DATA to a disposable runtime")
 	}
 	amazonFirst := strings.Replace(amazonSearchFixture, `<span class="s-pagination-next s-pagination-disabled">next</span>`, `<a class="s-pagination-next" href="/s?k=coffee&amp;page=2">next</a>`, 1)
 	amazonNext := strings.ReplaceAll(amazonSearchFixture, "B012345678", "B012345677")
@@ -98,13 +98,13 @@ func TestMarketplaceSearchRenderedRoutes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			process, err := camoufox.Start(ctx, dataDir, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+			process, err := fingerprint.Start(ctx, dataDir, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			life, closeTab := context.WithCancel(process.Context())
 			page, _ := url.Parse(tc.raw)
-			session := &RenderedSession{process: process, tab: camoufox.PageContext(life, process, process.Page), closeTab: closeTab,
+			session := &RenderedSession{process: process, tab: fingerprint.PageContext(life, process, process.Page), closeTab: closeTab,
 				closeAllocator: func() { process.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: page}
 			defer session.Close()
 			session.getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -117,13 +117,13 @@ func TestMarketplaceSearchRenderedRoutes(t *testing.T) {
 				return ebaySearchHTTPResponse(r, http.StatusOK, tc.nextBody), nil
 			})
 			interceptErrors := make(chan error, 8)
-			camoufox.ListenTarget(session.tab, func(event any) {
+			fingerprint.ListenTarget(session.tab, func(event any) {
 				paused, ok := event.(*fetch.EventRequestPaused)
 				if !ok {
 					return
 				}
 				go func() {
-					var action camoufox.Action
+					var action fingerprint.Action
 					if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == tc.raw {
 						action = fetch.FulfillRequest(paused.RequestID, 200).
 							WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).
@@ -131,7 +131,7 @@ func TestMarketplaceSearchRenderedRoutes(t *testing.T) {
 					} else {
 						action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 					}
-					if err := camoufox.Run(session.tab, action); err != nil {
+					if err := fingerprint.Run(session.tab, action); err != nil {
 						select {
 						case interceptErrors <- err:
 						default:
@@ -139,7 +139,7 @@ func TestMarketplaceSearchRenderedRoutes(t *testing.T) {
 					}
 				}()
 			})
-			if err := session.run(ctx, fetch.Enable(), camoufox.Navigate(tc.raw)); err != nil {
+			if err := session.run(ctx, fetch.Enable(), fingerprint.Navigate(tc.raw)); err != nil {
 				t.Fatal(err)
 			}
 			found, err := session.Capture(ctx)

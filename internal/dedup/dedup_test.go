@@ -359,3 +359,114 @@ func TestFlatGuardKeepsBrightnessShiftedCopy(t *testing.T) {
 		t.Fatal("有纹理的图压暗后应判重复")
 	}
 }
+
+type genericImage struct{ image.Image }
+
+func TestPerceptualHashMatchesGenericFallbackAcrossModels(t *testing.T) {
+	const w, h = 129, 97
+	rgba := image.NewRGBA(image.Rect(0, 0, w, h))
+	nrgba := image.NewNRGBA(image.Rect(0, 0, w, h))
+	gray := image.NewGray(image.Rect(0, 0, w, h))
+	ycbcr := image.NewYCbCr(image.Rect(0, 0, w, h), image.YCbCrSubsampleRatio420)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r := uint8((x * 255) / max(1, w-1))
+			g := uint8((y * 255) / max(1, h-1))
+			b := uint8((x + y) % 256)
+			a := uint8(255)
+			if (x+y)%7 == 0 {
+				a = 128
+			}
+			rgba.SetRGBA(x, y, color.RGBA{R: r / 2, G: g / 2, B: b / 2, A: 255})
+			nrgba.SetNRGBA(x, y, color.NRGBA{R: r, G: g, B: b, A: a})
+			gray.SetGray(x, y, color.Gray{Y: uint8((int(r) + int(g) + int(b)) / 3)})
+			yy, cb, cr := color.RGBToYCbCr(r, g, b)
+			ycbcr.Y[ycbcr.YOffset(x, y)] = yy
+			ci := ycbcr.COffset(x, y)
+			ycbcr.Cb[ci] = cb
+			ycbcr.Cr[ci] = cr
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		img  image.Image
+	}{
+		{"RGBA", rgba},
+		{"NRGBA", nrgba},
+		{"Gray", gray},
+		{"YCbCr", ycbcr},
+	} {
+		fast := PerceptualHashImage(tc.img)
+		slow := PerceptualHashImage(genericImage{tc.img})
+		if fast.Hash != slow.Hash || fast.Flat != slow.Flat {
+			t.Fatalf("%s fast path mismatch: fast=%+v slow=%+v", tc.name, fast, slow)
+		}
+		if fast.Pixels != "" || fast.MeanR != 0 || fast.MeanG != 0 || fast.MeanB != 0 {
+			t.Fatalf("%s PerceptualHashImage must skip pixel digest and mean color: %+v", tc.name, fast)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "sample.png")
+	writePNG(t, p, 128, 96, 42)
+	full, err := Hash(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	light, err := PerceptualHashFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if light.Hash != full.Hash || light.Flat != full.Flat || light.Pixels != "" {
+		t.Fatalf("PerceptualHashFile mismatch: light=%+v full=%+v", light, full)
+	}
+}
+
+func TestPixelDigestAndMeanColorFastPathsMatchGeneric(t *testing.T) {
+	const w, h = 41, 29
+	rgba := image.NewRGBA(image.Rect(3, 5, 3+w, 5+h))
+	nrgba := image.NewNRGBA(image.Rect(0, 0, w, h))
+	gray := image.NewGray(image.Rect(0, 0, w, h))
+	ycbcr := image.NewYCbCr(image.Rect(0, 0, w, h), image.YCbCrSubsampleRatio420)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r := uint8((x*7 + y*13) % 256)
+			g := uint8((x*11 + y*5) % 256)
+			b := uint8((x*3 + y*19) % 256)
+			a := uint8(120 + (x+y)%136)
+			rgba.SetRGBA(x+3, y+5, color.RGBA{R: r / 2, G: g / 2, B: b / 2, A: 200})
+			nrgba.SetNRGBA(x, y, color.NRGBA{R: r, G: g, B: b, A: a})
+			gray.SetGray(x, y, color.Gray{Y: uint8((int(r) + int(g) + int(b)) / 3)})
+			yy, cb, cr := color.RGBToYCbCr(r, g, b)
+			ycbcr.Y[ycbcr.YOffset(x, y)] = yy
+			ci := ycbcr.COffset(x, y)
+			ycbcr.Cb[ci] = cb
+			ycbcr.Cr[ci] = cr
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		img  image.Image
+	}{
+		{"RGBA", rgba},
+		{"NRGBA", nrgba},
+		{"Gray", gray},
+		{"YCbCr", ycbcr},
+	} {
+		if got, want := pixelDigest(tc.img), pixelDigest(genericImage{tc.img}); got != want {
+			t.Fatalf("%s pixelDigest fast path mismatch: got=%s want=%s", tc.name, got, want)
+		}
+		gr, gg, gb := meanColor(tc.img)
+		wr, wg, wb := meanColor(genericImage{tc.img})
+		if gr != wr || gg != wg || gb != wb {
+			t.Fatalf("%s meanColor fast path mismatch: got=(%d,%d,%d) want=(%d,%d,%d)", tc.name, gr, gg, gb, wr, wg, wb)
+		}
+	}
+}
+
+func BenchmarkPixelDigest2048(b *testing.B) {
+	img := image.NewNRGBA(image.Rect(0, 0, 2048, 2048))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = pixelDigest(img)
+	}
+}

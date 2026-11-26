@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nsgo-dev/nsgo/core"
-
+	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/update"
 )
@@ -69,14 +68,14 @@ func (a *App) startUpdateLoop() {
 func (a *App) silentCheck() {
 	auto := false
 	busy := false
-	a.onUI(func() {
+	a.syncUI(func() {
 		auto = a.autoCheck
 		busy = a.updateBusy
 	})
 	if !auto || busy {
 		return
 	}
-	a.onUI(func() { a.updateBusy = true })
+	a.syncUI(func() { a.updateBusy = true })
 	defer a.onUI(func() {
 		a.updateBusy = false
 		a.emit("update")
@@ -85,7 +84,7 @@ func (a *App) silentCheck() {
 }
 
 func (a *App) runUpdateCheck(manual bool) {
-	current := strings.TrimSpace(core.App().Version)
+	current := PackagedVersion()
 	if current == "" {
 		if manual {
 			a.onUI(func() {
@@ -116,11 +115,12 @@ func (a *App) runUpdateCheck(manual bool) {
 		return
 	}
 	var mirror string
-	a.onUI(func() {
+	a.syncUI(func() {
 		mirror = a.updateMirror
 		a.updateErr = ""
 	})
 	client := update.NewClient(current)
+	client.ProxyURL = browser.CurrentProxyServer()
 	client.ApplyMirrorSetting(mirror)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -194,7 +194,7 @@ func (a *App) downloadAndInstall() {
 	var running bool
 	var rel update.Release
 	var asset, mirror, ver string
-	a.onUI(func() {
+	a.syncUI(func() {
 		running = a.tasksRunning()
 		rel = a.updateRel
 		asset = a.updateAsset
@@ -211,7 +211,7 @@ func (a *App) downloadAndInstall() {
 		})
 		return
 	}
-	current := strings.TrimSpace(core.App().Version)
+	current := PackagedVersion()
 	exe, err := update.RunningExecutable()
 	if err != nil {
 		a.failUpdate(err)
@@ -227,11 +227,12 @@ func (a *App) downloadAndInstall() {
 			return
 		}
 		client := update.NewClient(current)
+		client.ProxyURL = browser.CurrentProxyServer()
 		client.ApplyMirrorSetting(mirror)
 		client.OnProgress = func(p update.Progress) {
 			a.onUI(func() {
 				a.updateDownloading = true
-				a.updateProgressText = "正在下载 " + p.Name
+				a.updateProgressText = formatUpdateProgress(p)
 				if p.Total > 0 {
 					a.updateFraction = float64(p.Done) / float64(p.Total)
 				}
@@ -240,7 +241,7 @@ func (a *App) downloadAndInstall() {
 		}
 		a.onUI(func() {
 			a.updateDownloading = true
-			a.updateProgressText = "正在下载 " + ver
+			a.updateProgressText = "正在测速选择最快的下载源..."
 			a.updateFraction = 0
 			a.updateErr = ""
 			a.emit("update")
@@ -264,7 +265,7 @@ func (a *App) downloadAndInstall() {
 		if v, err := prepared.Release.Version(); err == nil {
 			ver = v
 		}
-		a.onUI(func() {
+		a.syncUI(func() {
 			a.updateAsset = asset
 			running = a.tasksRunning()
 			a.emit("update")
@@ -319,23 +320,23 @@ func (a *App) downloadAndInstall() {
 	if err := update.SyncWindowsInstalledVersion(exe, ver); err != nil {
 		logging.Log.Warning("更新已安装，但同步 Windows 应用列表版本失败: %v", err)
 	}
-	a.onUI(func() {
+	a.syncUI(func() {
 		a.updatePending = false
 		a.updateDownloading = false
 		a.updateInstalled = ver
 		a.emit("update")
-		if outcome.Quit {
-			if a.scope != nil {
-				a.scope.Quit()
-			}
-			return
-		}
-		if outcome.Relaunch {
-			if a.confirmUpdateRestart(ver) && a.scope != nil {
-				a.scope.Restart()
-			}
-		}
 	})
+	if outcome.Quit {
+		if a.host != nil {
+			a.host.Quit()
+		}
+		return
+	}
+	if outcome.Relaunch {
+		if a.confirmUpdateRestart(ver) && a.host != nil {
+			a.host.Restart()
+		}
+	}
 }
 
 func (a *App) confirmUpdateQuit(detail string) bool {
@@ -377,4 +378,31 @@ func (a *App) skipUpdate() {
 		a.store.Set(update.KeySkipped, ver)
 	}
 	a.dismissUpdate()
+}
+
+func formatUpdateProgress(p update.Progress) string {
+	var b strings.Builder
+	b.WriteString("正在下载")
+	if p.Name != "" {
+		b.WriteByte(' ')
+		b.WriteString(p.Name)
+	}
+	var meta []string
+	if p.Source != "" {
+		meta = append(meta, p.Source)
+	}
+	if p.Done > 0 && p.Total > 0 {
+		meta = append(meta, formatBytes(p.Done)+" / "+formatBytes(p.Total))
+	} else if p.Done > 0 {
+		meta = append(meta, formatBytes(p.Done))
+	}
+	if p.BytesPerSec > 0 {
+		meta = append(meta, formatSpeed(int64(p.BytesPerSec)))
+	}
+	if len(meta) > 0 {
+		b.WriteString("（")
+		b.WriteString(strings.Join(meta, " · "))
+		b.WriteString("）")
+	}
+	return b.String()
 }

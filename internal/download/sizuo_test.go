@@ -18,7 +18,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -218,19 +218,19 @@ func TestSizuoLive(t *testing.T) {
 	}
 	t.Logf("current site: %v", err)
 }
-func TestSizuoCamoufoxCapture(t *testing.T) {
-	runtime := os.Getenv("TULAI_SIZUO_CAMOUFOX_ROOT")
+func TestSizuoFingerprintCapture(t *testing.T) {
+	runtime := os.Getenv("TULAI_SIZUO_FINGERPRINT_ROOT")
 	if runtime == "" {
-		t.Skip("set TULAI_SIZUO_CAMOUFOX_ROOT to a copied temporary runtime")
+		t.Skip("set TULAI_SIZUO_FINGERPRINT_ROOT to a copied temporary runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(process.Context())
-	tab := camoufox.PageContext(life, process, process.Page)
+	tab := fingerprint.PageContext(life, process, process.Page)
 	getter := NewHTTPGetter("")
 	getter.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	var usedCookie atomic.Bool
@@ -245,25 +245,25 @@ func TestSizuoCamoufoxCapture(t *testing.T) {
 	page := sizuoTestURL(t, root)
 	session := &RenderedSession{process: process, tab: tab, closeTab: closeTab, closeAllocator: process.Close, releaseProfile: func() {}, getter: getter, start: page}
 	defer session.Close()
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == root {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(`<title>Test</title><script src="/getimgs.php?aid=2356"></script>`)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			_ = camoufox.Run(session.tab, action)
+			_ = fingerprint.Run(session.tab, action)
 		}()
 	})
 	if err := session.run(ctx, fetch.Enable()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(root)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(root)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(c context.Context) error {

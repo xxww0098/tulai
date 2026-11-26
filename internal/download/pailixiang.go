@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"net/url"
 	"regexp"
 	"strings"
@@ -268,7 +268,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 	if err := checkCurrent(); err != nil {
 		return result, true, err
 	}
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, true)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), true)
 	if err != nil {
 		return result, true, err
 	}
@@ -288,7 +288,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 			overflow.Store(true)
 		}
 	}
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		switch e := event.(type) {
 		case *fetch.EventRequestPaused:
 			u, err := url.Parse(e.Request.URL)
@@ -305,7 +305,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 				if allowed {
 					action = fetch.ContinueRequest(e.RequestID)
 				}
-				_ = camoufox.Run(child, action)
+				_ = fingerprint.Run(child, action)
 			}()
 		case *network.EventRequestWillBeSent:
 			if e.RedirectResponse != nil {
@@ -355,7 +355,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 			}
 			go func(id network.RequestID) {
 				var body []byte
-				err := camoufox.Run(child, chromedp.ActionFunc(func(c context.Context) error { var x error; body, x = network.GetResponseBody(id).Do(c); return x }))
+				err := fingerprint.Run(child, chromedp.ActionFunc(func(c context.Context) error { var x error; body, x = network.GetResponseBody(id).Do(c); return x }))
 				if err != nil || len(body) > pailixiangMaxBody {
 					send(pailixiangMessage{request: req, failed: true})
 					return
@@ -373,7 +373,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 		}
 	})
 	timer := time.AfterFunc(30*time.Second, closeChild)
-	initErr := camoufox.Run(child, network.Enable().WithMaxResourceBufferSize(pailixiangMaxBody).WithMaxTotalBufferSize(2*pailixiangMaxBody).WithMaxPostDataSize(pailixiangMaxPost),
+	initErr := fingerprint.Run(child, network.Enable().WithMaxResourceBufferSize(pailixiangMaxBody).WithMaxTotalBufferSize(2*pailixiangMaxBody).WithMaxPostDataSize(pailixiangMaxPost),
 		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}, {ResourceType: network.ResourceTypeXHR}, {ResourceType: network.ResourceTypeFetch}}))
 	timer.Stop()
 	if initErr != nil {
@@ -382,17 +382,17 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 		}
 		return result, true, errors.New("无法创建拍立享公开采集标签")
 	}
-	run := func(actions ...camoufox.Action) error {
+	run := func(actions ...fingerprint.Action) error {
 		op, cancel := context.WithTimeout(child, 30*time.Second)
 		defer cancel()
-		err := camoufox.Run(op, actions...)
+		err := fingerprint.Run(op, actions...)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return err
 	}
 	target := "https://live.pailixiang.com/album/" + code
-	if err := run(camoufox.Navigate(target)); err != nil {
+	if err := run(fingerprint.Navigate(target)); err != nil {
 		if ctx.Err() != nil {
 			return result, true, ctx.Err()
 		}

@@ -10,7 +10,7 @@ import (
 	"github.com/xxww0098/tulai/internal/store"
 )
 
-func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
+func TestDeleteBrowserRemovesOnlyItsOwnProfile(t *testing.T) {
 	root := t.TempDir()
 	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 	if err != nil {
@@ -22,17 +22,11 @@ func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.UpdateBrowser(local.ID, false, true)
-	dir := browser.ProfileDir(root, browser.KindCamoufox, fmt.Sprintf("account-%d", local.ID))
+	dir := browser.ProfileDir(root, browser.KindFingerprint, fmt.Sprintf("account-%d", local.ID))
 	if err := os.MkdirAll(filepath.Join(dir, "Default"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "Local State"), []byte("profile"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.SaveLoggedInExtension("豆包", "profile-a", "扩展甲"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.SaveLoggedInExtension("千问", "profile-a", "扩展甲"); err != nil {
 		t.Fatal(err)
 	}
 	other, err := st.AddBrowser("千问", "账号2", "")
@@ -40,14 +34,14 @@ func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.UpdateBrowser(other.ID, false, true)
-	otherDir := browser.ProfileDir(root, browser.KindCamoufox, fmt.Sprintf("account-%d", other.ID))
+	otherDir := browser.ProfileDir(root, browser.KindFingerprint, fmt.Sprintf("account-%d", other.ID))
 	if err := os.MkdirAll(otherDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	a := &App{
 		store: st, manager: browser.NewManager(), dataRoot: root,
-		browserBackend: browser.KindCamoufox, browserSel: 0,
+		browserBackend: browser.KindFingerprint, browserSel: 0,
 	}
 	a.refreshBrowsers()
 	for i, row := range a.browserRows {
@@ -60,26 +54,10 @@ func TestDeleteBrowserRemovesProfileAndExtensionPair(t *testing.T) {
 		t.Fatalf("deleted account profile still exists: %v", err)
 	}
 	if _, err := os.Stat(otherDir); err != nil {
-		t.Fatal(err)
+		t.Fatal("the other account profile was removed")
 	}
-	rows := st.Browsers()
-	if len(rows) != 3 {
-		t.Fatalf("stopped browser cannot read the extension id, pair rows stay until a live delete: %+v", rows)
-	}
-
-	a.refreshBrowsers()
-	for i, row := range a.browserRows {
-		if row.ExtAccount == "profile-a" {
-			a.browserSel = i
-			break
-		}
-	}
-	a.deleteBrowser()
 	left := st.Browsers()
 	if len(left) != 1 || left[0].ID != other.ID {
-		t.Fatalf("deleting one extension row should drop both platforms: %+v", left)
-	}
-	if _, err := os.Stat(otherDir); err != nil {
-		t.Fatal("the other account profile was removed")
+		t.Fatalf("unexpected remaining accounts: %+v", left)
 	}
 }

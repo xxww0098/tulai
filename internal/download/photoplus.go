@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"net/url"
 	"regexp"
 	"strings"
@@ -207,7 +207,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 	if err := checkCurrent(); err != nil {
 		return result, true, err
 	}
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, true)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), true)
 	if err != nil {
 		return result, true, err
 	}
@@ -227,7 +227,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 			overflow.Store(true)
 		}
 	}
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		switch e := event.(type) {
 		case *fetch.EventRequestPaused:
 			u, parseErr := url.Parse(e.Request.URL)
@@ -237,7 +237,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 				if allowed {
 					action = fetch.ContinueRequest(e.RequestID)
 				}
-				_ = camoufox.Run(child, action)
+				_ = fingerprint.Run(child, action)
 			}()
 		case *network.EventResponseReceived:
 			if e.Response == nil {
@@ -268,7 +268,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 			}
 			go func(requestID network.RequestID) {
 				var body []byte
-				err := camoufox.Run(child, chromedp.ActionFunc(func(c context.Context) error {
+				err := fingerprint.Run(child, chromedp.ActionFunc(func(c context.Context) error {
 					var getErr error
 					body, getErr = network.GetResponseBody(requestID).Do(c)
 					return getErr
@@ -290,7 +290,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 		}
 	})
 	initTimeout := time.AfterFunc(30*time.Second, closeChild)
-	initErr := camoufox.Run(child,
+	initErr := fingerprint.Run(child,
 		network.Enable().WithMaxResourceBufferSize(photoplusMaxBody).WithMaxTotalBufferSize(2*photoplusMaxBody),
 		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}}))
 	initTimeout.Stop()
@@ -300,10 +300,10 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 		}
 		return result, true, errors.New("无法创建 Photoplus 公开采集标签")
 	}
-	run := func(actions ...camoufox.Action) error {
+	run := func(actions ...fingerprint.Action) error {
 		op, cancel := context.WithTimeout(child, 30*time.Second)
 		defer cancel()
-		err := camoufox.Run(op, actions...)
+		err := fingerprint.Run(op, actions...)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -311,7 +311,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 	}
 	// Do not copy query or fragment credentials into the anonymous context.
 	target := "https://live.photoplus.cn/live/pc/" + id + "/#/live"
-	if err := run(camoufox.Navigate(target)); err != nil {
+	if err := run(fingerprint.Navigate(target)); err != nil {
 		if ctx.Err() != nil {
 			return result, true, ctx.Err()
 		}

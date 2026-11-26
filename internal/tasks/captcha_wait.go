@@ -9,7 +9,6 @@ import (
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/logging"
-	"github.com/xxww0098/tulai/internal/notify"
 )
 
 // errHumanGaveUp 是等了 5 分钟还没人完成验证。任务改派，这个账号标成需验证。
@@ -22,15 +21,11 @@ var humanVerifyLimit = 5 * time.Minute
 var (
 	captchaVisible = captcha.Visible
 	captchaManual  = stopSolving
-	captchaAlert   = notify.Send
+	captchaAlert   = sendSystemNotification
 )
 
 func stopSolving(s *cdp.Session) {
 	if s == nil {
-		return
-	}
-	if s.IsEgo() {
-		_ = captcha.SetManual(s)
 		return
 	}
 	_, _ = s.Evaluate(`(window.__tulaiCaptcha && window.__tulaiCaptcha.setManual(true), true)`)
@@ -62,6 +57,9 @@ func (e *Engine) holdForHuman(ctx context.Context, sess *cdp.Session, t *Task) (
 	}
 	captchaManual(sess)
 	e.setAwaiting(t, true)
+	if t != nil {
+		e.noteExitRisk(t.Platform, t.ranOnOr(t.BrowserID))
+	}
 	// 单次出图和外层任务时限都从这里停表，验证结束再接着走。
 	e.pauseBudget(budgetIDs(t)...)
 	defer e.resumeBudget(budgetIDs(t)...)
@@ -159,6 +157,7 @@ func (e *Engine) resumeBudget(ids ...int64) {
 	}
 	now := time.Now()
 	seen := map[int64]bool{}
+	resumed := false
 	for _, id := range ids {
 		if id <= 0 || seen[id] {
 			continue
@@ -172,28 +171,45 @@ func (e *Engine) resumeBudget(ids ...int64) {
 			continue
 		}
 		delete(e.clock.holdStart, id)
+		resumed = true
 		if !start.IsZero() && now.After(start) {
 			e.clock.held[id] += now.Sub(start)
 		}
 	}
+	if resumed && e.clock.budgetWake != nil {
+		close(e.clock.budgetWake)
+		e.clock.budgetWake = nil
+	}
 }
 
 func (e *Engine) pausedFor(id int64, now time.Time) time.Duration {
+	extra, _, _ := e.budgetPauseState(id, now)
+	return extra
+}
+
+// budgetPauseState 返回账号累计暂停时长、当前是否正处于验证暂停，以及恢复时关闭的唤醒通道。
+func (e *Engine) budgetPauseState(id int64, now time.Time) (extra time.Duration, active bool, wake <-chan struct{}) {
 	if e == nil || id <= 0 {
-		return 0
+		return 0, false, nil
 	}
 	e.liveMu.Lock()
 	defer e.liveMu.Unlock()
-	extra := time.Duration(0)
 	if e.clock.held != nil {
 		extra = e.clock.held[id]
 	}
 	if e.clock.holdStart != nil {
-		if start, ok := e.clock.holdStart[id]; ok && !start.IsZero() && now.After(start) {
-			extra += now.Sub(start)
+		if start, ok := e.clock.holdStart[id]; ok {
+			active = true
+			if !start.IsZero() && now.After(start) {
+				extra += now.Sub(start)
+			}
+			if e.clock.budgetWake == nil {
+				e.clock.budgetWake = make(chan struct{})
+			}
+			wake = e.clock.budgetWake
 		}
 	}
-	return extra
+	return extra, active, wake
 }
 
 func taskIndex(t *Task) int {
@@ -218,6 +234,7 @@ func (e *Engine) setAwaiting(t *Task, on bool) {
 		delete(e.clock.verify, id)
 	}
 	e.liveMu.Unlock()
+	e.setSlotPaused(id, on)
 	if e.view != nil && t.Index > 0 {
 		shown := *t
 		if on {
@@ -227,9 +244,7 @@ func (e *Engine) setAwaiting(t *Task, on bool) {
 			shown.Status = StatusRunning
 			shown.Error = ""
 		}
-		for _, item := range batchMembers(shown) {
-			e.view.Update(item)
-		}
+		e.view.UpdateBatch(batchMembers(shown))
 	}
 	e.notify()
 }

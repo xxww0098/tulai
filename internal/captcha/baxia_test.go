@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 func TestSolveDisabled(t *testing.T) {
@@ -22,9 +22,9 @@ func TestSolveDisabled(t *testing.T) {
 }
 
 func TestSliderEndpointUsesExplicitAccount(t *testing.T) {
-	t.Setenv("TULAI_CAMOUFOX_ACCOUNT", "9333")
+	t.Setenv("TULAI_FINGERPRINT_ACCOUNT", "9333")
 	got := sliderEndpoints()
-	if len(got) != 1 || got[0] != "camoufox://9333" {
+	if len(got) != 1 || got[0] != "fingerprint://9333" {
 		t.Fatal(got)
 	}
 }
@@ -76,7 +76,7 @@ CanvasRenderingContext2D.prototype.getImageData = function(...args) {
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	endpoint := startDebugCamoufox(t, server.URL)
+	endpoint := startDebugFingerprint(t, server.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	if err := SolveQianwenSliderAt(ctx, endpoint); err != nil {
@@ -135,8 +135,8 @@ window.addEventListener('mouseup', (e) => {
 </body></html>`, gap)
 }
 
-func startDebugCamoufox(t *testing.T, pageURL string) string {
+func startDebugFingerprint(t *testing.T, pageURL string) string {
 	t.Helper()
-	_, endpoint := camoufoxtest.Start(t, pageURL)
+	_, endpoint := fingerprinttest.Start(t, pageURL)
 	return endpoint
 }

@@ -18,18 +18,8 @@ func TestOpenAndDefaults(t *testing.T) {
 	if n := s.GetInt("concurrency"); n != 0 {
 		t.Errorf("默认并发: %d，0 表示自动", n)
 	}
-	if got := s.Get("browserBackend"); got != "camoufox_extension" {
-		t.Errorf("默认控制面: %s", got)
-	}
-	if got := s.Get("extBridgePort"); got != "18765" {
-		t.Errorf("默认扩展端口: %s", got)
-	}
-	if got := s.Get("extBridgeToken"); got != "dev-token" {
-		t.Errorf("默认扩展令牌: %s", got)
-	}
-	s.Set("browserBackend", "extension")
-	if got := s.Get("browserBackend"); got != "extension" {
-		t.Errorf("写入控制面: %s", got)
+	if got := s.Get("browser_backend"); got != EngineFingerprint {
+		t.Errorf("默认引擎: %s", got)
 	}
 	s.SetInt("concurrency", 4)
 	if n := s.GetInt("concurrency"); n != 4 {
@@ -50,51 +40,51 @@ func TestOpenAndDefaults(t *testing.T) {
 	if !s.Browsers()[0].Usable(time.Now()) {
 		t.Fatal("reset should make the account usable")
 	}
-	ext, err := s.UpsertExtensionAccount("千问", "profile-1", "小号")
-	if err != nil {
-		t.Fatal(err)
-	}
-	again, err := s.UpsertExtensionAccount("千问", "profile-1", "小号")
-	if err != nil || again.ID != ext.ID || again.ExtAccount != "profile-1" {
-		t.Fatalf("upsert: %+v %+v err=%v", ext, again, err)
-	}
 	s.UpdateBrowser(b.ID, true, true)
 	bs := s.Browsers()
-	if len(bs) != 2 {
+	if len(bs) != 1 {
 		t.Fatalf("浏览器数量: %+v", bs)
 	}
-	for _, row := range bs {
-		if row.ID == b.ID && (!row.IsRunning || !row.IsLoggedIn) {
-			t.Errorf("浏览器状态: %+v", row)
-		}
+	if !bs[0].IsRunning || !bs[0].IsLoggedIn {
+		t.Errorf("浏览器状态: %+v", bs[0])
 	}
 }
 
-func TestDeleteByExtensionAccountLeavesLocalRows(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
+func TestOpenCleansLegacyExtensionRowsAndSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := s.AddManagedBrowser("豆包", "账号1", "", EngineFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO browsers(platform, name, port, user_data_dir, is_running, is_logged_in, ext_account) VALUES('千问','扩展旧号',9399,'',1,1,'legacy-ext')`); err != nil {
+		t.Fatal(err)
+	}
+	s.Set("browserBackend", "extension")
+	s.Set("browser_backend", "Camoufox")
+	s.Set("extBridgePort", "18765")
+	s.Set("extBridgeToken", "old-token")
+	s.Close()
+
+	s, err = Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	local, err := s.AddBrowser("豆包", "账号1", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpsertExtensionAccount("豆包", "profile-a", "扩展甲"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpsertExtensionAccount("千问", "profile-a", "扩展甲"); err != nil {
-		t.Fatal(err)
-	}
-	s.DeleteByExtensionAccount("")
-	s.DeleteByExtensionAccount("  ")
-	if rows := s.Browsers(); len(rows) != 3 {
-		t.Fatalf("empty account id must not delete rows: %+v", rows)
-	}
-	s.DeleteByExtensionAccount("profile-a")
 	rows := s.Browsers()
-	if len(rows) != 1 || rows[0].ID != local.ID || rows[0].ExtAccount != "" {
-		t.Fatalf("local account should remain: %+v", rows)
+	if len(rows) != 1 || rows[0].ID != local.ID {
+		t.Fatalf("legacy extension rows should be cleaned on open: %+v", rows)
+	}
+	if got := s.Get("browser_backend"); got != EngineFingerprint {
+		t.Fatalf("browser_backend = %q, want %q", got, EngineFingerprint)
+	}
+	for _, key := range []string{"browserBackend", "extBridgePort", "extBridgeToken"} {
+		if got := s.Get(key); got != "" {
+			t.Fatalf("legacy setting %s = %q, want empty", key, got)
+		}
 	}
 }
 
@@ -205,16 +195,6 @@ func TestOnlyLoggedInAccountsAreKept(t *testing.T) {
 			t.Fatal(err)
 		}
 		s.UpdateBrowser(saved.ID, false, true)
-		if _, err := s.UpsertExtensionAccount(platform, "bare-"+platform, ""); err != nil {
-			t.Fatal(err)
-		}
-		ext, err := s.SaveLoggedInExtension(platform, "live-"+platform, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !ext.IsLoggedIn || ext.Health != HealthReady || ext.Platform != platform {
-			t.Fatalf("saved extension = %+v", ext)
-		}
 		s.UpdateBrowserHealth(stale.ID, HealthExhausted, 0, "未登录")
 		if !s.ConfirmLogin(stale.ID) {
 			t.Fatal("confirm")
@@ -227,10 +207,11 @@ func TestOnlyLoggedInAccountsAreKept(t *testing.T) {
 			t.Fatalf("setup junk=%+v saved=%+v", browser(t, s, junk.ID), browser(t, s, saved.ID))
 		}
 	}
-	quota, err := s.SaveLoggedInExtension("千问", "quota", "扩展千问")
+	quota, err := s.AddBrowser("千问", "千问额度", "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.UpdateBrowser(quota.ID, false, true)
 	until := time.Now().Add(time.Hour).Unix()
 	s.UpdateBrowserHealth(quota.ID, HealthExhausted, until, "额度已用尽")
 	if s.ConfirmLogin(quota.ID) {
@@ -243,18 +224,6 @@ func TestOnlyLoggedInAccountsAreKept(t *testing.T) {
 	if dropped := s.DropUnloggedLocal(nil); len(dropped) != 0 {
 		t.Fatalf("stale flag deleted %+v", dropped)
 	}
-	var bare int
-	for _, row := range s.Browsers() {
-		if row.ExtAccount == "bare-豆包" || row.ExtAccount == "bare-千问" {
-			if row.IsLoggedIn {
-				t.Fatalf("bare extension marked logged in: %+v", row)
-			}
-			bare++
-		}
-	}
-	if bare != 2 {
-		t.Fatalf("unconfirmed extension rows = %d %+v", bare, s.Browsers())
-	}
 	dropped := s.DropUnloggedLocal(confirmedOut)
 	if len(dropped) != 2 {
 		t.Fatalf("confirmed-out locals = %+v", dropped)
@@ -264,39 +233,10 @@ func TestOnlyLoggedInAccountsAreKept(t *testing.T) {
 			t.Fatalf("dropped = %+v", row)
 		}
 	}
-	bare = 0
-	for _, row := range s.Browsers() {
-		if row.ExtAccount == "bare-豆包" || row.ExtAccount == "bare-千问" {
-			bare++
-		}
-	}
-	if bare != 2 {
-		t.Fatalf("confirmed-out local drop removed extensions: %+v", s.Browsers())
-	}
-	s.DropExtensionAccount("豆包", "bare-豆包")
-	s.DropExtensionAccount("千问", "bare-千问")
 	for _, row := range s.Browsers() {
 		if !row.IsLoggedIn {
 			t.Fatalf("unlogged row kept: %+v", row)
 		}
-		if row.ExtAccount != "" && row.Platform != "豆包" && row.Platform != "千问" {
-			t.Fatalf("extension platform = %+v", row)
-		}
-	}
-	var doubaoExt, qianwenExt bool
-	for _, row := range s.Browsers() {
-		if row.ExtAccount == "live-豆包" {
-			doubaoExt = true
-		}
-		if row.ExtAccount == "live-千问" {
-			qianwenExt = true
-		}
-		if row.ExtAccount == "bare-豆包" || row.ExtAccount == "bare-千问" {
-			t.Fatalf("connected-only extension kept: %+v", row)
-		}
-	}
-	if !doubaoExt || !qianwenExt {
-		t.Fatalf("logged-in extension rows = %+v", s.Browsers())
 	}
 }
 
@@ -309,4 +249,42 @@ func browser(t *testing.T, s *Store, id int64) Browser {
 	}
 	t.Fatalf("missing browser %d", id)
 	return Browser{}
+}
+
+// 换日之后，昨天记下的额度用尽已经到期：读到就恢复，库里也一起清干净。
+func TestExpiredQuotaRecoversOnRead(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	b, err := s.AddBrowser("豆包", "豆包1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	s.UpdateBrowserHealth(b.ID, HealthExhausted, now.Add(-time.Minute).Unix(), "账号额度已用尽: E_QUOTA")
+	got := browser(t, s, b.ID)
+	if got.Health != HealthReady || got.CoolUntil != 0 || got.LastError != "" || !got.Usable(now) {
+		t.Fatalf("expired quota should recover on read: %+v", got)
+	}
+	var health, last string
+	var coolUntil int64
+	if err := s.db.QueryRow(`SELECT health, cool_until, last_error FROM browsers WHERE id=?`, b.ID).Scan(&health, &coolUntil, &last); err != nil {
+		t.Fatal(err)
+	}
+	if health != HealthReady || coolUntil != 0 || last != "" {
+		t.Fatalf("recovery not saved: health=%q cool_until=%d last_error=%q", health, coolUntil, last)
+	}
+	// 还没到恢复时间的照旧挡住，错误提示留着。
+	until := now.Add(time.Hour).Unix()
+	s.UpdateBrowserHealth(b.ID, HealthExhausted, until, "账号额度已用尽: E_QUOTA")
+	if held := browser(t, s, b.ID); held.Health != HealthExhausted || held.CoolUntil != until || held.LastError == "" || held.Usable(now) {
+		t.Fatalf("active quota hold should stay: %+v", held)
+	}
+	// 没写恢复时间的挂起要等用户点恢复，读的时候不动。
+	s.UpdateBrowserHealth(b.ID, HealthExhausted, 0, "未登录")
+	if held := browser(t, s, b.ID); held.Health != HealthExhausted || held.CoolUntil != 0 || held.LastError != "未登录" {
+		t.Fatalf("hold without recovery time should stay: %+v", held)
+	}
 }

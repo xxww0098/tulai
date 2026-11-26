@@ -355,12 +355,11 @@ func sameSite(a, b string) bool {
 
 func loginSite(host string) string {
 	switch {
-	case host == "chatgpt.com" || host == "auth.openai.com" || host == "auth0.openai.com":
-		return "chatgpt"
 	case host == "tongyi.com" || strings.HasSuffix(host, ".tongyi.com") ||
-		host == "qianwen.com" || strings.HasSuffix(host, ".qianwen.com") ||
-		host == "qwen.ai" || strings.HasSuffix(host, ".qwen.ai"):
+		host == "qianwen.com" || strings.HasSuffix(host, ".qianwen.com"):
 		return "qianwen"
+	case host == "qwen.ai" || strings.HasSuffix(host, ".qwen.ai"):
+		return "qwen_intl"
 	default:
 		return ""
 	}
@@ -472,7 +471,7 @@ func (c *SliderConn) createPage(ctx context.Context, rawURL string) (string, err
 	var out struct {
 		TargetID string `json:"targetId"`
 	}
-	// 复用 Camoufox 的标签页，不为任务另建浏览器窗口。
+	// 复用受管浏览器的标签页，不为任务另建浏览器窗口。
 	if err := c.call(ctx, "", "Target.createTarget", pageTarget(rawURL, stayBack(ctx)), &out); err != nil {
 		return "", err
 	}

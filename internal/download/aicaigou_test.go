@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -312,7 +312,7 @@ func TestAicaigouShopRejectsRedirectAndChallenge(t *testing.T) {
 
 func TestAicaigouRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -324,19 +324,19 @@ func TestAicaigouRenderedCapture(t *testing.T) {
 	}
 	defer session.Close()
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == aicaigouTestPage {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(aicaigouTestHTML)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -348,7 +348,7 @@ func TestAicaigouRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(aicaigouTestPage)
-	if err := session.run(ctx, camoufox.Navigate(aicaigouTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(aicaigouTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
@@ -482,7 +482,7 @@ func TestAicaigouDOMOnlyFallback(t *testing.T) {
 
 func TestAicaigouShopRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -494,19 +494,19 @@ func TestAicaigouShopRenderedCapture(t *testing.T) {
 	}
 	defer session.Close()
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == aicaigouTestShop {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(`<title>店铺</title>`)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -518,7 +518,7 @@ func TestAicaigouShopRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(aicaigouTestShop)
-	if err := session.run(ctx, camoufox.Navigate(aicaigouTestShop)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(aicaigouTestShop)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {

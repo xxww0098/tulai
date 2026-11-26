@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -81,7 +81,7 @@ func TestMihuashiDoesNotScan(t *testing.T) {
 
 func TestMihuashiRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -93,19 +93,19 @@ func TestMihuashiRenderedCapture(t *testing.T) {
 	}
 	defer session.Close()
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && (paused.Request.URL == mihuashiTestPage || paused.Request.URL == mihuashiTestOtherPage) {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(mihuashiTestHTML)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -117,14 +117,14 @@ func TestMihuashiRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(mihuashiTestPage)
-	if err := session.run(ctx, camoufox.Navigate(mihuashiTestPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(mihuashiTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
 	if err == nil || !strings.Contains(err.Error(), "服务器错误") || len(got.Items) != 0 || session.PageURL() != mihuashiTestPage {
 		t.Fatalf("capture=%+v page=%s err=%v", got, session.PageURL(), err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(mihuashiTestOtherPage)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(mihuashiTestOtherPage)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

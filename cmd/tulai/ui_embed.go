@@ -1,13 +1,14 @@
 package main
 
 import (
-	"embed"
+	_ "embed"
 
-	"github.com/nsgo-dev/nsgo/tsx/compiler"
+	"github.com/xxww0098/tulai/internal/ui"
 )
 
-//go:embed ui
-var tsxFS embed.FS
+//go:embed assets/Icon.png
+var appIconPNG []byte
 
-// Root compiles and mounts tulai's NSGo TSX + Tailwind frontend.
-var Root = compiler.App(tsxFS, "ui/App.tsx")
+func init() {
+	ui.SetAppIcon(appIconPNG)
+}

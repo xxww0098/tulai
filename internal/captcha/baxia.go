@@ -25,13 +25,13 @@ import (
 var (
 	errGapSize       = errors.New("拼图尺寸不够")
 	errBaxiaDisabled = errors.New("已关闭自动滑块")
-	errBaxiaNoCDP    = errors.New("没有打开 Camoufox 账号窗口")
+	errBaxiaNoCDP    = errors.New("没有打开 Fingerprint 账号窗口")
 	errBaxiaNoSlider = errors.New("页面上没有识别到阿里云滑块")
 	errBaxiaRemain   = errors.New("拖动后滑块仍在")
 	errBaxiaLow      = errors.New("缺口置信度不够")
 )
 
-// SolveQianwenSlider 附着到应用内已打开的 Camoufox 账号，用信任的鼠标事件拖过阿里云滑块。
+// SolveQianwenSlider 附着到应用内已打开的 Fingerprint 账号，用信任的鼠标事件拖过阿里云滑块。
 // 拼图用本地缺口匹配；没有拼图图时把滑块拖到轨道尽头。页面脚本合成的点击是 isTrusted=false，这里不用那条路。
 func SolveQianwenSlider(ctx context.Context) error {
 	if strings.TrimSpace(os.Getenv("TULAI_BAXIA_SOLVE")) == "0" {
@@ -65,7 +65,7 @@ func SolveQianwenSlider(ctx context.Context) error {
 	return fmt.Errorf("%w: %v", errBaxiaNoCDP, last)
 }
 
-// SolveQianwenSliderAt 只连接指定的 Camoufox 账号。
+// SolveQianwenSliderAt 只连接指定的 Fingerprint 账号。
 func SolveQianwenSliderAt(ctx context.Context, endpoint string) error {
 	conn, err := cdp.DialSlider(ctx, endpoint)
 	if err != nil {
@@ -227,9 +227,9 @@ func decodeData(s string) ([]byte, error) {
 }
 
 func sliderEndpoints() []string {
-	raw := strings.TrimSpace(os.Getenv("TULAI_CAMOUFOX_ACCOUNT"))
+	raw := strings.TrimSpace(os.Getenv("TULAI_FINGERPRINT_ACCOUNT"))
 	if raw != "" {
-		return []string{"camoufox://" + raw}
+		return []string{"fingerprint://" + raw}
 	}
 	return nil
 }

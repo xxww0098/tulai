@@ -184,40 +184,6 @@ func TestConcurrentStoresAllocateDistinctAccountPorts(t *testing.T) {
 	}
 }
 
-func TestConcurrentExtensionRegistrationIsIdempotent(t *testing.T) {
-	stores := openConcurrentStores(t, 8)
-	start := make(chan struct{})
-	type outcome struct {
-		id  int64
-		err error
-	}
-	out := make(chan outcome, len(stores))
-	for _, s := range stores {
-		go func(s *Store) {
-			<-start
-			row, err := s.UpsertExtensionAccount("豆包", "same-profile", "同一账号")
-			out <- outcome{id: row.ID, err: err}
-		}(s)
-	}
-	close(start)
-	var id int64
-	for range stores {
-		r := <-out
-		if r.err != nil {
-			t.Errorf("concurrent registration: %v", r.err)
-			continue
-		}
-		if id == 0 {
-			id = r.id
-		} else if id != r.id {
-			t.Errorf("same profile received different IDs: %d and %d", id, r.id)
-		}
-	}
-	if rows := stores[0].Browsers(); len(rows) != 1 {
-		t.Fatalf("same profile produced %d accounts", len(rows))
-	}
-}
-
 func TestConcurrentSessionReadIsOneSnapshot(t *testing.T) {
 	stores := openConcurrentStores(t, 2)
 	makeSession := func(id int64, token string) (Session, []SessionTask) {

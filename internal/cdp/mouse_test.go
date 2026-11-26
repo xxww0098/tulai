@@ -42,7 +42,7 @@ document.querySelector('#active').addEventListener('change',()=>window.changes++
 	if err := s.UploadFiles(`(async()=>{if(!await tulaiClick(document.querySelector('#open')))throw new Error('入口点击失败');if(!await tulaiClick('#menu-item'))throw new Error('菜单点击失败')})()`, []string{file}); err != nil {
 		t.Fatal(err)
 	}
-	if !s.EvaluateBool(`!window.__oldClick&&window.__tulaiBaseInstalled===3&&window.changes===1&&document.querySelector('#active').files.length===1&&JSON.stringify(window.events)===JSON.stringify([['pointerdown','open',true],['click','open',true],['pointerdown','menu-item',true],['click','menu-item',true]])`) {
+	if !s.EvaluateBool(`!window.__oldClick&&window.__tulaiBaseInstalled===4&&window.changes===1&&document.querySelector('#active').files.length===1&&JSON.stringify(window.events)===JSON.stringify([['pointerdown','open',true],['click','open',true],['pointerdown','menu-item',true],['click','menu-item',true]])`) {
 		out, _ := s.Evaluate(`JSON.stringify({events:window.events,changes:window.changes,old:window.__oldClick})`)
 		t.Fatalf("trusted single-click/upload sequence failed: %s", out)
 	}

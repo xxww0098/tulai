@@ -85,7 +85,7 @@
     try {
       const u = new URL(location.href)
       if (u.protocol !== 'https:' || !['temu.com', 'www.temu.com'].includes(u.hostname) ||
-          !/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?search_result\.html$/i.test(u.pathname) ||
+          !/^\/(?:[a-z]{2,3}(?:-[a-z]{2,4})?\/)?search_result\.html$/i.test(u.pathname) ||
           u.searchParams.getAll('search_key').length !== 1 || !u.searchParams.get('search_key').trim()) return ''
       const parts = []
       for (const part of u.search.slice(1).split('&')) {
@@ -140,6 +140,19 @@
       if (key === searchKey) await saveCache()
     }, 500)
   }
+  function loadCache(key) {
+    if (!key) return Promise.resolve()
+    return browser.runtime.sendMessage({ type: 'TEMU_CACHE_LOAD', key, url: location.href }).then(saved => {
+      if (searchKey !== key || temuSearchKey() !== key || !saved || !saved.ok || !Array.isArray(saved.rows)) return
+      cacheReady = true
+      for (const row of saved.rows) {
+        if (row && typeof row.id === 'string' && !rows.has(row.id) && rows.size < maxCards) rows.set(row.id, row)
+      }
+      truncated ||= !!saved.truncated
+      controls()
+      if (rows.size > 0) host.style.display = 'block'
+    }).catch(() => {})
+  }
   function rememberSearch() {
     const key = temuSearchKey()
     if (key !== searchKey) {
@@ -152,16 +165,7 @@
       cacheReady = false
       truncated = blocked = false
       host.removeAttribute(SNAPSHOT_ATTR)
-      loadingCache = key ? browser.runtime.sendMessage({ type: 'TEMU_CACHE_LOAD', key, url: location.href }).then(saved => {
-        if (searchKey !== key || temuSearchKey() !== key || !saved || !saved.ok || !Array.isArray(saved.rows)) return
-        cacheReady = true
-        for (const row of saved.rows) {
-          if (row && typeof row.id === 'string' && !rows.has(row.id) && rows.size < maxCards) rows.set(row.id, row)
-        }
-        truncated ||= !!saved.truncated
-        controls()
-        if (rows.size > 0) host.style.display = 'block'
-      }).catch(() => {}) : Promise.resolve()
+      loadingCache = loadCache(key)
     }
     if (!key) return
     const snapshot = tulaiTemuSnapshot()
@@ -189,27 +193,58 @@
       return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
     } catch (_) { return false }
   }
+  function hasBackgroundImage(element) {
+    if (typeof getComputedStyle !== 'function') return false
+    let bg = ''
+    try { bg = getComputedStyle(element).backgroundImage || '' } catch (_) { return false }
+    if (!bg || bg === 'none') return false
+    const re = /url\(\s*["']?([^"')]+?)["']?\s*\)/gi
+    let match
+    while ((match = re.exec(bg)) !== null) {
+      if (httpImage(match[1])) return true
+    }
+    return false
+  }
   function hasImages() {
-    const images = document.images
+    const images = document.images || []
     // shortcut: inspect at most 10000 images; expand with the capture limit for larger pages.
     for (let i = 0; i < Math.min(images.length, 10000); i++) {
       const img = images[i]
       if (img.complete && img.naturalWidth > 1 && img.naturalHeight > 1 && httpImage(img.currentSrc || img.src)) return true
     }
-    const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT)
-    let element = document.documentElement
-    // shortcut: inspect at most 2000 links and backgrounds; expand if larger pages need it.
-    for (let i = 0; i < 2000 && element; i++, element = walker.nextNode()) {
-      if (element.tagName === 'A' && httpImage(element.href) && /\.(?:jpe?g|png|gif|webp|avif|bmp|tiff?|svg|heic|heif)$/i.test(new URL(element.href).pathname)) return true
-      const match = /url\(["']?(.*?)["']?\)/i.exec(getComputedStyle(element).backgroundImage)
-      if (match && httpImage(match[1])) return true
+    if (typeof document.createTreeWalker !== 'function' || typeof NodeFilter === 'undefined') return false
+    const roots = [document.documentElement]
+    let visited = 0
+    // shortcut: inspect at most 2000 links, backgrounds and open shadow DOM nodes; expand if larger pages need it.
+    for (let r = 0; r < roots.length && visited < 2000; r++) {
+      const root = roots[r]
+      if (!root) continue
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
+      let element = root.nodeType === 1 ? root : walker.nextNode()
+      for (; visited < 2000 && element; visited++, element = walker.nextNode()) {
+        if (element === host || host.contains(element)) continue
+        if (element.shadowRoot) roots.push(element.shadowRoot)
+        if (element.tagName === 'IMG' && element.complete && element.naturalWidth > 1 && element.naturalHeight > 1 && httpImage(element.currentSrc || element.src)) return true
+        if (element.tagName === 'A' && httpImage(element.href)) {
+          try {
+            if (/\.(?:jpe?g|png|gif|webp|avif|bmp|tiff?|svg|heic|heif)$/i.test(new URL(element.href, document.baseURI).pathname)) return true
+          } catch (_) {}
+        }
+        if (hasBackgroundImage(element)) return true
+      }
     }
     return false
   }
+  function ensureHostAttached() {
+    if (host.isConnected === false && document.documentElement) {
+      document.documentElement.append(host)
+    }
+  }
   function refresh() {
+    ensureHostAttached()
     rememberSearch()
     controls()
-    const temuWall = /^(?:www\.)?temu\.com$/i.test(location.hostname) && /^\/(?:login|bgn_verification)\.html$/i.test(location.pathname)
+    const temuWall = /^(?:www\.)?temu\.com$/i.test(location.hostname) && /^\/(?:[a-z]{2,3}(?:-[a-z]{2,4})?\/)?(?:login|bgn_verification)\.html$/i.test(location.pathname)
     host.style.display = !temuWall && (searchKey ? rows.size > 0 || blocked : hasImages()) ? 'block' : 'none'
   }
   function schedule() {
@@ -220,14 +255,14 @@
     if (!running) return
     refresh()
     if (!running) return
-    const list = document.querySelector('.js-search-goodsList')
+    const list = document.querySelector('.js-search-goodsList') || document.querySelector('[class*="search-goodsList"], [class*="goodsList"], main') || document.body
     const candidates = list ? list.querySelectorAll('[role="button"], button') : []
     let more = null
     for (let i = 0; i < candidates.length; i++) {
       const node = candidates[i]
       const label = (node.getAttribute('aria-label') || node.textContent || '').trim()
       const rect = node.getBoundingClientRect()
-      if (!node.closest('.EKDT7a3v') && !node.disabled && node.getAttribute('aria-disabled') !== 'true' &&
+      if (!node.closest('.EKDT7a3v') && !host.contains(node) && !node.closest('a[href*="-g-"], a[href*="goods_id="]') && !node.disabled && node.getAttribute('aria-disabled') !== 'true' &&
         /^(?:see more(?: items)?|load more|查看更多|显示更多|加载更多)$/i.test(label) &&
         rect.width > 0 && rect.height > 0 && rect.top < innerHeight * 1.4 && rect.bottom > 0) { more = node; break }
     }
@@ -258,6 +293,10 @@
       refresh()
       const key = searchKey
       await loadingCache
+      if (key && !cacheReady && searchKey === key && temuSearchKey() === key) {
+        loadingCache = loadCache(key)
+        await loadingCache
+      }
       if (key !== searchKey || key !== temuSearchKey()) { message('页面已变化，请重新点击下载', true); return }
       if (key) {
         if (!cacheReady) { message('无法恢复已加载商品，请刷新页面后重试', true); return }
@@ -289,6 +328,10 @@
     const key = searchKey
     starting = true; controls()
     await loadingCache
+    if (!cacheReady && searchKey === key && temuSearchKey() === key) {
+      loadingCache = loadCache(key)
+      await loadingCache
+    }
     const saved = await saveCache()
     starting = false
     if (key !== searchKey || key !== temuSearchKey()) { refresh(); return }
@@ -308,6 +351,13 @@
   })
   document.addEventListener('load', schedule, true)
   document.addEventListener('scroll', schedule, { passive: true })
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('popstate', schedule)
+    window.addEventListener('hashchange', schedule)
+    if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+      window.navigation.addEventListener('navigatesuccess', schedule)
+    }
+  }
   new MutationObserver(changes => {
     if (changes.some(change => change.target !== host && !host.contains(change.target))) schedule()
   }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['href', 'src', 'srcset', 'data-src', 'data-tooltip', 'data-state', 'style', 'class', 'hidden', 'aria-hidden'] })

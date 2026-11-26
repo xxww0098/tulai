@@ -1,6 +1,5 @@
 package main
 
-// ProductVersion 是桌面端产品版本。go tool nsgo build 还会把 cmd/tulai/nsgo.yaml 的
+// ProductVersion 是桌面端产品版本。go tool mygo build 还会把根目录 mygo.json 的
 // version 链进二进制；TestProductVersionMatchesConfig 要求两边相同。
-// MV3 页面桥（extension/manifest.json）单独编号，不是这个版本。
-const ProductVersion = "0.1.38"
+const ProductVersion = "0.1.39"

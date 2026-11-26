@@ -4,8 +4,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/agy"
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/store"
 )
 
@@ -100,7 +98,6 @@ type AccountLane struct {
 	ID           int64
 	Platform     string
 	Name         string
-	Extension    bool
 	Disabled     bool
 	State        LaneState
 	NextReadyAt  time.Time
@@ -111,7 +108,6 @@ type AccountLane struct {
 	Cap          int
 	Action       string
 	Job          *LaneJob
-	Email        string
 	CoolUntil    int64
 }
 
@@ -126,7 +122,6 @@ type LaneFact struct {
 	ID           int64
 	Platform     string
 	Name         string
-	Extension    bool
 	Disabled     bool
 	LoggedIn     bool
 	Health       string
@@ -145,12 +140,13 @@ type LaneFact struct {
 }
 
 type laneClock struct {
-	busy      map[int64]int64
-	jobs      map[int64]LaneJob
-	ready     map[int64]SendWindow
-	verify    map[int64]bool
-	holdStart map[int64]time.Time
-	held      map[int64]time.Duration
+	busy       map[int64]int64
+	jobs       map[int64]LaneJob
+	ready      map[int64]SendWindow
+	verify     map[int64]bool
+	holdStart  map[int64]time.Time
+	held       map[int64]time.Duration
+	budgetWake chan struct{}
 }
 
 func (c laneClock) snapshot() LaneLive {
@@ -203,33 +199,13 @@ func cloneGaps(in map[int64]SendWindow) map[int64]SendWindow {
 	return out
 }
 
-// accountSlot 和调度名额是同一条规则：本机浏览器用自己的 ID，
-// 同一个扩展配置文件的豆包和千问共用最小的那个 ID。
-func accountSlot(rows []store.Browser, id int64) int64 {
-	if id == 0 {
-		return 0
-	}
-	account := ""
-	for _, b := range rows {
-		if b.ID == id {
-			account = b.ExtAccount
-			break
-		}
-	}
-	if account == "" {
-		return id
-	}
-	slot := id
-	for _, b := range rows {
-		if b.ExtAccount == account && b.ID < slot {
-			slot = b.ID
-		}
-	}
-	return slot
+// accountSlot 和调度名额是同一条规则：每个受管浏览器账号独立使用自己的 ID。
+func accountSlot(_ []store.Browser, id int64) int64 {
+	return id
 }
 
-// MapLane 把一条账号收成界面上的状态。等人验证优先于出图中；扩展没连上是离线，
-// 本机没登录是需要登录；满额、验证码、冷却都比发送间隔优先。
+// MapLane 把一条账号收成界面上的状态。等人验证优先于出图中；
+// 未登录是需要登录；满额、验证码、冷却都比发送间隔优先。
 func MapLane(f LaneFact, now time.Time) AccountLane {
 	cap := max(f.Cap, 0)
 	name := strings.TrimSpace(f.Name)
@@ -237,7 +213,7 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 		name = f.Platform
 	}
 	ln := AccountLane{
-		ID: f.ID, Platform: f.Platform, Name: name, Extension: f.Extension, Disabled: f.Disabled,
+		ID: f.ID, Platform: f.Platform, Name: name, Disabled: f.Disabled,
 		UsedToday: f.UsedToday, SuccessToday: f.SuccessToday, FailedToday: f.FailedToday,
 		Cap: cap, NextReadyAt: f.NextReady, Gap: f.Gap,
 		CoolUntil: f.CoolUntil,
@@ -252,27 +228,17 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 		ln.Job = f.Job
 	case f.Disabled:
 		ln.State = LaneDisabled
-	case f.Extension && f.Offline:
-		ln.State = LaneOffline
 	case needsLogin(f, now):
 		ln.State = LaneLogin
-		if f.Platform == agy.Platform {
-			ln.Action = "去登录"
-		} else {
-			ln.Action = "去重登"
-		}
+		ln.Action = "去重登"
 	case needsCaptcha(f, now):
 		ln.State = LaneCaptcha
 		ln.Action = "去处理"
-	case agyExhausted(f, now):
-		ln.State = LaneQuota
 	case dayFull(f, now):
 		ln.State = LaneFull
 	case f.Offline:
 		ln.State = LaneOffline
-		if !f.Extension {
-			ln.Action = "去处理"
-		}
+		ln.Action = "去处理"
 	case cooling(f, now):
 		ln.State = LaneCooling
 	case !f.NextReady.IsZero() && now.Before(f.NextReady):
@@ -298,14 +264,6 @@ func needsCaptcha(f LaneFact, now time.Time) bool {
 		return false
 	}
 	return !factUsable(f, now)
-}
-
-func agyExhausted(f LaneFact, now time.Time) bool {
-	if f.Platform != agy.Platform || factUsable(f, now) {
-		return false
-	}
-	msg := strings.ToLower(f.LastError)
-	return strings.Contains(f.LastError, "额度") || strings.Contains(msg, "quota")
 }
 
 func dayFull(f LaneFact, now time.Time) bool {
@@ -344,7 +302,7 @@ func AssembleCaps(rows []store.Browser, live LaneLive, caps CapFor, now time.Tim
 		slot := accountSlot(rows, b.ID)
 		success, failed := b.ResultsToday(now)
 		fact := LaneFact{
-			ID: b.ID, Platform: b.Platform, Name: b.Name, Extension: b.ExtAccount != "", Disabled: b.Disabled,
+			ID: b.ID, Platform: b.Platform, Name: b.Name, Disabled: b.Disabled,
 			LoggedIn: b.IsLoggedIn, Health: b.Health, CoolUntil: b.CoolUntil, LastError: b.LastError,
 			UsedToday: b.UsedToday(now), SuccessToday: success, FailedToday: failed, Cap: caps.For(b.Platform), Offline: live.Offline[b.ID],
 		}
@@ -422,6 +380,10 @@ func (e *Engine) beginLanes() {
 	e.clock.verify = map[int64]bool{}
 	e.clock.holdStart = nil
 	e.clock.held = nil
+	if e.clock.budgetWake != nil {
+		close(e.clock.budgetWake)
+		e.clock.budgetWake = nil
+	}
 	e.liveMu.Unlock()
 }
 
@@ -433,6 +395,10 @@ func (e *Engine) finishLanes() {
 	e.clock.verify = nil
 	e.clock.holdStart = nil
 	e.clock.held = nil
+	if e.clock.budgetWake != nil {
+		close(e.clock.budgetWake)
+		e.clock.budgetWake = nil
+	}
 	e.liveMu.Unlock()
 }
 
@@ -482,43 +448,28 @@ func (e *Engine) AccountBoardCaps(now time.Time, caps CapFor) Board {
 	if e == nil {
 		return Board{}
 	}
+	return e.AccountBoardRows(e.laneRows(), now, caps)
+}
+
+// AccountBoardRows 使用调用方已加载的账号列表拼出车道快照，避免 UI 刷新重复查询数据库。
+func (e *Engine) AccountBoardRows(all []store.Browser, now time.Time, caps CapFor) Board {
+	if e == nil {
+		return Board{}
+	}
 	e.liveMu.Lock()
 	live := e.clock.snapshot()
 	e.liveMu.Unlock()
-	rows := e.laneRows()
-	if live.Offline == nil && len(rows) > 0 {
-		live.Offline = map[int64]bool{}
-	}
-	for _, b := range rows {
-		if e.extDown(b) {
-			if live.Offline == nil {
-				live.Offline = map[int64]bool{}
-			}
-			live.Offline[b.ID] = true
-		}
-	}
+	rows := filterLaneRows(all)
 	return AssembleCaps(rows, live, caps, now)
 }
 
-func (e *Engine) laneRows() []store.Browser {
-	if e == nil || e.store == nil {
+func filterLaneRows(all []store.Browser) []store.Browser {
+	if len(all) == 0 {
 		return nil
 	}
-	wantExt := e.useExtension("豆包") && !e.useBoundExtension("豆包")
-	var out []store.Browser
-	for _, b := range e.store.Browsers() {
-		if b.Platform == "ChatGPT" && b.ExtAccount == "" {
-			out = append(out, b)
-			continue
-		}
-		if b.Platform == agy.Platform {
-			out = append(out, b)
-			continue
-		}
-		if b.Platform != "豆包" && b.Platform != "千问" {
-			continue
-		}
-		if wantExt != (b.ExtAccount != "") {
+	out := make([]store.Browser, 0, len(all))
+	for _, b := range all {
+		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" {
 			continue
 		}
 		out = append(out, b)
@@ -526,20 +477,9 @@ func (e *Engine) laneRows() []store.Browser {
 	return out
 }
 
-func (e *Engine) extDown(b store.Browser) bool {
-	if e == nil || b.ExtAccount == "" {
-		return false
+func (e *Engine) laneRows() []store.Browser {
+	if e == nil || e.store == nil {
+		return nil
 	}
-	e.extMu.Lock()
-	srv := e.extSrv
-	e.extMu.Unlock()
-	if srv == nil {
-		return true
-	}
-	platform := extbridge.PlatformQianwen
-	if b.Platform == "豆包" {
-		platform = extbridge.PlatformDoubao
-	}
-	sess := srv.SessionByAccount(platform, b.ExtAccount)
-	return sess == nil || !sess.Alive()
+	return filterLaneRows(e.store.Browsers())
 }

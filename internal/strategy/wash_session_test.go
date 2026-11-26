@@ -10,9 +10,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 func TestWashSessionReusesPromptBoundary(t *testing.T) {
@@ -46,18 +46,17 @@ func TestWashSessionReusesPromptBoundary(t *testing.T) {
 		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(client, upstream) }()
 	}))
 	defer proxy.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), camoufoxtest.StartTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), fingerprinttest.StartTimeout)
 	defer cancel()
-	geoip := false
-	process, err := camoufox.Start(ctx, camoufoxtest.ConfigDir(t), camoufox.Options{Profile: t.TempDir(), Headless: true, Proxy: proxy.URL, GeoIP: &geoip, IgnoreHTTPSErrors: true}, os.Stderr)
+	process, err := fingerprint.Start(ctx, fingerprinttest.ConfigDir(t), fingerprint.Options{Profile: t.TempDir(), Headless: true, Proxy: proxy.URL, IgnoreHTTPSErrors: true}, os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer process.Close()
 	const port = 61274
-	camoufox.Register(port, process)
-	defer camoufox.Unregister(port, process)
-	client, err := cdp.NewClient(camoufox.Endpoint(port))
+	fingerprint.Register(port, process)
+	defer fingerprint.Unregister(port, process)
+	client, err := cdp.NewClient(fingerprint.Endpoint(port))
 	if err != nil {
 		t.Fatal(err)
 	}

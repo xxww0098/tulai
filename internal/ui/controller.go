@@ -1,13 +1,15 @@
-// Package ui implements tulai's NSGo application controller, state bridges, and native views.
+// Package ui implements tulai's MyGo application controller, bound services, and media handler.
 package ui
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"image"
-	"image/draw"
-	"net/url"
+	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,22 +21,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/nsgo-dev/nsgo"
-	"github.com/nsgo-dev/nsgo/core"
-	"github.com/nsgo-dev/nsgo/desktop"
+	"github.com/egoist/mygo"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/download"
-	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/imageedit"
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/prompts"
 	"github.com/xxww0098/tulai/internal/store"
+	"github.com/xxww0098/tulai/internal/strategy"
 	"github.com/xxww0098/tulai/internal/tasks"
 	"github.com/xxww0098/tulai/internal/update"
-	"github.com/xxww0098/tulai/internal/wizard"
 )
 
 const (
@@ -42,7 +41,35 @@ const (
 	batchImage
 )
 
-const settingTaskBrowserVisible = "task_browser_visible"
+const (
+	settingTaskBrowserVisible       = "task_browser_visible"
+	settingDismissedSharedExitHints = "dismissed_shared_exit_hints"
+)
+
+const (
+	settingDotMatrixEffect = "dot_matrix_effect"
+	defaultDotMatrixEffect = "grain"
+)
+
+var validDotMatrixEffects = []string{
+	"ripple",
+	"fbm",
+	"helix",
+	"grain",
+	"spiral",
+	"warp",
+	"plasma",
+	"band",
+	"snowflakes",
+}
+
+func normalizeDotMatrixEffect(raw string) string {
+	return pickStr(strings.TrimSpace(raw), defaultDotMatrixEffect, validDotMatrixEffects)
+}
+
+// appTitle is the product name the window title, the macOS app menu and the
+// brand header show. The binary, bundle and module keep the ASCII name tulai.
+const appTitle = "图来"
 
 // Controller aliases App so callers and tests can reference either name.
 type Controller = App
@@ -78,20 +105,62 @@ type pageState struct {
 	skipImages  bool
 }
 
-// App holds tulai's application state, stores, background task managers, and NSGo scope.
+type workspaceSlot struct {
+	platform string
+	page     int
+}
+
+type platformWorkspace struct {
+	pages               map[int]pageState
+	batchMode           int
+	textPrompts         string
+	imgPrompts          string
+	freeformPrompts     string
+	imgFreeformPrompts  string
+	promptPick          string
+	imgPromptPick       string
+	promptChoice        string
+	genPromptChoice     string
+	imgGenPromptChoice  string
+	washPromptChoice    string
+	fissionPromptChoice string
+	textRepeat          int
+	imageRepeat         int
+	imagePromptMode     string
+	genSession          int64
+	washSession         int64
+	fissionSession      int64
+	rewashCounts        map[string]int
+	rewashUndo          *rewashSnapshot
+	resultsDoneOpen     bool
+	gallerySelected     map[string]bool
+	fissionRetryBase    []tasks.Task
+}
+
+// App holds tulai's application state, stores, background task managers, and desktop host.
 type App struct {
 	mu sync.Mutex
 
 	store    *store.Store
 	manager  *browser.Manager
 	engine   *tasks.Engine
-	scope    *core.Scope
+	host     DesktopHost
+	media    *MediaHandler
 	dataRoot string
 
-	// Native signal bumped inside engine goroutine to repaint BrowserStage & ImageEditStage.
-	nativeTick *core.Signal[uint64]
+	// Single-goroutine controller actor channels (started in ui.Run).
+	actorCh   chan func()
+	actorWake chan struct{}
+	actorStop chan struct{}
+	actorDone chan struct{}
 
-	// Subscriber channels for "watchEvents" in TSX.
+	// Shared media buffers read by MediaHandler HTTP goroutines.
+	mediaMu      sync.RWMutex
+	drawerFrame  []byte
+	editOrigPath string
+	editOutJPEG  []byte
+
+	// Subscriber channels for coalesced topic updates.
 	watchersMu   sync.Mutex
 	watchers     map[int]chan string
 	nextWatcher  int
@@ -105,71 +174,55 @@ type App struct {
 	accountProxyNote string
 	detectedNote     string
 	detectedDetail   string
-	camoufoxStatus   string
-	camoufoxBusy     bool
-	camoufoxPercent  float64
-	camoufoxDone     int64
-	camoufoxTotal    int64
-	camoufoxSpeed    int64
-	camoufoxLast     int64
-	camoufoxStage    string
-	camoufoxAt       time.Time
-	camoufoxReady    bool
+	runtimeStatus    string
+	runtimeBusy      bool
+	runtimePercent   float64
+	runtimeDone      int64
+	runtimeTotal     int64
+	runtimeSpeed     int64
+	runtimeLast      int64
+	runtimeStage     string
+	runtimeAt        time.Time
+	runtimeReady     bool
 
-	platDoubao         bool
-	platQianwen        bool
-	platAntigravity    bool
-	platChatGPT        bool
-	chatGPTModel       string
-	agyBin             string
-	agyHomeRoot        string
-	agyModel           string
-	agyTimeoutMin      float64
-	agySaved           string
-	agyLogin           *agyLoginState
-	agyChooser         *agyChooserState
-	agyUsageMu         sync.Mutex
-	agyUsage           map[int64]agyUsageSlot
-	agyUsageForce      map[int64]bool
-	agyUsageStop       context.CancelFunc
-	agyUsageWake       chan struct{}
-	agyUsageSync       bool
-	agyUsageFetch      func(context.Context, string, string) (agy.GeminiUsage, error)
-	agyUsageBusy       func(int64) bool
-	sendStrategy       string
-	concurrencyAuto    bool
-	retryCount         float64
-	sendWait           float64
-	dailyCap           float64
-	dailyCapSet        bool
-	dailyCapQianwen    float64
-	dailyCapQianwenSet bool
-	dailyCapAgy        float64
-	dailyCapAgySet     bool
-	dailyCapChatGPT    float64
-	dailyCapChatGPTSet bool
-	riskyWords         string
-	pickFile           func() (string, error)
-	waitBefore         float64
-	waitResult         bool
-	waitResultS        float64
-	taskSwitch         bool
-	switchCount        float64
-	startBrowserIdx    float64
-	outputPath         string
-	genAutoNumber      bool
-	washAutoNumber     bool
-	numPrefix          string
-	numStart           float64
-	numWidth           float64
-	outputSizeMode     string
-	outputSizePreset   string
-	outputRatio        string
-	outputWidth        string
-	outputHeight       string
-	outputCrop         bool
+	platDoubao              bool
+	platQianwen             bool
+	platQwenIntl            bool
+	sendStrategy            string
+	concurrencyAuto         bool
+	concurrencyMax          float64
+	concurrencyAutoQianwen  bool
+	concurrencyMaxQianwen   float64
+	concurrencyAutoQwenIntl bool
+	concurrencyMaxQwenIntl  float64
+	retryCount              float64
+	sendWait                float64
+	dailyCap                float64
+	dailyCapSet             bool
+	dailyCapQianwen         float64
+	dailyCapQianwenSet      bool
+	dailyCapQwenIntl        float64
+	dailyCapQwenIntlSet     bool
+	riskyWords              string
+	pickFile                func() (string, error)
+	waitBefore              float64
+	waitResult              bool
+	waitResultS             float64
+	taskSwitch              bool
+	switchCount             float64
+	startBrowserIdx         float64
+	outputPath              string
+	genAutoNumber           bool
+	washAutoNumber          bool
+	numPrefix               string
+	numStart                float64
+	numWidth                float64
+	doubaoOutput            outputSizePrefs
+	qianwenOutput           outputSizePrefs
+	qwenIntlOutput          outputSizePrefs
 	washStyle          string
 	removeWatermark    bool
+	autoDeleteHistory  bool
 	downloadConc       float64
 	downloadRetries    float64
 	downloadRateKB     float64
@@ -208,34 +261,43 @@ type App struct {
 	dlSelectedID    int
 
 	// Prompts & structured prompt parts
-	prompts          string
-	userPrompts      []prompts.UserPrompt
-	promptPick       string
-	promptChoice     string
-	freeformPrompts  string
-	promptNote       string
-	genPromptChoice  string
-	promptEditPick   string
-	promptEditChoice string
-	promptEditText   string
-	promptEditName   string
-	promptEditKind   string
-	promptEditDraft  string
-	promptDraftName  string
-	promptDraftKind  string
-	promptFilter     string
-	promptEditNote   string
-	washPromptChoice string
-	promptSuffix     string
-	useSuffix        bool
-	structuredGen    promptParts
-	structuredWash   promptParts
-	structuredReady  bool
-	structuredOpen   bool
-	structuredPage   int
+	prompts             string
+	textPrompts         string
+	imgPrompts          string
+	userPrompts         []prompts.UserPrompt
+	promptPick          string
+	imgPromptPick       string
+	promptChoice        string
+	freeformPrompts     string
+	imgFreeformPrompts  string
+	promptNote          string
+	genPromptChoice     string
+	imgGenPromptChoice  string
+	promptEditPick      string
+	promptEditChoice    string
+	promptEditText      string
+	promptEditName      string
+	promptEditKind      string
+	promptEditDraft     string
+	promptDraftName     string
+	promptDraftKind     string
+	promptFilter        string
+	promptEditNote      string
+	washPromptChoice    string
+	fissionPromptChoice string
+	promptSuffix        string
+	useSuffix           bool
+	structuredGen       promptParts
+	structuredWash      promptParts
+	structuredReady     bool
+	structuredOpen      bool
+	structuredPage      int
 
-	batchMode    int
-	platformAuto bool
+	batchMode       int
+	textRepeat      int
+	imageRepeat     int
+	imagePromptMode string
+	platformAuto    bool
 	logPaused    bool
 	logPick      int
 	logQuery     string
@@ -254,8 +316,10 @@ type App struct {
 	previewPath      string
 	statePage        int
 	parked           map[int]pageState
+	platformSpaces   map[string]platformWorkspace
 	fissionRetryBase []tasks.Task
 	runPage          int
+	runPlatform      string
 
 	// Captcha & proxy
 	captchaEnabled bool
@@ -277,13 +341,18 @@ type App struct {
 	edit            imageEditState
 	uiUpdates       []func()
 	persistDeferral int
-	dirtyWorkspace  map[int]struct{}
+	dirtyWorkspace  map[workspaceSlot]struct{}
 	workspaceWrites int
+	runPersistTimer *time.Timer
+	runPersistDirty map[workspaceSlot]struct{}
+	runEmitPending  bool
 
-	// Browsers & Antigravity accounts
-	browserRows      []store.Browser
-	browserChecked   map[int64]bool
-	browserPending   map[int64]browserOperation
+	// Browsers
+	browserRows              []store.Browser
+	browserChecked           map[int64]bool
+	browserPending           map[int64]browserOperation
+	dismissedSharedExitHints map[string]string
+	browserProbing   atomic.Bool
 	browserBatch     *browserBatchRun
 	browserDrawer    *browserDrawerState
 	browserViewingID int64
@@ -294,14 +363,15 @@ type App struct {
 	newBrowserName   string
 	platSynced       bool
 	platSyncedTab    int
-	renameID         int64
-	renameDraft      string
-	loginLaunch      func(store.Browser) error
-	loginClosed      []int64
-	afterClose       func()
-	extToken         string
-	extPort          string
-	extTokenNote     string
+	renameID           int64
+	renameDraft        string
+	loginLaunch        func(store.Browser) error
+	clearHistoryFn     func(context.Context, store.Browser, strategy.ClearHistoryOptions) (strategy.ClearHistoryResult, error)
+	clearHistoryCancel context.CancelFunc
+	syncAccountNameFn  func(context.Context, store.Browser) (string, error)
+	syncNamesCancel    context.CancelFunc
+	loginClosed        []int64
+	afterClose         func()
 
 	// Queue & workspace state
 	queue           []tasks.Task
@@ -314,19 +384,19 @@ type App struct {
 	washSession     int64
 	fissionSession  int64
 	workspacePage   string
-	historyOpen     bool
 	resultsDoneOpen bool
 	laneCollapsed   bool
 	rewashUndo      *rewashSnapshot
 	rewashCounts    map[string]int
 	stamps          map[string]int64
 
-	tab          int
-	settingsTab  int
-	navCollapsed bool
-	navManual    bool
-	logOpen      bool
-	darkTheme    bool
+	tab             int
+	settingsTab     int
+	navCollapsed    bool
+	navManual       bool
+	logOpen         bool
+	darkTheme       bool
+	dotMatrixEffect string
 
 	// Update state
 	updateBusy         bool
@@ -353,17 +423,15 @@ type App struct {
 
 	// Wizard state
 	wizardOn        bool
-	wizardStep      wizard.Step
+	wizardStep      wizardStep
 	wizardDir       int
-	wizardPlan      wizard.BrowserPlan
-	wizardQueue     wizard.Queue
+	wizardPlan      wizardBrowserPlan
+	wizardQueue     wizardQueue
 	wizardAccount   store.Browser
 	wizardExtra     bool
 	wizardChoice    string
 	wizardFirst     bool
-	wizardAgy       wizardAgyState
-	wizardPlanFn    func() wizard.BrowserPlan
-	agyLocate       func(string) (string, bool)
+	wizardPlanFn    func() wizardBrowserPlan
 	wizardPhase     string
 	wizardNote      string
 	wizardErr       string
@@ -377,14 +445,18 @@ type App struct {
 	wizardNameFor   int64
 	loginShots      map[int64]loginShot
 	loginWatchGen   map[int64]int
-	loginHold       map[int64]struct{}
-	loginFresh      map[int64]struct{}
-	loginProbed     map[int64]string
-	accountProbe    func(store.Browser) (string, error)
-	loginPoll       time.Duration
-	loginFollow     func(store.Browser, string)
-	accountOpen     func(store.Browser) error
-	quitting        bool
+	loginHold        map[int64]struct{}
+	loginFresh       map[int64]struct{}
+	loginAutoName    map[int64]string
+	loginProbed      map[int64]string
+	accountProbe     func(store.Browser) (string, error)
+	accountNameProbe func(ctx context.Context, endpoint string) (string, error)
+	loginPoll        time.Duration
+	accountNameWait  time.Duration
+	accountNamePoll  time.Duration
+	loginFollow      func(store.Browser, string)
+	accountOpen      func(store.Browser) error
+	quitting         bool
 
 	// Optional toast notification sent to TSX
 	toastSeq   int
@@ -393,11 +465,12 @@ type App struct {
 }
 
 var (
-	activeAppMu sync.RWMutex
-	activeApp   *App
+	activeAppMu              sync.RWMutex
+	activeApp                *App
+	runPersistCoalesceWindow = 200 * time.Millisecond
 )
 
-// SetTestApp registers an isolated controller instance for nsgotest and Go tests.
+// SetTestApp registers an isolated controller instance for Go unit tests.
 func SetTestApp(a *App) {
 	activeAppMu.Lock()
 	activeApp = a
@@ -424,8 +497,9 @@ func NewApp(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot st
 		watchers:   map[int]chan string{},
 		updateStop: make(chan struct{}),
 	}
-	if eng != nil {
-		eng.DropInactiveExtensionAccounts()
+	a.media = NewMediaHandler(a)
+	if bm != nil {
+		bm.SetExitHandler(a.handleBrowserExit)
 	}
 	if st != nil {
 		a.loadSettings()
@@ -434,39 +508,117 @@ func NewApp(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot st
 	return a
 }
 
-// Run launches the NSGo desktop application hosting root.
-func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot string, root func(*core.Scope) core.Node) {
+// Run launches the MyGo desktop application hosting tulai's Web Frontend.
+func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot string) {
 	a := NewApp(st, bm, eng, dataRoot)
 	SetTestApp(a)
 	defer SetTestApp(nil)
 
-	if a.engine != nil {
-		if err := a.engine.ServeLocal(); err != nil && a.extTokenNote == "" {
-			a.extTokenNote = "自动对接未启动，可复制令牌手动填写"
-		}
-	}
 	a.wireHealing()
+
+	host := &mygoHost{}
+	a.BindHost(host)
+	a.StartActor()
+	stopPump := a.startEventPump(host)
+
+	RegisterBindings(a)
+	if err := mygo.Protocol.Handle(MediaScheme, a.media); err != nil {
+		logging.Log.Errorf("注册本地媒体协议失败: %v", err)
+	}
+	applyMyGoTheme(a.darkTheme)
+
+	if runtime.GOOS == "darwin" {
+		mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
+			{
+				Label: appTitle,
+				Submenu: []*mygo.MenuItem{
+					{Role: mygo.RoleAbout},
+					mygo.Separator(),
+					{Role: mygo.RoleHide},
+					{Role: mygo.RoleHideOthers},
+					{Role: mygo.RoleUnhide},
+					mygo.Separator(),
+					{Role: mygo.RoleQuit},
+				},
+			},
+			{Role: mygo.RoleEditMenu},
+			{Role: mygo.RoleWindowMenu},
+		}))
+	}
 
 	loginCtx, loginStop := context.WithCancel(context.Background())
 	var loginWG sync.WaitGroup
-	defer func() {
-		a.shutdown(loginStop, &loginWG)
-	}()
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			a.shutdown(loginStop, &loginWG)
+			stopPump()
+		})
+	}
+	defer cleanup()
 
-	var opts []nsgo.Option
-	opts = append(opts,
-		nsgo.WindowSize(1160, 740),
-		nsgo.WindowConstraints(core.WindowConstraints{MinWidth: 900, MinHeight: 620}),
-	)
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
+		if e != nil && e.SessionEnding {
+			// OS logout/shutdown cannot be canceled; avoid dialogs and let OnQuit run fast cleanup.
+			return
+		}
+	})
+	mygo.App.OnWillQuit(func(_ *mygo.QuitEvent) {})
+	mygo.App.OnQuit(func() {
+		cleanup()
+	})
 
-	nsgo.Run(func(cx *core.Scope) core.Node {
-		a.BindScope(cx)
-		if runtime.GOOS == "darwin" {
-			desktop.SetApplicationMenu(cx, []desktop.MenuItem{
-				{Label: "tulai", Items: []desktop.MenuItem{{Role: desktop.MenuAbout}, {Role: desktop.MenuQuit}}},
-				{Label: "Edit", Items: []desktop.MenuItem{{Role: desktop.MenuUndo}, {Role: desktop.MenuRedo}, {Role: desktop.MenuCut}, {Role: desktop.MenuCopy}, {Role: desktop.MenuPaste}, {Role: desktop.MenuSelectAll}}},
+	mygo.App.WhenReady(func() {
+		win := mygo.NewWindow(mygo.WindowOptions{
+			Title:                appTitle,
+			URL:                  "/",
+			Width:                1160,
+			Height:               740,
+			MinWidth:             900,
+			MinHeight:            620,
+			StateKey:             "main",
+			Hidden:               true,
+			BackgroundColor:      "light-dark(#F2F4F7, #0C1017)",
+			TitleBarStyle:        mygo.TitleBarHiddenInset,
+			TrafficLightPosition: &mygo.Point{X: 14, Y: 14},
+			TitleBarHeight:       38,
+			Page: mygo.PageOptions{
+				DevTools:             mygo.DevToolsAuto,
+				BackgroundThrottling: mygo.ThrottlingOff,
+			},
+		})
+		host.setWindow(win)
+		win.OnReadyToShow(func() {
+			win.Show()
+		})
+		win.OnFileDrop(func(e *mygo.FileDropEvent) {
+			if e == nil || len(e.Paths) == 0 {
+				return
+			}
+			_ = EventFileDrop.Emit(win, FileDropEvent{
+				Paths: append([]string(nil), e.Paths...),
+				X:     e.X,
+				Y:     e.Y,
+			})
+		})
+		if pg := win.Page(); pg != nil {
+			pg.OnContextMenu(func(e *mygo.ContextMenuEvent) {
+				if e != nil {
+					e.PreventDefault()
+				}
+			})
+			pg.OnWillNavigate(func(e *mygo.NavigateEvent) {
+				if e == nil || isAllowedAppNavigation(e.URL) {
+					return
+				}
+				e.PreventDefault()
+				if e.UserInitiated && (strings.HasPrefix(e.URL, "http://") || strings.HasPrefix(e.URL, "https://")) {
+					target := e.URL
+					go func() { _ = mygo.Shell.OpenExternal(target) }()
+				}
 			})
 		}
+
 		var logEmitPending atomic.Bool
 		logging.Log.SetSink(func(logging.Entry) {
 			if a.isQuitting() {
@@ -482,61 +634,64 @@ func Run(st *store.Store, bm *browser.Manager, eng *tasks.Engine, dataRoot strin
 				}
 			})
 		})
-		a.startAgyUsage()
 		if a.engine != nil {
 			loginWG.Add(1)
 			go func() {
 				defer loginWG.Done()
 				a.engine.WatchLogins(loginCtx)
 			}()
-			a.engine.SetIdleGuard(func(id int64) bool {
-				a.mu.Lock()
-				defer a.mu.Unlock()
-				return a.browserViewingID == id
-			})
-			a.engine.EnsureExtensionBridge(func() {
-				if a.isQuitting() {
-					return
-				}
-				a.emit("browsers", "workbench")
-			})
 		}
 		a.startUpdateLoop()
-		cx.Cleanup(func() {
-			a.shutdown(loginStop, &loginWG)
-		})
-		if root != nil {
-			return root(cx)
-		}
-		return core.View{}
-	}, opts...)
+	})
+
+	if err := mygo.App.Run(); err != nil {
+		logging.Log.Errorf("MyGo 运行异常退出: %v", err)
+	}
 }
 
-// BindScope attaches an NSGo root scope to App for tests and runtime execution.
-func (a *App) BindScope(cx *core.Scope) {
-	if a == nil || cx == nil {
+func isAllowedAppNavigation(raw string) bool {
+	u := strings.ToLower(strings.TrimSpace(raw))
+	return u == "" ||
+		strings.HasPrefix(u, "mygo://") ||
+		strings.HasPrefix(u, MediaScheme+"://") ||
+		strings.HasPrefix(u, "http://mygo.localhost") ||
+		strings.HasPrefix(u, "http://"+MediaScheme+".localhost") ||
+		strings.HasPrefix(u, "http://localhost:") ||
+		strings.HasPrefix(u, "http://127.0.0.1:") ||
+		strings.HasPrefix(u, "about:")
+}
+
+// BindHost attaches a DesktopHost implementation to App for runtime or tests.
+func (a *App) BindHost(h DesktopHost) {
+	if a == nil {
 		return
 	}
-	a.scope = cx
-	a.nativeTick = core.NewSignal[uint64](cx, 0)
+	a.mu.Lock()
+	a.host = h
+	a.mu.Unlock()
 }
 
 func (a *App) shutdown(loginStop context.CancelFunc, loginWG *sync.WaitGroup) {
 	if a == nil {
 		return
 	}
-	a.closeBrowserDrawer()
-	a.waitRename()
-	if a.store != nil {
-		a.saveSettings()
-	}
+	a.StopActor()
 	a.mu.Lock()
 	alreadyQuitting := a.quitting
 	a.quitting = true
 	a.uiUpdates = nil
+	if a.runPersistTimer != nil {
+		a.runPersistTimer.Stop()
+		a.runPersistTimer = nil
+	}
 	a.mu.Unlock()
 	if alreadyQuitting {
 		return
+	}
+	a.closeBrowserDrawer()
+	a.waitRename()
+	if a.store != nil {
+		a.saveSettings()
 	}
 	logging.Log.SetSink(nil)
 	if loginStop != nil {
@@ -545,7 +700,6 @@ func (a *App) shutdown(loginStop context.CancelFunc, loginWG *sync.WaitGroup) {
 	if loginWG != nil {
 		loginWG.Wait()
 	}
-	a.stopAgyUsage()
 	for _, task := range a.dlTasks {
 		if task.cancel != nil {
 			task.cancel()
@@ -570,7 +724,13 @@ func (a *App) shutdown(loginStop context.CancelFunc, loginWG *sync.WaitGroup) {
 }
 
 func (a *App) hasWindow() bool {
-	return a != nil && a.scope != nil && !a.isQuitting()
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	ok := a.host != nil && !a.quitting
+	a.mu.Unlock()
+	return ok
 }
 
 func (a *App) isQuitting() bool {
@@ -625,22 +785,6 @@ func (a *App) emit(topics ...string) {
 		}
 	}
 	a.watchersMu.Unlock()
-
-	if a.scope != nil && a.nativeTick != nil {
-		needNative := false
-		for _, t := range topics {
-			if t == "browserDrawer" || t == "imageedit" || t == "all" {
-				needNative = true
-				break
-			}
-		}
-		if needNative {
-			tick := a.nativeTick
-			a.scope.Post(func() {
-				tick.Set(tick.GetUntracked() + 1)
-			})
-		}
-	}
 }
 
 func (a *App) pushToast(level, msg string) {
@@ -653,8 +797,8 @@ func (a *App) pushToast(level, msg string) {
 	a.emit("toast")
 }
 
-// postUI queues callbacks for the engine goroutine. Tests without a scope
-// drive the same queue by calling flushUIUpdates on their owning goroutine.
+// postUI queues callbacks for the controller actor goroutine. Headless tests
+// without a running actor drive the same queue by calling flushUIUpdates directly.
 func (a *App) postUI(fn func()) {
 	if a == nil || fn == nil {
 		return
@@ -665,10 +809,13 @@ func (a *App) postUI(fn func()) {
 		return
 	}
 	a.uiUpdates = append(a.uiUpdates, fn)
-	sc := a.scope
+	wakeCh := a.actorWake
 	a.mu.Unlock()
-	if sc != nil {
-		sc.Post(a.flushUIUpdates)
+	if wakeCh != nil {
+		select {
+		case wakeCh <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -680,16 +827,11 @@ func (a *App) syncUI(fn func()) {
 	if a == nil || fn == nil {
 		return
 	}
-	if !a.hasWindow() {
+	if !a.actorActive() {
 		fn()
 		return
 	}
-	done := make(chan struct{})
-	a.postUI(func() {
-		defer close(done)
-		fn()
-	})
-	<-done
+	_ = a.call(context.Background(), fn)
 }
 
 func (a *App) flushUIUpdates() {
@@ -699,7 +841,15 @@ func (a *App) flushUIUpdates() {
 	for {
 		a.mu.Lock()
 		if len(a.uiUpdates) == 0 {
+			hasRuntime := a.host != nil || a.actorCh != nil
 			a.mu.Unlock()
+			if a.runEmitPending || len(a.runPersistDirty) > 0 {
+				if !hasRuntime {
+					a.flushRunWorkspaceUpdate()
+				} else {
+					a.ensureRunPersistTimer()
+				}
+			}
 			return
 		}
 		batch := a.uiUpdates
@@ -717,172 +867,115 @@ func (a *App) flushUIUpdates() {
 	}
 }
 
-// onScope runs fn on the NSGo engine goroutine and waits for completion or ctx cancellation.
+// onScope runs fn on the controller actor goroutine and waits for completion or ctx cancellation.
 func (a *App) onScope(ctx context.Context, fn func()) error {
-	if a == nil || a.scope == nil {
-		fn()
+	return a.call(ctx, fn)
+}
+
+func (a *App) desktopHost() DesktopHost {
+	if a == nil {
 		return nil
 	}
-	done := make(chan struct{})
-	a.scope.Post(func() {
-		defer close(done)
-		fn()
-	})
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	a.mu.Lock()
+	h := a.host
+	a.mu.Unlock()
+	return h
 }
 
 func (a *App) pickFilesAsync(ctx context.Context, title string, multiple bool, types []string, typesName string) ([]string, error) {
-	if a == nil || a.scope == nil {
+	h := a.desktopHost()
+	if h == nil {
 		return nil, nil
 	}
-	type pickRes struct {
-		paths []string
-		err   error
+	var filters []FileFilter
+	if len(types) > 0 {
+		filters = []FileFilter{{Name: typesName, Extensions: types}}
 	}
-	ch := make(chan pickRes, 1)
-	a.scope.Post(func() {
-		a.scope.PickFiles(core.PickFilesOptions{
-			Multiple:  multiple,
-			Title:     title,
-			Types:     types,
-			TypesName: typesName,
-		}, func(files []core.File, err error) {
-			var paths []string
-			for _, f := range files {
-				if p := strings.TrimSpace(f.Path); p != "" {
-					paths = append(paths, p)
-				}
-			}
-			ch <- pickRes{paths: paths, err: err}
-		})
-	})
-	select {
-	case r := <-ch:
-		return r.paths, r.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return h.PickFiles(ctx, title, multiple, filters)
 }
 
 func (a *App) pickDirsAsync(ctx context.Context, title string, multiple bool) ([]string, error) {
-	if a == nil || a.scope == nil {
+	h := a.desktopHost()
+	if h == nil {
 		return nil, nil
 	}
-	type pickRes struct {
-		paths []string
-		err   error
-	}
-	ch := make(chan pickRes, 1)
-	a.scope.Post(func() {
-		a.scope.PickDirectories(core.PickDirectoriesOptions{
-			Multiple: multiple,
-			Title:    title,
-		}, func(dirs []core.Directory, err error) {
-			var paths []string
-			for _, d := range dirs {
-				if p := strings.TrimSpace(d.Path); p != "" {
-					paths = append(paths, p)
-				}
-			}
-			ch <- pickRes{paths: paths, err: err}
-		})
-	})
-	select {
-	case r := <-ch:
-		return r.paths, r.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return h.PickDirectories(ctx, title, multiple)
 }
 
 func (a *App) saveFileAsync(ctx context.Context, name, mime string, data []byte) (bool, string, error) {
-	if a == nil || a.scope == nil {
+	h := a.desktopHost()
+	if h == nil {
 		return false, "", nil
 	}
-	type saveRes struct {
-		saved bool
-		path  string
-		err   error
-	}
-	ch := make(chan saveRes, 1)
-	a.scope.Post(func() {
-		a.scope.SaveFile(core.SaveOptions{
-			Name: name,
-			MIME: mime,
-			Data: data,
-		}, func(saved bool, path string, err error) {
-			ch <- saveRes{saved: saved, path: path, err: err}
-		})
-	})
-	select {
-	case r := <-ch:
-		return r.saved, r.path, r.err
-	case <-ctx.Done():
-		return false, "", ctx.Err()
-	}
+	return h.SaveFile(ctx, name, mime, data)
 }
 
 func (a *App) openPath(path string) error {
 	path = strings.TrimSpace(path)
-	if path == "" || a == nil || a.scope == nil {
+	h := a.desktopHost()
+	if path == "" || h == nil {
 		return nil
 	}
-	ch := make(chan error, 1)
-	a.scope.Post(func() {
-		a.scope.OpenFile(core.SharedFile{Path: path}, func(_ bool, err error) {
-			ch <- err
-		})
-	})
-	return <-ch
+	return h.OpenPath(path)
 }
 
 func (a *App) revealPath(path string) error {
 	path = strings.TrimSpace(path)
-	if path == "" || a == nil || a.scope == nil {
+	h := a.desktopHost()
+	if path == "" || h == nil {
 		return nil
 	}
-	ch := make(chan error, 1)
-	a.scope.Post(func() {
-		a.scope.RevealFile(path, func(err error) {
-			ch <- err
-		})
-	})
-	return <-ch
+	return h.RevealPath(path)
 }
 
+var pngHeaderMagic = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+
 func (a *App) copyText(text string) {
-	if a == nil || a.scope == nil {
-		return
+	if h := a.desktopHost(); h != nil {
+		_ = h.SetClipboard(text)
 	}
-	a.scope.Post(func() {
-		a.scope.SetClipboard(text)
-	})
+}
+
+func (a *App) copyImage(path string) error {
+	path = strings.TrimSpace(path)
+	h := a.desktopHost()
+	if path == "" || h == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	pngBytes := raw
+	if !bytes.HasPrefix(raw, pngHeaderMagic) {
+		img, err := imageedit.DecodeImage(raw)
+		if err != nil {
+			return fmt.Errorf("无法解析图片格式: %w", err)
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			return err
+		}
+		pngBytes = buf.Bytes()
+	}
+	return h.SetClipboardImage(pngBytes)
+}
+
+func (a *App) trashPath(path string) error {
+	path = strings.TrimSpace(path)
+	h := a.desktopHost()
+	if path == "" || h == nil {
+		return nil
+	}
+	return h.TrashPath(path)
 }
 
 func (a *App) confirmAlert(title, message, confirmLabel string) bool {
-	if a == nil || a.scope == nil {
+	h := a.desktopHost()
+	if h == nil {
 		return true
 	}
-	ch := make(chan int, 1)
-	a.scope.Post(func() {
-		a.scope.ShowAlert(core.AlertConfig{
-			Title:      title,
-			Message:    message,
-			Cancelable: true,
-			Actions: []core.AlertAction{
-				{Label: "取消", Role: core.AlertCancel},
-				{Label: confirmLabel, Role: core.AlertDefault},
-			},
-		}, func(idx int) {
-			ch <- idx
-		})
-	})
-	return <-ch == 1
+	return h.ConfirmAlert(title, message, confirmLabel)
 }
 
 // loadSettings loads all application configuration from SQLite.
@@ -894,18 +987,10 @@ func (a *App) loadSettings() {
 	a.browserBackend = browser.NormalizeStoredBackend(runtime.GOOS, s.Get("browser_backend"))
 	s.Set("browser_backend", a.browserBackend)
 	a.browserChoice = browser.ChoiceLabel(a.browserBackend)
-	a.extToken = extbridge.NormalizeExtToken(s.Get(extbridge.SettingExtToken))
-	if extbridge.WeakToken(s.Get(extbridge.SettingExtToken)) {
-		if generated, err := extbridge.NewToken(); err == nil {
-			a.extToken = generated
-			s.Set(extbridge.SettingExtToken, generated)
-		}
-	}
-	a.extPort = extbridge.NormalizeExtPort(s.Get(extbridge.SettingExtPort))
 	chosenPlatform := "豆包"
 	for _, p := range s.Platforms() {
 		switch p {
-		case "豆包", "千问", agy.Platform, "ChatGPT":
+		case "豆包", "千问", "千问国际":
 			chosenPlatform = p
 		default:
 			continue
@@ -913,37 +998,34 @@ func (a *App) loadSettings() {
 		break
 	}
 	a.setSinglePlatform(chosenPlatform)
-	a.chatGPTModel = s.Get("chatgpt_model")
-	if a.chatGPTModel == "" {
-		a.chatGPTModel = "gpt-image-2"
-	}
-	a.agyBin = strings.TrimSpace(s.Get("agy_bin"))
-	if a.agyBin == "" {
-		a.agyBin = agy.DefaultBin()
-	}
-	a.agyHomeRoot = strings.TrimSpace(s.Get("agy_home_root"))
-	if a.agyHomeRoot == "" {
-		a.agyHomeRoot = agy.HomeRoot("", s.File())
-	}
-	a.agyModel = strings.TrimSpace(s.Get("agy_model"))
-	if a.agyModel == "" {
-		a.agyModel = agy.DefaultModel
-	}
-	sec := s.GetInt("agy_timeout_seconds")
-	if sec <= 0 {
-		sec = int(agy.DefaultTimeout / time.Second)
-	}
-	if sec < 60 {
-		sec = 60
-	}
-	if sec > 3600 {
-		sec = 3600
-	}
-	a.agyTimeoutMin = float64(sec) / 60
-	a.agySaved = a.agySignature()
 	a.platformAuto = false
 	a.sendStrategy = pickStr(s.Get("send_strategy"), "顺序循环", []string{"顺序循环", "随机循环"})
 	a.concurrencyAuto = s.GetInt("concurrency") != 1
+	if raw := strings.TrimSpace(s.Get("concurrency_max")); raw == "" {
+		a.concurrencyMax = float64(tasks.PlatformInFlight)
+	} else {
+		a.concurrencyMax = float64(clampInt(s.GetInt("concurrency_max"), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+	}
+	if raw := strings.TrimSpace(s.Get("concurrency_qianwen")); raw == "" {
+		a.concurrencyAutoQianwen = a.concurrencyAuto
+	} else {
+		a.concurrencyAutoQianwen = s.GetInt("concurrency_qianwen") != 1
+	}
+	if raw := strings.TrimSpace(s.Get("concurrency_max_qianwen")); raw == "" {
+		a.concurrencyMaxQianwen = a.concurrencyMax
+	} else {
+		a.concurrencyMaxQianwen = float64(clampInt(s.GetInt("concurrency_max_qianwen"), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+	}
+	if raw := strings.TrimSpace(s.Get("concurrency_qwen_intl")); raw == "" {
+		a.concurrencyAutoQwenIntl = a.concurrencyAuto
+	} else {
+		a.concurrencyAutoQwenIntl = s.GetInt("concurrency_qwen_intl") != 1
+	}
+	if raw := strings.TrimSpace(s.Get("concurrency_max_qwen_intl")); raw == "" {
+		a.concurrencyMaxQwenIntl = a.concurrencyMax
+	} else {
+		a.concurrencyMaxQwenIntl = float64(clampInt(s.GetInt("concurrency_max_qwen_intl"), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+	}
 	a.retryCount = float64(clampInt(s.GetInt("retry_count"), 0, 20))
 	a.sendWait = float64(clampInt(s.GetInt("send_wait_seconds"), 0, 600))
 	a.dailyCap = float64(clampInt(s.GetInt("daily_cap"), 0, 200))
@@ -955,8 +1037,7 @@ func (a *App) loadSettings() {
 		return float64(clampInt(s.GetInt(key), 0, 200)), true
 	}
 	a.dailyCapQianwen, a.dailyCapQianwenSet = capOr("daily_cap_qianwen", a.dailyCap)
-	a.dailyCapAgy, a.dailyCapAgySet = capOr("daily_cap_agy", a.dailyCap)
-	a.dailyCapChatGPT, a.dailyCapChatGPTSet = capOr("daily_cap_chatgpt", a.dailyCap)
+	a.dailyCapQwenIntl, a.dailyCapQwenIntlSet = capOr("daily_cap_qwen_intl", 100)
 	a.riskyWords = s.Get("risky_words")
 	if strings.TrimSpace(a.riskyWords) == "" {
 		a.riskyWords = tasks.RiskySetting()
@@ -1007,12 +1088,13 @@ func (a *App) loadSettings() {
 	}
 	a.downloadRateKB = float64(clampInt(s.GetInt("download_rate_kbps"), 0, 102400))
 	a.removeWatermark = s.GetBool("remove_watermark")
+	a.autoDeleteHistory = s.GetBool("auto_delete_history")
 	a.prompts = s.Get("prompts")
 	a.freeformPrompts = s.Get("prompts_freeform")
 	a.userPrompts = prompts.ParseUser(s.Get("user_prompts"))
 	a.promptPick = s.Get("prompt_pick")
 	a.promptChoice = a.promptPick
-	a.genPromptChoice = a.promptPick
+	a.genPromptChoice = a.resolvedGenPromptChoice()
 	a.promptSuffix = s.Get("prompt_suffix")
 	a.useSuffix = s.GetBool("use_suffix")
 	a.captchaEnabled = s.GetBool("captcha_enabled")
@@ -1030,67 +1112,26 @@ func (a *App) loadSettings() {
 		a.manager.SetTaskVisible(s.GetBool(settingTaskBrowserVisible))
 	}
 	a.darkTheme = s.Get("ui_theme") == "dark"
+	a.dotMatrixEffect = normalizeDotMatrixEffect(s.Get(settingDotMatrixEffect))
 
+	a.loadDismissedSharedExitHints(s)
 	a.refreshBrowsers()
 	a.newBrowserPlat = "豆包"
 	a.logs = logging.Log.Entries()
 
-	for _, p := range splitLines(s.Get("source_images")) {
-		data, err := os.ReadFile(p)
-		if err != nil || !images.IsValidImageBytes(data) {
-			continue
-		}
-		a.sources = append(a.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
+	a.loadPlatformWorkspaceFromStore("豆包", s)
+	a.loadPlatformWorkspaceFromStore("千问", s)
+	a.loadPlatformWorkspaceFromStore("千问国际", s)
+	a.platDoubao = false
+	a.platQianwen = false
+	a.platQwenIntl = false
+	a.setSinglePlatform(chosenPlatform)
+	if ws, ok := a.platformSpaces[chosenPlatform]; ok {
+		a.restorePlatformWorkspace(ws, chosenPlatform)
 	}
-	wash := pageState{srcSel: -1, prompts: s.Get("wash_prompt")}
-	if strings.TrimSpace(wash.prompts) == "" {
-		wash.prompts = a.defaultWashPrompt()
-	}
-	for _, p := range splitLines(s.Get("wash_images")) {
-		data, err := os.ReadFile(p)
-		if err != nil || !images.IsValidImageBytes(data) {
-			continue
-		}
-		wash.sources = append(wash.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
-	}
-	a.parked = map[int]pageState{pageWash: wash, pageFission: {srcSel: -1, prompts: DefaultFissionPrompt}}
 	a.loadDedupSettings(s)
 	a.autoCheck = update.AutoOn(s.Get(update.KeyAutoCheck))
 	a.updateMirror = strings.TrimSpace(s.Get(update.KeyMirror))
-	switch s.Get("batch_mode") {
-	case "image":
-		a.batchMode = batchImage
-	case "text":
-		a.batchMode = batchText
-	default:
-		if len(a.sources) > 0 {
-			a.batchMode = batchImage
-		} else {
-			a.batchMode = batchText
-		}
-	}
-	a.restoreWorkspace(pageHome)
-	a.restoreWorkspace(pageWash)
-	a.restoreWorkspace(pageFission)
-	a.onPage(pageHome, func() {
-		a.stageTab = s.GetInt("gen_stage")
-		a.stagePicked = s.Get("gen_stage_picked") == "1"
-	})
-	a.onPage(pageWash, func() {
-		if strings.TrimSpace(a.prompts) == "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变" {
-			a.prompts = a.defaultWashPrompt()
-		} else if a.selectedPlatform() == "豆包" && prompts.SameText(a.prompts, DefaultWashPrompt) {
-			a.prompts = a.defaultWashPrompt()
-		} else if prompts.SameText(a.prompts, prompts.LegacyDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PreviousDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.ReviewedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PixelReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FrameReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.WindowReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FullBleedDoubaoWashPrompt) {
-			a.prompts = prompts.DoubaoWashPrompt
-		}
-		a.stageTab = s.GetInt("wash_stage")
-		a.stagePicked = s.Get("wash_stage_picked") == "1"
-	})
-	a.onPage(pageFission, func() {
-		a.stageTab = s.GetInt("fission_stage")
-		a.stagePicked = s.Get("fission_stage_picked") == "1"
-	})
 	switch s.Get("workspace_page") {
 	case store.PageGen:
 		a.tab = pageHome
@@ -1106,6 +1147,112 @@ func (a *App) loadSettings() {
 	a.syncPage()
 }
 
+func (a *App) loadPlatformWorkspaceFromStore(platform string, s *store.Store) {
+	if a.platformSpaces == nil {
+		a.platformSpaces = map[string]platformWorkspace{}
+	}
+	a.platDoubao = platform == "豆包"
+	a.platQianwen = platform == "千问"
+	a.platQwenIntl = platform == "千问国际"
+	a.statePage = pageHome
+	a.tab = pageHome
+	a.restorePlatformWorkspace(defaultPlatformWorkspace(platform), platform)
+
+	a.textPrompts = s.Get(platformSettingKey(platform, "prompts"))
+	a.imgPrompts = s.Get(platformSettingKey(platform, "img_prompts"))
+	a.prompts = a.textPrompts
+	a.freeformPrompts = s.Get(platformSettingKey(platform, "prompts_freeform"))
+	a.imgFreeformPrompts = s.Get(platformSettingKey(platform, "img_prompts_freeform"))
+	a.promptPick = s.Get(platformSettingKey(platform, "prompt_pick"))
+	a.promptChoice = a.promptPick
+	a.genPromptChoice = a.resolvedGenPromptChoice()
+	a.imgPromptPick = s.Get(platformSettingKey(platform, "img_prompt_pick"))
+	a.imgGenPromptChoice = a.resolvedPromptChoiceFor(a.imgPromptPick)
+	if a.imgGenPromptChoice == choosePromptLabel {
+		a.imgPromptPick = ""
+	}
+	a.textRepeat = clampRepeat(s.GetInt(platformSettingKey(platform, "free_text_repeat")))
+	a.imageRepeat = clampRepeat(s.GetInt(platformSettingKey(platform, "free_image_repeat")))
+	a.imagePromptMode = normalizeImagePromptMode(s.Get(platformSettingKey(platform, "image_prompt_mode")))
+	if platform == "豆包" {
+		for _, p := range splitLines(s.Get("source_images")) {
+			data, err := os.ReadFile(p)
+			if err != nil || !images.IsValidImageBytes(data) {
+				continue
+			}
+			a.sources = append(a.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
+		}
+	}
+	wash := pageState{srcSel: -1, prompts: s.Get(platformSettingKey(platform, "wash_prompt"))}
+	if strings.TrimSpace(wash.prompts) == "" {
+		wash.prompts = defaultWashPromptFor(platform)
+	}
+	if platform == "豆包" {
+		for _, p := range splitLines(s.Get("wash_images")) {
+			data, err := os.ReadFile(p)
+			if err != nil || !images.IsValidImageBytes(data) {
+				continue
+			}
+			wash.sources = append(wash.sources, sourceImage{Path: p, Hash: images.SHA256(data)})
+		}
+	}
+	a.parked = map[int]pageState{pageWash: wash, pageFission: {srcSel: -1, prompts: DefaultFissionPrompt}}
+	switch s.Get(platformSettingKey(platform, "batch_mode")) {
+	case "image":
+		a.batchMode = batchImage
+	case "text":
+		a.batchMode = batchText
+	default:
+		if len(a.sources) > 0 {
+			a.batchMode = batchImage
+		} else {
+			a.batchMode = batchText
+		}
+	}
+	if a.batchMode == batchImage {
+		if a.imgPrompts == "" && a.textPrompts != "" {
+			a.imgPrompts = a.textPrompts
+		}
+		a.prompts = a.imgPrompts
+	}
+	a.restoreWorkspaceFor(platform, pageHome)
+	a.restoreWorkspaceFor(platform, pageWash)
+	a.restoreWorkspaceFor(platform, pageFission)
+	a.onPage(pageHome, func() {
+		a.stageTab = s.GetInt(platformSettingKey(platform, "gen_stage"))
+		a.stagePicked = s.Get(platformSettingKey(platform, "gen_stage_picked")) == "1"
+		if s.Get(platformSettingKey(platform, "batch_mode")) == "" && len(a.sources) > 0 {
+			a.batchMode = batchImage
+		}
+		if a.batchMode == batchImage {
+			a.imgPrompts = a.prompts
+		} else {
+			a.textPrompts = a.prompts
+		}
+	})
+	a.onPage(pageWash, func() {
+		if strings.TrimSpace(a.prompts) == "提取图中的商品主体，去掉所有文字、水印和背景装饰，纯白背景，保持主体形状、颜色和细节完全不变" ||
+			prompts.SameText(a.prompts, prompts.PreviousDefaultWashPrompt) {
+			a.prompts = defaultWashPromptFor(platform)
+		} else if platform == "豆包" && prompts.SameText(a.prompts, DefaultWashPrompt) {
+			a.prompts = defaultWashPromptFor(platform)
+		} else if platform == "豆包" && (prompts.SameText(a.prompts, prompts.LegacyDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PreviousDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.ReviewedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PixelReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FrameReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.WindowReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FullBleedDoubaoWashPrompt)) {
+			a.prompts = prompts.DoubaoWashPrompt
+		}
+		a.stageTab = s.GetInt(platformSettingKey(platform, "wash_stage"))
+		a.stagePicked = s.Get(platformSettingKey(platform, "wash_stage_picked")) == "1"
+	})
+	a.onPage(pageFission, func() {
+		a.stageTab = s.GetInt(platformSettingKey(platform, "fission_stage"))
+		a.stagePicked = s.Get(platformSettingKey(platform, "fission_stage_picked")) == "1"
+		a.skipImages = s.Get(platformSettingKey(platform, "fission_skip_images")) == "1"
+		if a.skipImages && prompts.SameText(a.prompts, DefaultFissionPrompt) {
+			a.prompts = ""
+		}
+	})
+	a.platformSpaces[platform] = a.capturePlatformWorkspace()
+}
+
 // saveSettings persists application configuration to SQLite.
 func (a *App) saveSettings() {
 	if a == nil || a.store == nil {
@@ -1114,17 +1261,19 @@ func (a *App) saveSettings() {
 	s := a.store
 	s.Set("browser_backend", a.browserBackend)
 	s.SetPlatforms(a.selectedPlatforms())
-	s.Set("chatgpt_model", a.chatGPTModel)
-	a.persistAgySettings()
 	s.SetInt("platform_auto", boolInt(a.platformAuto))
 	s.Set("send_strategy", a.sendStrategy)
-	s.SetInt("concurrency", a.taskConcurrency())
+	s.SetInt("concurrency", a.taskConcurrencyFor("豆包"))
+	s.SetInt("concurrency_max", a.concurrencyMaxFor("豆包"))
+	s.SetInt("concurrency_qianwen", a.taskConcurrencyFor("千问"))
+	s.SetInt("concurrency_max_qianwen", a.concurrencyMaxFor("千问"))
+	s.SetInt("concurrency_qwen_intl", a.taskConcurrencyFor("千问国际"))
+	s.SetInt("concurrency_max_qwen_intl", a.concurrencyMaxFor("千问国际"))
 	s.SetInt("retry_count", int(a.retryCount))
 	s.SetInt("send_wait_seconds", int(a.sendWait))
 	s.SetInt("daily_cap", a.shownDailyCap())
 	s.SetInt("daily_cap_qianwen", a.shownDailyCapFor("千问"))
-	s.SetInt("daily_cap_agy", a.shownDailyCapFor(agy.Platform))
-	s.SetInt("daily_cap_chatgpt", a.shownDailyCapFor("ChatGPT"))
+	s.SetInt("daily_cap_qwen_intl", a.shownDailyCapFor("千问国际"))
 	words := a.riskyWords
 	if strings.TrimSpace(words) == "" {
 		words = tasks.RiskySetting()
@@ -1158,32 +1307,62 @@ func (a *App) saveSettings() {
 	s.SetInt("download_retries", clampInt(int(a.downloadRetries), 0, 10))
 	s.SetInt("download_rate_kbps", clampInt(int(a.downloadRateKB), 0, 102400))
 	s.SetInt("remove_watermark", boolInt(a.removeWatermark))
+	s.SetInt("auto_delete_history", boolInt(a.autoDeleteHistory))
 	a.saveDedupSettings(s)
 	a.persistUpdatePrefs()
 	a.noteWorkspacePage()
 	if a.workspacePage != "" {
 		s.Set("workspace_page", a.workspacePage)
 	}
-	gen, wash, fission := a.stateOf(pageHome), a.stateOf(pageWash), a.stateOf(pageFission)
-	s.SetInt("gen_stage", gen.stageTab)
-	s.SetInt("gen_stage_picked", boolInt(gen.stagePicked))
-	s.SetInt("wash_stage", wash.stageTab)
-	s.SetInt("wash_stage_picked", boolInt(wash.stagePicked))
-	s.SetInt("fission_stage", fission.stageTab)
-	s.SetInt("fission_stage_picked", boolInt(fission.stagePicked))
-	s.Set("prompts", gen.prompts)
-	s.Set("wash_prompt", strings.TrimSpace(wash.prompts))
-	s.Set("wash_images", joinPaths(sourcePaths(wash.sources)))
-	s.Set("prompts_freeform", a.freeformPrompts)
+	a.syncPage()
+	savePlatformMeta := func(platform string) {
+		ws, ok := a.workspaceSnapshotIfPresent(platform)
+		if !ok {
+			return
+		}
+		gen := workspacePageState(ws, platform, pageHome)
+		wash := workspacePageState(ws, platform, pageWash)
+		fission := workspacePageState(ws, platform, pageFission)
+		s.SetInt(platformSettingKey(platform, "gen_stage"), gen.stageTab)
+		s.SetInt(platformSettingKey(platform, "gen_stage_picked"), boolInt(gen.stagePicked))
+		s.SetInt(platformSettingKey(platform, "wash_stage"), wash.stageTab)
+		s.SetInt(platformSettingKey(platform, "wash_stage_picked"), boolInt(wash.stagePicked))
+		s.SetInt(platformSettingKey(platform, "fission_stage"), fission.stageTab)
+		s.SetInt(platformSettingKey(platform, "fission_stage_picked"), boolInt(fission.stagePicked))
+		s.SetInt(platformSettingKey(platform, "fission_skip_images"), boolInt(fission.skipImages))
+		textPrompts := ws.textPrompts
+		imgPrompts := ws.imgPrompts
+		if ws.batchMode == batchImage {
+			imgPrompts = gen.prompts
+		} else {
+			textPrompts = gen.prompts
+		}
+		s.Set(platformSettingKey(platform, "prompts"), textPrompts)
+		s.Set(platformSettingKey(platform, "img_prompts"), imgPrompts)
+		s.Set(platformSettingKey(platform, "wash_prompt"), strings.TrimSpace(wash.prompts))
+		s.Set(platformSettingKey(platform, "prompts_freeform"), ws.freeformPrompts)
+		s.Set(platformSettingKey(platform, "img_prompts_freeform"), ws.imgFreeformPrompts)
+		s.Set(platformSettingKey(platform, "prompt_pick"), ws.promptPick)
+		s.Set(platformSettingKey(platform, "img_prompt_pick"), ws.imgPromptPick)
+		s.SetInt(platformSettingKey(platform, "free_text_repeat"), clampRepeat(ws.textRepeat))
+		s.SetInt(platformSettingKey(platform, "free_image_repeat"), clampRepeat(ws.imageRepeat))
+		s.Set(platformSettingKey(platform, "image_prompt_mode"), normalizeImagePromptMode(ws.imagePromptMode))
+		if ws.batchMode == batchImage {
+			s.Set(platformSettingKey(platform, "batch_mode"), "image")
+		} else {
+			s.Set(platformSettingKey(platform, "batch_mode"), "text")
+		}
+		if platform == "豆包" {
+			s.Set("wash_images", joinPaths(sourcePaths(wash.sources)))
+			s.Set("source_images", joinPaths(sourcePaths(gen.sources)))
+		}
+	}
+	savePlatformMeta("豆包")
+	savePlatformMeta("千问")
+	savePlatformMeta("千问国际")
 	s.Set("user_prompts", prompts.FormatUser(a.userPrompts))
-	s.Set("prompt_pick", a.promptPick)
 	s.Set("prompt_suffix", a.promptSuffix)
 	s.SetInt("use_suffix", boolInt(a.useSuffix))
-	if a.batchMode == batchImage {
-		s.Set("batch_mode", "image")
-	} else {
-		s.Set("batch_mode", "text")
-	}
 	s.SetInt("captcha_enabled", boolInt(a.captchaEnabled))
 	s.Set("captcha_backend", a.captchaBackend)
 	s.Set("captcha_custom_url", a.customURL)
@@ -1191,18 +1370,30 @@ func (a *App) saveSettings() {
 	s.Set("captcha_custom_model", a.customModel)
 	s.Set("captcha_ikunocr_key", a.ikunocrKey)
 	a.persistProxy()
-	s.Set("source_images", joinPaths(sourcePaths(gen.sources)))
 	if a.darkTheme {
 		s.Set("ui_theme", "dark")
 	} else {
 		s.Set("ui_theme", "light")
 	}
+	s.Set(settingDotMatrixEffect, a.resolvedDotMatrixEffect())
 	a.saveImageEditSettings()
 	a.savePromptParts()
-	a.persistWorkspace(pageHome)
-	a.persistWorkspace(pageWash)
-	a.persistWorkspace(pageFission)
+	for _, plat := range []string{"豆包", "千问", "千问国际"} {
+		if _, ok := a.workspaceSnapshotIfPresent(plat); !ok {
+			continue
+		}
+		a.persistWorkspaceFor(plat, pageHome)
+		a.persistWorkspaceFor(plat, pageWash)
+		a.persistWorkspaceFor(plat, pageFission)
+	}
 	a.saveDownloadRecords()
+}
+
+func (a *App) resolvedDotMatrixEffect() string {
+	if a == nil {
+		return defaultDotMatrixEffect
+	}
+	return normalizeDotMatrixEffect(a.dotMatrixEffect)
 }
 
 func (a *App) pushProxy() {
@@ -1252,19 +1443,11 @@ func (a *App) configuredBrowsers() []store.Browser {
 }
 
 func (a *App) missingBrowserNames(rows []store.Browser) []string {
-	switch a.browserBackend {
-	case browser.KindCamoufox, browser.KindChromeCDP:
-	default:
-		return nil
-	}
-	if a.extensionTasks() {
+	if browser.CanonicalBackend(a.browserBackend) != browser.KindFingerprint {
 		return nil
 	}
 	have := map[string]bool{}
 	for _, b := range rows {
-		if b.ExtAccount != "" {
-			continue
-		}
 		have[b.Platform] = true
 	}
 	var missing []string
@@ -1274,10 +1457,6 @@ func (a *App) missingBrowserNames(rows []store.Browser) []string {
 		}
 	}
 	return missing
-}
-
-func (a *App) extensionTasks() bool {
-	return false
 }
 
 func (a *App) numberingFor(page int) tasks.Numbering {
@@ -1294,6 +1473,10 @@ func (a *App) numberingFor(page int) tasks.Numbering {
 }
 
 func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
+	concPlatform := a.selectedPlatform()
+	if len(platforms) == 1 && (platforms[0] == "豆包" || platforms[0] == "千问" || platforms[0] == "千问国际") {
+		concPlatform = platforms[0]
+	}
 	opts := tasks.Options{
 		Platforms:           platforms,
 		Prompts:             promptList,
@@ -1301,7 +1484,7 @@ func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
 		UseSuffix:           a.useSuffix,
 		StructuredPrompt:    a.promptExtras(a.statePage, a.currentPromptParts()),
 		Images:              paths,
-		Concurrency:         a.taskConcurrency(),
+		Concurrency:         a.taskConcurrencyFor(concPlatform),
 		RetryCount:          int(a.retryCount),
 		SendWait:            int(a.sendWait),
 		WaitBeforeSend:      int(a.waitBefore),
@@ -1312,19 +1495,16 @@ func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
 		StartBrowserIndex:   int(a.startBrowserIdx),
 		OutputPath:          a.outputPath,
 		Numbering:           a.numberingFor(a.statePage),
-		OutputSize:          a.doubaoOutputSize(),
+		OutputSize:          a.outputSizeFor(concPlatform),
+		RepeatCount:         a.currentRepeatCount(),
 		RemoveWatermark:     a.removeWatermark,
+		AutoDeleteHistory:   a.autoDeleteHistory,
 		DownloadConcurrency: int(a.downloadConc),
 		DownloadRetries:     int(a.downloadRetries),
 		DownloadRateKBps:    int(a.downloadRateKB),
 		DailyCap:            a.shownDailyCap(),
 		DailyCaps:           a.dailyCaps(),
 		RiskyWords:          tasks.ParseWords(a.riskyWords),
-		AgyBin:              a.agyBin,
-		AgyModel:            a.agyModel,
-		ChatGPTModel:        a.chatGPTModel,
-		AgyHomeRoot:         a.agyHomeRoot,
-		AgyTimeoutSec:       a.agyTimeoutSec(),
 	}
 	switch a.statePage {
 	case pageWash:
@@ -1333,10 +1513,10 @@ func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
 		opts.SoloImages = a.washSoloPaths()
 	case pageFission:
 		opts.Fission = true
+		opts.FissionTextOnly = len(paths) == 0
 		opts.UseSuffix = false
 		opts.StructuredPrompt = ""
 		opts.WaitResult = true
-		opts.RemoveWatermark = false
 	}
 	return opts
 }
@@ -1358,31 +1538,165 @@ func (a *App) stopTasks() {
 	}
 }
 
+func isPromptTextPath(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".txt", ".md":
+		return true
+	default:
+		return false
+	}
+}
+
+func partitionHomeDropPaths(paths []string) (textPaths, otherPaths []string) {
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		info, err := os.Stat(p)
+		if err == nil && !info.IsDir() && isPromptTextPath(p) {
+			textPaths = append(textPaths, p)
+		} else {
+			otherPaths = append(otherPaths, p)
+		}
+	}
+	return textPaths, otherPaths
+}
+
 func (a *App) ingestSources(paths []string) {
 	if a.running || len(paths) == 0 {
 		return
 	}
+	a.syncPage()
+	platform := a.selectedPlatform()
+	page := a.statePage
+	if page == pageHome {
+		textPaths, otherPaths := partitionHomeDropPaths(paths)
+		if len(textPaths) > 0 && len(otherPaths) == 0 {
+			if !a.hasWindow() {
+				if err := a.importPromptTextFiles(platform, textPaths); err != nil {
+					a.pushToast("error", err.Error())
+				}
+				return
+			}
+			go func() {
+				imported, count, impErr := readPromptTextFiles(textPaths)
+				a.postUI(func() {
+					if impErr != nil {
+						a.pushToast("error", impErr.Error())
+						return
+					}
+					a.applyImportedPrompts(platform, imported, count)
+				})
+			}()
+			return
+		}
+		paths = otherPaths
+		if len(paths) == 0 {
+			return
+		}
+	}
+	needHash := page == pageHome
 	if !a.hasWindow() {
-		a.addLoaded(a.statePage, loadSourceFiles(paths))
+		a.addLoadedFor(platform, page, loadSourceFilesFor(paths, needHash))
 		return
 	}
-	page := a.statePage
 	go func() {
-		loaded := loadSourceFiles(paths)
-		a.postUI(func() { a.addLoaded(page, loaded) })
+		loaded := loadSourceFilesFor(paths, needHash)
+		a.postUI(func() { a.addLoadedFor(platform, page, loaded) })
 	}()
 }
 
 func loadSourceFiles(paths []string) []sourceImage {
-	var loaded []sourceImage
-	for _, p := range expandImagePaths(paths) {
-		data, err := os.ReadFile(p)
-		if err != nil || !images.IsValidImageBytes(data) {
-			continue
+	return loadSourceFilesFor(paths, true)
+}
+
+// loadSourceFilesFor 批量校验并加载源图：洗图/裂变仅读 16 字节文件头验证，自由生图并发流式计算 SHA-256。
+func loadSourceFilesFor(paths []string, needHash bool) []sourceImage {
+	expanded := expandImagePaths(paths)
+	if len(expanded) == 0 {
+		return nil
+	}
+	if !needHash {
+		loaded := make([]sourceImage, 0, len(expanded))
+		for _, p := range expanded {
+			if isValidImageFileHeader(p) {
+				loaded = append(loaded, sourceImage{Path: p})
+			}
 		}
-		loaded = append(loaded, sourceImage{Path: p, Hash: images.SHA256(data)})
+		return loaded
+	}
+	results := make([]sourceImage, len(expanded))
+	valid := make([]bool, len(expanded))
+	workers := min(8, max(1, runtime.NumCPU()), len(expanded))
+	if workers <= 1 {
+		for i, p := range expanded {
+			if hash, ok := hashImageFile(p); ok {
+				results[i] = sourceImage{Path: p, Hash: hash}
+				valid[i] = true
+			}
+		}
+	} else {
+		jobs := make(chan int, len(expanded))
+		for i := range expanded {
+			jobs <- i
+		}
+		close(jobs)
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Go(func() {
+				for i := range jobs {
+					p := expanded[i]
+					if hash, ok := hashImageFile(p); ok {
+						results[i] = sourceImage{Path: p, Hash: hash}
+						valid[i] = true
+					}
+				}
+			})
+		}
+		wg.Wait()
+	}
+	loaded := make([]sourceImage, 0, len(expanded))
+	for i := range expanded {
+		if valid[i] {
+			loaded = append(loaded, results[i])
+		}
 	}
 	return loaded
+}
+
+func isValidImageFileHeader(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var hdr [16]byte
+	n, _ := io.ReadFull(f, hdr[:])
+	return n > 0 && images.IsValidImageBytes(hdr[:n])
+}
+
+func hashImageFile(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	var hdr [16]byte
+	n, readErr := io.ReadFull(f, hdr[:])
+	if n == 0 || !images.IsValidImageBytes(hdr[:n]) {
+		return "", false
+	}
+	h := sha256.New()
+	_, _ = h.Write(hdr[:n])
+	if readErr == nil {
+		if _, err := io.Copy(h, f); err != nil {
+			return "", false
+		}
+	} else if !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return "", false
+	}
+	return hex.EncodeToString(h.Sum(nil)), true
 }
 
 func expandImagePaths(paths []string) []string {
@@ -1457,42 +1771,87 @@ func sourcePaths(list []sourceImage) []string {
 }
 
 func currentVersion() string {
-	if v := strings.TrimSpace(core.App().Version); v != "" {
+	if v := PackagedVersion(); v != "" {
 		return v
 	}
 	return "未打包"
 }
 
-func fileURL(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return ""
-	}
-	if strings.HasPrefix(p, "file://") || strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://") || strings.HasPrefix(p, "data:") {
-		return p
-	}
-	abs, err := filepath.Abs(p)
-	if err == nil {
-		p = abs
-	}
-	slashed := filepath.ToSlash(p)
-	if !strings.HasPrefix(slashed, "/") {
-		slashed = "/" + slashed
-	}
-	return (&url.URL{Scheme: "file", Path: slashed}).String()
-}
-
-func toRGBA(img image.Image) *image.RGBA {
-	if img == nil {
+func (a *App) ensureMedia() *MediaHandler {
+	if a == nil {
 		return nil
 	}
-	if r, ok := img.(*image.RGBA); ok {
-		return r
+	a.mu.Lock()
+	if a.media == nil {
+		a.media = NewMediaHandler(a)
 	}
-	b := img.Bounds()
-	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	draw.Draw(dst, dst.Bounds(), img, b.Min, draw.Src)
-	return dst
+	m := a.media
+	a.mu.Unlock()
+	return m
+}
+
+func (a *App) mediaURL(p string) string {
+	if m := a.ensureMedia(); m != nil {
+		return m.FileURL(p)
+	}
+	return ""
+}
+
+func (a *App) setDrawerFrame(jpeg []byte) {
+	if a == nil {
+		return
+	}
+	a.mediaMu.Lock()
+	a.drawerFrame = jpeg
+	a.mediaMu.Unlock()
+}
+
+func (a *App) currentDrawerFrame() []byte {
+	if a == nil {
+		return nil
+	}
+	a.mediaMu.RLock()
+	data := a.drawerFrame
+	a.mediaMu.RUnlock()
+	return data
+}
+
+func (a *App) setEditOrigPath(p string) {
+	if a == nil {
+		return
+	}
+	a.mediaMu.Lock()
+	a.editOrigPath = p
+	a.mediaMu.Unlock()
+}
+
+func (a *App) currentEditOrigPath() string {
+	if a == nil {
+		return ""
+	}
+	a.mediaMu.RLock()
+	p := a.editOrigPath
+	a.mediaMu.RUnlock()
+	return p
+}
+
+func (a *App) setEditPreviewJPEG(jpeg []byte) {
+	if a == nil {
+		return
+	}
+	a.mediaMu.Lock()
+	a.editOutJPEG = jpeg
+	a.mediaMu.Unlock()
+}
+
+func (a *App) currentEditPreviewJPEG() []byte {
+	if a == nil {
+		return nil
+	}
+	a.mediaMu.RLock()
+	data := a.editOutJPEG
+	a.mediaMu.RUnlock()
+	return data
 }
 
 func splitLines(s string) []string {

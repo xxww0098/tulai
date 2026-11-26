@@ -7,53 +7,40 @@ import (
 	"github.com/xxww0098/tulai/internal/store"
 )
 
-func TestManagedEnginesPreserveLegacyDefaults(t *testing.T) {
+func TestManagedEngineDefaultsToFingerprint(t *testing.T) {
 	for _, goos := range []string{"windows", "darwin", "linux"} {
-		if DefaultBackend(goos) != KindCamoufox {
+		if DefaultBackend(goos) != KindFingerprint {
 			t.Fatal(goos)
 		}
-		if NormalizeStoredBackend(goos, KindChromeCDP) != KindChromeCDP || ChoiceLabel(KindChromeCDP) != KindChromeCDP {
-			t.Fatal("explicit managed Chrome choice was lost")
-		}
-		for _, old := range []string{"", "Chrome", "Edge", "Builtin", "chromium", "ego lite", "Camoufox"} {
-			if NormalizeStoredBackend(goos, old) != KindCamoufox || CanonicalBackend(old) != KindCamoufox || ChoiceLabel(old) != KindCamoufox {
-				t.Fatal(old)
+		for _, value := range []string{"", "unknown", "other", "Fingerprint"} {
+			if NormalizeStoredBackend(goos, value) != KindFingerprint || CanonicalBackend(value) != KindFingerprint || ChoiceLabel(value) != KindFingerprint {
+				t.Fatal(value)
 			}
 		}
-	}
-	for _, pair := range [][2]string{{"windows", "amd64"}, {"darwin", "amd64"}, {"darwin", "arm64"}} {
-		if !CamoufoxSupported(pair[0], pair[1]) {
-			t.Fatal(pair)
+		wantAMD64 := goos == "windows" || goos == "linux"
+		wantARM64 := goos == "darwin"
+		if RuntimeSupported(goos, "amd64", KindFingerprint) != wantAMD64 || RuntimeSupported(goos, "arm64", KindFingerprint) != wantARM64 {
+			t.Fatalf("unexpected Fingerprint platform support on %s", goos)
 		}
 	}
-	if CamoufoxSupported("windows", "arm64") {
-		t.Fatal("upstream does not ship Windows ARM64")
+	if _, ok := InstalledRuntime(t.TempDir(), KindFingerprint); ok {
+		t.Fatal("empty directory looks installed for Fingerprint")
 	}
-	for _, os := range []string{"windows", "darwin", "linux"} {
-		if !RuntimeSupported(os, "amd64", KindChromeCDP) || RuntimeSupported(os, "arm64", KindChromeCDP) != (os == "darwin") {
-			t.Fatalf("unexpected Chrome for Testing platform support on %s", os)
-		}
-	}
-	if _, ok := InstalledCamoufox(t.TempDir()); ok {
-		t.Fatal("empty directory looks installed")
+	if status, exe := FormatDetected(nil); status != "Fingerprint 尚未安装" || exe != "" {
+		t.Fatalf("FormatDetected(nil) = %q, %q", status, exe)
 	}
 }
 
-func TestAccountEnginesUsesStoredAccountsBeforeNewAccountDefault(t *testing.T) {
+func TestAccountEnginesAlwaysReturnsFingerprint(t *testing.T) {
 	rows := []store.Browser{
-		{Platform: "豆包", Engine: KindChromeCDP},
+		{Platform: "豆包", Engine: KindFingerprint},
 		{Platform: "豆包", Disabled: true},
-		{Platform: "豆包", ExtAccount: "legacy"},
 		{Platform: "千问"},
 	}
-	if got := AccountEngines(rows, "豆包", KindCamoufox); !slices.Equal(got, []string{KindChromeCDP}) {
+	if got := AccountEngines(rows, "豆包", KindFingerprint); !slices.Equal(got, []string{KindFingerprint}) {
 		t.Fatal(got)
 	}
-	rows = append(rows, store.Browser{Platform: "豆包", IsLoggedIn: true})
-	if got := AccountEngines(rows, "豆包", KindCamoufox); !slices.Equal(got, []string{KindChromeCDP, KindCamoufox}) {
-		t.Fatal(got)
-	}
-	if got := AccountEngines(rows, "ChatGPT", KindChromeCDP); !slices.Equal(got, []string{KindChromeCDP}) {
+	if got := AccountEngines(nil, "千问", ""); !slices.Equal(got, []string{KindFingerprint}) {
 		t.Fatal(got)
 	}
 }

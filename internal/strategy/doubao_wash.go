@@ -12,6 +12,7 @@ import (
 
 	extbundle "github.com/xxww0098/tulai/extension"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/logging"
 )
 
 // ErrWashWaitTimeout is returned only after a submitted batch yielded no results.
@@ -76,15 +77,106 @@ func (d Doubao) UploadFiles(s *cdp.Session, files []string) error {
 	if len(d.washNames) == 0 {
 		return d.base.UploadFiles(s, files)
 	}
+	s.EnsureBase()
+	// 当豆包文件选择框支持 multiple（或尚未预挂载）时，一次性提交整批源图让浏览器并发上传到 TOS。
+	// 不支持多选或整批未确认时，先清干净残留附件再回退逐张上传，避免重复叠传。
+	if len(d.washNames) > 1 && s.EvaluateBool(`(() => {
+		const input = document.querySelector('input[type="file"][data-testid="upload-file-input"]') || document.querySelector('input[type="file"]');
+		return !input || !!input.multiple;
+	})()`) {
+		paths := make([]string, len(d.washNames))
+		for i, name := range d.washNames {
+			paths[i] = filepath.Join(d.washDir, name)
+		}
+		if err := s.UploadFiles("window.tulaiOpenUpload()", paths); err == nil {
+			checkErr := checkWashAttachmentsSet(s, d.washNames, true)
+			if checkErr == nil {
+				return nil
+			}
+			if !clearWashAttachments(s) {
+				return checkErr
+			}
+		} else {
+			if diag, diagErr := s.Evaluate(`window.tulaiUploadAncestorDiagnostic ? tulaiUploadAncestorDiagnostic() : ""`); diagErr == nil && diag != "" {
+				logging.Log.Debugf("豆包批量上传诊断: %s", diag)
+			}
+			if !strings.Contains(err.Error(), "不支持多选") && !clearWashAttachments(s) {
+				return err
+			}
+		}
+	}
 	// Some Doubao file choosers accept just one file at a time. Verify each
 	// attachment in the composer before selecting the next one for this message.
 	for i, name := range d.washNames {
 		if err := s.UploadFiles("window.tulaiOpenUpload()", []string{filepath.Join(d.washDir, name)}); err != nil {
+			if diag, diagErr := s.Evaluate(`window.tulaiUploadAncestorDiagnostic ? tulaiUploadAncestorDiagnostic() : ""`); diagErr == nil && diag != "" {
+				logging.Log.Debugf("豆包逐张上传诊断: %s", diag)
+			}
 			return err
 		}
 		if err := checkWashAttachments(s, d.washNames[:i+1], true); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// clearWashAttachments 在多选批量上传部分失败后清理输入区残留附件，确认归零后才允许回退逐张上传。
+func clearWashAttachments(s *cdp.Session) bool {
+	out, err := s.EvaluateAsync(`(async () => {
+		const page = window.__tulaiWashPage;
+		const names = () => (page && typeof page.attachmentNames === 'function') ? page.attachmentNames(document) : [];
+		if (names().length === 0) return true;
+		const deadline = Date.now() + 4000;
+		for (let round = 0; round < 3 && Date.now() < deadline; round++) {
+			if (page && typeof page.removeButtons === 'function' && typeof page.composer === 'function') {
+				for (let step = 0; step < 20 && Date.now() < deadline; step++) {
+					const buttons = page.removeButtons(document, page.composer(document));
+					if (!buttons.length) break;
+					const btn = buttons[0];
+					try {
+						if (typeof btn.click === 'function') btn.click();
+						else if (typeof btn.dispatchEvent === 'function') btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+					} catch (e) {}
+					await new Promise(resolve => setTimeout(resolve, 30));
+					if (names().length === 0) return true;
+				}
+			}
+			if (typeof window.tulaiCleanComposer === 'function') {
+				try { await window.tulaiCleanComposer(); } catch (e) {}
+			}
+			const waitUntil = Math.min(deadline, Date.now() + 800);
+			while (Date.now() < waitUntil) {
+				if (names().length === 0) return true;
+				await new Promise(resolve => setTimeout(resolve, 40));
+			}
+		}
+		return names().length === 0;
+	})()`)
+	return err == nil && out == "true"
+}
+
+func checkWashAttachmentsSet(s *cdp.Session, names []string, wait bool) error {
+	expected, _ := json.Marshal(names)
+	timeout := 0
+	if wait {
+		timeout = 30000
+	}
+	out, err := s.EvaluateAsync(fmt.Sprintf(`(async () => {
+		const page = window.__tulaiWashPage, expected = %s, want = new Set(expected), deadline = Date.now() + %d;
+		for (;;) {
+			const names = page.attachmentNames(document);
+			if (names.length === expected.length && new Set(names).size === want.size &&
+				names.every(name => want.has(name)) && page.freshAttachment(document, new Set())) return true;
+			if (Date.now() >= deadline) return false;
+			await new Promise(resolve => setTimeout(resolve, 40));
+		}
+	})()`, expected, timeout))
+	if err != nil {
+		return err
+	}
+	if out != "true" {
+		return fmt.Errorf("豆包输入区未确认本批 %d 张附件的名称", len(names))
 	}
 	return nil
 }
@@ -102,7 +194,7 @@ func checkWashAttachments(s *cdp.Session, names []string, wait bool) error {
 			if (names.length === expected.length && expected.every((name, i) => name === names[i]) &&
 				page.freshAttachment(document, new Set())) return true;
 			if (Date.now() >= deadline) return false;
-			await new Promise(resolve => setTimeout(resolve, 200));
+			await new Promise(resolve => setTimeout(resolve, 40));
 		}
 	})()`, expected, timeout))
 	if err != nil {
@@ -118,7 +210,7 @@ func (d Doubao) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, 
 	return waitForResult(s, timeout, d.washNames)
 }
 
-// resolveDoubaoWash uses the same attachment URI checks as the Firefox page
+// resolveDoubaoWash uses the same attachment URI checks as the page
 // bridge. A nil result leaves visible candidates unassigned for manual review.
 func resolveDoubaoWash(s *cdp.Session, names []string, visible []Result) []Result {
 	expected, _ := json.Marshal(names)

@@ -3,7 +3,7 @@ package download
 import (
 	"context"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net"
 	"net/http"
@@ -188,7 +188,7 @@ func TestCNUDiscoveryRedirectAndHTTPS(t *testing.T) {
 
 func TestCNURenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	png := filterPNG(t, 1, 1)
 	var images, badRequests atomic.Int32
@@ -246,10 +246,10 @@ func TestCNURenderedCapture(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -262,14 +262,14 @@ func TestCNURenderedCapture(t *testing.T) {
 	if images.Load() != 1 || badRequests.Load() != 0 {
 		t.Fatalf("images=%d bad=%d", images.Load(), badRequests.Load())
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://www.cnu.cc/works/124")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://www.cnu.cc/works/124")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
 	if err != nil || len(got.Items) != 1 || got.Items[0].Metadata["cnu_work_id"] != "124" {
 		t.Fatalf("current work=%+v err=%v", got, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://www.cnu.cc/login")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://www.cnu.cc/login")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

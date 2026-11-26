@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -165,7 +165,7 @@ func TestWechatListLiteralBoundaries(t *testing.T) {
 
 func TestWechatRenderedCaptureAndVerification(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -181,13 +181,13 @@ func TestWechatRenderedCaptureAndVerification(t *testing.T) {
 	const articleBody = `<html><title>文章</title><div id="js_content"><img data-src="https://mmbiz.qpic.cn/body/640"></div><script>window.picture_page_info_list = [{cdn_url:'https://mmbiz.qpic.cn/list/0'}].slice(0,20);</script><img src="https://mmbiz.qpic.cn/avatar/0"></html>`
 	const captchaBody = `<html><title>安全验证</title><img src="https://mmbiz.qpic.cn/captcha/0"></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && (paused.Request.URL == article || paused.Request.URL == captcha) {
 				body := articleBody
 				if paused.Request.URL == captcha {
@@ -197,7 +197,7 @@ func TestWechatRenderedCaptureAndVerification(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -209,14 +209,14 @@ func TestWechatRenderedCaptureAndVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	session.start, _ = url.Parse(article)
-	if err := session.run(ctx, camoufox.Navigate(article)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(article)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
 	if err != nil || got.Title != "文章" || len(got.Items) != 2 || got.Items[0].URL != "https://mmbiz.qpic.cn/body/640" || got.Items[1].URL != "https://mmbiz.qpic.cn/list/0" {
 		t.Fatalf("rendered article=%+v err=%v", got, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(captcha)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(captcha)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

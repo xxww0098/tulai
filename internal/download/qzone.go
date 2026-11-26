@@ -810,18 +810,19 @@ func (s *RenderedSession) qzonePersonalGet(ctx context.Context, page *url.URL, o
 		endpoint == "/proxy/domain/photo.qzone.qq.com/fcgi-bin/fcg_list_album_v3" ||
 		endpoint == "/proxy/domain/photo.qzone.qq.com/fcgi-bin/fcg_list_photo_v2" ||
 		endpoint == "/proxy/domain/photo.qzone.qq.com/fcgi-bin/cgi_floatview_photo_list_v2"
-	if !allowed || s == nil || s.tab == nil || s.getter == nil || QzoneURLHasCredentials(observedURL) {
+	tab := s.activeTab()
+	if !allowed || s == nil || tab == nil || s.getter == nil || QzoneURLHasCredentials(observedURL) {
 		return nil, errors.New("QQ 空间请求地址无效")
 	}
 	target := &url.URL{Scheme: "https", Host: "user.qzone.qq.com", Path: endpoint, RawQuery: params.Encode()}
 	s.mu.RLock()
-	captured, pageIP, startIP := s.pageURL, s.pageIP, s.startIP
+	start, captured, pageIP, startIP := s.start, s.pageURL, s.pageIP, s.startIP
 	s.mu.RUnlock()
 	if captured == nil || !sameOrigin(captured, page) || !sameOrigin(page, target) {
 		return nil, errors.New("QQ 空间请求只允许当前页面的同源代理")
 	}
 	requestCtx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(s.tab, cancel)
+	stop := context.AfterFunc(tab, cancel)
 	defer func() { stop(); cancel() }()
 	checkPage := func() error {
 		var current string
@@ -854,7 +855,7 @@ func (s *RenderedSession) qzonePersonalGet(ctx context.Context, page *url.URL, o
 		return nil, err
 	}
 	policy := safeDownloadPolicy{}
-	if pageIP.IsValid() && pageIP == startIP && sameOrigin(s.start, page) && !isPublicDownloadIP(pageIP) {
+	if pageIP.IsValid() && pageIP == startIP && sameOrigin(start, page) && !isPublicDownloadIP(pageIP) {
 		policy.allowedLocal = pageIP
 	}
 	request, err := http.NewRequestWithContext(context.WithValue(requestCtx, safeDownloadPolicyKey{}, policy), http.MethodGet, target.String(), nil)

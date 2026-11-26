@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net"
 	"net/http"
@@ -227,7 +227,7 @@ func TestYupooPageLimit(t *testing.T) {
 
 func TestYupooRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	png := filterPNG(t, 1, 1)
 	var subpages, imageRequests, badRequests atomic.Int32
@@ -297,10 +297,10 @@ func TestYupooRenderedCapture(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -313,14 +313,14 @@ func TestYupooRenderedCapture(t *testing.T) {
 	if imageRequests.Load() != 1 || badRequests.Load() != 0 {
 		t.Fatalf("image requests=%d unexpected=%d", imageRequests.Load(), badRequests.Load())
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://store.x.yupoo.com/albums/12?uid=1")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://store.x.yupoo.com/albums/12?uid=1")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
 	if err == nil || len(got.Items) != 1 || got.Items[0].Metadata["album_id"] != "12" {
 		t.Fatalf("current album=%+v err=%v", got, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://evil.invalid/login")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://evil.invalid/login")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net"
 	"net/http"
@@ -194,7 +194,7 @@ func TestUnsplashSearchLimitAndRedirect(t *testing.T) {
 
 func TestUnsplashRenderedSearch(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	png := filterPNG(t, 1, 1)
 	var childPhotos, downloads, images, badRequests atomic.Int32
@@ -278,10 +278,10 @@ func TestUnsplashRenderedSearch(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String()), chromedp.Evaluate(`window.scrollTo(0,333)`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String()), chromedp.Evaluate(`window.scrollTo(0,333)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -302,14 +302,14 @@ func TestUnsplashRenderedSearch(t *testing.T) {
 	if downloads.Load() != 1 || images.Load() != 1 || badRequests.Load() != 0 {
 		t.Fatalf("downloads=%d images=%d bad=%d", downloads.Load(), images.Load(), badRequests.Load())
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://unsplash.com/photos/cat-BBBBBBBBBBB")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://unsplash.com/photos/cat-BBBBBBBBBBB")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
 	if err != nil || len(got.Items) != 1 || got.Items[0].Metadata["unsplash_photo_id"] != "BBBBBBBBBBB" {
 		t.Fatalf("current photo=%+v err=%v", got, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("https://unsplash.com/login")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("https://unsplash.com/login")); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

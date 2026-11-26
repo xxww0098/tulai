@@ -88,7 +88,9 @@ globalThis.TULAIPage = (function () {
     const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 }
     if (rect.width <= 5 || rect.height <= 5) return false
     const style = styleOf(el)
-    return style.display !== 'none' && style.visibility !== 'hidden'
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+    if (style.opacity !== '' && style.opacity != null && parseFloat(style.opacity) <= 0.05) return false
+    return true
   }
 
   function enabled(el) {
@@ -240,10 +242,20 @@ globalThis.TULAIPage = (function () {
   }
 
   // 从输入框往上找最近的 upload_file_button。页上另有一颗相同 testid 时，不会选到输入区外面的那颗。
+  // 2026-11 豆包图像生成模式移除 upload_file_button testid，改为与 upload-file-input 同父容器的圆按钮。
   function uploadEntry(doc, comp) {
     for (let scope = comp && comp.parentElement; scope && scope !== doc.body; scope = scope.parentElement) {
       const found = all(scope, 'button[data-testid="upload_file_button"],button[aria-label="添加附件"]').filter(enabled)[0]
       if (found) return found
+    }
+    for (let scope = comp && comp.parentElement; scope && scope !== doc.body; scope = scope.parentElement) {
+      const inputs = fileInputs(scope)
+      for (let i = 0; i < inputs.length; i++) {
+        const wrap = inputs[i].parentElement
+        if (!wrap || wrap === doc.body) continue
+        const peer = all(wrap, 'button,[role="button"]').filter(enabled)[0]
+        if (peer) return peer
+      }
     }
     return null
   }
@@ -252,6 +264,8 @@ globalThis.TULAIPage = (function () {
     if (!comp) return null
     const surface = closest(comp, '.guidance-input-surface')
     if (surface && (!entry || surface.contains(entry))) return surface
+    const chatInput = closest(comp, '[data-testid="chat_input"]')
+    if (chatInput && (!entry || chatInput.contains(entry))) return chatInput
     const body = closest(comp, '[data-chat-input-body]')
     if (body && (!entry || body.contains(entry))) return body
     for (let node = comp.parentElement; node && node !== (comp.ownerDocument || {}).body; node = node.parentElement) {
@@ -272,7 +286,7 @@ globalThis.TULAIPage = (function () {
     return closest(comp, '[data-testid="chat_input"]') || attachmentScope(comp, uploadEntry(doc, comp))
   }
 
-  const SIBLING_SKILL_RE = /^(PPT\s*生成|帮我写作|视频生成|录音转写|更多技能|AI\s*搜索|音乐生成)$/
+  const SIBLING_SKILL_RE = /^(PPT\s*生成|帮我写作|视频生成|录音转写|更多技能|更多|技能|数据分析|AI\s*搜索|音乐生成|图像编辑)$/
 
   function hasSiblingSkillButton(scope, exclude) {
     return all(scope, 'button,[role="button"]').some(function (el) {
@@ -290,17 +304,30 @@ globalThis.TULAIPage = (function () {
     return base
   }
 
-  function inSkillToolbar(el) {
-    if (closest(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]') ||
-        all(el, '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-component-type="skill-item"]').length) {
+  const SKILL_TOOLBAR_SEL = '[data-testid="guidance-skill-bar"],[data-testid="skill_bar_button_3"],[data-skill-id="skill_bar_button_3"],[data-component-type="skill-item"],[data-input-engine-action-source="actionbar"],[class*="deterministic-overflow-list"],[class*="overflow-visible-item"]'
+
+  function inSkillToolbar(el, comp) {
+    if (closest(el, SKILL_TOOLBAR_SEL) || all(el, SKILL_TOOLBAR_SEL).length) {
       return true
     }
-    const body = (el && el.ownerDocument && el.ownerDocument.body) || null
-    for (let bar = el && el.parentElement, depth = 0; bar && bar !== body && depth <= 4; bar = bar.parentElement, depth++) {
+    const doc = (el && el.ownerDocument) || null
+    const activeComp = comp !== undefined ? comp : (doc ? composer(doc) : null)
+    const body = (doc && doc.body) || null
+    for (let bar = el && el.parentElement, depth = 0; bar && bar !== body && depth <= 8; bar = bar.parentElement, depth++) {
+      if (activeComp && bar.contains && bar.contains(activeComp)) break
+      if (bar.matches && bar.matches('[data-testid="chat_input"],.guidance-input-surface,.guidance-input-content')) break
       if (all(bar, USER_Q + ',' + ASSISTANT_Q + ',nav,aside').length) break
       if (hasSiblingSkillButton(bar, el)) return true
     }
     return false
+  }
+
+  function openSkillPopups(doc) {
+    return all(doc, '[role="menu"][data-state="open"],[role="listbox"][data-state="open"],[data-radix-menu-content],[data-slot="dropdown-menu-content"],[data-slot="popover-content"],[data-radix-popper-content-wrapper]').filter(function (m) {
+      if (!visible(m)) return false
+      if (m.getAttribute && (m.getAttribute('data-state') === 'closed' || m.getAttribute('role') === 'tooltip')) return false
+      return true
+    })
   }
 
   function imageModeControl(doc) {
@@ -324,10 +351,18 @@ globalThis.TULAIPage = (function () {
       })
       if (btn) return btn
     }
-    const menus = all(doc, '[role="menu"][data-state="open"],[role="listbox"][data-state="open"],[data-radix-popper-content-wrapper]').filter(visible)
+    const menus = openSkillPopups(doc)
     for (let i = 0; i < menus.length; i++) {
-      const entry = all(menus[i], 'button,[role="menuitem"],[role="option"],[data-component-type="skill-item"]').find(function (el) {
-        return enabled(el) && exactText(el, '图像生成')
+      const byId = all(menus[i], '[data-testid="skill_bar_button_3"],[data-skill-id="skill_bar_button_3"]').find(enabled)
+      if (byId) return byId
+      const entry = all(menus[i], 'button,[role="menuitem"],[role="option"],[data-component-type="skill-item"],div,span').find(function (el) {
+        if (!enabled(el)) return false
+        if (exactText(el, '图像生成')) {
+          if ((el.tagName === 'DIV' || el.tagName === 'SPAN') && (!el.getAttribute || !el.getAttribute('role')) && el.children && el.children.length > 2) return false
+          return true
+        }
+        return !!(el.matches && el.matches('button,[role="menuitem"],[role="option"],[data-component-type="skill-item"]')) &&
+          all(el, 'span,div,p').some(function (child) { return visible(child) && exactText(child, '图像生成') })
       })
       if (entry) return entry
     }
@@ -336,6 +371,7 @@ globalThis.TULAIPage = (function () {
 
   function imageModeActive(doc) {
     const scope = imageModeScope(doc)
+    const comp = composer(doc)
     // 2026-11 起已选技能在输入区挂固定 testid 的退出按钮，文本就是技能名。
     if (all(scope, '[data-testid="skill_input_exit_button"]').some(function (el) {
       return visible(el) && exactText(el, '图像生成')
@@ -345,7 +381,7 @@ globalThis.TULAIPage = (function () {
       if (!visible(el) || !exactText(el, '图像生成')) return false
       if (el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true') return true
       // 普通工具栏始终有同名入口，只有输入区里的已选模式标签才算切换成功。
-      return !inSkillToolbar(el)
+      return !inSkillToolbar(el, comp)
     })
   }
 
@@ -360,32 +396,88 @@ globalThis.TULAIPage = (function () {
     })
   }
 
+  // 2026-11 豆包新增「对话 / 工作（云电脑）」模式切换：处于「工作」模式时输入栏隐藏
+  // 「图像生成」技能栏，需要先切回「对话」模式才能展示并点击「图像生成」。
+  async function switchBackToChatMode(doc, allowOpen) {
+    const scope = imageModeScope(doc)
+    const modeBtn = all(scope, '[data-testid="chat_input_action_mode"]').find(enabled)
+    if (!modeBtn) return ''
+    const modeText = normalize(modeBtn.innerText)
+    if (!modeText || modeText === '对话') return ''
+    const menus = openSkillPopups(doc)
+    for (let i = 0; i < menus.length; i++) {
+      const chatItem = all(menus[i], '[role="menuitem"],[role="option"],button').find(function (el) {
+        return enabled(el) && exactText(el, '对话')
+      })
+      if (chatItem) return (await pressMenuControl(chatItem)) ? 'selected' : ''
+    }
+    if (!allowOpen) return ''
+    const topChatTab = all(doc, 'button,[role="tab"],[role="button"]').find(function (el) {
+      if (el === modeBtn || !enabled(el) || !exactText(el, '对话')) return false
+      if (closest(el, USER_Q + ',' + ASSISTANT_Q + ',nav,aside,[data-testid="chat_input"]')) return false
+      const parent = el.parentElement
+      if (!parent) return false
+      return all(parent, 'button,[role="tab"],[role="button"]').some(function (sib) {
+        return sib !== el && visible(sib) && exactText(sib, '工作')
+      })
+    })
+    if (topChatTab) return (await pressMenuControl(topChatTab)) ? 'opened' : ''
+    return (await pressMenuControl(modeBtn)) ? 'opened' : ''
+  }
+
   async function ensureImageMode(doc, cancelled, timeoutMs) {
     const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 12000)
     let clicks = 0
     let lastClick = 0
-    let moreOpened = false
+    let moreClicks = 0
+    let lastMoreClick = 0
+    let modeSwitchClicks = 0
+    let lastModeSwitch = 0
+    let promoDismissed = false
     while (Date.now() < deadline) {
       if (cancelled && cancelled()) return { error: '切换图像生成模式已取消', code: 'E_CANCELLED' }
       if (loginWall(doc)) return { error: '请先登录平台账号', code: 'E_NOT_LOGGED_IN' }
       if (imageModeActive(doc)) return { ok: true }
-      const control = imageModeControl(doc)
-      if (control && enabled(control) && clicks < 3 && (clicks === 0 || Date.now() - lastClick >= 3500)) {
-        if (!activate(control)) return { error: '无法点击「图像生成」，未开始任务', code: 'E_SELECTOR_MISS' }
-        clicks++
-        lastClick = Date.now()
-      } else if (!control && !moreOpened) {
-        const toolbar = skillToolbarScope(doc)
-        const more = all(toolbar, '[data-testid="skill_bar_button_more"]').find(enabled) ||
-          all(toolbar, 'button,[role="button"]').find(function (el) {
-            return enabled(el) && exactText(el, '更多技能')
-          })
-        if (more) {
-          moreOpened = true
-          activate(more)
+      if (!promoDismissed) {
+        const promoClose = dismissClientPromo(doc, composer(doc))
+        if (promoClose) {
+          promoDismissed = true
+          await pressMenuControl(promoClose)
+          await new Promise(function (resolve) { setTimeout(resolve, 120) })
+          continue
         }
       }
-      await new Promise(function (resolve) { setTimeout(resolve, 100) })
+      const control = imageModeControl(doc)
+      if (control && enabled(control) && clicks < 3 && (clicks === 0 || Date.now() - lastClick >= 3500)) {
+        if (!await pressMenuControl(control)) return { error: '无法点击「图像生成」，未开始任务', code: 'E_SELECTOR_MISS' }
+        clicks++
+        lastClick = Date.now()
+      } else if (!control) {
+        const allowOpenMode = modeSwitchClicks < 2 && (modeSwitchClicks === 0 || Date.now() - lastModeSwitch >= 2500)
+        const switched = await switchBackToChatMode(doc, allowOpenMode)
+        if (switched) {
+          if (switched === 'opened') {
+            modeSwitchClicks++
+            lastModeSwitch = Date.now()
+          }
+          await new Promise(function (resolve) { setTimeout(resolve, 120) })
+          continue
+        }
+        if (moreClicks < 2 && (moreClicks === 0 || Date.now() - lastMoreClick >= 2500)) {
+          const toolbar = skillToolbarScope(doc)
+          const more = all(toolbar, '[data-testid="skill_bar_button_more"]').find(enabled) ||
+            all(toolbar, 'button,[role="button"]').find(function (el) {
+              return enabled(el) && /^(更多技能|更多|技能)$/.test(normalize(el.innerText)) &&
+                (!el.getAttribute || el.getAttribute('data-testid') !== 'general-agent-skill-button')
+            })
+          if (more) {
+            moreClicks++
+            lastMoreClick = Date.now()
+            await pressMenuControl(more)
+          }
+        }
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 40) })
     }
     if (!clicks && !all(doc, '[data-testid="chat_header_avatar_button"]').some(visible) && hasVisibleLoginButton(doc)) {
       return { error: '请先登录平台账号', code: 'E_NOT_LOGGED_IN' }
@@ -393,99 +485,217 @@ globalThis.TULAIPage = (function () {
     return { error: clicks ? '点击「图像生成」后模式未生效，未开始任务' : '未找到「图像生成」入口，未开始任务', code: 'E_SELECTOR_MISS' }
   }
 
-  // 图像模式的「比例」入口（触发按钮文本形如「比例 自动」「比例 4:3」）。
+  // 图像模式的「比例」入口（触发按钮文本形如「自动比例」「比例 自动」「比例 4:3」「3:4」）。
+  function ratioLabelText(el) {
+    if (!el) return ''
+    return normalize(el.innerText || (el.getAttribute && el.getAttribute('aria-label')) || '')
+  }
+
   function ratioControl(doc) {
     const scope = imageModeScope(doc)
-    return all(scope, 'button,[role="button"]').find(function (el) {
-      if (!enabled(el)) return false
-      const text = normalize(el.innerText)
-      if (!/^比例\s/.test(text)) return false
-      return el.getAttribute('aria-haspopup') !== null || /^(自动|\d+:\d+)$/.test(text.slice(3).trim())
-    }) || null
+    const candidates = all(scope, 'button,[role="button"],[aria-haspopup="menu"],[aria-haspopup="dialog"],[aria-haspopup="listbox"]').filter(function (el) {
+      if (!enabled(el) || closest(el, USER_Q + ',' + ASSISTANT_Q)) return false
+      const text = ratioLabelText(el)
+      if (!text) return false
+      if (/^比例/.test(text)) {
+        const rest = text.slice(2).trim()
+        return (el.getAttribute && el.getAttribute('aria-haspopup') !== null) || /^(自动|\d+:\d+)$/.test(rest)
+      }
+      if (/^(自动比例|比例\s*自动)$/.test(text)) return true
+      const hasPopup = el.getAttribute && el.getAttribute('aria-haspopup') !== null
+      const meta = (el.getAttribute && ((el.getAttribute('data-testid') || '') + ' ' + (el.getAttribute('aria-label') || ''))) || ''
+      return (hasPopup || /ratio|比例/i.test(meta)) && /^\d+:\d+$/.test(text)
+    })
+    if (!candidates.length) return null
+    return candidates.find(function (el) { return el.getAttribute && el.getAttribute('aria-haspopup') !== null }) || candidates[0]
   }
 
   // 当前已选比例，如 "4:3"；「自动」或读不到时返回 ""。
   function ratioValue(el) {
-    const m = /^比例\s+(自动|\d+:\d+)\s*$/.exec(normalize(el && el.innerText))
-    return m ? (m[1] === '自动' ? '' : m[1]) : ''
+    const text = ratioLabelText(el)
+    if (/^(自动比例|比例\s*自动|自动)$/.test(text)) return ''
+    const m = /^(?:比例\s*)?(\d+:\d+)$/.exec(text)
+    return m ? m[1] : ''
   }
 
-  // 打开中的比例菜单：radix 下拉里同时有「自动」和若干 a:b 选项。
+  function isRatioAuto(el) {
+    return /^(自动比例|比例\s*自动|自动)$/.test(ratioLabelText(el))
+  }
+
+  function ratioMatches(el, want) {
+    return want === '自动' ? isRatioAuto(el) : ratioValue(el) === want
+  }
+
+  function isRatioOptionText(text) {
+    return text === '自动' || text === '自动比例' || /^\d+:\d+$/.test(text)
+  }
+
+  function ratioOptionEnabled(el) {
+    if (!enabled(el)) return false
+    if (styleOf(el).pointerEvents === 'none') return false
+    if (closest(el, '[data-state="closed"]')) return false
+    return true
+  }
+
+  // 从比例浮层（传统下拉菜单或 2×4 卡片弹窗）里提取所有可选比例项（含 button / role / div 卡片）。
+  function ratioMenuItems(menu) {
+    if (!menu) return []
+    const semantic = all(menu, 'button,[role="menuitemradio"],[role="menuitemcheckbox"],[role="menuitem"],[role="option"],[role="radio"],[role="button"]').filter(function (el) {
+      return ratioOptionEnabled(el) && isRatioOptionText(normalize(el.innerText))
+    })
+    if (semantic.length >= 2) return semantic
+    const leaves = all(menu, 'div,li,label,span').filter(function (el) {
+      if (!ratioOptionEnabled(el)) return false
+      const text = normalize(el.innerText)
+      if (!isRatioOptionText(text)) return false
+      return !all(el, 'div,li,label,span,button').some(function (child) {
+        return child !== el && isRatioOptionText(normalize(child.innerText))
+      })
+    })
+    const cards = []
+    for (let i = 0; i < leaves.length; i++) {
+      let target = leaves[i]
+      const label = normalize(target.innerText)
+      while (target.parentElement && target.parentElement !== menu) {
+        const parent = target.parentElement
+        if (!ratioOptionEnabled(parent) || normalize(parent.innerText) !== label) break
+        target = parent
+      }
+      if (cards.indexOf(target) === -1) cards.push(target)
+    }
+    return cards.length ? cards : semantic
+  }
+
+  function isRatioMenuContainer(menu) {
+    if (!menu || !visible(menu)) return false
+    if (menu.getAttribute && (menu.getAttribute('data-state') === 'closed' || menu.getAttribute('role') === 'tooltip')) return false
+    if (styleOf(menu).pointerEvents === 'none') return false
+    if (closest(menu, USER_Q + ',' + ASSISTANT_Q + ',[data-state="closed"]')) return false
+    const items = ratioMenuItems(menu)
+    const auto = items.some(function (el) {
+      const text = normalize(el.innerText)
+      return text === '自动' || text === '自动比例'
+    })
+    const pairs = items.some(function (el) { return /^\d+:\d+$/.test(normalize(el.innerText)) })
+    return auto && pairs
+  }
+
+  // 打开中的比例浮层：兼容 Radix DropdownMenu（role=menu/listbox）与 2026-11 新版 2×4 卡片 Popover（role=dialog / popover-content / popper wrapper / 浮动 div）。
   function ratioMenu(doc) {
-    return all(doc, '[role="menu"][data-state="open"],[role="listbox"][data-state="open"]').find(function (menu) {
-      if (!visible(menu)) return false
-      const items = all(menu, 'button,[role="menuitemradio"],[role="menuitem"],[role="option"]')
-      const auto = items.some(function (el) { return normalize(el.innerText) === '自动' })
-      const pairs = items.some(function (el) { return /^\d+:\d+$/.test(normalize(el.innerText)) })
-      return auto && pairs
-    }) || null
+    const primary = all(doc, '[role="menu"],[role="listbox"],[role="dialog"],[data-radix-menu-content],[data-slot="dropdown-menu-content"],[data-slot="popover-content"],[data-radix-popper-content-wrapper],[popover]').filter(isRatioMenuContainer)
+    let matches = primary
+    if (!matches.length) {
+      matches = all(doc, 'div').filter(function (el) {
+        const cls = String((el && el.className) || '')
+        if (!/popover|popup|dropdown|portal|menu|ratio/i.test(cls)) return false
+        return isRatioMenuContainer(el)
+      })
+    }
+    if (!matches.length) return null
+    // 嵌套包裹层（如 popper wrapper -> popover-content）优先取最内层面板。
+    return matches.find(function (candidate) {
+      return !matches.some(function (other) { return other !== candidate && candidate.contains && candidate.contains(other) })
+    }) || matches[0]
   }
 
   function closeRatioMenu(doc, control) {
-    if (ratioMenu(doc) && control) {
-      try { activate(control) } catch (e) {}
-    }
     try {
       (doc || document).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     } catch (e) {}
+    if (ratioMenu(doc) && control) {
+      try { activate(control) } catch (e) {}
+    }
   }
 
-  // 把图像模式的输出比例设成 ratio（如 "4:3"）。菜单选项来自 2026-11 的豆包页面：
+  async function pressMenuControl(el) {
+    if (!el) return false
+    if (typeof window !== 'undefined' && typeof window.tulaiClick === 'function') {
+      try {
+        if (await window.tulaiClick(el)) return true
+      } catch (e) {}
+    }
+    return activate(el)
+  }
+
+  // 把图像模式的输出比例设成 ratio（如 "4:3" 或 "自动"）。浮层选项来自 2026-11 的豆包页面：
   // 自动 / 9:16 / 2:3 / 3:4 / 1:1 / 4:3 / 3:2 / 16:9。选中与否以触发按钮标签为准。
   // 工具栏随 React 重绘，节点可能被换掉：菜单没开就重取按钮再点；点完只看标签确认。
-  async function setOutputRatio(doc, ratio, cancelled) {
-    const want = normalize(ratio)
-    if (!/^\d+:\d+$/.test(want)) return { error: '比例格式应为 4:3', code: 'E_SELECTOR_MISS' }
-    const deadline = Date.now() + 12000
+  async function setOutputRatio(doc, ratio, cancelled, timeoutMs) {
+    const raw = normalize(ratio)
+    const want = raw === '自动比例' ? '自动' : raw
+    if (want !== '自动' && !/^\d+:\d+$/.test(want)) return { error: '比例格式应为 4:3', code: 'E_SELECTOR_MISS' }
+    const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 12000)
     let control = null
     while (Date.now() < deadline) {
       if (cancelled && cancelled()) return { error: '设置比例已取消', code: 'E_CANCELLED' }
       control = ratioControl(doc)
       if (control) break
-      await new Promise(function (resolve) { setTimeout(resolve, 120) })
+      await new Promise(function (resolve) { setTimeout(resolve, 40) })
     }
     if (!control) return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS' }
-    if (ratioValue(control) === want) return { ok: true, already: true }
-    let lastOpen = 0
-    let menu = null
-    while (Date.now() < deadline) {
+    if (ratioMatches(control, want)) return { ok: true, already: true }
+    let lastError = '比例 ' + want + ' 未生效'
+    for (let round = 0; round < 3 && Date.now() < deadline; round++) {
       if (cancelled && cancelled()) { closeRatioMenu(doc, control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
-      // 已选成目标（点击在上一轮就生效）也算完成。
       control = ratioControl(doc) || control
-      if (control && ratioValue(control) === want) {
+      if (control && ratioMatches(control, want)) {
+        if (ratioMenu(doc)) closeRatioMenu(doc, control)
+        return { ok: true }
+      }
+      let menu = ratioMenu(doc)
+      let lastOpen = 0
+      const openUntil = Math.min(deadline, Date.now() + 2600)
+      while (!menu && Date.now() < openUntil) {
+        if (cancelled && cancelled()) { closeRatioMenu(doc, control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
+        control = ratioControl(doc) || control
+        if (control && ratioMatches(control, want)) {
+          if (ratioMenu(doc)) closeRatioMenu(doc, control)
+          return { ok: true }
+        }
+        if (lastOpen === 0 || Date.now() - lastOpen >= 1200) {
+          if (!await pressMenuControl(control)) return { error: '无法点击「比例」', code: 'E_SELECTOR_MISS' }
+          lastOpen = Date.now()
+        }
+        await new Promise(function (resolve) { setTimeout(resolve, 40) })
+        menu = ratioMenu(doc)
+      }
+      if (!menu) {
+        lastError = '「比例」菜单未出现'
+        continue
+      }
+      const readyUntil = Math.min(deadline, Date.now() + 150)
+      while (Date.now() < readyUntil) {
+        const op = parseFloat(styleOf(menu).opacity)
+        if (isNaN(op) || op > 0.5) break
+        await new Promise(function (resolve) { setTimeout(resolve, 20) })
+      }
+      const item = ratioMenuItems(menu).find(function (el) {
+        const text = normalize(el.innerText)
+        return want === '自动' ? (text === '自动' || text === '自动比例') : text === want
+      })
+      if (!item) {
         closeRatioMenu(doc, control)
-        return { ok: true }
+        return { error: '「比例」菜单没有 ' + want, code: 'E_SELECTOR_MISS' }
       }
-      menu = ratioMenu(doc)
-      if (menu) break
-      if (lastOpen === 0 || Date.now() - lastOpen >= 2500) {
-        if (!activate(control)) return { error: '无法点击「比例」', code: 'E_SELECTOR_MISS' }
-        lastOpen = Date.now()
+      if (!await pressMenuControl(item)) {
+        closeRatioMenu(doc, control)
+        return { error: '无法点击比例 ' + want, code: 'E_SELECTOR_MISS' }
       }
-      await new Promise(function (resolve) { setTimeout(resolve, 120) })
-    }
-    if (!menu) return { error: '「比例」菜单未出现', code: 'E_SELECTOR_MISS' }
-    const item = all(menu, 'button,[role="menuitemradio"],[role="menuitem"],[role="option"]').find(function (el) {
-      return enabled(el) && normalize(el.innerText) === want
-    })
-    if (!item) {
-      closeRatioMenu(doc, control)
-      return { error: '「比例」菜单没有 ' + want, code: 'E_SELECTOR_MISS' }
-    }
-    if (!activate(item)) {
-      closeRatioMenu(doc, control)
-      return { error: '无法点击比例 ' + want, code: 'E_SELECTOR_MISS' }
-    }
-    while (Date.now() < deadline) {
-      if (cancelled && cancelled()) return { error: '设置比例已取消', code: 'E_CANCELLED' }
-      const again = ratioControl(doc)
-      if (again && ratioValue(again) === want) {
-        if (ratioMenu(doc)) closeRatioMenu(doc, again)
-        return { ok: true }
+      const confirmUntil = Math.min(deadline, Date.now() + 1800)
+      while (Date.now() < confirmUntil) {
+        if (cancelled && cancelled()) { closeRatioMenu(doc, ratioControl(doc) || control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
+        const again = ratioControl(doc)
+        if (again && ratioMatches(again, want)) {
+          if (ratioMenu(doc)) closeRatioMenu(doc, again)
+          return { ok: true }
+        }
+        await new Promise(function (resolve) { setTimeout(resolve, 40) })
       }
-      await new Promise(function (resolve) { setTimeout(resolve, 120) })
+      lastError = '比例 ' + want + ' 未生效'
+      if (ratioMenu(doc)) closeRatioMenu(doc, ratioControl(doc) || control)
     }
-    return { error: '比例 ' + want + ' 未生效', code: 'E_SELECTOR_MISS' }
+    closeRatioMenu(doc, ratioControl(doc) || control)
+    return { error: lastError, code: 'E_SELECTOR_MISS' }
   }
 
   function fileInputs(scope) {
@@ -579,15 +789,28 @@ globalThis.TULAIPage = (function () {
   function removeButtons(doc, comp) {
     const scope = attachmentScope(comp, uploadEntry(doc, comp))
     if (!scope) return []
-    return all(scope, 'button,[role="button"]').filter(function (el) {
+    return all(scope, '[data-testid="attachment-delete-btn"],[aria-label="delete" i],button,[role="button"]').filter(function (el) {
+      if (!el || el.isConnected === false || el.disabled || (el.getAttribute && el.getAttribute('aria-disabled') === 'true')) return false
+      if (el.getAttribute && (el.getAttribute('data-testid') === 'attachment-delete-btn' || /^delete$/i.test(String(el.getAttribute('aria-label') || '').trim()))) {
+        // 豆包未悬停卡片时删除 <svg> 为 display:none，只要所属附件卡片可见即可派发点击移除。
+        const card = closest(el, '[data-testid="attachment-image-card"]')
+        return card ? visible(card) : visible(el)
+      }
       return enabled(el) && /删除|移除|remove attachment/i.test(labelOf(el))
     })
   }
 
-  // ego.js clientPromotionClose：豆包「立即下载电脑版」旁边唯一的「关闭」。
-  // 范围里有输入框、消息、密码或验证码时不关。
+  // ego.js clientPromotionClose：豆包「立即下载电脑版」或「下载电脑版」弹窗旁唯一的「关闭」。
+  // 范围里有输入框、消息、密码、登录或验证码时不关。
   function dismissClientPromo(doc, comp) {
     if (!doubaoHost(hostOf(doc))) return null
+    function findClose(scope) {
+      return all(scope, 'button,[role="button"]').find(function (button) {
+        return enabled(button) && [button.getAttribute && button.getAttribute('aria-label'), button.getAttribute && button.getAttribute('title'), button.innerText].some(function (text) {
+          return String(text || '').trim() === '关闭'
+        })
+      }) || null
+    }
     const cta = all(doc, 'button,[role="button"],a').find(function (button) {
       return enabled(button) && [button.getAttribute && button.getAttribute('aria-label'), button.innerText].some(function (text) {
         return String(text || '').trim() === '立即下载电脑版'
@@ -597,11 +820,23 @@ globalThis.TULAIPage = (function () {
       if (comp && scope.contains && scope.contains(comp)) break
       if (matchesQuery(scope, USER_Q) || matchesQuery(scope, ASSISTANT_Q)) break
       if (all(scope, 'input[type="password"],[data-sitekey],iframe[src*="captcha"]').length) break
-      const close = all(scope, 'button,[role="button"]').find(function (button) {
-        return enabled(button) && [button.getAttribute && button.getAttribute('aria-label'), button.getAttribute && button.getAttribute('title'), button.innerText].some(function (text) {
-          return String(text || '').trim() === '关闭'
-        })
+      const close = findClose(scope)
+      if (close) return close
+    }
+    const dialogs = all(doc, '[role="dialog"],[aria-modal="true"]').filter(visible)
+    for (let i = dialogs.length - 1; i >= 0; i--) {
+      const dlg = dialogs[i]
+      if (comp && dlg.contains && dlg.contains(comp)) continue
+      if (matchesQuery(dlg, USER_Q) || matchesQuery(dlg, ASSISTANT_Q)) continue
+      if (all(dlg, 'input[type="password"],[data-sitekey],iframe[src*="captcha"]').length) continue
+      const text = String(dlg.innerText || '')
+      if (/扫码登录|手机号登录|短信登录|验证码登录|密码登录|登录以解锁/.test(text)) continue
+      if (!/下载电脑版|立即下载电脑版/.test(text)) continue
+      const hasDownloadCTA = all(dlg, 'button,[role="button"],a').some(function (button) {
+        return enabled(button) && /^(立即下载|立即下载电脑版|下载电脑版)$/.test(normalize(button.innerText))
       })
+      if (!hasDownloadCTA) continue
+      const close = findClose(dlg)
       if (close) return close
     }
     return null
@@ -636,8 +871,16 @@ globalThis.TULAIPage = (function () {
   }
 
   function orderedMessages(doc, user, assistant) {
-    return all(doc, assistant + ',' + user).filter(function (node, index, nodes) {
-      return !nodes.some(function (parent) { return parent !== node && parent.contains && parent.contains(node) })
+    const nodes = all(doc, assistant + ',' + user)
+    if (nodes.length <= 1) return nodes
+    const set = new Set(nodes)
+    return nodes.filter(function (node) {
+      let p = node && node.parentElement
+      while (p) {
+        if (set.has(p)) return false
+        p = p.parentElement
+      }
+      return true
     })
   }
 
@@ -907,6 +1150,7 @@ globalThis.TULAIPage = (function () {
       sourceURLs,
       anchor: null,
       anchorConfirmed: false,
+      anchorRawText: '',
       scope,
     }
   }
@@ -917,9 +1161,18 @@ globalThis.TULAIPage = (function () {
     const messages = orderedMessages(doc, q.user, q.assistant)
     const prompt = state.prompt
     let anchor = null
-    if (prompt && state.anchorConfirmed && state.anchor && state.anchor.isConnected !== false && messages.indexOf(state.anchor) !== -1 && userMatchesPrompt(state.anchor, prompt)) {
-      anchor = state.anchor
-    } else if (prompt) {
+    let anchorIdx = -1
+    if (prompt && state.anchorConfirmed && state.anchor && state.anchor.isConnected !== false) {
+      anchorIdx = messages.indexOf(state.anchor)
+      if (anchorIdx !== -1) {
+        const raw = String((state.anchor.innerText || state.anchor.textContent) || '')
+        if (state.anchorRawText === raw || userMatchesPrompt(state.anchor, prompt)) {
+          state.anchorRawText = raw
+          anchor = state.anchor
+        }
+      }
+    }
+    if (!anchor && prompt) {
       const oldMatches = (state.userBodies || []).filter(function (bodies) { return bodiesMatchPrompt(bodies, prompt) }).length
       const matches = messages.filter(function (node) { return matchesQuery(node, q.user) && userMatchesPrompt(node, prompt) })
       if (matches.length > oldMatches) anchor = matches[oldMatches]
@@ -927,11 +1180,15 @@ globalThis.TULAIPage = (function () {
         const tailIndex = messages.indexOf(state.tail)
         if (tailIndex !== -1) anchor = matches.find(function (node) { return messages.indexOf(node) > tailIndex }) || null
       }
+      if (anchor) {
+        anchorIdx = messages.indexOf(anchor)
+        state.anchorRawText = String((anchor.innerText || anchor.textContent) || '')
+      }
     }
     state.anchor = anchor
-    if (!anchor) return []
+    if (!anchor || anchorIdx === -1) return []
     state.anchorConfirmed = true
-    let following = messages.slice(messages.indexOf(anchor) + 1)
+    let following = messages.slice(anchorIdx + 1)
     const nextUser = following.findIndex(function (node) { return matchesQuery(node, q.user) })
     if (nextUser !== -1) {
       state.followedByUser = true
@@ -940,24 +1197,37 @@ globalThis.TULAIPage = (function () {
     return following.filter(function (node) { return matchesQuery(node, q.assistant) })
   }
 
-  // 同一张 mdbox 里的大图和缩略图只留一张。空 SVG / blob 占位即使 naturalWidth 更大也丢掉，
-  // 改留 http(s) 实图（或 srcset、data-src、picture、背景、下载链接上的地址）。
-  // 不在 mdbox 里的图（包括用户消息上的 message_image_content）丢掉。
-  function resultImages(doc, state) {
-    const messages = newAssistants(doc, state)
+  function scanAssistantCards(assistants, state) {
     const best = new Map()
-    messages.forEach(function (message) {
+    const pending = []
+    const pendingSeen = new Set()
+    assistants.forEach(function (message) {
       const seenCards = new Set()
+      const chosenByCard = new Map()
+      function chosenOf(card) {
+        if (chosenByCard.has(card)) return chosenByCard.get(card)
+        const chosen = chooseCardImage(card, state)
+        chosenByCard.set(card, chosen)
+        return chosen
+      }
       function take(card) {
         if (!card || seenCards.has(card) || !message.contains(card)) return
         seenCards.add(card)
-        const chosen = chooseCardImage(card, state)
+        const chosen = chosenOf(card)
         if (chosen) best.set(card, chosen)
       }
       all(message, 'img').forEach(function (img) {
         take(closest(img, '[data-testid="mdbox_image"]'))
       })
-      all(message, '[data-testid="mdbox_image"]').forEach(take)
+      const cards = all(message, '[data-testid="mdbox_image"]')
+      cards.forEach(function (card) {
+        take(card)
+        if (!card || pendingSeen.has(card) || !message.contains(card)) return
+        const chosen = chosenOf(card)
+        if (chosen && chosen.url && !isPlaceholderURL(chosen.url) && isFetchableRasterURL(chosen.url)) return
+        pendingSeen.add(card)
+        pending.push(card)
+      })
     })
     const seen = new Set()
     const images = []
@@ -966,15 +1236,22 @@ globalThis.TULAIPage = (function () {
       seen.add(item.url)
       images.push({ url: item.url, rawUrl: rawURLs.get(rawImageKey(item.url)) || '', img: item.img })
     })
-    return images
+    return { images, pending }
+  }
+
+  // 同一张 mdbox 里的大图和缩略图只留一张。空 SVG / blob 占位即使 naturalWidth 更大也丢掉，
+  // 改留 http(s) 实图（或 srcset、data-src、picture、背景、下载链接上的地址）。
+  // 不在 mdbox 里的图（包括用户消息上的 message_image_content）丢掉。
+  function resultImages(doc, state) {
+    return scanAssistantCards(newAssistants(doc, state), state).images
   }
 
   function isHiddenClass(el) {
     return !!(el && /(^|\s)!?hidden(\s|$)/.test(el.className || ''))
   }
 
-  function resultsBusy(doc, state) {
-    if (newAssistants(doc, state).some(busy)) return true
+  function isBusyForAssistants(doc, state, assistants) {
+    if (assistants.some(busy)) return true
     if (state && state.anchorConfirmed) {
       const scope = imageModeScope(doc) || doc
       if (all(scope, '[data-testid="chat_input_local_break_button"]').some(function (el) {
@@ -984,23 +1261,20 @@ globalThis.TULAIPage = (function () {
     return false
   }
 
-  // 完成候选：这一轮回复里有实图，并且没有生成指示；若仍有待揭开的图片卡片，最多宽限 15 秒。
-  // 重新生成/复制和声明张数在真实页面上经常没有。调用方再等地址稳住约 3 秒。
-  function replyDone(doc, state) {
-    const isBusy = resultsBusy(doc, state)
-    const images = resultImages(doc, state).filter(function (item) {
-      return item && item.url && !isPlaceholderURL(item.url)
-    })
-    if (isBusy || !images.length) {
+  function resultsBusy(doc, state) {
+    return isBusyForAssistants(doc, state, newAssistants(doc, state))
+  }
+
+  function computeReplyDone(isBusy, validImages, pending, state) {
+    if (isBusy || !validImages.length) {
       if (state) {
         state.pendingSince = 0
         state.pendingSig = ''
       }
       return { done: false }
     }
-    const pending = pendingRevealTargets(doc, state)
     if (pending.length > 0 && state) {
-      const sig = images.length + ':' + pending.length
+      const sig = validImages.length + ':' + pending.length
       const now = Date.now()
       if (state.pendingSig !== sig || !state.pendingSince) {
         state.pendingSig = sig
@@ -1014,6 +1288,18 @@ globalThis.TULAIPage = (function () {
       state.pendingSig = ''
     }
     return { done: true }
+  }
+
+  // 完成候选：这一轮回复里有实图，并且没有生成指示；若仍有待揭开的图片卡片，最多宽限 15 秒。
+  // 重新生成/复制和声明张数在真实页面上经常没有。调用方再等地址稳住约 3 秒。
+  function replyDone(doc, state) {
+    const assistants = newAssistants(doc, state)
+    const isBusy = isBusyForAssistants(doc, state, assistants)
+    const scanned = scanAssistantCards(assistants, state)
+    const images = scanned.images.filter(function (item) {
+      return item && item.url && !isPlaceholderURL(item.url)
+    })
+    return computeReplyDone(isBusy, images, scanned.pending, state)
   }
 
   function assistantText(doc, state) {
@@ -1052,26 +1338,13 @@ globalThis.TULAIPage = (function () {
   }
 
   // 豆包生成卡常先挂 1536 SVG 壳，真图 img 标着 loading=lazy。滚进视口并改成 eager 后才换成 http(s)。
-  const REVEAL_DWELL_MS = 2000
+  const REVEAL_DWELL_MS = 800
   function pendingRevealTargets(doc, state) {
-    const out = []
-    const seen = new Set()
-    newAssistants(doc, state).forEach(function (message) {
-      all(message, '[data-testid="mdbox_image"]').forEach(function (card) {
-        if (!message.contains(card) || seen.has(card)) return
-        const chosen = chooseCardImage(card, state)
-        if (chosen && chosen.url && !isPlaceholderURL(chosen.url) && isFetchableRasterURL(chosen.url)) return
-        seen.add(card)
-        out.push(card)
-      })
-    })
-    return out
+    return scanAssistantCards(newAssistants(doc, state), state).pending
   }
 
-  function revealResults(doc, state) {
-    if (!state) return
-    const pending = pendingRevealTargets(doc, state)
-    if (!pending.length) return
+  function revealPending(pending, state) {
+    if (!state || !pending.length) return
     const now = Date.now()
     let idx = 0
     if (state.revealEl && now - (state.revealAt || 0) < REVEAL_DWELL_MS) {
@@ -1088,6 +1361,30 @@ globalThis.TULAIPage = (function () {
     }
     pending.forEach(nudgeImage)
     scrollIntoView(target)
+  }
+
+  function revealResults(doc, state) {
+    if (!state) return
+    revealPending(pendingRevealTargets(doc, state), state)
+  }
+
+  function pollResults(doc, state) {
+    const assistants = newAssistants(doc, state)
+    const scanned = scanAssistantCards(assistants, state)
+    if (scanned.pending.length && state) {
+      revealPending(scanned.pending, state)
+    }
+    const validImages = scanned.images.filter(function (item) {
+      return item && item.url && !isPlaceholderURL(item.url)
+    })
+    const isBusy = isBusyForAssistants(doc, state, assistants)
+    const signal = computeReplyDone(isBusy, validImages, scanned.pending, state)
+    return {
+      assistants,
+      images: validImages,
+      busy: isBusy,
+      signal,
+    }
   }
 
   function composerCleared(doc) {
@@ -1107,12 +1404,23 @@ globalThis.TULAIPage = (function () {
 
 
   // HTMLElement.click() 只有 click，没有 pointerdown。豆包发送按钮和千问一样，需要走完 pointer 再 click，
-  // 否则页面常常不收下这次发送，输入框也不清空。
-  function dispatchUiEvent(el, type) {
+  // 否则页面常常不收下这次发送，输入框也不清空。在元素中央 40% 范围内做微小拟人偏移。
+  function pickClickPoint(el) {
+    const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return { x: 0, y: 0 }
+    const jitterX = rect.width > 8 ? (Math.random() - 0.5) * rect.width * 0.4 : 0
+    const jitterY = rect.height > 8 ? (Math.random() - 0.5) * rect.height * 0.4 : 0
+    return {
+      x: Math.round((rect.left + rect.width / 2 + jitterX) * 10) / 10,
+      y: Math.round((rect.top + rect.height / 2 + jitterY) * 10) / 10,
+    }
+  }
+
+  function dispatchUiEvent(el, type, coords) {
     if (!el || typeof el.dispatchEvent !== 'function') return null
-    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null
-    const x = rect ? rect.left + rect.width / 2 : 0
-    const y = rect ? rect.top + rect.height / 2 : 0
+    const pos = coords || pickClickPoint(el)
+    const x = pos.x
+    const y = pos.y
     const point = {
       bubbles: true,
       cancelable: true,
@@ -1145,10 +1453,11 @@ globalThis.TULAIPage = (function () {
   }
 
   function poke(el) {
-    const down = dispatchUiEvent(el, 'pointerdown')
-    dispatchUiEvent(el, 'mousedown')
-    dispatchUiEvent(el, 'pointerup')
-    dispatchUiEvent(el, 'mouseup')
+    const coords = pickClickPoint(el)
+    const down = dispatchUiEvent(el, 'pointerdown', coords)
+    dispatchUiEvent(el, 'mousedown', coords)
+    dispatchUiEvent(el, 'pointerup', coords)
+    dispatchUiEvent(el, 'mouseup', coords)
     return down
   }
 
@@ -1157,6 +1466,26 @@ globalThis.TULAIPage = (function () {
     poke(el)
     try { el.click() } catch (e) { return false }
     return true
+  }
+
+  // SPA 页内点「新对话」，省去整页重载。只点非消息区、非新标签的显式新对话入口。
+  function clickNewChat(doc) {
+    const direct = all(doc, '[data-testid="create_conversation_button"],[data-testid*="new_chat"]').find(function (el) {
+      return enabled(el) && !closest(el, USER_Q + ',' + ASSISTANT_Q) && el.getAttribute('target') !== '_blank'
+    })
+    if (direct) return activate(direct)
+    const btn = all(doc, 'button,[role="button"],a').find(function (el) {
+      if (!enabled(el) || closest(el, USER_Q + ',' + ASSISTANT_Q)) return false
+      if (el.tagName === 'A' && el.getAttribute && el.getAttribute('target') === '_blank') return false
+      const text = normalize(el.innerText || (el.getAttribute && el.getAttribute('aria-label')) || '')
+      return text === '新对话'
+    })
+    return btn ? activate(btn) : false
+  }
+
+  function canMultiUpload(doc, comp) {
+    const input = fileInput(doc, comp)
+    return !!(input && input.multiple)
   }
 
   function assignFiles(input, files) {
@@ -1267,6 +1596,665 @@ globalThis.TULAIPage = (function () {
     return out
   }
 
+  // ---- 聊天历史记录删除 ----
+  const RATE_LIMIT_RE = /过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests/i
+
+  function conversationIdFromHref(href) {
+    try {
+      const u = new URL(String(href || ''), (typeof location !== 'undefined' && location && location.href) || 'https://www.doubao.com/chat/')
+      const parts = u.pathname.split('/').filter(Boolean)
+      const i = parts.indexOf('chat')
+      return i >= 0 && parts[i + 1] ? parts[i + 1] : ''
+    } catch (e) {
+      return ''
+    }
+  }
+
+  function hasRateLimitNotice(doc) {
+    return all(doc, '[role="alert"],[role="dialog"],[class*="toast"],[class*="notice"]').some(function (el) {
+      if (!visible(el)) return false
+      const txt = normalize(el.innerText)
+      return txt.length > 0 && txt.length <= 240 && RATE_LIMIT_RE.test(txt)
+    })
+  }
+
+  function historyBlocked(doc) {
+    if (loginWall(doc)) return { stopped: 'not_logged_in', error: '账号未登录' }
+    if (detectCaptcha(doc).blocked) return { stopped: 'captcha', error: '触发安全验证' }
+    if (hasRateLimitNotice(doc)) return { stopped: 'rate_limit', error: '触发操作频率限制' }
+    return null
+  }
+
+  // 豆包真实 DOM 中 [data-testid="conversation-list-v2-project"] 是整个对话列表根容器
+  // （同时包着 project-grouped-section「项目」与 conversation-section「最近」），
+  // 因此只能排除 project-grouped-section，不能排除 conversation-list-v2-project。
+  function inProjectSection(el) {
+    return !!closest(el, '[data-testid="project-grouped-section"]')
+  }
+
+  function conversationItems(doc) {
+    const root = (doc && doc.querySelector && doc.querySelector('[data-testid="chat_list_wrapper"]')) || doc
+    const nodes = all(root, '[data-testid="conversation-list-v2-item"]')
+    const seen = new Set()
+    const out = []
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i]
+      if (!el || el.isConnected === false || inProjectSection(el)) continue
+      const link = closest(el, 'a[href]')
+      const id = normalize((el.getAttribute && el.getAttribute('data-conversation-id')) || '') ||
+        conversationIdFromHref(link && link.getAttribute && link.getAttribute('href'))
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      const moreBtn = (el.querySelector && (
+        el.querySelector('button[data-testid="chat_list_item_more_button"]') ||
+        el.querySelector('[data-testid="chat_list_item_more_button"]') ||
+        el.querySelector('button[aria-haspopup="menu"]')
+      )) || null
+      const title = normalize(el.innerText || (el.getAttribute && el.getAttribute('title')) || '').slice(0, 80)
+      out.push({ id, title, el, moreBtn, active: (el.getAttribute && el.getAttribute('data-conversation-active')) === 'true' })
+    }
+    return out
+  }
+
+  function sidebarVisible(doc) {
+    const wrap = doc && doc.querySelector && (doc.querySelector('[data-testid="chat_list_wrapper"]') || doc.querySelector('[data-testid="flow_chat_sidebar"]'))
+    return !!(wrap && visible(wrap))
+  }
+
+  async function ensureSidebarOpen(doc, timeoutMs) {
+    if (sidebarVisible(doc)) return true
+    const toggle = all(doc, 'button,[role="button"]').find(function (el) {
+      if (!enabled(el)) return false
+      const label = normalize(labelOf(el))
+      return /展开侧边栏|打开侧边栏|显示侧边栏|侧边栏/.test(label) && !/收起|隐藏|关闭/.test(label)
+    })
+    if (!toggle) return sidebarVisible(doc)
+    await pressMenuControl(toggle)
+    const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 2000)
+    while (Date.now() < deadline) {
+      if (sidebarVisible(doc)) return true
+      await new Promise(function (resolve) { setTimeout(resolve, 40) })
+    }
+    return sidebarVisible(doc)
+  }
+
+  async function hoverEl(el) {
+    if (!el) return false
+    if (typeof window !== 'undefined' && typeof window.tulaiHover === 'function') {
+      try {
+        if (await window.tulaiHover(el)) return true
+      } catch (e) {}
+    }
+    try {
+      if (typeof el.dispatchEvent === 'function' && typeof MouseEvent === 'function') {
+        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }))
+        el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: false }))
+      }
+      if (typeof el.onmouseenter === 'function') el.onmouseenter()
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+
+  function openActionMenus(doc) {
+    return all(doc, '[role="menu"],[data-radix-menu-content],[data-slot="dropdown-menu-content"],[role="listbox"],[data-radix-popper-content-wrapper]').filter(function (m) {
+      if (!visible(m)) return false
+      if (m.getAttribute && (m.getAttribute('data-state') === 'closed' || m.getAttribute('role') === 'tooltip')) return false
+      return true
+    })
+  }
+
+  function findDeleteMenuItem(menu) {
+    if (!menu) return null
+    const candidates = all(menu, '[role="menuitem"],[role="option"],button,div,span').filter(function (el) {
+      if (!enabled(el)) return false
+      if ((el.tagName === 'DIV' || el.tagName === 'SPAN') && !el.getAttribute('role') && el.children && el.children.length > 2) return false
+      const t = normalize(el.innerText)
+      return /^(删除|删除对话|删除聊天|删除记录)$/.test(t) || (t.indexOf('删除') >= 0 && t.length <= 10 && !/取消|清除|上下文/.test(t))
+    })
+    return candidates.find(function (el) { return /^(删除|删除对话|删除聊天|删除记录)$/.test(normalize(el.innerText)) }) || candidates[0] || null
+  }
+
+  const DIALOG_SEL = '[role="dialog"],[role="alertdialog"],[data-radix-dialog-content],[data-slot="dialog-content"],[data-slot="alert-dialog-content"],.semi-modal,[class*="modal"]'
+
+  function findConfirmDeleteButton(doc, oldDialogs) {
+    const dialogs = all(doc, DIALOG_SEL).filter(function (d) {
+      if (!visible(d)) return false
+      if (d.getAttribute && d.getAttribute('data-state') === 'closed') return false
+      return !oldDialogs || !oldDialogs.has(d)
+    })
+    for (let i = dialogs.length - 1; i >= 0; i--) {
+      const dlg = dialogs[i]
+      const btns = all(dlg, 'button,[role="button"]').filter(function (b) {
+        if (!enabled(b)) return false
+        const t = normalize(b.innerText)
+        return /^(确认删除|删除对话|删除聊天|删除|确定|确认)$/.test(t)
+      })
+      const exact = btns.find(function (b) { return /^(确认删除|删除对话|删除聊天|删除)$/.test(normalize(b.innerText)) }) || btns[0]
+      if (exact) return { dialog: dlg, button: exact }
+    }
+    return null
+  }
+
+  function closeMenus(doc) {
+    try {
+      (doc || document).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    } catch (e) {}
+  }
+
+  async function waitRadixClosed(doc, ms) {
+    const deadline = Date.now() + (ms > 0 ? ms : 500)
+    while (Date.now() < deadline) {
+      const closing = all(doc, '[role="menu"][data-state="closed"],[role="dialog"][data-state="closed"],[role="alertdialog"][data-state="closed"]')
+      if (!closing.length) return
+      await new Promise(function (resolve) { setTimeout(resolve, 25) })
+    }
+  }
+
+  async function openDeleteItemFromTrigger(doc, trigger, deadline) {
+    const oldMenus = new Set(openActionMenus(doc))
+    if (!await pressMenuControl(trigger)) return { error: '无法点击更多菜单按钮' }
+    const waitUntil = Math.min(deadline, Date.now() + 2500)
+    while (Date.now() < waitUntil) {
+      const menus = openActionMenus(doc).filter(function (m) { return !oldMenus.has(m) })
+      for (let i = menus.length - 1; i >= 0; i--) {
+        const delItem = findDeleteMenuItem(menus[i])
+        if (delItem) return { menu: menus[i], item: delItem }
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 30) })
+    }
+    closeMenus(doc)
+    return { error: '菜单中未找到删除项' }
+  }
+
+  async function deleteConversation(doc, convID, cancelled, timeoutMs) {
+    const blocked = historyBlocked(doc)
+    if (blocked) return Object.assign({ ok: false }, blocked)
+    const currentID = conversationIdFromHref(typeof location !== 'undefined' && location ? location.href : '')
+    const targetID = normalize(convID) || currentID
+    if (!targetID) return { ok: false, notFound: true, error: '当前页面没有可删除的对话 ID' }
+    const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 10000)
+    await waitRadixClosed(doc, 400)
+
+    let delItem = null
+    let title = ''
+    let usedHeader = false
+    const inSidebar = conversationItems(doc).find(function (it) { return it.id === targetID }) || null
+    if (inSidebar) title = inSidebar.title
+
+    // 当前页会话优先尝试顶部标题栏更多按钮，避免依赖侧边栏展开状态。
+    if (targetID === currentID) {
+      const headerMore = doc && doc.querySelector && doc.querySelector('button[data-testid="conversation_header_more_button"]')
+      if (headerMore && enabled(headerMore)) {
+        const opened = await openDeleteItemFromTrigger(doc, headerMore, deadline)
+        if (opened.item) {
+          delItem = opened.item
+          usedHeader = true
+        }
+      }
+    }
+
+    if (!delItem) {
+      await ensureSidebarOpen(doc, 2000)
+      const item = conversationItems(doc).find(function (it) { return it.id === targetID }) || null
+      if (!item) return { ok: false, notFound: true, error: '侧边栏未找到对话 ' + targetID }
+      title = item.title || title
+      if (!item.moreBtn) return { ok: false, error: '未找到对话更多按钮' }
+      await hoverEl(item.el)
+      await new Promise(function (resolve) { setTimeout(resolve, 70) })
+      // 再将鼠标停到更多按钮中心，避免 tulaiClick 贝塞尔逼近路径上下偏移离开 32px 行导致失焦隐藏。
+      await hoverEl(item.moreBtn)
+      await new Promise(function (resolve) { setTimeout(resolve, 40) })
+      let opened = await openDeleteItemFromTrigger(doc, item.moreBtn, deadline)
+      if (!opened.item) {
+        try { if (typeof item.moreBtn.focus === 'function') item.moreBtn.focus() } catch (e) {}
+        await hoverEl(item.moreBtn)
+        await new Promise(function (resolve) { setTimeout(resolve, 60) })
+        opened = await openDeleteItemFromTrigger(doc, item.moreBtn, deadline)
+      }
+      if (!opened.item) return { ok: false, error: opened.error || '未找到删除菜单项' }
+      delItem = opened.item
+    }
+
+    const oldDialogs = new Set(all(doc, DIALOG_SEL).filter(visible))
+    const fastCap = typeof window !== 'undefined' ? window.__tulaiHistoryFast : null
+    if (fastCap && typeof fastCap.arm === 'function') fastCap.arm(targetID)
+    try {
+      if (!await pressMenuControl(delItem)) {
+        closeMenus(doc)
+        return { ok: false, error: '无法点击删除菜单项' }
+      }
+
+      let confirmed = false
+      while (Date.now() < deadline) {
+        if (cancelled && cancelled()) {
+          closeMenus(doc)
+          return { ok: false, stopped: 'cancelled', error: '清理已取消' }
+        }
+        const blk = historyBlocked(doc)
+        if (blk) return Object.assign({ ok: false }, blk)
+        const dlg = findConfirmDeleteButton(doc, oldDialogs)
+        if (dlg && !confirmed) {
+          confirmed = true
+          if (!await pressMenuControl(dlg.button)) {
+            return { ok: false, error: '无法点击确认删除按钮' }
+          }
+          await new Promise(function (resolve) { setTimeout(resolve, 60) })
+          continue
+        }
+        const stillInSidebar = conversationItems(doc).some(function (it) { return it.id === targetID })
+        const stillDialog = !!findConfirmDeleteButton(doc, oldDialogs)
+        const nowHrefID = conversationIdFromHref(typeof location !== 'undefined' && location ? location.href : '')
+        const removed = inSidebar ? !stillInSidebar : (usedHeader ? (nowHrefID !== targetID && !stillInSidebar) : !stillInSidebar)
+        if (removed && !stillDialog) {
+          await waitRadixClosed(doc, 400)
+          return { ok: true, id: targetID, title }
+        }
+        await new Promise(function (resolve) { setTimeout(resolve, 40) })
+      }
+      closeMenus(doc)
+      return { ok: false, error: '删除对话超时未生效' }
+    } finally {
+      if (fastCap && typeof fastCap.disarm === 'function') fastCap.disarm()
+    }
+  }
+
+  function findHistoryScroller(doc) {
+    let cur = doc && doc.querySelector && doc.querySelector('[data-testid="chat_list_wrapper"]')
+    for (let d = 0; cur && d < 8; d++, cur = cur.parentElement) {
+      if (typeof cur.scrollHeight === 'number' && typeof cur.clientHeight === 'number' && cur.scrollHeight > cur.clientHeight + 20) {
+        return cur
+      }
+    }
+    return null
+  }
+
+  async function deleteNextHistoryItem(doc, skipIds, keepRecent, cancelled, timeoutMs) {
+    const blocked = historyBlocked(doc)
+    if (blocked) return Object.assign({ ok: false }, blocked)
+    await ensureSidebarOpen(doc, 2000)
+    const skip = new Set(Array.isArray(skipIds) ? skipIds.map(String) : [])
+    const keep = Math.max(0, Number(keepRecent) || 0)
+
+    function pickTarget() {
+      const items = conversationItems(doc)
+      const candidates = items.slice(keep).filter(function (it) { return !skip.has(it.id) })
+      return { items, target: candidates[0] || null }
+    }
+
+    let picked = pickTarget()
+    if (!picked.target) {
+      const scroller = findHistoryScroller(doc)
+      if (scroller) {
+        const beforeTop = scroller.scrollTop
+        scroller.scrollTop = scroller.scrollHeight
+        if (scroller.scrollTop !== beforeTop) {
+          await new Promise(function (resolve) { setTimeout(resolve, 450) })
+          picked = pickTarget()
+        }
+      }
+    }
+    if (!picked.target) {
+      return { ok: true, done: true, remaining: picked.items.length }
+    }
+    const res = await deleteConversation(doc, picked.target.id, cancelled, timeoutMs)
+    const afterItems = conversationItems(doc)
+    if (!res.ok) {
+      return {
+        ok: false,
+        id: picked.target.id,
+        title: picked.target.title,
+        remaining: afterItems.length,
+        stopped: res.stopped || '',
+        error: res.error || '删除失败',
+      }
+    }
+    return {
+      ok: true,
+      deleted: true,
+      id: res.id || picked.target.id,
+      title: res.title || picked.target.title,
+      remaining: afterItems.length,
+    }
+  }
+
+  async function collectHistoryIds(doc, skipIds, keepRecent, maxCount) {
+    const blocked = historyBlocked(doc)
+    if (blocked) return Object.assign({ ok: false, ids: [], keepIds: [], titles: {} }, blocked)
+    await ensureSidebarOpen(doc, 2000)
+    const skip = new Set(Array.isArray(skipIds) ? skipIds.map(String) : [])
+    const keep = Math.max(0, Number(keepRecent) || 0)
+    const limit = Math.max(1, Number(maxCount) || 200)
+    const scroller = findHistoryScroller(doc)
+    if (scroller && scroller.scrollTop > 0) {
+      scroller.scrollTop = 0
+      await new Promise(function (resolve) { setTimeout(resolve, 80) })
+    }
+
+    const ordered = []
+    const seen = new Set()
+    const titles = {}
+    function scan() {
+      let added = 0
+      const items = conversationItems(doc)
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i]
+        if (!seen.has(it.id)) {
+          seen.add(it.id)
+          ordered.push(it.id)
+          titles[it.id] = it.title || ''
+          added++
+        }
+      }
+      return added
+    }
+
+    scan()
+    if (scroller && ordered.length < keep + limit) {
+      let idleSteps = 0
+      const step = Math.max(200, Math.floor((scroller.clientHeight || 400) * 0.8))
+      for (let round = 0; round < 35 && ordered.length < keep + limit; round++) {
+        const prevTop = scroller.scrollTop
+        const prevHeight = scroller.scrollHeight
+        scroller.scrollTop = Math.min(scroller.scrollHeight, prevTop + step)
+        const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 20
+        await new Promise(function (resolve) { setTimeout(resolve, atBottom ? 350 : 120) })
+        const added = scan()
+        if (added === 0 && scroller.scrollTop === prevTop && scroller.scrollHeight === prevHeight) {
+          if (++idleSteps >= 2) break
+        } else {
+          idleSteps = 0
+        }
+      }
+      scroller.scrollTop = 0
+    }
+
+    const keepIds = ordered.slice(0, keep)
+    const keepSet = new Set(keepIds)
+    const ids = ordered.filter(function (id) { return !keepSet.has(id) && !skip.has(id) }).slice(0, limit)
+    return { ok: true, ids: ids, keepIds: keepIds, titles: titles, totalSeen: ordered.length }
+  }
+
+  // ---- 豆包「管理历史对话」页（/chat/thread/list）原生批量删除 ----
+
+  function inSidebar(el) {
+    return !!(closest(el, '#flow_chat_sidebar') || closest(el, '[data-testid="flow_chat_sidebar"]') || closest(el, '[data-testid="chat_route_layout_leftside_nav"]'))
+  }
+
+  function isCheckedBox(el) {
+    if (!el) return false
+    if (el.checked === true) return true
+    if (el.getAttribute && (el.getAttribute('aria-checked') === 'true' || el.getAttribute('data-state') === 'checked')) return true
+    const inner = el.querySelector && el.querySelector('input[type="checkbox"],[role="checkbox"]')
+    if (inner && inner !== el) return isCheckedBox(inner)
+    return false
+  }
+
+  function findThreadListMoreButton(doc) {
+    const winW = (typeof window !== 'undefined' && window.innerWidth) || 1200
+    const candidates = all(doc, 'button,[role="button"]').filter(function (el) {
+      if (!enabled(el) || inSidebar(el)) return false
+      if (closest(el, '[role="menu"],[role="dialog"],[role="alertdialog"]')) return false
+      const r = el.getBoundingClientRect ? el.getBoundingClientRect() : { top: 999, left: 0, width: 0, height: 0 }
+      if (r.top < 0 || r.top > 120 || r.left < winW * 0.5) return false
+      const hasMenu = el.getAttribute && (el.getAttribute('aria-haspopup') === 'menu' || el.getAttribute('data-slot') === 'dropdown-menu-trigger')
+      const testid = String((el.getAttribute && el.getAttribute('data-testid')) || '')
+      const label = normalize(labelOf(el))
+      const text = normalize(el.innerText)
+      const hasSvg = !!(el.querySelector && el.querySelector('svg'))
+      return !!(hasMenu || /更多|more/i.test(label) || /more|menu/i.test(testid) || (hasSvg && text.length <= 2) || text === '...' || text === '···')
+    })
+    if (!candidates.length) return null
+    candidates.sort(function (a, b) {
+      const ra = a.getBoundingClientRect ? a.getBoundingClientRect() : { left: 0 }
+      const rb = b.getBoundingClientRect ? b.getBoundingClientRect() : { left: 0 }
+      return rb.left - ra.left
+    })
+    return candidates[0]
+  }
+
+  function findBatchDeleteMenuItem(menu) {
+    if (!menu) return null
+    const items = all(menu, '[role="menuitem"],[role="option"],button,div,span').filter(function (el) {
+      if (!enabled(el)) return false
+      if ((el.tagName === 'DIV' || el.tagName === 'SPAN') && !el.getAttribute('role') && el.children && el.children.length > 2) return false
+      const t = normalize(el.innerText)
+      return /批量删除对话|批量删除|清空对话|删除全部/.test(t)
+    })
+    return items.find(function (el) { return /批量删除对话|批量删除/.test(normalize(el.innerText)) }) || items[0] || null
+  }
+
+  function findSelectAllControl(doc) {
+    const nodes = all(doc, 'label,button,[role="checkbox"],[role="button"],div,span').filter(function (el) {
+      if (!enabled(el) || inSidebar(el)) return false
+      if (closest(el, '[role="menu"],[role="dialog"],[role="alertdialog"]')) return false
+      const t = normalize(el.innerText)
+      if (!/^(全选|选择全部|全部选择)$/.test(t)) return false
+      if ((el.tagName === 'DIV' || el.tagName === 'SPAN') && el.children && el.children.length > 3) return false
+      return true
+    })
+    if (!nodes.length) return null
+    const hit = nodes[0]
+    const box = (hit.querySelector && hit.querySelector('input[type="checkbox"],[role="checkbox"]')) ||
+      (hit.parentElement && hit.parentElement.querySelector && hit.parentElement.querySelector('input[type="checkbox"],[role="checkbox"]'))
+    return box && enabled(box) ? box : hit
+  }
+
+  function findMainCheckboxes(doc, selectAllEl) {
+    const allBoxes = all(doc, 'input[type="checkbox"],[role="checkbox"],[data-testid*="checkbox"]').filter(function (el) {
+      if (!enabled(el) || inSidebar(el)) return false
+      if (closest(el, '[role="menu"],[role="dialog"],[role="alertdialog"]')) return false
+      if (selectAllEl && (el === selectAllEl || (selectAllEl.contains && selectAllEl.contains(el)) || (el.contains && el.contains(selectAllEl)))) return false
+      const parentText = normalize(el.parentElement && el.parentElement.innerText)
+      if (/^(全选|选择全部|全部选择)$/.test(parentText)) return false
+      return true
+    })
+    // 去重（防止 wrapper 与内层 input 同时命中）
+    const dedup = allBoxes.filter(function (el) {
+      return !allBoxes.some(function (other) { return other !== el && el.contains && el.contains(other) })
+    })
+    dedup.sort(function (a, b) {
+      const ra = a.getBoundingClientRect ? a.getBoundingClientRect() : { top: 0 }
+      const rb = b.getBoundingClientRect ? b.getBoundingClientRect() : { top: 0 }
+      return ra.top - rb.top
+    })
+    return dedup
+  }
+
+  function findBatchDeleteButton(doc) {
+    const btns = all(doc, 'button,[role="button"]').filter(function (el) {
+      if (!enabled(el) || inSidebar(el)) return false
+      if (closest(el, '[role="menu"],[role="dialog"],[role="alertdialog"]')) return false
+      const t = normalize(el.innerText)
+      if (/批量删除/.test(t)) return false
+      return /^(删除|删除对话|删除所选|删除选中|确认删除)(\s*[\(（]\s*\d+\s*[\)）]|\s+\d+)?$/.test(t)
+    })
+    return btns[btns.length - 1] || null
+  }
+
+  function parseCountFromText(text) {
+    const m = /(\d+)/.exec(String(text || ''))
+    return m ? parseInt(m[1], 10) : 0
+  }
+
+  function exitBatchMode(doc) {
+    const cancelBtn = all(doc, 'button,[role="button"]').find(function (el) {
+      if (!enabled(el) || inSidebar(el)) return false
+      if (closest(el, '[role="menu"],[role="dialog"],[role="alertdialog"]')) return false
+      return /^(取消|完成|退出)$/.test(normalize(el.innerText))
+    })
+    if (cancelBtn) activate(cancelBtn)
+    else closeMenus(doc)
+  }
+
+  async function batchDeleteOnThreadList(doc, keepRecent, maxDelete, cancelled, timeoutMs) {
+    const blocked = historyBlocked(doc)
+    if (blocked) return Object.assign({ ok: false }, blocked)
+    const keep = Math.max(0, Number(keepRecent) || 0)
+    const limit = Math.max(1, Number(maxDelete) || 200)
+    const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 15000)
+    await waitRadixClosed(doc, 400)
+
+    const beforeSidebar = conversationItems(doc)
+    const bodyText = normalize(doc && doc.body && doc.body.innerText)
+    if (beforeSidebar.length === 0 && /暂无历史对话|暂无对话|还没有历史对话|暂无记录/.test(bodyText)) {
+      return { ok: true, done: true, deletedCount: 0, remaining: 0 }
+    }
+
+    // 1. 若尚未进入批量选择模式，点右上角「...」→「批量删除对话」
+    let selectAllEl = findSelectAllControl(doc)
+    let rowBoxes = findMainCheckboxes(doc, selectAllEl)
+    if (!rowBoxes.length && !selectAllEl) {
+      const moreBtn = findThreadListMoreButton(doc)
+      if (!moreBtn) {
+        return { ok: false, unsupported: true, error: '未找到管理历史对话页右上角更多按钮' }
+      }
+      const oldMenus = new Set(openActionMenus(doc))
+      if (!await pressMenuControl(moreBtn)) {
+        return { ok: false, unsupported: true, error: '无法点击右上角更多按钮' }
+      }
+      let batchItem = null
+      const menuUntil = Math.min(deadline, Date.now() + 2500)
+      while (Date.now() < menuUntil) {
+        const menus = openActionMenus(doc).filter(function (m) { return !oldMenus.has(m) })
+        for (let i = menus.length - 1; i >= 0; i--) {
+          batchItem = findBatchDeleteMenuItem(menus[i])
+          if (batchItem) break
+        }
+        if (batchItem) break
+        await new Promise(function (r) { setTimeout(r, 30) })
+      }
+      if (!batchItem) {
+        closeMenus(doc)
+        return { ok: false, unsupported: true, error: '管理历史对话菜单中未找到「批量删除对话」' }
+      }
+      const oldDialogs = new Set(all(doc, DIALOG_SEL).filter(visible))
+      if (!await pressMenuControl(batchItem)) {
+        closeMenus(doc)
+        return { ok: false, unsupported: true, error: '无法点击「批量删除对话」' }
+      }
+
+      // 等待进入勾选模式或直接弹出清空确认框
+      const modeUntil = Math.min(deadline, Date.now() + 3000)
+      while (Date.now() < modeUntil) {
+        if (cancelled && cancelled()) return { ok: false, stopped: 'cancelled', error: '清理已取消' }
+        const directDlg = findConfirmDeleteButton(doc, oldDialogs)
+        if (directDlg) {
+          if (keep > 0) {
+            closeMenus(doc)
+            return { ok: false, unsupported: true, error: '原生一键清空不支持保留最近条数' }
+          }
+          if (!await pressMenuControl(directDlg.button)) {
+            return { ok: false, error: '无法点击批量删除确认按钮' }
+          }
+          while (Date.now() < deadline) {
+            if (!findConfirmDeleteButton(doc, oldDialogs) && conversationItems(doc).length === 0) {
+              return { ok: true, done: true, deletedCount: Math.max(1, beforeSidebar.length), remaining: 0 }
+            }
+            await new Promise(function (r) { setTimeout(r, 50) })
+          }
+          return { ok: true, done: conversationItems(doc).length === 0, deletedCount: Math.max(1, beforeSidebar.length), remaining: conversationItems(doc).length }
+        }
+        selectAllEl = findSelectAllControl(doc)
+        rowBoxes = findMainCheckboxes(doc, selectAllEl)
+        if (rowBoxes.length > 0 || selectAllEl) break
+        await new Promise(function (r) { setTimeout(r, 40) })
+      }
+    }
+
+    if (!rowBoxes.length && !selectAllEl) {
+      if (conversationItems(doc).length <= keep) {
+        return { ok: true, done: true, deletedCount: 0, remaining: conversationItems(doc).length }
+      }
+      return { ok: false, unsupported: true, error: '进入批量删除模式后未检测到复选框' }
+    }
+
+    // 2. 勾选目标对话（keep=0 且无小上限时优先点「全选」，否则精准勾选第 keep 条之后的复选框）
+    let selectedCount = 0
+    const useSelectAll = keep === 0 && selectAllEl && (rowBoxes.length === 0 || rowBoxes.length <= limit)
+    if (useSelectAll) {
+      if (!isCheckedBox(selectAllEl)) {
+        await pressMenuControl(selectAllEl)
+        await new Promise(function (r) { setTimeout(r, 120) })
+      }
+      rowBoxes = findMainCheckboxes(doc, selectAllEl)
+      selectedCount = rowBoxes.filter(isCheckedBox).length
+    }
+    if (selectedCount === 0 && rowBoxes.length > 0) {
+      const targets = rowBoxes.slice(keep, keep + limit)
+      if (!targets.length) {
+        exitBatchMode(doc)
+        return { ok: true, done: true, deletedCount: 0, remaining: rowBoxes.length }
+      }
+      for (let i = 0; i < targets.length; i++) {
+        if (cancelled && cancelled()) {
+          exitBatchMode(doc)
+          return { ok: false, stopped: 'cancelled', error: '清理已取消' }
+        }
+        if (!isCheckedBox(targets[i])) {
+          await pressMenuControl(targets[i])
+          await new Promise(function (r) { setTimeout(r, 15) })
+        }
+      }
+      selectedCount = targets.filter(isCheckedBox).length || targets.length
+    }
+
+    // 3. 点击底部/顶部批量「删除」按钮 + 二次确认弹窗
+    let delBtn = null
+    const btnUntil = Math.min(deadline, Date.now() + 2000)
+    while (Date.now() < btnUntil) {
+      delBtn = findBatchDeleteButton(doc)
+      if (delBtn) break
+      await new Promise(function (r) { setTimeout(r, 40) })
+    }
+    if (!delBtn) {
+      exitBatchMode(doc)
+      return { ok: false, unsupported: true, error: '批量删除模式下未找到删除提交按钮' }
+    }
+    const btnCount = parseCountFromText(delBtn.innerText)
+    const beforeCount = rowBoxes.length
+    const sampleIDs = beforeSidebar.slice(keep, keep + 3).map(function (it) { return it.id })
+    const oldDialogs = new Set(all(doc, DIALOG_SEL).filter(visible))
+
+    if (!await pressMenuControl(delBtn)) {
+      exitBatchMode(doc)
+      return { ok: false, error: '无法点击批量删除按钮' }
+    }
+
+    let confirmed = false
+    while (Date.now() < deadline) {
+      if (cancelled && cancelled()) return { ok: false, stopped: 'cancelled', error: '清理已取消' }
+      const blk = historyBlocked(doc)
+      if (blk) return Object.assign({ ok: false }, blk)
+      const dlg = findConfirmDeleteButton(doc, oldDialogs)
+      if (dlg && !confirmed) {
+        confirmed = true
+        if (!await pressMenuControl(dlg.button)) {
+          return { ok: false, error: '无法点击批量删除确认按钮' }
+        }
+        await new Promise(function (r) { setTimeout(r, 80) })
+        continue
+      }
+      const stillDialog = !!findConfirmDeleteButton(doc, oldDialogs)
+      const curSidebar = conversationItems(doc)
+      const curSet = new Set(curSidebar.map(function (it) { return it.id }))
+      const sampleRemoved = sampleIDs.length > 0 && sampleIDs.some(function (id) { return !curSet.has(id) })
+      const curBoxes = findMainCheckboxes(doc, findSelectAllControl(doc))
+      const boxesDropped = beforeCount > 0 && (curBoxes.length < beforeCount)
+      const emptyNow = curSidebar.length === 0 && /暂无历史对话|暂无对话|还没有历史对话/.test(normalize(doc && doc.body && doc.body.innerText))
+      if (!stillDialog && (sampleRemoved || boxesDropped || emptyNow)) {
+        await waitRadixClosed(doc, 400)
+        const afterSidebar = conversationItems(doc)
+        const count = Math.max(1, btnCount || selectedCount || Math.max(0, beforeCount - curBoxes.length))
+        const remaining = afterSidebar.length
+        return { ok: true, done: remaining <= keep, deletedCount: count, remaining: remaining }
+      }
+      await new Promise(function (r) { setTimeout(r, 50) })
+    }
+    return { ok: false, error: '批量删除对话超时未生效' }
+  }
+
   return {
     doubaoHost,
     hostOf,
@@ -1284,6 +2272,8 @@ globalThis.TULAIPage = (function () {
     unsentBlocksUpload,
     sendButton,
     activate,
+    clickNewChat,
+    canMultiUpload,
     loginWall,
     removeButtons,
     dismissClientPromo,
@@ -1292,6 +2282,7 @@ globalThis.TULAIPage = (function () {
     newAssistants,
     resultImages,
     revealResults,
+    pollResults,
     resultsBusy,
     replyDone,
     assistantText,
@@ -1305,6 +2296,12 @@ globalThis.TULAIPage = (function () {
     captchaCrop,
     bytesToBase64,
     base64ToBytes,
+    conversationItems,
+    ensureSidebarOpen,
+    deleteConversation,
+    deleteNextHistoryItem,
+    collectHistoryIds,
+    batchDeleteOnThreadList,
     normalize,
     imageURL,
     isPlaceholderURL,

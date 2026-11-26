@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"image"
 	"io"
 	"net/http"
@@ -152,7 +152,7 @@ func TestYandeLivePagination(t *testing.T) {
 
 func TestYandeRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -167,17 +167,17 @@ func TestYandeRenderedCapture(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	result, err := session.Capture(ctx)
 	if err != nil || len(result.Items) != 1 || result.Items[0].Metadata["yande_post_id"] != "123" {
 		t.Fatalf("captured=%+v err=%v", result.Items, err)
 	}
-	if err := session.run(ctx, camoufox.Navigate("http://yande.re/login")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate("http://yande.re/login")); err != nil {
 		t.Fatal(err)
 	}
 	result, err = session.Capture(ctx)

@@ -10,6 +10,7 @@ import (
 	"image/draw"
 	"image/png"
 	"math"
+	"sync"
 )
 
 //go:embed watermarks
@@ -27,6 +28,42 @@ var watermarkStyles = []watermarkStyle{
 	{"qwen-label.png", "千问", 2048, 57, 57, true},
 }
 
+var (
+	watermarkTplOnce sync.Once
+	watermarkTplMap  map[string]image.Image
+	watermarkTplErr  error
+)
+
+func loadWatermarkTemplate(file string) (image.Image, error) {
+	watermarkTplOnce.Do(func() {
+		watermarkTplMap = make(map[string]image.Image, len(watermarkStyles))
+		for _, s := range watermarkStyles {
+			if _, ok := watermarkTplMap[s.file]; ok {
+				continue
+			}
+			data, err := watermarkFiles.ReadFile("watermarks/" + s.file)
+			if err != nil {
+				watermarkTplErr = fmt.Errorf("读取水印模板: %w", err)
+				return
+			}
+			tpl, err := png.Decode(bytes.NewReader(data))
+			if err != nil {
+				watermarkTplErr = fmt.Errorf("解析水印模板: %w", err)
+				return
+			}
+			watermarkTplMap[s.file] = tpl
+		}
+	})
+	if watermarkTplErr != nil {
+		return nil, watermarkTplErr
+	}
+	tpl, ok := watermarkTplMap[file]
+	if !ok {
+		return nil, fmt.Errorf("读取水印模板: 未知模板 %s", file)
+	}
+	return tpl, nil
+}
+
 // RemoveWatermark 匹配已校准的角落水印并局部修复；原图不变，未匹配时不返回处理版。
 func RemoveWatermark(ctx context.Context, src image.Image, platform string) (image.Image, bool, error) {
 	if err := ctx.Err(); err != nil {
@@ -39,11 +76,16 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 	if b.Dx() < 128 || b.Dy() < 128 || int64(b.Dx()) > (32*1024*1024)/int64(b.Dy()) {
 		return nil, false, nil
 	}
-	// shortcut: 仅校准当前方图网页导出；其他比例需独立采集模板后再开放。
-	if b.Dx() != b.Dy() {
+	if platform != "豆包" && platform != "千问" && platform != "千问国际" {
 		return nil, false, nil
 	}
-	if platform != "豆包" && platform != "千问" {
+	isQwen := platform == "千问" || platform == "千问国际"
+	stylePlatform := platform
+	if isQwen {
+		stylePlatform = "千问"
+	}
+	// 千问暂仅校准方图模板；豆包已开放 4:3、3:4、16:9、9:16 等非方图比例（按短边比例定位并维持 0.85 高门槛防误伤）。
+	if platform != "豆包" && b.Dx() != b.Dy() {
 		return nil, false, nil
 	}
 	// 16 位图片保持原样，避免另存 8 位 PNG 时降低原图精度。
@@ -53,31 +95,25 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 	}
 	short := min(b.Dx(), b.Dy())
 	maxEdge, threshold := 2048, 0.85
-	if platform == "千问" {
+	if isQwen {
 		// 千问在不同输出尺寸重新栅格化字形，缩小后比较轮廓可减轻像素相位差。
 		maxEdge, threshold = 768, 0.60
 	}
 	workScale := math.Min(1, float64(maxEdge)/float64(max(b.Dx(), b.Dy())))
 	w, h := int(math.Round(float64(b.Dx())*workScale)), int(math.Round(float64(b.Dy())*workScale))
-	work := resize(src, w, h)
-	hp := watermarkHighPass(work)
 	var dst *image.NRGBA
 	for _, style := range watermarkStyles {
-		if style.platform != platform {
+		if style.platform != stylePlatform {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		data, err := watermarkFiles.ReadFile("watermarks/" + style.file)
+		template, err := loadWatermarkTemplate(style.file)
 		if err != nil {
-			return nil, false, fmt.Errorf("读取水印模板: %w", err)
+			return nil, false, err
 		}
-		template, err := png.Decode(bytes.NewReader(data))
-		if err != nil {
-			return nil, false, fmt.Errorf("解析水印模板: %w", err)
-		}
-		area, score, err := matchWatermark(ctx, hp, w, h, template, style)
+		area, score, err := matchWatermarkInCorner(ctx, src, w, h, template, style)
 		if err != nil {
 			return nil, false, err
 		}
@@ -90,7 +126,7 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 		}
 		area = image.Rect(b.Min.X+int(math.Round(float64(area.Min.X)/workScale)), b.Min.Y+int(math.Round(float64(area.Min.Y)/workScale)), b.Min.X+int(math.Round(float64(area.Max.X)/workScale)), b.Min.Y+int(math.Round(float64(area.Max.Y)/workScale)))
 		radius := max(1, int(math.Ceil(float64(short)/float64(style.ref))))
-		if platform == "千问" {
+		if isQwen {
 			radius = max(2, int(math.Ceil(5*float64(short)/float64(style.ref))))
 		}
 		if err := repairWatermark(ctx, dst, template, area, radius); err != nil {
@@ -103,38 +139,215 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 	return dst, true, nil
 }
 
-func watermarkHighPass(src image.Image) []float64 {
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	integral := make([]float64, (w+1)*(h+1))
-	gray := func(x, y int) float64 {
-		r, g, bl, _ := src.At(b.Min.X+x, b.Min.Y+y).RGBA()
-		return float64(r+g+bl) / (3 * 65535)
+// extractGrayBuffer 提取任意 image.Image 的 [0,1] 归一化灰度数组，对常见像素格式走零接口拆箱快路径。
+func extractGrayBuffer(src image.Image, rect image.Rectangle) []float64 {
+	w, h := rect.Dx(), rect.Dy()
+	gray := make([]float64, w*h)
+	const inv255x3 = 1.0 / (3.0 * 255.0)
+	const inv65535x3 = 1.0 / (3.0 * 65535.0)
+	switch img := src.(type) {
+	case *image.NRGBA:
+		for y := 0; y < h; y++ {
+			rowOff := (rect.Min.Y+y-img.Rect.Min.Y)*img.Stride + (rect.Min.X-img.Rect.Min.X)*4
+			dstOff := y * w
+			for x := 0; x < w; x++ {
+				i := rowOff + x*4
+				a := float64(img.Pix[i+3])
+				if a == 255 {
+					gray[dstOff+x] = float64(int(img.Pix[i])+int(img.Pix[i+1])+int(img.Pix[i+2])) * inv255x3
+				} else if a > 0 {
+					// 与 NRGBA.RGBA() 预乘语义保持一致
+					scale := a / (255.0 * 255.0 * 3.0)
+					gray[dstOff+x] = float64(int(img.Pix[i])+int(img.Pix[i+1])+int(img.Pix[i+2])) * scale
+				}
+			}
+		}
+		return gray
+	case *image.RGBA:
+		for y := 0; y < h; y++ {
+			rowOff := (rect.Min.Y+y-img.Rect.Min.Y)*img.Stride + (rect.Min.X-img.Rect.Min.X)*4
+			dstOff := y * w
+			for x := 0; x < w; x++ {
+				i := rowOff + x*4
+				gray[dstOff+x] = float64(int(img.Pix[i])+int(img.Pix[i+1])+int(img.Pix[i+2])) * inv255x3
+			}
+		}
+		return gray
+	case *image.Gray:
+		for y := 0; y < h; y++ {
+			rowOff := (rect.Min.Y+y-img.Rect.Min.Y)*img.Stride + (rect.Min.X - img.Rect.Min.X)
+			dstOff := y * w
+			for x := 0; x < w; x++ {
+				gray[dstOff+x] = float64(img.Pix[rowOff+x]) / 255.0
+			}
+		}
+		return gray
+	case *image.YCbCr:
+		for y := 0; y < h; y++ {
+			sy := rect.Min.Y + y
+			dstOff := y * w
+			for x := 0; x < w; x++ {
+				sx := rect.Min.X + x
+				yi := img.YOffset(sx, sy)
+				ci := img.COffset(sx, sy)
+				r, g, bl := color.YCbCrToRGB(img.Y[yi], img.Cb[ci], img.Cr[ci])
+				gray[dstOff+x] = float64(int(r)+int(g)+int(bl)) * inv255x3
+			}
+		}
+		return gray
+	default:
+		for y := 0; y < h; y++ {
+			dstOff := y * w
+			for x := 0; x < w; x++ {
+				r, g, bl, _ := src.At(rect.Min.X+x, rect.Min.Y+y).RGBA()
+				gray[dstOff+x] = float64(r+g+bl) * inv65535x3
+			}
+		}
+		return gray
 	}
+}
+
+func highPassFromGray(gray []float64, w, h int) []float64 {
+	stride := w + 1
+	integral := make([]float64, stride*(h+1))
 	for y := 0; y < h; y++ {
 		row := 0.0
+		srcOff := y * w
+		prevRow := y * stride
+		curRow := (y + 1) * stride
 		for x := 0; x < w; x++ {
-			row += gray(x, y)
-			integral[(y+1)*(w+1)+x+1] = integral[y*(w+1)+x+1] + row
+			row += gray[srcOff+x]
+			integral[curRow+x+1] = integral[prevRow+x+1] + row
 		}
 	}
 	hp := make([]float64, w*h)
 	for y := 0; y < h; y++ {
+		y0, y1 := max(0, y-3), min(h, y+4)
+		i0, i1 := y0*stride, y1*stride
+		rowOff := y * w
 		for x := 0; x < w; x++ {
 			x0, x1 := max(0, x-3), min(w, x+4)
-			y0, y1 := max(0, y-3), min(h, y+4)
-			sum := integral[y1*(w+1)+x1] - integral[y0*(w+1)+x1] - integral[y1*(w+1)+x0] + integral[y0*(w+1)+x0]
-			hp[y*w+x] = gray(x, y) - sum/float64((x1-x0)*(y1-y0))
+			sum := integral[i1+x1] - integral[i0+x1] - integral[i1+x0] + integral[i0+x0]
+			hp[rowOff+x] = gray[rowOff+x] - sum/float64((x1-x0)*(y1-y0))
 		}
 	}
 	return hp
 }
 
+func watermarkHighPass(src image.Image) []float64 {
+	b := src.Bounds()
+	return highPassFromGray(extractGrayBuffer(src, b), b.Dx(), b.Dy())
+}
+
+// extractWorkROIGray 仅对工作分辨率下角落 ROI 区域采样并提取灰度，避免对整幅 2K/4K 大图做缩放与高通滤波。
+func extractWorkROIGray(src image.Image, w, h int, roi image.Rectangle) []float64 {
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	if sw == w && sh == h {
+		return extractGrayBuffer(src, roi.Add(b.Min))
+	}
+	rw, rh := roi.Dx(), roi.Dy()
+	gray := make([]float64, rw*rh)
+	// 先裁剪包含 ROI 所需的源图子块，用 x/image/draw 双线性直接缩放到 ROI 尺寸。
+	sx0 := max(0, int(math.Floor(float64(roi.Min.X)*float64(sw)/float64(w))))
+	sy0 := max(0, int(math.Floor(float64(roi.Min.Y)*float64(sh)/float64(h))))
+	sx1 := min(sw, int(math.Ceil(float64(roi.Max.X)*float64(sw)/float64(w))))
+	sy1 := min(sh, int(math.Ceil(float64(roi.Max.Y)*float64(sh)/float64(h))))
+	if sx1 <= sx0 || sy1 <= sy0 {
+		return gray
+	}
+	// 使用精确像素中心双线性映射到源图灰度，与全图 resize(src, w, h) 在 ROI 内保持一致。
+	subRect := image.Rect(b.Min.X+sx0, b.Min.Y+sy0, b.Min.X+sx1, b.Min.Y+sy1)
+	subGray := extractGrayBuffer(src, subRect)
+	subW, subH := subRect.Dx(), subRect.Dy()
+	fsw, fsh := float64(sw), float64(sh)
+	fw, fh := float64(w), float64(h)
+	for ry := 0; ry < rh; ry++ {
+		fy := (float64(roi.Min.Y+ry)+0.5)*fsh/fh - 0.5 - float64(sy0)
+		y0 := int(math.Floor(fy))
+		ty := fy - float64(y0)
+		y1 := y0 + 1
+		if y0 < 0 {
+			y0, ty = 0, 0
+		} else if y0 >= subH {
+			y0, ty = subH-1, 0
+		}
+		if y1 < 0 {
+			y1 = 0
+		} else if y1 >= subH {
+			y1 = subH - 1
+		}
+		row0, row1 := y0*subW, y1*subW
+		dstOff := ry * rw
+		for rx := 0; rx < rw; rx++ {
+			fx := (float64(roi.Min.X+rx)+0.5)*fsw/fw - 0.5 - float64(sx0)
+			x0 := int(math.Floor(fx))
+			tx := fx - float64(x0)
+			x1 := x0 + 1
+			if x0 < 0 {
+				x0, tx = 0, 0
+			} else if x0 >= subW {
+				x0, tx = subW-1, 0
+			}
+			if x1 < 0 {
+				x1 = 0
+			} else if x1 >= subW {
+				x1 = subW - 1
+			}
+			top := subGray[row0+x0]*(1-tx) + subGray[row0+x1]*tx
+			bot := subGray[row1+x0]*(1-tx) + subGray[row1+x1]*tx
+			gray[dstOff+rx] = top*(1-ty) + bot*ty
+		}
+	}
+	return gray
+}
+
+func matchWatermarkInCorner(ctx context.Context, src image.Image, w, h int, template image.Image, style watermarkStyle) (image.Rectangle, float64, error) {
+	scale := float64(min(w, h)) / float64(style.ref)
+	factors := []float64{0.96, 0.98, 1, 1.02, 1.04}
+	shift := 4
+	maxFactor := 1.04
+	if w != h {
+		factors = []float64{0.88, 0.92, 0.96, 0.98, 1, 1.02, 1.04, 1.08, 1.12}
+		shift = 8
+		maxFactor = 1.12
+	}
+	maxTW := max(3, int(math.Round(float64(template.Bounds().Dx())*scale*maxFactor)))
+	maxTH := max(3, int(math.Round(float64(template.Bounds().Dy())*scale*maxFactor)))
+	bx := int(math.Round(float64(style.x) * scale))
+	by := int(math.Round(float64(style.y) * scale))
+	// 留出 7x7 高通盒滤半径(3) + 位移余量，确保边界像素与全图高通一致。
+	const pad = 4
+	var roi image.Rectangle
+	if style.topLeft {
+		roi = image.Rect(max(0, bx-shift-pad), max(0, by-shift-pad), min(w, bx+maxTW+shift+pad), min(h, by+maxTH+shift+pad))
+	} else {
+		roi = image.Rect(max(0, w-bx-maxTW-shift-pad), max(0, h-by-maxTH-shift-pad), min(w, w-bx+shift+pad), min(h, h-by+shift+pad))
+	}
+	if roi.Empty() {
+		return image.Rectangle{}, 0, nil
+	}
+	roiGray := extractWorkROIGray(src, w, h, roi)
+	hp := highPassFromGray(roiGray, roi.Dx(), roi.Dy())
+	return matchWatermarkWindow(ctx, hp, roi, w, h, template, style, factors, shift)
+}
+
 func matchWatermark(ctx context.Context, hp []float64, w, h int, template image.Image, style watermarkStyle) (image.Rectangle, float64, error) {
+	factors := []float64{0.96, 0.98, 1, 1.02, 1.04}
+	shift := 4
+	if w != h {
+		factors = []float64{0.88, 0.92, 0.96, 0.98, 1, 1.02, 1.04, 1.08, 1.12}
+		shift = 8
+	}
+	return matchWatermarkWindow(ctx, hp, image.Rect(0, 0, w, h), w, h, template, style, factors, shift)
+}
+
+func matchWatermarkWindow(ctx context.Context, hp []float64, roi image.Rectangle, w, h int, template image.Image, style watermarkStyle, factors []float64, shift int) (image.Rectangle, float64, error) {
 	best := 0.0
 	var area image.Rectangle
 	scale := float64(min(w, h)) / float64(style.ref)
-	for _, factor := range []float64{0.96, 0.98, 1, 1.02, 1.04} {
+	rw := roi.Dx()
+	for _, factor := range factors {
 		tw := max(3, int(math.Round(float64(template.Bounds().Dx())*scale*factor)))
 		th := max(3, int(math.Round(float64(template.Bounds().Dy())*scale*factor)))
 		tp := watermarkHighPass(resize(template, tw, th))
@@ -150,19 +363,25 @@ func matchWatermark(ctx context.Context, hp []float64, w, h int, template image.
 		if !style.topLeft {
 			x, y = w-x-tw, h-y-th
 		}
-		for dy := -4; dy <= 4; dy++ {
+		for dy := -shift; dy <= shift; dy++ {
 			if err := ctx.Err(); err != nil {
 				return area, best, err
 			}
-			for dx := -4; dx <= 4; dx++ {
+			for dx := -shift; dx <= shift; dx++ {
 				x0, y0 := x+dx, y+dy
 				if x0 < 1 || y0 < 1 || x0+tw >= w || y0+th >= h {
 					continue
 				}
+				if x0 < roi.Min.X || y0 < roi.Min.Y || x0+tw > roi.Max.X || y0+th > roi.Max.Y {
+					continue
+				}
+				rx0, ry0 := x0-roi.Min.X, y0-roi.Min.Y
 				xy, yy := 0.0, 0.0
 				for row := 0; row < th; row++ {
+					tpRow := tp[row*tw : (row+1)*tw]
+					hpRow := hp[(ry0+row)*rw+rx0 : (ry0+row)*rw+rx0+tw]
 					for col := 0; col < tw; col++ {
-						a, v := tp[row*tw+col], hp[(y0+row)*w+x0+col]
+						a, v := tpRow[col], hpRow[col]
 						xy += a * v
 						yy += v * v
 					}

@@ -12,7 +12,8 @@ import (
 	"golang.org/x/net/html"
 )
 
-var temuProductPath = regexp.MustCompile(`^/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?/)?[^/]{0,500}-g-([0-9]{15,20})\.html$`)
+var temuProductPath = regexp.MustCompile(`^/(?:[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?/)?[^/]{0,1000}-g-([0-9]{15,20})\.html$`)
+var temuImageHostPattern = regexp.MustCompile(`^[a-z0-9-]*img[a-z0-9-]*\.kwcdn\.com$`)
 
 // shortcut: bound anomalously large product pages until the limit is configurable.
 const maxTemuImages = 10000
@@ -140,7 +141,7 @@ func temuImageURL(page *url.URL, raw string) (string, string, bool) {
 }
 
 func temuImageHost(host string) bool {
-	return host == "img.kwcdn.com" || host == "img-eu.kwcdn.com"
+	return temuImageHostPattern.MatchString(host)
 }
 
 type temuImage struct{ raw, kind, variant string }

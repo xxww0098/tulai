@@ -1,13 +1,13 @@
 package cdp
 
 import (
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 	"testing"
 )
 
 func newFixtureSession(t *testing.T, rawURL string) *Session {
 	t.Helper()
-	_, endpoint := camoufoxtest.Start(t, "about:blank")
+	_, endpoint := fingerprinttest.Start(t, "about:blank")
 	client, err := NewClient(endpoint)
 	if err != nil {
 		t.Fatal(err)

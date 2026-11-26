@@ -39,29 +39,33 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install Linux UI test dependencies
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk libpango-1.0-0 libpangocairo-1.0-0 libcairo2
+      - uses: oven-sh/setup-bun@v2
       - name: Test
         run: go test ./... -short -race -timeout 20m
-      - name: Check
-        run: go tool nsgo check ./cmd/tulai
+      - name: Vet and build all commands
+        run: go vet ./... && go build ./cmd/...
+      - name: Verify MyGo bindings and frontend
+        run: |
+          go tool mygo generate
+          git diff --exit-code frontend/src/mygo.ts
+          bun install --frozen-lockfile --cwd frontend
+          bun run --cwd frontend typecheck
+          bun run --cwd frontend test
+          bun run --cwd frontend build
       - name: Install fingerprint test dependencies
-        run: npm ci --prefix internal/camoufox/driver --ignore-scripts --omit=dev --no-audit --no-fund
+        run: npm ci --prefix internal/fingerprint/driver --ignore-scripts --omit=dev --no-audit --no-fund
       - name: Fingerprint policy tests
-        run: node --test internal/camoufox/driver/*.test.mjs
+        run: node --test internal/fingerprint/driver/*.test.mjs
       - name: Extension tests
         run: |
-          node extension/content_test.js
-          node extension/download_test.js
-          node extension/network_test.js
-          node extension/qianwen/page_test.js
-          node extension/doubao/page_test.js
-          node extension/bridge_test.js
-          node extension/pair_test.js
-          node extension/quota_test.js
-          node extension/refuse_test.js
-      - name: Test release gate
-        run: bash scripts/check-release-ci.test.sh
+          for f in $(find extension -name '*_test.js' | LC_ALL=C sort); do
+            echo "Running $f"
+            node "$f"
+          done
+      - name: Test scripts
+        run: |
+          bash scripts/check-release-ci.test.sh
+          python3 -m unittest discover -s scripts -p '*_test.py'
 
   windows-test:
     if: github.ref_type != 'tag'
@@ -76,51 +80,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Test Windows downloads, ChatGPT, and updater
-        run: go test ./internal/download ./internal/chatgpt ./internal/update ./cmd/tulai -short
-      - name: Test Windows background commands
-        run: go test ./internal/agy -short -run '^TestWindowsBackgroundCommand'
-      - name: Check
-        run: go tool nsgo check ./cmd/tulai
+      - name: Test Windows browser, runtime, downloads, and updater
+        run: go test ./internal/browser ./internal/fingerprint ./internal/download ./internal/update ./cmd/tulai -short
+      - name: Build all commands on Windows
+        run: go build ./cmd/...
+      - name: Vet
+        run: go vet ./...
 
-  extension:
-    needs: guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - name: Pack the page-bridge extension
-        run: |
-          ver=$(jq -r .version extension/manifest.json)
-          rm -rf dist-extension
-          mkdir -p dist-extension/tulai-extension
-          cp -a extension/. dist-extension/tulai-extension/
-          find dist-extension/tulai-extension -name '*.go' -delete
-          find dist-extension -name .DS_Store -delete
-          (cd dist-extension && zip -r "tulai-extension-${ver}.zip" tulai-extension)
-          (cd dist-extension && sha256sum "tulai-extension-${ver}.zip" > SHA256SUMS.txt)
-      - uses: actions/upload-artifact@v7
-        with:
-          name: tulai-extension
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            dist-extension/*.zip
-            dist-extension/SHA256SUMS.txt
-
-  camoufox:
+  fingerprint:
     if: github.ref_type != 'tag'
     needs: guard
-    name: camoufox (${{ matrix.os }}, ${{ matrix.suite.name }})
+    name: fingerprint (${{ matrix.os }}, ${{ matrix.suite.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-latest","macos-latest","macos-15-intel"]' || '["windows-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-latest","macos-latest"]' || '["windows-latest"]') }}
         suite:
           - name: browser
-            packages: ./internal/browser ./internal/cdp ./internal/captcha ./internal/chatgpt
+            packages: ./internal/browser ./internal/cdp ./internal/captcha
           - name: strategy
             packages: ./internal/strategy
     steps:
@@ -129,27 +108,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # The smoke install downloads Node, the launcher packages and the ~250MB
-      # kernel into the user config dir; cache it keyed on the pinned version
-      # (install.go) and the dependency lock so runs skip the downloads.
-      - name: Cache Camoufox runtime
+      # The smoke install downloads Node, playwright-core and the pinned
+      # fingerprint-chromium archive into the user config dir; cache it keyed
+      # on the pinned versions and lockfile so runs skip the downloads.
+      - name: Cache Fingerprint runtime
         uses: actions/cache@v6
         with:
           path: |
-            ~/AppData/Roaming/tulai/runtime/camoufox
-            ~/Library/Application Support/tulai/runtime/camoufox
-          key: camoufox-runtime-${{ matrix.os }}-${{ hashFiles('internal/camoufox/install.go', 'internal/camoufox/driver/package-lock.json') }}
-          restore-keys: camoufox-runtime-${{ matrix.os }}-
-      - name: Install and smoke-test Camoufox
+            ~/AppData/Roaming/tulai/runtime/fingerprint
+            ~/Library/Application Support/tulai/runtime/fingerprint
+          key: fingerprint-runtime-${{ matrix.os }}-${{ hashFiles('internal/fingerprint/install.go', 'internal/fingerprint/fingerprint.go', 'internal/fingerprint/driver/package-lock.json') }}
+          restore-keys: fingerprint-runtime-${{ matrix.os }}-
+      - name: Install and smoke-test Fingerprint
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: go run ./cmd/tulai-camoufox-smoke
+        run: go run ./cmd/tulai-fingerprint-smoke
       - name: Account isolation, persistence and page operations
         run: go test -count=1 -timeout 30m -p 1 ${{ matrix.suite.packages }}
 
-  camoufox-bundle:
+  fingerprint-bundle:
     needs: guard
-    name: prepare Windows Camoufox runtime
+    name: prepare Windows Fingerprint runtime
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -161,18 +140,18 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Prepare pinned Node and launcher dependencies
-        run: go run ./cmd/tulai-camoufox-bundle
+        run: go run ./cmd/tulai-fingerprint-bundle
       - name: Verify bundled runtime on Windows
-        run: go test -tags=tulai_camoufox_bundle -run '^TestEmbeddedWindowsRuntimeLoadsWithoutNetwork$' -count=1 ./internal/camoufox
+        run: go test -tags=tulai_fingerprint_bundle -run '^TestEmbeddedWindowsRuntimeLoadsWithoutNetwork$' -count=1 ./internal/fingerprint
       - uses: actions/upload-artifact@v7
         with:
-          name: camoufox-runtime-windows-amd64
+          name: fingerprint-runtime-windows-amd64
           if-no-files-found: error
           retention-days: 1
-          path: internal/camoufox/bundled/windows-amd64.zip
+          path: internal/fingerprint/bundled/windows-amd64.zip
 
   package:
-    needs: [guard, camoufox-bundle]
+    needs: [guard, fingerprint-bundle]
     name: package windows
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -182,21 +161,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: oven-sh/setup-bun@v2
       - name: Install NSIS
         run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile --cwd frontend
       - uses: actions/download-artifact@v7
         with:
-          name: camoufox-runtime-windows-amd64
-          path: internal/camoufox/bundled
+          name: fingerprint-runtime-windows-amd64
+          path: internal/fingerprint/bundled
       - name: Verify Windows runtime bundle before packaging
         env:
           TULAI_REQUIRE_WINDOWS_BUNDLE: "1"
-        run: go test -run '^TestBundledWindowsArchiveUnpacks$' -count=1 ./internal/camoufox
+        run: go test -run '^TestBundledWindowsArchiveUnpacks$' -count=1 ./internal/fingerprint
       - name: Package
         env:
           CGO_ENABLED: "0"
-          GOFLAGS: "-tags=tulai_camoufox_bundle"
-        run: go tool nsgo build -target windows_x64,windows_arm64 ./cmd/tulai
+          GOFLAGS: "-tags=tulai_fingerprint_bundle"
+        run: go tool mygo build -platform windows/amd64,windows/arm64
       - name: Collect distributable files
         run: scripts/collect-dist.sh windows
       - uses: actions/upload-artifact@v7
@@ -208,7 +190,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [extension, package]
+    needs: [package]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -259,12 +241,6 @@ jobs:
               "tulai-${version}-windows-amd64.exe"
               "tulai-${version}-windows-arm64.exe"
             )
-            shopt -s nullglob
-            extzips=(tulai-extension-*.zip)
-            if [[ ${#extzips[@]} -ne 1 ]]; then
-              echo "expected one tulai-extension zip, found ${#extzips[@]}" >&2
-              exit 1
-            fi
             for name in "${required[@]}"; do
               if [[ ! -f "$name" ]]; then
                 echo "updater asset missing: $name" >&2
@@ -278,7 +254,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=${GITHUB_REF_NAME#v}
-          ext=$(unzip -p release/tulai-extension-*.zip tulai-extension/manifest.json | jq -r .version)
           changes=$(awk -v heading="## $version" '/^## / { if (found) exit; found = ($0 == heading); next } found { print }' CHANGELOG.md)
           if [[ -z "${changes//[[:space:]]/}" ]]; then
             echo "missing release notes for $version in CHANGELOG.md" >&2
@@ -288,7 +263,7 @@ jobs:
           {
             echo "# tulai ${version}"
             echo
-            echo "桌面端 ${version}（cmd/tulai/nsgo.yaml，标签 ${GITHUB_REF_NAME}）。页面桥扩展是 ${ext}（tulai-extension-${ext}.zip），编号独立，不跟着桌面端走。"
+            echo "桌面端 ${version}（mygo.json，标签 ${GITHUB_REF_NAME}）。"
             printf '%s\n' "$changes"
             echo
             echo "- 本版本只提供 Windows 安装包；macOS 和 Linux 可继续使用历史版本。"

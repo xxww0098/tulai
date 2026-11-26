@@ -18,7 +18,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 const googleImagesTestPage = "https://www.google.com/search?q=moon&tbm=isch&tbs=isz%3Al"
@@ -307,18 +307,18 @@ func TestGoogleImagesPublicLive(t *testing.T) {
 }
 
 func TestGoogleImagesRenderedCapture(t *testing.T) {
-	if os.Getenv("TULAI_RENDERED_E2E") != "1" || os.Getenv("TULAI_CAMOUFOX_TEST_DATA") == "" {
-		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_CAMOUFOX_TEST_DATA to a disposable Camoufox runtime")
+	if os.Getenv("TULAI_RENDERED_E2E") != "1" || os.Getenv("TULAI_FINGERPRINT_TEST_DATA") == "" {
+		t.Skip("set TULAI_RENDERED_E2E=1 and TULAI_FINGERPRINT_TEST_DATA to a disposable Fingerprint runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	process, err := camoufox.Start(ctx, os.Getenv("TULAI_CAMOUFOX_TEST_DATA"), camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	process, err := fingerprint.Start(ctx, os.Getenv("TULAI_FINGERPRINT_TEST_DATA"), fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(process.Context())
 	page := googleImagesTestURL(t, googleImagesTestPage)
-	session := &RenderedSession{process: process, tab: camoufox.PageContext(life, process, process.Page), closeTab: closeTab,
+	session := &RenderedSession{process: process, tab: fingerprint.PageContext(life, process, process.Page), closeTab: closeTab,
 		closeAllocator: func() { process.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: page}
 	defer session.Close()
 	thumbnail := `<img width="10" height="10" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">`
@@ -327,19 +327,19 @@ func TestGoogleImagesRenderedCapture(t *testing.T) {
 		`<div class="islrtb isv-r" style="width:100px;height:100px" data-docid="doc3" data-tbnid="thumb3" data-ou="https://cdn.example.test/unloaded.jpg" data-ru="https://publisher.example.test/page"><img width="10" height="10" style="opacity:0" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="></div>` +
 		`<img src="https://cdn.example.test/unrelated.jpg"></body></html>`
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == googleImagesTestPage {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -347,7 +347,7 @@ func TestGoogleImagesRenderedCapture(t *testing.T) {
 			}
 		}()
 	})
-	if err := session.run(ctx, fetch.Enable(), camoufox.Navigate(googleImagesTestPage)); err != nil {
+	if err := session.run(ctx, fetch.Enable(), fingerprint.Navigate(googleImagesTestPage)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {

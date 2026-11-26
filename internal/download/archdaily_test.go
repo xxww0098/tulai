@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"image"
 	"io"
 	"net/http"
@@ -233,7 +233,7 @@ func (fn archDailyRoundTripper) RoundTrip(r *http.Request) (*http.Response, erro
 
 func TestArchDailyRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -255,19 +255,19 @@ func TestArchDailyRenderedCapture(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == target {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(archDailyArticleFixture(archDailyTestArticle, archDailyTestGallery))))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -280,7 +280,7 @@ func TestArchDailyRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(target)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(target)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -428,7 +428,7 @@ func TestArchDailyLiveTwoCategoryPages(t *testing.T) {
 
 func TestArchDailyRenderedChineseRedirect(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -452,19 +452,19 @@ func TestArchDailyRenderedChineseRedirect(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/html"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == target {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(archDailyArticleFixture(target, gallery))))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -477,7 +477,7 @@ func TestArchDailyRenderedChineseRedirect(t *testing.T) {
 	}
 	start, _ := url.Parse(oldURL)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(target)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -508,19 +508,19 @@ func TestArchDailyRenderedLiveGallery(t *testing.T) {
 	const preview = "https://images.adsttc.com/media/images/65e7/71b4/da34/c701/7c51/cabe/newsletter/the-gallery-house-wim-goes-architectuur_2.jpg?1709666804"
 	fixture := `<html><head><link rel="canonical" href="` + archDailyPublicArticle + `"></head><body><article id="single-content"><img src="` + preview + `" data-nr-picture-id="` + media + `" longdesc="` + archDailyPublicGallery + `"></article></body></html>`
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == archDailyPublicArticle {
 				action = fetch.FulfillRequest(paused.RequestID, http.StatusOK).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(fixture)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -533,7 +533,7 @@ func TestArchDailyRenderedLiveGallery(t *testing.T) {
 	}
 	start, _ := url.Parse(archDailyPublicArticle)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(archDailyPublicArticle)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(archDailyPublicArticle)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

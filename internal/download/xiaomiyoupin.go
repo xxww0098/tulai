@@ -17,7 +17,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 const (
@@ -369,7 +369,7 @@ func (s *RenderedSession) captureXiaomiYoupin(ctx context.Context, page *url.URL
 	if err := checkCurrent(); err != nil {
 		return result, err
 	}
-	child, closeChild, err := camoufox.NewPage(ctx, s.tab, false)
+	child, closeChild, err := fingerprint.NewPage(ctx, s.activeTab(), false)
 	if err != nil {
 		return result, errors.New("无法创建小米有品采集标签")
 	}
@@ -377,7 +377,7 @@ func (s *RenderedSession) captureXiaomiYoupin(ctx context.Context, page *url.URL
 	stop := context.AfterFunc(ctx, closeChild)
 	defer stop()
 	observer := newXiaomiYoupinObserver(page, child.Done())
-	camoufox.ListenTarget(child, func(event any) {
+	fingerprint.ListenTarget(child, func(event any) {
 		if paused, ok := event.(*fetch.EventRequestPaused); ok {
 			allowed := false
 			if paused.Request != nil && paused.Request.Method == "GET" && paused.RedirectedRequestID == "" {
@@ -385,18 +385,18 @@ func (s *RenderedSession) captureXiaomiYoupin(ctx context.Context, page *url.URL
 				allowed = e == nil && sameOrigin(page, u) && xiaomiYoupinID(u) == id
 			}
 			go func() {
-				var action camoufox.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+				var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 				if allowed {
 					action = fetch.ContinueRequest(paused.RequestID)
 				}
-				_ = camoufox.Run(child, action)
+				_ = fingerprint.Run(child, action)
 			}()
 			return
 		}
 		observer.event(event)
 	})
 	timer := time.AfterFunc(30*time.Second, closeChild)
-	err = camoufox.Run(child, network.Enable().WithMaxResourceBufferSize(xiaomiYoupinMaxBody).WithMaxTotalBufferSize(4*xiaomiYoupinMaxBody).WithMaxPostDataSize(1), fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}}))
+	err = fingerprint.Run(child, network.Enable().WithMaxResourceBufferSize(xiaomiYoupinMaxBody).WithMaxTotalBufferSize(4*xiaomiYoupinMaxBody).WithMaxPostDataSize(1), fetch.Enable().WithPatterns([]*fetch.RequestPattern{{ResourceType: network.ResourceTypeDocument}}))
 	timer.Stop()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -404,17 +404,17 @@ func (s *RenderedSession) captureXiaomiYoupin(ctx context.Context, page *url.URL
 		}
 		return result, errors.New("无法监听小米有品页面")
 	}
-	run := func(actions ...camoufox.Action) error {
+	run := func(actions ...fingerprint.Action) error {
 		op, cancel := context.WithTimeout(child, 30*time.Second)
 		defer cancel()
-		err := camoufox.Run(op, actions...)
+		err := fingerprint.Run(op, actions...)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return err
 	}
 	target := page.Scheme + "://" + page.Host + "/detail?gid=" + url.QueryEscape(id)
-	if err := run(camoufox.Navigate(target)); err != nil {
+	if err := run(fingerprint.Navigate(target)); err != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}

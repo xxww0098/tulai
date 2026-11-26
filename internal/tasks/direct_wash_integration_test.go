@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,27 +16,19 @@ import (
 	"testing"
 
 	"github.com/xxww0098/tulai/internal/browser"
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
 	"github.com/xxww0098/tulai/internal/cdp"
-	"github.com/xxww0098/tulai/internal/extbridge"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 	"github.com/xxww0098/tulai/internal/store"
 	"github.com/xxww0098/tulai/internal/strategy"
 )
 
-func TestManagedChromeSubmitsTenPerMessageAndMapsReversedResults(t *testing.T) {
-	config := os.Getenv("TULAI_CHROME_TEST_DATA")
-	if _, ok := camoufox.InstalledChrome(config); !ok || testing.Short() {
-		t.Skip("requires a tulai-managed Chrome test runtime")
-	}
-	testDirectWashBatches(t, config, store.EngineChromeCDP, 23)
+func TestManagedFingerprintSubmitsTenPerMessageAndMapsReversedResults(t *testing.T) {
+	config := fingerprinttest.ConfigDir(t)
+	testDirectWashBatches(t, config, 23)
 }
 
-func TestCamoufoxDriverSubmitsTenPerMessageAndMapsReversedResults(t *testing.T) {
-	testDirectWashBatches(t, camoufoxtest.ConfigDir(t), "", 21)
-}
-
-func testDirectWashBatches(t *testing.T, config, engine string, count int) {
+func testDirectWashBatches(t *testing.T, config string, count int) {
 	t.Helper()
 	const page = `<!doctype html><meta charset="utf-8"><div class="guidance-input-surface">
 		<button data-testid="skill_input_exit_button">图像生成</button>
@@ -126,20 +120,20 @@ func testDirectWashBatches(t *testing.T, config, engine string, count int) {
 	defer fixture.Close()
 	proxy := washFixtureProxy(fixture)
 	defer proxy.Close()
-	proc, err := camoufox.Start(t.Context(), config, camoufox.Options{
-		ChromeCDP: engine == store.EngineChromeCDP, Profile: t.TempDir(), Headless: true, Proxy: proxy.URL, GeoIP: new(bool), IgnoreHTTPSErrors: true,
+	proc, err := fingerprint.Start(t.Context(), config, fingerprint.Options{
+		Profile:           t.TempDir(),
+		Headless:          true,
+		Proxy:             proxy.URL,
+		IgnoreHTTPSErrors: true,
 	}, os.Stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer proc.Close()
 	const handle = 62373
-	camoufox.Register(handle, proc)
-	defer camoufox.Unregister(handle, proc)
-	endpoint := camoufox.Endpoint(handle)
-	if engine == store.EngineChromeCDP {
-		endpoint = camoufox.ChromeEndpoint(handle)
-	}
+	fingerprint.Register(handle, proc)
+	defer fingerprint.Unregister(handle, proc)
+	endpoint := fingerprint.FingerprintEndpoint(handle)
 	client, err := cdp.NewClient(endpoint)
 	if err != nil {
 		t.Fatal(err)
@@ -155,8 +149,7 @@ func testDirectWashBatches(t *testing.T, config, engine string, count int) {
 		t.Fatal(err)
 	}
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox")
-	account, err := st.AddManagedBrowser("豆包", browser.CanonicalBackend(engine), "", engine)
+	account, err := st.AddManagedBrowser("豆包", browser.KindFingerprint, "", store.EngineFingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,4 +180,28 @@ func testDirectWashBatches(t *testing.T, config, engine string, count int) {
 	if !slices.EqualFunc(batches, want, slices.Equal[[]int]) {
 		t.Fatalf("sent %v", batches)
 	}
+}
+
+func washFixtureProxy(fixture *httptest.Server) *httptest.Server {
+	target, _ := url.Parse(fixture.URL)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "connect only", http.StatusMethodNotAllowed)
+			return
+		}
+		upstream, err := net.Dial("tcp", target.Host)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		client, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			upstream.Close()
+			return
+		}
+		_, _ = buf.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		_ = buf.Flush()
+		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(upstream, buf) }()
+		go func() { defer client.Close(); defer upstream.Close(); _, _ = io.Copy(client, upstream) }()
+	}))
 }

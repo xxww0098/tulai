@@ -1,8 +1,6 @@
 package captcha
 
 import (
-	"context"
-	"errors"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -10,30 +8,6 @@ import (
 
 	"github.com/xxww0098/tulai/internal/logging"
 )
-
-func TestPreparePagePreservesVisibleVerificationBeforeRenew(t *testing.T) {
-	for _, auto := range []bool{false, true} {
-		page := &preparePageFixture{ego: true, installed: true, revision: "old", blocked: true, autoSolve: auto}
-		if err := PreparePage(page); !errors.Is(err, ErrVerificationRequired) || page.renewals != 0 || page.manualCalls != 1 {
-			t.Fatalf("auto=%v error=%v renew=%d manual=%d", auto, err, page.renewals, page.manualCalls)
-		}
-	}
-}
-
-func TestVerificationRequiredRespectsAutomaticModeAndCancellation(t *testing.T) {
-	for _, auto := range []bool{false, true} {
-		page := &preparePageFixture{blocked: true, autoSolve: auto}
-		err := CheckVerificationRequired(page)
-		if errors.Is(err, ErrVerificationRequired) == auto || page.manualCalls != map[bool]int{false: 1, true: 0}[auto] {
-			t.Fatalf("auto=%v error=%v manual=%d", auto, err, page.manualCalls)
-		}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	page := &preparePageFixture{ctx: ctx, ego: true, installed: true, blocked: true, afterRead: cancel}
-	if err := PreparePage(page); !errors.Is(err, context.Canceled) || errors.Is(err, ErrVerificationRequired) || page.renewals != 0 || page.manualCalls != 0 {
-		t.Fatalf("cancellation must precede manual/renew: error=%v page=%+v", err, page)
-	}
-}
 
 func TestVerificationVisibilityReadOnlyNodeFixture(t *testing.T) {
 	node, err := exec.LookPath("node")

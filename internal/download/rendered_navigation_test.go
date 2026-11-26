@@ -66,10 +66,24 @@ func TestDedicatedDownloadPageReplacesPendingNavigation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	pending := make(chan struct{}, 1)
+	triggerArmed := make(chan struct{}, 1)
+	trigger := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/entry":
 			http.Redirect(w, r, "/home", http.StatusFound)
+		case "/trigger":
+			select {
+			case triggerArmed <- struct{}{}:
+			default:
+			}
+			select {
+			case <-trigger:
+				w.Header().Set("Content-Type", "text/plain")
+				_, _ = w.Write([]byte("go"))
+			case <-r.Context().Done():
+			case <-ctx.Done():
+			}
 		case "/pending":
 			select {
 			case pending <- struct{}{}:
@@ -90,6 +104,17 @@ func TestDedicatedDownloadPageReplacesPendingNavigation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	// Arm an in-page replacement trigger before starting /pending: Chromium's CDP
+	// queues concurrent Runtime.evaluate calls behind an in-flight Page.navigate,
+	// whereas real page/script redirects run on the active document immediately.
+	if err := session.run(ctx, chromedp.Evaluate(`void fetch('/trigger').then(() => location.replace('/landing'))`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-triggerArmed:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 	opened := make(chan error, 1)
 	go func() { opened <- session.OpenTarget(ctx, server.URL+"/pending") }()
 	select {
@@ -99,9 +124,7 @@ func TestDedicatedDownloadPageReplacesPendingNavigation(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if err := session.run(ctx, chromedp.Evaluate(`location.replace('/landing')`, nil)); err != nil {
-		t.Fatal(err)
-	}
+	close(trigger)
 	if err := <-opened; err != nil {
 		t.Fatal(err)
 	}

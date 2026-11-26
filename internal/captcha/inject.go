@@ -1,12 +1,10 @@
 package captcha
 
 import (
-	"context"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -27,45 +25,6 @@ func InjectJS() string {
 
 func configuredInjectJS(enabled bool) string {
 	return fmt.Sprintf("window.__tulaiCaptchaEnabled = %t;\nwindow.__tulaiCaptcha && window.__tulaiCaptcha.setManual(false);\n", enabled) + InjectJS()
-}
-
-type egoPagePreparer interface {
-	Ctx() context.Context
-	IsEgo() bool
-	EgoEvaluate(string, any) error
-	RenewPage() error
-}
-
-// PreparePage 在安装其他脚本前迁移仍运行旧验证码监听的 Ego 文档。
-func PreparePage(s egoPagePreparer) error {
-	if !s.IsEgo() {
-		return nil
-	}
-	var current struct {
-		Installed bool   `json:"installed"`
-		Revision  string `json:"revision"`
-		Blocked   bool   `json:"blocked"`
-		AutoSolve bool   `json:"autoSolve"`
-	}
-	if err := s.Ctx().Err(); err != nil {
-		return err
-	}
-	err := s.EgoEvaluate(`({installed:!!window.__tulaiCaptchaInstalled,revision:window.__tulaiCaptchaRevision||'',blocked:`+verificationExpression+`,autoSolve:!!(window.__tulaiCaptcha && window.__tulaiCaptcha.status && window.__tulaiCaptcha.status().autoSolve)})`, &current)
-	if ctxErr := s.Ctx().Err(); ctxErr != nil {
-		return ctxErr
-	}
-	if err != nil {
-		return fmt.Errorf("检查验证码监听版本: %w", err)
-	}
-	if current.Blocked && (!current.AutoSolve || current.Revision != injectRevision) {
-		return errors.Join(ErrVerificationRequired, SetManual(s))
-	}
-	if current.Installed && current.Revision != injectRevision {
-		if err := s.RenewPage(); err != nil {
-			return fmt.Errorf("更新验证码监听页面: %w", err)
-		}
-	}
-	return nil
 }
 
 // Attach 把验证码求解注入并挂到会话：

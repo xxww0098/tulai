@@ -3,28 +3,28 @@ package tasks
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/agy"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
 	"github.com/xxww0098/tulai/internal/cdp"
+	"github.com/xxww0098/tulai/internal/dedup"
 	"github.com/xxww0098/tulai/internal/download"
-	"github.com/xxww0098/tulai/internal/extbridge"
-	"github.com/xxww0098/tulai/internal/heal"
 	"github.com/xxww0098/tulai/internal/images"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -51,52 +51,49 @@ type Engine struct {
 	closing            bool
 	sessions           map[string]*cdp.Session // key: backend:platform:browserID
 	washChats          map[*cdp.Session]washChat
-	extWashChats       map[int64]extensionWashChat
-	firefoxAddons      map[int64]string
-	runBrowsers        map[int64]string       // 本批实际使用的页面桥目录，空串表示普通浏览器
-	unavailableEngines sync.Map               // account engines that failed this run's local preflight
-	idleClose          map[int64]*idleBrowser // 保活浏览器到点关闭
-	idleGuard          func(id int64) bool    // 界面还在用的账号不做空闲关闭
-	idleAfter          time.Duration          // 测试把空闲窗口缩短；空则用 browserIdleClose
-	keepAlive          func(id int64) bool    // 测试替换的保活判定；空则查浏览器管理器
-	srcHashes          map[string]string      // 源图路径 → SHA256（当前任务的回声过滤）
+	pendingDeleteChats map[*cdp.Session]pendingDeleteChat
+	washBatchKey       string // 单次运行的洗图批次标识，用于生成唯一上传文件名
+	runBrowsers        map[int64]bool    // 本批实际使用过的受管浏览器账号
+	unavailableEngines sync.Map          // account engines that failed this run's local preflight
+	srcHashes          map[string]string // 测试注入的源图 SHA256；正式运行走惰性流式缓存 srcHashCache
+	srcHashCache       sync.Map          // 源图路径 → SHA256（惰性流式缓存）
+	srcSigs            sync.Map          // 源图路径 → dedup.Signature（洗图质检/裂变择优的惰性缓存）
+	fissionMu          sync.Mutex
+	fissionHashes      []uint64 // 本轮裂变已保存结果的 63 位 pHash，供多候选择优避碰
 	dataRoot           string
 	active             map[int64]bool
 	manual             map[int64]bool
+	manualWake         chan struct{}
+	liveConcurrency    map[string]int // 运行中动态调整的每平台并发上限（<=0 表示自动默认）
 	dlFetch            *download.Fetcher // 结果图改用直接下载时共用：站点并发和限速按这一次运行算
 
-	extStartMu  sync.Mutex
-	extMu       sync.Mutex
-	extSrv      *extbridge.Server
-	extBatch    string
-	extConfig   extbridge.PairInfo // 配置中的首选端口和令牌，用于判断是否需要重新监听
-	extErr      string
-	extOnChange func()
-	pair        *extbridge.PairServer
-	pairErr     error
-	extNotice   string
+	loginProbe     func(context.Context, store.Browser) (string, error)
+	loginFocus     func(context.Context, store.Browser) error
+	sliderFn       func(context.Context, store.Browser) error
+	onHeal         func()
+	onRecover      func(healAction, int64)
+	loginLast      map[int64]time.Time
+	loginPrev      map[int64]string
+	attention      string
+	attentionID    int64
+	notes          []string
+	wake           chan struct{}
+	wakes          []chan struct{}
+	gap            func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
+	deleteConvFn   func(context.Context, string, *cdp.Session, string) error
+	convIDFn       func(*cdp.Session) string
+	noAccountNoted bool
 
-	loginProbe      func(context.Context, store.Browser) (string, error)
-	loginFocus      func(context.Context, store.Browser) error
-	sliderFn        func(context.Context, store.Browser) error
-	onHeal          func()
-	onRecover       func(heal.Action, int64)
-	loginLast       map[int64]time.Time
-	loginPrev       map[int64]string
-	attention       string
-	attentionID     int64
-	notes           []string
-	wake            chan struct{}
-	wakes           []chan struct{}
-	gap             func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
-	agyNoted        bool
-	noAccountNoted  bool
-	onAgyDone       func(int64)
-	refreshAgyUsage func(context.Context)
+	liveMu      sync.Mutex
+	clock       laneClock
+	acctMeta    map[int64]accountInfo
+	starts      sync.Map // task index → time.Time
+	activeSched *slotSched
+}
 
-	liveMu sync.Mutex
-	clock  laneClock
-	starts sync.Map // task index → time.Time
+type accountInfo struct {
+	name string
+	port int
 }
 
 // NewEngine 创建引擎（solver 可后置注入）。
@@ -108,27 +105,6 @@ func NewEngine(st *store.Store, bm *browser.Manager, solver captcha.Solver, data
 		sessions: map[string]*cdp.Session{},
 		dataRoot: dataRoot,
 	}
-}
-
-// SetAgyUsageKick 在某个 Antigravity 账号的一单结束时通知界面去读额度。
-// 回调不能阻塞，也不能再进引擎锁。
-func (e *Engine) SetAgyUsageKick(fn func(int64)) {
-	if e == nil {
-		return
-	}
-	e.mu.Lock()
-	e.onAgyDone = fn
-	e.mu.Unlock()
-}
-
-// SetAgyUsageRefresh waits for quota readings before the first CLI task is assigned.
-func (e *Engine) SetAgyUsageRefresh(fn func(context.Context)) {
-	if e == nil {
-		return
-	}
-	e.mu.Lock()
-	e.refreshAgyUsage = fn
-	e.mu.Unlock()
 }
 
 // AccountBusy 报告这个账号是否正在出图。读额度要避开这段时间。
@@ -175,9 +151,9 @@ func (e *Engine) Retry(ctx context.Context, opts Options, failed []Task, onTask 
 
 func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	for _, task := range failed {
-		if task.Platform == "豆包" {
+		if supportsOutputSize(task.Platform) {
 			if err := opts.OutputSize.Validate(); err != nil {
-				return fmt.Errorf("豆包输出尺寸: %w", err)
+				return fmt.Errorf("%s输出尺寸: %w", task.Platform, err)
 			}
 			break
 		}
@@ -212,14 +188,27 @@ func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask 
 	return e.driveLocked(ctx, opts, queue, onTask, onProgress, attempt)
 }
 
+func missingPlatform(platform string) error {
+	return fmt.Errorf("平台[%s]没有配置浏览器，请先在浏览器管理中添加", platform)
+}
+
 func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
-	if opts.Fission && (len(opts.Images) != 1 || len(opts.Prompts) != 4 || len(opts.Platforms) != 1) {
-		return fmt.Errorf("裂变图片需要一张母图、四个方向和一个服务商")
+	if opts.Fission {
+		validImages := len(opts.Images) == 1
+		if opts.FissionTextOnly {
+			validImages = len(opts.Images) == 0
+		}
+		if !validImages || len(opts.Prompts) != 4 || len(opts.Platforms) != 1 {
+			if opts.FissionTextOnly {
+				return fmt.Errorf("纯提示词裂变需要四个方向和一个服务商")
+			}
+			return fmt.Errorf("裂变图片需要一张母图、四个方向和一个服务商")
+		}
 	}
 	for _, platform := range opts.Platforms {
-		if platform == "豆包" {
+		if supportsOutputSize(platform) {
 			if err := opts.OutputSize.Validate(); err != nil {
-				return fmt.Errorf("豆包输出尺寸: %w", err)
+				return fmt.Errorf("%s输出尺寸: %w", platform, err)
 			}
 			break
 		}
@@ -258,8 +247,6 @@ func (e *Engine) claimRun() error {
 			delete(e.sessions, key)
 		}
 	}
-	// 扩展会话先登记成账号，再按账号建队。同步会听页面桥，不占 e.mu 以外的引擎锁。
-	e.syncExtensionAccounts()
 	return nil
 }
 
@@ -267,36 +254,45 @@ func (e *Engine) claimRun() error {
 func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	e.opts = opts
 	e.washChats = nil
-	e.extWashChats = nil
+	e.pendingDeleteChats = nil
 	e.dlFetch = newResultFetcher(opts)
 	e.starts.Clear()
-	e.agyNoted = false
-	e.noAccountNoted = false
-	e.view = NewQueueView(queue)
-	// 预计算源图哈希：结果若与源图字节相同（平台回显原图）则跳过
-	e.srcHashes = map[string]string{}
-	for _, img := range opts.Images {
-		if data, err := os.ReadFile(img); err == nil {
-			e.srcHashes[img] = images.SHA256(data)
+	e.srcSigs.Clear()
+	e.fissionMu.Lock()
+	e.fissionHashes = nil
+	if opts.Fission && len(opts.FissionKeepPaths) > 0 {
+		for _, keep := range opts.FissionKeepPaths {
+			if sig, err := dedup.Hash(keep); err == nil && !sig.Flat {
+				e.fissionHashes = append(e.fissionHashes, sig.Hash)
+			}
 		}
 	}
+	e.fissionMu.Unlock()
+	e.noAccountNoted = false
+	e.view = NewQueueView(queue)
+	// 源图哈希改为惰性流式计算，避免大批量任务启动前同步读取全部源图。
+	e.srcHashes = nil
+	e.srcHashCache.Clear()
+	e.liveConcurrency = nil
+	e.clearAccountMeta()
 	ctx, cancel := context.WithCancel(ctx)
 	nudge := make(chan struct{}, 1)
 	done := make(chan struct{})
 	e.cancel = cancel
 	e.running = true
 	e.runDone = done
-	e.runBrowsers = make(map[int64]string)
+	e.runBrowsers = make(map[int64]bool)
 	e.wake = nudge
+	e.washBatchKey = strconv.FormatInt(time.Now().UnixNano(), 36)
 	e.mu.Unlock()
 	started := time.Now()
-	e.rotateExtBatch()
 	e.beginLanes()
 
 	defer func() {
 		cancel()
 		e.closeRunBrowsers()
 		e.finishLanes()
+		e.clearAccountMeta()
 		logging.Event(logging.Line{Stage: "queue", Msg: "任务结束", Elapsed: time.Since(started)})
 		e.mu.Lock()
 		e.running = false
@@ -304,7 +300,10 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 			e.runDone = nil
 		}
 		e.washChats = nil
-		e.extWashChats = nil
+		e.pendingDeleteChats = nil
+		e.liveConcurrency = nil
+		e.srcHashCache.Clear()
+		e.srcSigs.Clear()
 		e.cancel = nil
 		if e.wake == nudge {
 			e.wake = nil
@@ -315,19 +314,13 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 
 	logging.SetRun(started.Format("20060102T150405.000"))
 	logging.Event(logging.Line{Stage: "queue", Msg: fmt.Sprintf("任务开始：共 %d 个", len(queue)), Images: len(queue)})
-	onProgress(Progress{Done: 0, Total: len(queue)})
-	e.mu.Lock()
-	refresh := e.refreshAgyUsage
-	e.mu.Unlock()
-	if refresh != nil {
-		for _, task := range queue {
-			if task.Platform == agy.Platform {
-				refresh(ctx)
-				break
-			}
-		}
+	if onProgress == nil {
+		onProgress = func(Progress) {}
 	}
+	onProgress(Progress{Done: 0, Total: len(queue)})
 	runErr := e.runPlatforms(ctx, nudge, queue, onTask, onProgress, attempt)
+	// 批次正常结束后，清理复用的豆包洗图会话历史（仅保留在未取消且全部成功时）。
+	e.flushPendingAutoDelete(ctx)
 	// 跑完或停下时，还排着的都改成已停止。界面和计数共用这一份状态。
 	e.stopLeftovers()
 	return runErr
@@ -352,44 +345,99 @@ func (e *Engine) sendGap(base time.Duration) time.Duration {
 	return JitterWait(base, rand.Float64())
 }
 
-// dispatchLimit 是这一轮允许同时跑的任务数。
-// Concurrency <= 0 时等于当前可用账号名额，跑的过程中账号变多变少都会重算。
-// 正数是手动上限，仍然不会超过可用名额。一个可用账号都没有时，手动上限照旧，自动至少留 1，占位任务还能跑。
-func (e *Engine) dispatchLimit(now time.Time) int {
-	var rows []store.Browser
-	seen := map[string]bool{}
-	for _, platform := range e.opts.Platforms {
-		if seen[platform] {
-			continue
-		}
-		seen[platform] = true
-		rows = append(rows, e.accountsFor(platform)...)
+// SetConcurrency 在任务运行中动态调整单平台并发上限，立即唤醒调度器生效。
+// limit <= 0 表示自动模式默认上限（PlatformInFlight）；正数限制在 [1, MaxPlatformInFlight]。
+func (e *Engine) SetConcurrency(platform string, limit int) {
+	if e == nil || strings.TrimSpace(platform) == "" {
+		return
 	}
-	usable := ParallelSlotsCaps(rows, now, e.caps())
-	if e.opts.Concurrency > 0 {
-		if usable > 0 {
-			return min(e.opts.Concurrency, usable)
-		}
-		return e.opts.Concurrency
+	if limit > MaxPlatformInFlight {
+		limit = MaxPlatformInFlight
 	}
-	if usable < 1 {
-		return 1
+	if limit < 0 {
+		limit = 0
 	}
-	return usable
+	e.mu.Lock()
+	if e.liveConcurrency == nil {
+		e.liveConcurrency = map[string]int{}
+	}
+	e.liveConcurrency[platform] = limit
+	sched := e.activeSched
+	e.mu.Unlock()
+	if sched != nil {
+		sched.ping()
+	}
+	e.Wake()
 }
 
-// slotKey 是调度名额。本机浏览器用自己的 ID。
-// 扩展桥里同一个配置文件的千问和豆包共用一个名额：background.js 每条命令都会 focusTab，
-// 同一个窗口只能有一个前台标签，再开一个标签也抢不到焦点。不同配置文件各有进程和标签，名额分开。
-// 还没登记的负数占位 ID 保持原值，-1 和 -2 不再并成 0。
+// concurrencyLimits 返回该平台的单平台上限与全局并发上限（0 表示不设全局上限）。
+// 仅在未设置运行期单平台覆盖且初始 Concurrency > 0 时启用全局上限（例如手动单并发跨平台串行）。
+func (e *Engine) concurrencyLimits(platform string) (platLimit, globalLimit int) {
+	if e == nil {
+		return PlatformInFlight, 0
+	}
+	e.mu.Lock()
+	if e.liveConcurrency != nil {
+		if v, ok := e.liveConcurrency[platform]; ok {
+			e.mu.Unlock()
+			if v > 0 {
+				return min(v, MaxPlatformInFlight), 0
+			}
+			return PlatformInFlight, 0
+		}
+	}
+	c := e.opts.Concurrency
+	e.mu.Unlock()
+	if c > 0 {
+		lim := min(c, MaxPlatformInFlight)
+		return lim, lim
+	}
+	return PlatformInFlight, 0
+}
+
+func (e *Engine) platformLimit(platform string) int {
+	platLimit, _ := e.concurrencyLimits(platform)
+	return platLimit
+}
+
+func (e *Engine) hasLoginProbe() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	has := e.loginProbe != nil
+	e.mu.Unlock()
+	return has
+}
+
+func (e *Engine) refreshAccountMeta(rows []store.Browser) {
+	if e == nil {
+		return
+	}
+	meta := make(map[int64]accountInfo, len(rows))
+	for _, b := range rows {
+		meta[b.ID] = accountInfo{name: accountLabel(b), port: b.Port}
+	}
+	e.liveMu.Lock()
+	e.acctMeta = meta
+	e.liveMu.Unlock()
+}
+
+func (e *Engine) clearAccountMeta() {
+	if e == nil {
+		return
+	}
+	e.liveMu.Lock()
+	e.acctMeta = nil
+	e.liveMu.Unlock()
+}
+
+// slotKey 是调度名额。每个受管浏览器账号独立使用自己的 ID，负数占位 ID 同样保持原值。
 func (e *Engine) slotKey(id int64) int64 {
-	if e == nil || e.store == nil || id == 0 {
-		return id
-	}
-	return accountSlot(e.store.Browsers(), id)
+	return id
 }
 
-// pickIdleAccount 优先使用 Gemini 剩余额度最多的账号；网页平台仍优先用剩余日额度较少的账号。
+// pickIdleAccount 优先使用当日已用次数较多的健康空闲账号（集中耗尽单号日额度后再切下一号）。
 func (e *Engine) pickIdleAccount(platform string, preferred, avoid int64, busy map[int64]bool, readyAt map[int64]time.Time, now time.Time) (int64, bool) {
 	return e.pickIdleAccountExcept(platform, preferred, avoid, busy, readyAt, now, nil, false)
 }
@@ -398,29 +446,74 @@ func (e *Engine) pickIdleAccountExcept(platform string, preferred, avoid int64, 
 	if e == nil || e.store == nil {
 		return 0, false
 	}
-	all := e.store.Browsers()
+	return e.pickIdleAccountFromRows(e.accountsFor(platform), platform, preferred, avoid, busy, readyAt, nil, nil, nil, now, excluded, preferFirst)
+}
+
+func exitLoadFor(exitKey string, busyExitCount map[string]int) int {
+	if exitKey == "" || len(busyExitCount) == 0 {
+		return 0
+	}
+	return busyExitCount[exitKey]
+}
+
+// pickIdleAccountFromRows 使用已缓存的平台账号快照择优挑选空闲账号：
+// 1. 过滤忙碌、发送间隔中以及同出口错峰/风控退避中的账号，避免共享出口队头阻塞独立代理账号；
+// 2. 仍优先用当日已用次数更高的账号；同额度且均非首选账号时，优先选择当前负载更低的出口以提升并发与降低风控。
+func (e *Engine) pickIdleAccountFromRows(
+	rows []store.Browser,
+	platform string,
+	preferred, avoid int64,
+	busy map[int64]bool,
+	readyAt map[int64]time.Time,
+	exitKeys map[int64]string,
+	exitBlocked func(exitKey string, accountID int64) bool,
+	busyExitCount map[string]int,
+	now time.Time,
+	excluded map[int64]bool,
+	preferFirst bool,
+) (int64, bool) {
+	if e == nil || len(rows) == 0 {
+		return 0, false
+	}
+	capN := e.capFor(platform)
 	var best *store.Browser
-	bestUsed := -1.0
-	for _, b := range e.accountsFor(platform) {
-		if b.ID == avoid || excluded[b.ID] || !openAccount(b, now, e.capFor(platform)) {
+	bestUsed := -1
+	bestExitLoad := 0
+	for i := range rows {
+		b := rows[i]
+		if b.ID == avoid || excluded[b.ID] || !openAccount(b, now, capN) {
 			continue
 		}
-		slot := accountSlot(all, b.ID)
+		slot := b.ID
 		if busy[slot] || now.Before(readyAt[slot]) {
 			continue
 		}
-		if preferFirst && b.ID == preferred && platform != agy.Platform {
+		exitKey := exitKeys[b.ID]
+		if exitKey != "" && exitBlocked != nil && exitBlocked(exitKey, b.ID) {
+			continue
+		}
+		if preferFirst && b.ID == preferred {
 			return b.ID, true
 		}
-		used := float64(b.UsedToday(now))
-		if platform == agy.Platform {
-			used = agyRemaining(e.store, b.ID, now)
+		used := b.UsedToday(now)
+		exitLoad := exitLoadFor(exitKey, busyExitCount)
+		better := best == nil || used > bestUsed
+		if !better && used == bestUsed {
+			if b.ID == preferred {
+				better = true
+			} else if best.ID != preferred {
+				if exitLoad != bestExitLoad {
+					better = exitLoad < bestExitLoad
+				} else {
+					better = b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID)
+				}
+			}
 		}
-		if best == nil || used > bestUsed || (used == bestUsed &&
-			(b.ID == preferred || (best.ID != preferred && (b.LastUsed < best.LastUsed || (b.LastUsed == best.LastUsed && b.ID < best.ID))))) {
+		if better {
 			row := b
 			best = &row
 			bestUsed = used
+			bestExitLoad = exitLoad
 		}
 	}
 	if best == nil {
@@ -582,9 +675,6 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			}
 			continue
 		}
-		if e.holdAgy(&t, err) {
-			return t
-		}
 		if e.maybeRotate(&t, err, time.Now()) {
 			return t
 		}
@@ -604,10 +694,6 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Status = StatusNeedsUser
 			return t
 		}
-		if errors.Is(err, errQianwenLogin) || errors.Is(err, errDoubaoLogin) {
-			t.Status = StatusFailed
-			return t
-		}
 		if kind == faultQuota || kind == faultRate || kind == faultAuth {
 			t.Status = StatusFailed
 			return t
@@ -625,18 +711,20 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 		if t.Attempts >= maxAttempts {
 			break
 		}
-		select {
-		case <-time.After(3 * time.Second):
-		case <-ctx.Done():
-			return stoppedTask(ctx, t)
-		}
 		if switched != "" && t.slot != 0 && e.slotKey(t.BrowserID) != prevSlot {
+			// 立即释放失败账号与并发名额，把 3 秒退避交给调度器按 retryAfter 非阻塞计时。
 			t.rotated = true
 			t.Status = StatusPending
 			t.Reassigned = switched
 			t.ReassignWhy = "失败换号"
 			t.pauseNote = "rotate"
+			t.retryAfter = time.Now().Add(3 * time.Second)
 			return t
+		}
+		select {
+		case <-time.After(3 * time.Second):
+		case <-ctx.Done():
+			return stoppedTask(ctx, t)
 		}
 	}
 	t.Status = StatusFailed
@@ -670,28 +758,34 @@ func stoppedTask(ctx context.Context, t Task) Task {
 	return t
 }
 
+// setTaskPhase 更新运行中任务的执行子阶段并刷新队列快照，供前端在真正开始网页生图后再播放点阵动效。
+func (e *Engine) setTaskPhase(t *Task, phase Phase) {
+	if e == nil || t == nil || t.Phase == phase {
+		return
+	}
+	t.Phase = phase
+	if e.view != nil && t.Index > 0 {
+		e.view.UpdateBatch(batchMembers(*t))
+	}
+	e.notify()
+}
+
 // attempt 单次尝试：会话准备 → 上传 → 发送 → 等结果 → 保存。
 func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
-	if t != nil && t.Platform == "ChatGPT" {
-		return e.attemptChatGPT(ctx, t)
+	if !t.submitted && !t.everSent {
+		t.noUse = true
 	}
-	if t != nil && t.Platform == agy.Platform {
-		return e.attemptAntigravity(ctx, t)
-	}
-	if e.useExtension(t.Platform) && !e.chromeAccount(t.BrowserID) {
-		if t.Platform == "豆包" {
-			return e.attemptDoubaoExtension(ctx, t)
-		}
-		return e.attemptQianwenExtension(ctx, t)
+	if t.submitted {
+		e.setTaskPhase(t, PhaseGenerating)
+	} else {
+		e.setTaskPhase(t, PhasePreparing)
 	}
 	strat := strategy.Factory(t.Platform)
 	if strat == nil {
 		return fmt.Errorf("不支持的平台 %s", t.Platform)
 	}
 	if doubao, ok := strat.(*strategy.Doubao); ok && len(t.batch) > 1 {
-		t.noUse = !t.submitted
-		job := QianwenJob{IdempotencyPrefix: e.extIdempotencyPrefix(t), Images: t.Images, VerifyAttachments: true}
-		cleanup, err := doubao.PrepareWashBatch(t.Images, job.uploadNames())
+		cleanup, err := doubao.PrepareWashBatch(t.Images, washBatchUploadNames(e.washBatchPrefix(t), t.Images))
 		if err != nil {
 			return fmt.Errorf("准备豆包洗图附件: %w", err)
 		}
@@ -738,12 +832,19 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 			sess.Close()
 			e.forgetSession(sess)
 			if attemptErr == nil || errors.Is(attemptErr, context.Canceled) || errors.Is(attemptErr, context.DeadlineExceeded) {
-				attemptErr = fmt.Errorf("%w", heal.ErrCrashed)
+				attemptErr = fmt.Errorf("%w", errHealCrashed)
 			}
 		}
 	}()
-	if e.opts.Wash && t.Platform == "豆包" && e.opts.WaitResult && !sess.IsEgo() {
-		defer func() { e.finishWashChat(sess, len(t.Images), attemptErr == nil && t.submitted && ctx.Err() == nil) }()
+	if e.opts.Wash && t.Platform == "豆包" && e.opts.WaitResult {
+		defer func() {
+			e.finishWashChat(sess, len(t.Images), attemptErr == nil && t.submitted && ctx.Err() == nil)
+			e.maybeAutoDeleteHistory(work, t, sess, attemptErr)
+		}()
+	} else {
+		defer func() {
+			e.maybeAutoDeleteHistory(work, t, sess, attemptErr)
+		}()
 	}
 	// 发送前等待（等待页面/登录就绪）
 	if !t.submitted && e.opts.WaitBeforeSend > 0 {
@@ -753,21 +854,21 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 			if ctx.Err() != nil {
 				return fmt.Errorf("已停止")
 			}
-			return fmt.Errorf("%w", heal.ErrCrashed)
+			return fmt.Errorf("%w", errHealCrashed)
 		}
 	}
 	if !t.submitted {
-		if row, ok := e.browserByID(t.BrowserID); ok && row.ExtAccount == "" {
+		if row, ok := e.browserByID(t.BrowserID); ok {
 			if state, stateErr := sess.LoginState(); stateErr == nil {
 				switch state {
 				case "out":
-					e.applyLogin(row, heal.StateOut)
+					e.applyLogin(row, loginStateOut)
 					return fmt.Errorf("未登录")
 				case "challenge":
-					e.applyLogin(row, heal.StateChallenge)
+					e.applyLogin(row, loginStateChallenge)
 					return errNeedsVerify
 				case "in":
-					e.applyLogin(row, heal.StateIn)
+					e.applyLogin(row, loginStateIn)
 				}
 			}
 		}
@@ -789,11 +890,13 @@ func (e *Engine) submitTask(ctx context.Context, t *Task, strat strategy.Strateg
 		return nil
 	}
 	if t.sentURL != "" {
-		strategy.FocusQwenChat(sess, t.sentURL, t.sentWrap)
+		strategy.FocusQwenChatFor(sess, t.Platform, t.sentURL, t.sentWrap)
 		t.submitted = true
+		e.setTaskPhase(t, PhaseGenerating)
 		return nil
 	}
 	if t.submitted {
+		e.setTaskPhase(t, PhaseGenerating)
 		return nil
 	}
 	if ctx == nil {
@@ -837,6 +940,9 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 		sess.ResetChat()
 		logging.Log.Debugf("#%d 复用已完成的豆包洗图对话", t.Index)
 	} else {
+		if sess != nil {
+			e.deletePendingWashChat(sess.Ctx(), sess)
+		}
 		if err := strategy.FreshChat(sess); err != nil {
 			return fmt.Errorf("新对话: %w", err)
 		}
@@ -845,41 +951,156 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	if err := strat.CleanComposer(sess); err != nil {
 		return fmt.Errorf("清理输入区: %w", err)
 	}
+	prompt, targetRatio := e.applyOutputRatio(t, strat, sess)
 	// 上传源图
 	if len(t.Images) > 0 {
+		e.setTaskPhase(t, PhaseUploading)
 		if err := strat.UploadFiles(sess, t.Images); err != nil {
 			return fmt.Errorf("上传: %w", err)
 		}
 		e.traceTask(t, "upload", fmt.Sprintf("#%d 已上传 %d 张源图", t.Index, len(t.Images)), len(t.Images), 0, nil)
+		// 上传参考图后页面可能重绘输入区工具栏（豆包/千问/千问国际），再确认一次图像模式与原生比例（已一致时零点击秒过）。
+		if targetRatio != "" {
+			if ensurer, ok := strat.(interface{ EnsureImageMode(*cdp.Session) error }); ok {
+				if err := ensurer.EnsureImageMode(sess); err != nil {
+					return fmt.Errorf("确认图像模式: %w", err)
+				}
+			}
+			if setter, ok := strat.(interface {
+				SetOutputRatio(*cdp.Session, string) (bool, string)
+			}); ok {
+				if applied, why := setter.SetOutputRatio(sess, targetRatio); applied {
+					if e.opts.OutputSize.NativeRatio(t.Platform) == targetRatio {
+						prompt = strings.TrimSpace(t.Prompt)
+					}
+				} else if why != "" {
+					logging.Log.Debugf("#%d 上传源图后%s原生比例未恢复 %s（%s）", t.Index, t.Platform, targetRatio, why)
+				}
+			}
+		}
 	}
 	// 上传预览就绪后再标记，避免把源图回显当作生成结果。
 	if err := strat.MarkTask(sess); err != nil {
 		return err
 	}
-	prompt := e.opts.OutputSize.prompt(t.Platform, t.Prompt)
-	if reuse {
+	if reuse && len(t.batch) <= 1 {
 		if err := strategy.MarkDoubaoTurn(sess, prompt); err != nil {
 			return err
 		}
 	}
 	// 发送提示词
-	t.noUse = false
 	if err := strat.SendPrompt(sess, prompt); err != nil {
 		if adoptSentChat(t, sess) {
 			t.submitted = true
+			t.everSent = true
+			t.noUse = false
 			t.sentAt = time.Now()
+			e.setTaskPhase(t, PhaseGenerating)
 			return nil
 		}
-		if len(t.batch) > 1 && !errors.Is(err, strategy.ErrSubmissionUncertain) {
+		if errors.Is(err, strategy.ErrSubmissionUncertain) {
+			t.everSent = true
+			t.noUse = false
+		} else if !t.everSent {
 			t.noUse = true
 		}
 		return fmt.Errorf("发送: %w", err)
 	}
 	adoptSentChat(t, sess)
 	t.submitted = true
+	t.everSent = true
+	t.noUse = false
 	t.sentAt = time.Now()
+	e.setTaskPhase(t, PhaseGenerating)
 	e.traceTask(t, "submit", fmt.Sprintf("#%d %s 已提交", t.Index, e.accountName(t.BrowserID)), 0, 0, nil)
 	return nil
+}
+
+// applyOutputRatio 在网页端设置平台原生「比例」控件，并返回发送用提示词与期望的原生比例（供上传源图后复核）。
+func (e *Engine) applyOutputRatio(t *Task, strat strategy.Strategy, sess *cdp.Session) (string, string) {
+	prompt := e.opts.OutputSize.prompt(t.Platform, t.Prompt)
+	setter, ok := strat.(interface {
+		SetOutputRatio(*cdp.Session, string) (bool, string)
+	})
+	if !ok {
+		return prompt, ""
+	}
+	if ratio := e.opts.OutputSize.NativeRatio(t.Platform); ratio != "" {
+		if applied, why := setter.SetOutputRatio(sess, ratio); applied {
+			prompt = strings.TrimSpace(t.Prompt)
+			logging.Log.Info("#%d 已设置%s原生比例 %s", t.Index, t.Platform, ratio)
+		} else if why != "" {
+			logging.Log.Info("#%d %s原生比例未设置（%s），改用提示词比例", t.Index, t.Platform, why)
+		}
+		if supportsOutputSize(t.Platform) {
+			return prompt, ratio
+		}
+		return prompt, ""
+	}
+	if t.Platform == "豆包" {
+		if rw, rh, err := e.opts.OutputSize.ratio(); err == nil && rw > 0 {
+			if closest := ClosestNativeRatio(rw, rh); closest != "" {
+				if applied, why := setter.SetOutputRatio(sess, closest); applied {
+					logging.Log.Info("#%d 已按目标比例最接近的豆包原生比例设置 %s", t.Index, closest)
+				} else if why != "" {
+					logging.Log.Debugf("#%d 豆包原生比例未设置（%s）", t.Index, why)
+				}
+				return prompt, closest
+			}
+		}
+		if applied, why := setter.SetOutputRatio(sess, "自动"); applied {
+			logging.Log.Debugf("#%d 豆包原生比例已确认自动", t.Index)
+		} else if why != "" {
+			logging.Log.Debugf("#%d 豆包原生比例重置自动未生效（%s）", t.Index, why)
+		}
+		return prompt, "自动"
+	}
+	if t.Platform != "千问" && t.Platform != "千问国际" {
+		return prompt, ""
+	}
+	if rw, rh, err := e.opts.OutputSize.ratio(); err == nil && rw > 0 {
+		if closest := ClosestNativeRatio(rw, rh); closest != "" {
+			if applied, why := setter.SetOutputRatio(sess, closest); applied {
+				logging.Log.Info("#%d 已按目标比例最接近的%s原生比例设置 %s", t.Index, t.Platform, closest)
+			} else if why != "" {
+				logging.Log.Debugf("#%d %s原生比例未设置（%s）", t.Index, t.Platform, why)
+			}
+			return prompt, closest
+		}
+		return prompt, ""
+	}
+	if t.Platform == "千问" {
+		if ratio := strings.TrimSpace(e.opts.QianwenOutputRatio); ratio != "" {
+			if applied, why := setter.SetOutputRatio(sess, ratio); applied {
+				logging.Log.Info("#%d 已设置千问原生比例 %s", t.Index, ratio)
+			} else if why != "" {
+				logging.Log.Debugf("#%d 千问原生比例未设置（%s）", t.Index, why)
+			}
+			return prompt, ratio
+		}
+	}
+	if len(t.Images) > 0 {
+		if ratio := closestImageNativeRatio(t.Images[0]); ratio != "" {
+			if applied, why := setter.SetOutputRatio(sess, ratio); applied {
+				logging.Log.Info("#%d 已按源图画幅设置%s原生比例 %s", t.Index, t.Platform, ratio)
+			} else if why != "" {
+				logging.Log.Debugf("#%d %s原生比例未设置（%s）", t.Index, t.Platform, why)
+			}
+			return prompt, ratio
+		}
+		return prompt, ""
+	}
+	// 纯文生图避免继承上一单发送前失败遗留在空白页的横屏/方图比例，回正至默认比例（千问 3:4，千问国际 16:9）。
+	defaultRatio := "3:4"
+	if t.Platform == "千问国际" {
+		defaultRatio = "16:9"
+	}
+	if applied, why := setter.SetOutputRatio(sess, defaultRatio); applied {
+		logging.Log.Debugf("#%d %s文生图原生比例已确认 %s", t.Index, t.Platform, defaultRatio)
+	} else if why != "" {
+		logging.Log.Debugf("#%d %s文生图原生比例重置未生效（%s）", t.Index, t.Platform, why)
+	}
+	return prompt, defaultRatio
 }
 
 func adoptSentChat(t *Task, sess *cdp.Session) bool {
@@ -916,7 +1137,7 @@ func (e *Engine) resultWait() time.Duration {
 
 func (e *Engine) resultWaitFor(t *Task) time.Duration {
 	d := e.resultWait()
-	if t != nil && t.Platform == "千问" && t.Attempts > 1 && d < qianwenRetryWait {
+	if t != nil && (t.Platform == "千问" || t.Platform == "千问国际") && t.Attempts > 1 && d < qianwenRetryWait {
 		return qianwenRetryWait
 	}
 	return d
@@ -991,6 +1212,9 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 			logging.Log.Debugf("#%d 截获 %d 个候选结果", t.Index, candidates)
 		}
 		saveAt := time.Now()
+		if len(results) > 0 {
+			e.setTaskPhase(t, PhaseDownloading)
+		}
 		if len(t.batch) > 1 {
 			indices := make([]int, len(results))
 			for i, result := range results {
@@ -1015,8 +1239,9 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 		if len(saved) > 0 || t.matchedSavedResult {
 			return nil
 		}
+		e.setTaskPhase(t, PhaseGenerating)
 		if time.Since(lastProgress) >= stallAfter {
-			return fmt.Errorf("%w", heal.ErrStuck)
+			return fmt.Errorf("%w", errHealStuck)
 		}
 		logging.Log.Debugf("#%d 候选暂无有效生成图，继续等待", t.Index)
 		pause := min(1500*time.Millisecond, budget-used)
@@ -1035,41 +1260,13 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 	return waitErrSeen
 }
 
-// browsersOfPlatforms 返回每个平台可用的浏览器。
-// browserBackend=extension 时优先用已连上的扩展账号。还没有会话时用占位 ID，跟以前的单连接一样。
+// browsersOfPlatforms 返回每个平台可用的受管浏览器。
 func (e *Engine) browsersOfPlatforms() map[string][]int64 {
-	if e.useExtension("千问") && !e.useBoundExtension("千问") {
-		browsersOf := map[string][]int64{}
-		if e.store != nil {
-			for _, b := range e.store.Browsers() {
-				if b.Platform == agy.Platform || b.Platform == "ChatGPT" {
-					if b.ExtAccount == "" {
-						browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
-					}
-					continue
-				}
-				if b.ExtAccount == "" {
-					continue
-				}
-				browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
-			}
-		}
-		if len(browsersOf["豆包"]) == 0 {
-			browsersOf["豆包"] = []int64{-1}
-		}
-		if len(browsersOf["千问"]) == 0 {
-			browsersOf["千问"] = []int64{-2}
-		}
-		return browsersOf
-	}
 	browsersOf := map[string][]int64{}
 	if e.store == nil {
 		return browsersOf
 	}
 	for _, b := range e.store.Browsers() {
-		if b.ExtAccount != "" {
-			continue
-		}
 		browsersOf[b.Platform] = append(browsersOf[b.Platform], b.ID)
 	}
 	return browsersOf
@@ -1091,7 +1288,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	e.mu.Lock()
 	if s, ok := e.sessions[key]; ok {
 		if e.runBrowsers != nil {
-			e.runBrowsers[browserID] = ""
+			e.runBrowsers[browserID] = true
 		}
 		e.mu.Unlock()
 		return s, nil
@@ -1106,9 +1303,14 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 		return nil, fmt.Errorf("浏览器 %d 不存在", browserID)
 	}
 	onLog := func(line string) {
-		if len(line) > 0 && len(line) < 400 {
-			logging.Log.Debugf("[页面] %s", line)
+		if len(line) == 0 || len(line) >= 400 {
+			return
 		}
+		if strings.Contains(line, "was preloaded using link preload but not used") ||
+			strings.Contains(line, "is ignored when delivered in a report-only policy") {
+			return
+		}
+		logging.Log.Debugf("[页面] %s", line)
 	}
 	home := ""
 	if strat != nil {
@@ -1120,7 +1322,7 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 	}
 	e.mu.Lock()
 	if e.runBrowsers != nil {
-		e.runBrowsers[browserID] = ""
+		e.runBrowsers[browserID] = true
 	}
 	e.mu.Unlock()
 	client, clientErr := cdp.NewClient(ws)
@@ -1134,9 +1336,6 @@ func (e *Engine) session(ctx context.Context, platform string, browserID int64, 
 		return nil, fmt.Errorf("打开页面: %w", err)
 	}
 	context.AfterFunc(sess.Ctx(), client.Close)
-	if err := captcha.PreparePage(sess); err != nil {
-		return nil, closeFailedSession(ctx, sess, err)
-	}
 	// 注入平台 hook + 验证码求解
 	if err := strat.InstallHook(sess); err != nil {
 		return nil, closeFailedSession(ctx, sess, err)
@@ -1164,215 +1363,162 @@ func (e *Engine) closeRunBrowsers() {
 	e.mu.Lock()
 	ids := e.runBrowsers
 	e.runBrowsers = nil
-	// 已装页面桥的绑定浏览器保活（无头或显示窗口都算）：下一批任务直接复用，不再整轮冷启动。
-	alive := e.keepAlive
-	if alive == nil && e.browsers != nil {
-		browsers := e.browsers
-		alive = func(id int64) bool { dir := e.firefoxAddons[id]; return dir != "" && browsers.LoadedAddon(id) == dir }
-	}
-	for id, dir := range ids {
-		if dir == "" || e.firefoxAddons[id] != dir {
-			continue
-		}
-		if alive != nil && alive(id) {
-			if e.idleClose[id] == nil {
-				e.armIdleCloseLocked(id)
-			}
-			delete(ids, id)
-			continue
-		}
-		e.cancelIdleCloseLocked(id)
-		delete(e.firefoxAddons, id)
-	}
 	e.mu.Unlock()
 	var wg sync.WaitGroup
-	for id, dir := range ids {
+	for id := range ids {
 		wg.Go(func() {
-			if dir == "" {
-				e.dropSessions(id)
-			}
+			e.dropSessions(id)
 			if e.browsers != nil {
-				e.browsers.StopWithAddon(id, dir)
+				e.browsers.Stop(id)
 				if e.store != nil {
 					e.store.SetRunning(id, e.browsers.IsRunning(id))
 				}
 			}
-			if dir != "" {
-				_ = os.RemoveAll(dir)
-			}
 		})
 	}
 	wg.Wait()
-	e.trimIdleBrowsers()
 }
 
-// browserIdleClose 是保活浏览器的空闲关闭窗口。
-const browserIdleClose = 15 * time.Minute
-
-type idleBrowser struct {
-	id    int64
-	since time.Time
-	timer *time.Timer
-}
-
-// SetIdleGuard 注册「账号正被界面使用」的判断；查看面板盯着时不做空闲关闭。
-func (e *Engine) SetIdleGuard(fn func(id int64) bool) {
-	if e == nil {
-		return
-	}
-	e.mu.Lock()
-	e.idleGuard = fn
-	e.mu.Unlock()
-}
-
-func (e *Engine) armIdleClose(id int64) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.armIdleCloseLocked(id)
-}
-
-func (e *Engine) armIdleCloseLocked(id int64) {
-	if e.closing || e.firefoxAddons[id] == "" {
-		return
-	}
-	delay := e.idleAfter
-	if delay <= 0 {
-		delay = browserIdleClose
-	}
-	e.cancelIdleCloseLocked(id)
-	if e.idleClose == nil {
-		e.idleClose = map[int64]*idleBrowser{}
-	}
-	idle := &idleBrowser{id: id, since: time.Now()}
-	e.idleClose[id] = idle
-	idle.timer = time.AfterFunc(delay, func() { e.closeIdleBrowser(idle, false) })
-}
-
-func (e *Engine) cancelIdleCloseLocked(id int64) {
-	if t := e.idleClose[id]; t != nil {
-		t.timer.Stop()
-		delete(e.idleClose, id)
-	}
-}
-
-// Only bound web browsers share this budget. Manual viewers and running tasks retain ownership.
-func (e *Engine) boundBrowserLimitLocked() int {
-	platforms := 0
-	for _, name := range []string{"豆包", "千问"} {
-		if slices.Contains(e.opts.Platforms, name) {
-			platforms++
+func (e *Engine) accountProxy(id int64) string {
+	if row, ok := e.browserByID(id); ok && strings.TrimSpace(row.Proxy) != "" {
+		if norm, valid := browser.NormalizeProxy(row.Proxy); valid {
+			return norm
 		}
 	}
-	limit := PlatformInFlight * max(1, platforms)
-	if e.opts.Concurrency > 0 {
-		return min(limit, e.opts.Concurrency)
-	}
-	return limit
+	return browser.CurrentProxyServer()
 }
 
-func (e *Engine) trimIdleBrowsers() {
-	e.mu.Lock()
-	if len(e.firefoxAddons) <= e.boundBrowserLimitLocked() || e.closing {
-		e.mu.Unlock()
-		return
+func sharedExitKeyFromRows(all []store.Browser, row store.Browser, platform, globalProxy string) string {
+	if row.ID <= 0 || len(browser.SamePlatformSharedExit(all, row, globalProxy)) == 0 {
+		return ""
 	}
-	idle := make([]*idleBrowser, 0, len(e.idleClose))
-	for _, b := range e.idleClose {
-		idle = append(idle, b)
+	proxy := globalProxy
+	if strings.TrimSpace(row.Proxy) != "" {
+		if norm, valid := browser.NormalizeProxy(row.Proxy); valid {
+			proxy = norm
+		}
 	}
-	e.mu.Unlock()
-	slices.SortFunc(idle, func(a, b *idleBrowser) int { return a.since.Compare(b.since) })
-	for _, b := range idle {
-		e.closeIdleBrowser(b, true)
+	key := browser.NormalizeProxyKey(proxy)
+	if key == "" {
+		key = "direct"
 	}
+	return platform + "|" + key
 }
 
-func (e *Engine) closeIdleBrowser(idle *idleBrowser, overBudget bool) {
-	id := idle.id
-	e.mu.Lock()
-	guard := e.idleGuard
-	e.mu.Unlock()
-	// The viewer takes the UI lock. Recheck the lease after releasing that lock.
-	viewed := guard != nil && guard(id)
-	e.mu.Lock()
-	if e.closing || e.idleClose[id] != idle || (overBudget && len(e.firefoxAddons) <= e.boundBrowserLimitLocked()) {
-		e.mu.Unlock()
-		return
+func buildPlatformExitKeys(all, platformRows []store.Browser, platform string) map[int64]string {
+	if len(platformRows) < 2 {
+		return nil
 	}
-	if e.active[id] || e.manual[id] || viewed {
-		if !overBudget {
-			e.armIdleCloseLocked(id)
+	globalProxy := browser.CurrentProxyServer()
+	var out map[int64]string
+	for _, b := range platformRows {
+		if b.Disabled {
+			continue
 		}
-		e.mu.Unlock()
-		return
-	}
-	e.cancelIdleCloseLocked(id)
-	dir := e.firefoxAddons[id]
-	delete(e.firefoxAddons, id)
-	if e.runBrowsers[id] == dir {
-		delete(e.runBrowsers, id)
-	}
-	e.mu.Unlock()
-	// The bound page bridge does not own direct-driver sessions. A later start may
-	// already have installed a new bridge for this account while we were unlocked.
-	if e.browsers != nil {
-		e.browsers.StopWithAddon(id, dir)
-		if e.store != nil {
-			e.store.SetRunning(id, e.browsers.IsRunning(id))
-		}
-	}
-	if dir != "" {
-		_ = os.RemoveAll(dir)
-	}
-	name := strconv.FormatInt(id, 10)
-	if e.store != nil {
-		for _, b := range e.store.Browsers() {
-			if b.ID == id {
-				name = b.Name
-				break
+		if key := sharedExitKeyFromRows(all, b, platform, globalProxy); key != "" {
+			if out == nil {
+				out = make(map[int64]string, len(platformRows))
 			}
+			out[b.ID] = key
 		}
 	}
-	logging.Log.Info("已回收账号[%s] 的空闲页面桥", name)
+	return out
+}
+
+func (e *Engine) sharedExitKey(platform string, id int64) string {
+	if e == nil || e.store == nil || id <= 0 {
+		return ""
+	}
+	all := e.store.Browsers()
+	row := findBrowser(all, id)
+	if row == nil {
+		return ""
+	}
+	return sharedExitKeyFromRows(all, *row, platform, browser.CurrentProxyServer())
+}
+
+// sourceHash 按需流式计算并缓存源图 SHA256，用于结果回声过滤。
+// 若测试通过 e.srcHashes 预先注入哈希，则优先使用注入值。
+func (e *Engine) sourceHash(path string) string {
+	if e == nil || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	if e.srcHashes != nil {
+		if h, ok := e.srcHashes[path]; ok {
+			return h
+		}
+	}
+	if cached, ok := e.srcHashCache.Load(path); ok {
+		return cached.(string)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	h := sha256.New()
+	_, copyErr := io.Copy(h, f)
+	closeErr := f.Close()
+	if copyErr != nil || closeErr != nil {
+		return ""
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	e.srcHashCache.Store(path, sum)
+	return sum
+}
+
+func (e *Engine) washBatchPrefix(t *Task) string {
+	e.mu.Lock()
+	if e.washBatchKey == "" {
+		e.washBatchKey = strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	key := e.washBatchKey
+	e.mu.Unlock()
+	if t == nil {
+		return key
+	}
+	base := key + ":" + strconv.Itoa(t.Index)
+	if t.sendSeq <= 0 {
+		return base
+	}
+	return base + ":" + strconv.Itoa(t.sendSeq)
+}
+
+func (e *Engine) cacheSourceSignature(path string, img image.Image) {
+	if e == nil || img == nil || strings.TrimSpace(path) == "" {
+		return
+	}
+	if _, ok := e.srcSigs.Load(path); ok {
+		return
+	}
+	e.srcSigs.Store(path, dedup.PerceptualHashImage(img))
+}
+
+func (e *Engine) sourceSignature(path string) *dedup.Signature {
+	if e == nil || strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if cached, ok := e.srcSigs.Load(path); ok {
+		sig := cached.(dedup.Signature)
+		return &sig
+	}
+	sig, err := dedup.PerceptualHashFile(path)
+	if err != nil {
+		return nil
+	}
+	e.srcSigs.Store(path, sig)
+	return &sig
 }
 
 type failedSession interface {
-	Ctx() context.Context
-	IsEgo() bool
-	EgoEvaluate(string, any) error
-	HandOff() error
 	Close()
 }
 
 func closeFailedSession(ctx context.Context, sess failedSession, err error) error {
-	if ctx.Err() == nil && errors.Is(err, captcha.ErrVerificationRequired) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		if sess.IsEgo() {
-			manualErr := captcha.SetManual(sess)
-			handOffErr := sess.HandOff()
-			if errors.Is(handOffErr, context.DeadlineExceeded) && ctx.Err() == nil {
-				// 交还操作的独立超时不表示整批任务已取消。
-				handOffErr = fmt.Errorf("交还浏览器超时: %v", handOffErr)
-			}
-			err = errors.Join(err, manualErr, handOffErr)
-		}
-	}
 	sess.Close()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
 	return err
-}
-
-func (e *Engine) kickAgyUsage(id int64) {
-	if e == nil || id <= 0 {
-		return
-	}
-	e.mu.Lock()
-	fn := e.onAgyDone
-	e.mu.Unlock()
-	if fn != nil {
-		fn(id)
-	}
 }
 
 func (e *Engine) accountBusy(id int64) bool {
@@ -1397,14 +1543,8 @@ func (e *Engine) setActive(id int64, on bool) {
 		e.active[id] = true
 	} else {
 		delete(e.active, id)
-		if dir := e.runBrowsers[id]; dir != "" && dir == e.firefoxAddons[id] {
-			e.armIdleCloseLocked(id)
-		}
 	}
 	e.mu.Unlock()
-	if !on {
-		e.trimIdleBrowsers()
-	}
 }
 
 // ActiveAccounts 是当前正在跑任务的账号。
@@ -1421,65 +1561,6 @@ func (e *Engine) ActiveAccounts() map[int64]bool {
 	return out
 }
 
-// PairState 告诉界面自动对接有没有在听、扩展最近有没有来取令牌。
-func (e *Engine) PairState() (listening, paired bool) {
-	if e == nil {
-		return false, false
-	}
-	e.extMu.Lock()
-	p := e.pair
-	e.extMu.Unlock()
-	if p == nil {
-		return false, false
-	}
-	hit := p.LastHit()
-	return true, !hit.IsZero() && time.Since(hit) < 2*time.Minute
-}
-
-// ServeLocal 启动页面桥和固定端口上的令牌发现。桥没听成时仍然尝试发现端口。
-func (e *Engine) ServeLocal() error {
-	if e == nil {
-		return nil
-	}
-	bridgeErr := error(nil)
-	if _, err := e.extensionServer(); err != nil {
-		bridgeErr = err
-		logging.Log.Warning("页面桥未监听: %v", err)
-	}
-	e.extMu.Lock()
-	already := e.pair != nil
-	e.extMu.Unlock()
-	if !already {
-		pair, err := extbridge.StartPair(e.pairInfo)
-		e.extMu.Lock()
-		if err != nil {
-			e.pairErr = err
-		} else {
-			e.pair = pair
-			e.pairErr = nil
-		}
-		e.extMu.Unlock()
-		if err != nil {
-			logging.Log.Warning("自动对接未启动: %v", err)
-			if bridgeErr != nil {
-				return bridgeErr
-			}
-			return err
-		}
-		logging.Log.Info("页面桥自动对接监听 127.0.0.1:%s", extbridge.PairPort)
-	}
-	return bridgeErr
-}
-
-func (e *Engine) pairInfo() extbridge.PairInfo {
-	e.extMu.Lock()
-	defer e.extMu.Unlock()
-	if e.extSrv == nil {
-		return extbridge.PairInfo{}
-	}
-	return e.extSrv.PairInfo()
-}
-
 func (e *Engine) forgetSession(sess *cdp.Session) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1493,16 +1574,24 @@ func (e *Engine) forgetSession(sess *cdp.Session) {
 // 限制解码分配，仍允许 8K 结果图。
 const maxResultPixels = 32 * 1024 * 1024
 
-func validRawResult(data []byte) bool {
+func decodeValidRawResult(data []byte) (image.Image, string, bool) {
 	if !images.AcceptGenerated(data) {
-		return false
+		return nil, "", false
 	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || cfg.Height <= 0 || int64(cfg.Width) > maxResultPixels/int64(cfg.Height) {
-		return false
+		return nil, "", false
 	}
-	_, _, err = image.Decode(bytes.NewReader(data))
-	return err == nil
+	decoded, format, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", false
+	}
+	return decoded, format, true
+}
+
+func validRawResult(data []byte) bool {
+	_, _, ok := decodeValidRawResult(data)
+	return ok
 }
 
 // prefetchResults 在同一页里并行下载多张结果。单张仍走原来的逐张抓取。
@@ -1511,7 +1600,7 @@ func prefetchResults(strat strategy.Strategy, sess *cdp.Session, results []strat
 	fetch, ok := strat.(interface {
 		FetchResultList(*cdp.Session, []string) [][]byte
 	})
-	if !ok || sess == nil || sess.IsEgo() {
+	if !ok || sess == nil {
 		return out
 	}
 	var urls []string
@@ -1576,6 +1665,320 @@ func (e *Engine) fetchViaDownload(ctx context.Context, rawURL string) ([]byte, e
 	return fetcher.FetchBytes(ctx, rawURL, nil)
 }
 
+type preparedResult struct {
+	index    int
+	result   strategy.Result
+	data     []byte
+	decoded  image.Image
+	format   string
+	cfg      image.Config
+	hash     string
+	usingRaw bool
+}
+
+func (e *Engine) selectAndReserveFissionCandidate(sigs []fissionCandidate, motherSig *dedup.Signature) (int, uint64, bool) {
+	e.fissionMu.Lock()
+	defer e.fissionMu.Unlock()
+	chosen := pickBestFissionCandidate(sigs, e.fissionHashes, motherSig)
+	if chosen < 0 {
+		chosen = 0
+	}
+	for _, s := range sigs {
+		if s.index == chosen {
+			if !s.sig.Flat {
+				e.fissionHashes = append(e.fissionHashes, s.sig.Hash)
+				return chosen, s.sig.Hash, true
+			}
+			break
+		}
+	}
+	return chosen, 0, false
+}
+
+func (e *Engine) reserveFissionHash(decoded image.Image) (uint64, bool) {
+	if decoded == nil {
+		return 0, false
+	}
+	sig := dedup.PerceptualHashImage(decoded)
+	if sig.Flat {
+		return 0, false
+	}
+	e.fissionMu.Lock()
+	e.fissionHashes = append(e.fissionHashes, sig.Hash)
+	e.fissionMu.Unlock()
+	return sig.Hash, true
+}
+
+func (e *Engine) releaseFissionHash(hash uint64) {
+	e.fissionMu.Lock()
+	defer e.fissionMu.Unlock()
+	for i := len(e.fissionHashes) - 1; i >= 0; i-- {
+		if e.fissionHashes[i] == hash {
+			e.fissionHashes = append(e.fissionHashes[:i], e.fissionHashes[i+1:]...)
+			return
+		}
+	}
+}
+
+func (e *Engine) prepareResultCandidate(ctx context.Context, i int, r strategy.Result, batched [][]byte, t *Task, strat strategy.Strategy, sess *cdp.Session) (*preparedResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	data := r.Data
+	decoded := r.Decoded
+	format := r.Format
+	var err error
+	usingRaw := false
+	if data == nil && i < len(batched) && batched[i] != nil {
+		data = batched[i]
+		if r.RawURL != "" {
+			if img, fmtName, ok := decodeValidRawResult(data); ok {
+				usingRaw, decoded, format = true, img, fmtName
+			} else {
+				data = nil
+			}
+		}
+	}
+	if data == nil && r.RawURL != "" {
+		if fetch, ok := strat.(interface {
+			FetchRawResultBytes(*cdp.Session, string) ([]byte, error)
+		}); ok {
+			data, err = fetch.FetchRawResultBytes(sess, r.RawURL)
+		} else {
+			data, err = strat.FetchResultBytes(sess, r.RawURL)
+		}
+		if err == nil {
+			if img, fmtName, ok := decodeValidRawResult(data); ok {
+				usingRaw, decoded, format = true, img, fmtName
+			} else {
+				data = nil
+			}
+		}
+	}
+	if data == nil {
+		data, err = strat.FetchResultBytes(sess, r.URL)
+	}
+	if data == nil && ctx.Err() == nil {
+		// 页面内 fetch 拿不到时，用下载引擎按地址再取一次：带重试、站点并发和限速。
+		if via, dlErr := e.fetchViaDownload(ctx, r.URL); dlErr == nil {
+			data, err = via, nil
+			logging.Log.Debugf("候选图 #%d 页面取回失败，改用下载引擎", i+1)
+		}
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		logging.Log.Warning("候选图 #%d 抓取失败: %s", i+1, strings.SplitN(err.Error(), "?", 2)[0])
+		if parsed, parseErr := url.Parse(r.URL); parseErr == nil {
+			path := []rune(parsed.EscapedPath())
+			if len(path) > 220 {
+				path = path[:220]
+			}
+			logging.Log.Debugf("候选图 #%d URL: scheme=%s; host=%s; path=%s", i+1, parsed.Scheme, parsed.Host, string(path))
+		}
+		return nil, nil
+	}
+	if !images.IsValidImageBytes(data) {
+		if r.Data != nil {
+			return nil, fmt.Errorf("网页下载结果 #%d 校验失败: 文件为空或图片格式不支持", i+1)
+		}
+		logging.Log.Debugf("候选图 #%d 不是有效图片", i+1)
+		return nil, nil
+	}
+	var cfg image.Config
+	if decoded != nil && format != "" {
+		b := decoded.Bounds()
+		cfg = image.Config{Width: b.Dx(), Height: b.Dy()}
+	} else {
+		cfg, format, err = image.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
+			if r.Data != nil {
+				return nil, fmt.Errorf("网页下载结果 #%d 校验失败: 无法解析图片格式: %w", i+1, err)
+			}
+			logging.Log.Debugf("候选图 #%d 无法解析图片格式", i+1)
+			return nil, nil
+		}
+		if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width) > maxResultPixels/int64(cfg.Height) {
+			if r.Data != nil {
+				return nil, fmt.Errorf("网页下载结果 #%d 校验失败: 图片尺寸超出上限: %dx%d", i+1, cfg.Width, cfg.Height)
+			}
+			logging.Log.Debugf("候选图 #%d 图片尺寸超出上限: %dx%d", i+1, cfg.Width, cfg.Height)
+			return nil, nil
+		}
+		decoded, _, err = image.Decode(bytes.NewReader(data))
+		if err != nil {
+			if r.Data != nil {
+				return nil, fmt.Errorf("网页下载结果 #%d 校验失败: 无法完整解码: %w", i+1, err)
+			}
+			logging.Log.Debugf("候选图 #%d 无法完整解码", i+1)
+			return nil, nil
+		}
+	}
+	if len(data) < images.MinGeneratedBytes || cfg.Width < images.MinGeneratedSide || cfg.Height < images.MinGeneratedSide {
+		logging.Log.Debugf("候选图 #%d 不是生成图（%d 字节，%dx%d），已忽略", i+1, len(data), cfg.Width, cfg.Height)
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	hash := images.SHA256(data)
+	if t.savedHashes[hash] {
+		t.matchedSavedResult = true
+		return nil, nil
+	}
+	for _, source := range t.Images {
+		if h := e.sourceHash(source); h != "" && h == hash {
+			logging.Log.Debugf("候选图 #%d 与本任务的源图相同", i+1)
+			return nil, nil
+		}
+	}
+	return &preparedResult{
+		index:    i,
+		result:   r,
+		data:     data,
+		decoded:  decoded,
+		format:   format,
+		cfg:      cfg,
+		hash:     hash,
+		usingRaw: usingRaw,
+	}, nil
+}
+
+// prepareInMemoryCandidates 并行解码已在内存中的多张候选结果（不触碰 CDP 会话或任务可变字段），
+// 用于加速豆包 4 图自由生图与裂变多候选的解码/校验阶段。
+func (e *Engine) prepareInMemoryCandidates(ctx context.Context, results []strategy.Result, batched [][]byte) ([]*preparedResult, []error, []bool) {
+	n := len(results)
+	cands := make([]*preparedResult, n)
+	errs := make([]error, n)
+	handled := make([]bool, n)
+	var workIdx []int
+	for i, r := range results {
+		if r.Data != nil || (i < len(batched) && batched[i] != nil) {
+			workIdx = append(workIdx, i)
+		}
+	}
+	if len(workIdx) < 2 {
+		return cands, errs, handled
+	}
+	jobs := make(chan int, len(workIdx))
+	for _, i := range workIdx {
+		jobs <- i
+	}
+	close(jobs)
+	workers := min(4, max(1, runtime.NumCPU()), len(workIdx))
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			for i := range jobs {
+				if err := ctx.Err(); err != nil {
+					errs[i] = err
+					handled[i] = true
+					continue
+				}
+				r := results[i]
+				data := r.Data
+				decoded := r.Decoded
+				format := r.Format
+				usingRaw := false
+				if data == nil && i < len(batched) && batched[i] != nil {
+					data = batched[i]
+					if r.RawURL != "" {
+						if img, fmtName, ok := decodeValidRawResult(data); ok {
+							usingRaw, decoded, format = true, img, fmtName
+						} else {
+							// RawURL 解码无效时交回主循环走 FetchResultBytes 兜底
+							continue
+						}
+					}
+				}
+				if data == nil {
+					continue
+				}
+				handled[i] = true
+				if !images.IsValidImageBytes(data) {
+					if r.Data != nil {
+						errs[i] = fmt.Errorf("网页下载结果 #%d 校验失败: 文件为空或图片格式不支持", i+1)
+					} else {
+						logging.Log.Debugf("候选图 #%d 不是有效图片", i+1)
+					}
+					continue
+				}
+				var cfg image.Config
+				var err error
+				if decoded != nil && format != "" {
+					b := decoded.Bounds()
+					cfg = image.Config{Width: b.Dx(), Height: b.Dy()}
+				} else {
+					cfg, format, err = image.DecodeConfig(bytes.NewReader(data))
+					if err != nil {
+						if r.Data != nil {
+							errs[i] = fmt.Errorf("网页下载结果 #%d 校验失败: 无法解析图片格式: %w", i+1, err)
+						} else {
+							logging.Log.Debugf("候选图 #%d 无法解析图片格式", i+1)
+						}
+						continue
+					}
+					if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width) > maxResultPixels/int64(cfg.Height) {
+						if r.Data != nil {
+							errs[i] = fmt.Errorf("网页下载结果 #%d 校验失败: 图片尺寸超出上限: %dx%d", i+1, cfg.Width, cfg.Height)
+						} else {
+							logging.Log.Debugf("候选图 #%d 图片尺寸超出上限: %dx%d", i+1, cfg.Width, cfg.Height)
+						}
+						continue
+					}
+					decoded, _, err = image.Decode(bytes.NewReader(data))
+					if err != nil {
+						if r.Data != nil {
+							errs[i] = fmt.Errorf("网页下载结果 #%d 校验失败: 无法完整解码: %w", i+1, err)
+						} else {
+							logging.Log.Debugf("候选图 #%d 无法完整解码", i+1)
+						}
+						continue
+					}
+				}
+				if len(data) < images.MinGeneratedBytes || cfg.Width < images.MinGeneratedSide || cfg.Height < images.MinGeneratedSide {
+					logging.Log.Debugf("候选图 #%d 不是生成图（%d 字节，%dx%d），已忽略", i+1, len(data), cfg.Width, cfg.Height)
+					continue
+				}
+				if err := ctx.Err(); err != nil {
+					errs[i] = err
+					continue
+				}
+				cands[i] = &preparedResult{
+					index:    i,
+					result:   r,
+					data:     data,
+					decoded:  decoded,
+					format:   format,
+					cfg:      cfg,
+					hash:     images.SHA256(data),
+					usingRaw: usingRaw,
+				}
+			}
+		})
+	}
+	wg.Wait()
+	return cands, errs, handled
+}
+
+func (e *Engine) filterPreparedCandidate(i int, cand *preparedResult, t *Task) *preparedResult {
+	if cand == nil {
+		return nil
+	}
+	if t.savedHashes[cand.hash] {
+		t.matchedSavedResult = true
+		return nil
+	}
+	for _, source := range t.Images {
+		if h := e.sourceHash(source); h != "" && h == cand.hash {
+			logging.Log.Debugf("候选图 #%d 与本任务的源图相同", i+1)
+			return nil
+		}
+	}
+	return cand
+}
+
 // saveResults 校验 + 去重 + 按日期目录落盘。
 func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strategy, sess *cdp.Session, results []strategy.Result) ([]string, error) {
 	t.matchedSavedResult = false
@@ -1585,220 +1988,228 @@ func (e *Engine) saveResults(ctx context.Context, t *Task, strat strategy.Strate
 	}
 	var saved []string
 	batched := prefetchResults(strat, sess, results)
-	for i, r := range results {
-		if e.opts.Fission && len(saved) > 0 {
-			break
+	preCands, preErrs, preHandled := e.prepareInMemoryCandidates(ctx, results, batched)
+	nextCandidate := func(i int, r strategy.Result) (*preparedResult, error) {
+		if preHandled[i] {
+			if preErrs[i] != nil {
+				return nil, preErrs[i]
+			}
+			return e.filterPreparedCandidate(i, preCands[i], t), nil
 		}
-		if err := ctx.Err(); err != nil {
-			return saved, err
+		return e.prepareResultCandidate(ctx, i, r, batched, t, strat, sess)
+	}
+	if e.opts.Fission && len(results) > 1 {
+		// 裂变场景且平台单次返回多张候选时（如千问每次返回 2 张），
+		// 先收集全部有效候选并按 pHash 与已保存结果/母图的最大结构差异择优保留 1 张。
+		var pool []*preparedResult
+		var sigs []fissionCandidate
+		for i, r := range results {
+			cand, err := nextCandidate(i, r)
+			if err != nil {
+				return saved, err
+			}
+			if cand == nil {
+				continue
+			}
+			sigs = append(sigs, fissionCandidate{
+				index: len(pool),
+				sig:   dedup.PerceptualHashImage(cand.decoded),
+			})
+			pool = append(pool, cand)
 		}
-		data := r.Data
-		var err error
-		usingRaw := false
-		if data == nil && i < len(batched) && batched[i] != nil {
-			data = batched[i]
-			if r.RawURL != "" {
-				usingRaw = validRawResult(data)
-				if !usingRaw {
-					data = nil
-				}
+		if len(pool) > 0 {
+			var motherSig *dedup.Signature
+			if len(t.Images) == 1 {
+				motherSig = e.sourceSignature(t.Images[0])
+			}
+			chosen, reservedHash, hasReserved := e.selectAndReserveFissionCandidate(sigs, motherSig)
+			if chosen < 0 || chosen >= len(pool) {
+				chosen = 0
+			}
+			if len(pool) > 1 {
+				logging.Log.Debugf("#%d 裂变多候选择优：共 %d 张有效候选，选用 #%d", t.Index, len(pool), pool[chosen].index+1)
+			}
+			path, err := e.writePreparedResult(ctx, t, pool[chosen], hasReserved)
+			if path != "" {
+				saved = append(saved, path)
+			} else if hasReserved {
+				e.releaseFissionHash(reservedHash)
+			}
+			if err != nil {
+				return saved, err
 			}
 		}
-		if data == nil && r.RawURL != "" {
-			if fetch, ok := strat.(interface {
-				FetchRawResultBytes(*cdp.Session, string) ([]byte, error)
-			}); ok {
-				data, err = fetch.FetchRawResultBytes(sess, r.RawURL)
-			} else {
-				data, err = strat.FetchResultBytes(sess, r.RawURL)
-			}
-			usingRaw = err == nil && validRawResult(data)
-			if !usingRaw {
-				data = nil
-			}
-		}
-		if data == nil {
-			data, err = strat.FetchResultBytes(sess, r.URL)
-		}
-		if data == nil && ctx.Err() == nil {
-			// 页面内 fetch 拿不到时，用下载引擎按地址再取一次：带重试、站点并发和限速。
-			if via, dlErr := e.fetchViaDownload(ctx, r.URL); dlErr == nil {
-				data, err = via, nil
-				logging.Log.Debugf("候选图 #%d 页面取回失败，改用下载引擎", i+1)
-			}
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return saved, ctxErr
-		}
-		if err != nil {
-			logging.Log.Warning("候选图 #%d 抓取失败: %s", i+1, strings.SplitN(err.Error(), "?", 2)[0])
-			if parsed, parseErr := url.Parse(r.URL); parseErr == nil {
-				path := []rune(parsed.EscapedPath())
-				if len(path) > 220 {
-					path = path[:220]
-				}
-				logging.Log.Debugf("候选图 #%d URL: scheme=%s; host=%s; path=%s", i+1, parsed.Scheme, parsed.Host, string(path))
-			}
-			continue
-		}
-		if !images.IsValidImageBytes(data) {
-			if r.Data != nil {
-				return saved, fmt.Errorf("网页下载结果 #%d 校验失败: 文件为空或图片格式不支持", i+1)
-			}
-			logging.Log.Debugf("候选图 #%d 不是有效图片", i+1)
-			continue
-		}
-		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-		if err != nil {
-			if r.Data != nil {
-				return saved, fmt.Errorf("网页下载结果 #%d 校验失败: 无法解析图片格式: %w", i+1, err)
-			}
-			logging.Log.Debugf("候选图 #%d 无法解析图片格式", i+1)
-			continue
-		}
-		if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width) > maxResultPixels/int64(cfg.Height) {
-			if r.Data != nil {
-				return saved, fmt.Errorf("网页下载结果 #%d 校验失败: 图片尺寸超出上限: %dx%d", i+1, cfg.Width, cfg.Height)
-			}
-			logging.Log.Debugf("候选图 #%d 图片尺寸超出上限: %dx%d", i+1, cfg.Width, cfg.Height)
-			continue
-		}
-		decoded, _, err := image.Decode(bytes.NewReader(data))
-		if err != nil {
-			if r.Data != nil {
-				return saved, fmt.Errorf("网页下载结果 #%d 校验失败: 无法完整解码: %w", i+1, err)
-			}
-			logging.Log.Debugf("候选图 #%d 无法完整解码", i+1)
-			continue
-		}
-		if len(data) < images.MinGeneratedBytes || cfg.Width < images.MinGeneratedSide || cfg.Height < images.MinGeneratedSide {
-			logging.Log.Debugf("候选图 #%d 不是生成图（%d 字节，%dx%d），已忽略", i+1, len(data), cfg.Width, cfg.Height)
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return saved, err
-		}
-		hash := images.SHA256(data)
-		if t.savedHashes[hash] {
-			t.matchedSavedResult = true
-			continue
-		}
-		sourceEcho := false
-		for _, source := range t.Images {
-			if e.srcHashes[source] == hash {
-				sourceEcho = true
+	} else {
+		for i, r := range results {
+			if e.opts.Fission && len(saved) > 0 {
 				break
 			}
-		}
-		if sourceEcho {
-			logging.Log.Debugf("候选图 #%d 与本任务的源图相同", i+1)
-			continue
-		}
-		if t.Platform == "豆包" && !usingRaw && !r.WatermarkRemoved && watermarkStaticImage(data, format) {
-			repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return saved, ctxErr
+			cand, err := nextCandidate(i, r)
+			if err != nil {
+				return saved, err
 			}
-			if repairErr == nil && changed {
-				if png, encErr := images.EncodePNG(repaired); encErr == nil {
-					data, decoded, format = png, repaired, "png"
-				} else {
-					logging.Log.Warning("#%d 图片 #%d 去水印编码失败，保留原图: %s", t.Index, i+1, encErr)
-				}
-			} else if repairErr != nil {
-				logging.Log.Warning("#%d 图片 #%d 去水印失败，保留原图: %s", t.Index, i+1, repairErr)
-			} else {
-				logging.Log.Warning("#%d 图片 #%d 未匹配到已支持的水印，保留原图", t.Index, i+1)
+			if cand == nil {
+				continue
 			}
-		}
-		ext := "." + format
-		if format == "jpeg" {
-			ext = ".jpg"
-		}
-		// 洗图结果统一存 PNG，白底主体图后面还要再加工。
-		if e.opts.Wash && format != "png" {
-			png, encErr := images.EncodePNG(decoded)
-			if encErr != nil {
-				return saved, fmt.Errorf("洗图结果 #%d 转 PNG 失败: %w", i+1, encErr)
+			var reservedHash uint64
+			hasReserved := false
+			if e.opts.Fission {
+				reservedHash, hasReserved = e.reserveFissionHash(cand.decoded)
 			}
-			data, ext = png, ".png"
-		}
-		if t.Platform == "豆包" {
-			adjusted, sizeErr := e.opts.OutputSize.process(ctx, data, cfg)
-			if sizeErr != nil {
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return saved, ctxErr
-				}
-				backup := e.opts
-				backup.OutputPath = filepath.Join(backup.OutputPath, "待核对")
-				backupStem, backupStyle := backup.resultName(t.Prompt, resultSource(t))
-				original, saveErr := writeNumberedFile(ctx, backup.ResultDir(time.Now()), backupStem, backupStyle, ext, data)
-				if saveErr != nil {
-					return saved, errors.Join(fmt.Errorf("调整输出尺寸失败: %w", sizeErr), fmt.Errorf("保留未调整尺寸的图片失败: %w", saveErr))
-				}
-				return saved, fmt.Errorf("调整输出尺寸失败，未调整尺寸的图片保存在 %s: %w", original, sizeErr)
+			path, err := e.writePreparedResult(ctx, t, cand, hasReserved)
+			if path != "" {
+				saved = append(saved, path)
+			} else if hasReserved {
+				e.releaseFissionHash(reservedHash)
 			}
-			data = adjusted
-		}
-		dir := e.opts.ResultDir(time.Now())
-		stem, style := e.opts.resultName(t.Prompt, resultSource(t))
-		path, err := writeNumberedFile(ctx, dir, stem, style, ext, data)
-		if err != nil {
-			return saved, err
-		}
-		saved = append(saved, path)
-		if t.savedHashes == nil {
-			t.savedHashes = make(map[string]bool)
-		}
-		t.savedHashes[hash] = true
-		// 扩展下载已经换成去水印 PNG 时，不再按实验开关另存一份。
-		if t.Platform != "千问" || !e.opts.RemoveWatermark || r.WatermarkRemoved {
-			continue
-		}
-		if !watermarkStaticImage(data, format) {
-			logging.Log.Warning("#%d 图片 #%d 跳过去水印：仅支持静态 PNG/JPEG/WebP，原图已保留", t.Index, i+1)
-			continue
-		}
-		logging.Log.Info("#%d 图片 #%d 正在计算去水印，原图已保留", t.Index, i+1)
-		repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return saved, ctxErr
-		}
-		if repairErr != nil {
-			logging.Log.Warning("#%d 图片 #%d 去水印失败，保留原图: %s", t.Index, i+1, repairErr)
-			continue
-		}
-		if !changed {
-			logging.Log.Warning("#%d 图片 #%d 未匹配到已支持的水印，保留原图", t.Index, i+1)
-			continue
-		}
-		repairData, repairErr := images.EncodePNG(repaired)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return saved, ctxErr
-		}
-		if repairErr == nil {
-			repairBase := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)) + "_去水印"
-			var repairPath string
-			repairPath, repairErr = writeResultFile(ctx, dir, repairBase, ".png", repairData)
-			if errors.Is(repairErr, os.ErrExist) {
-				repairPath, repairErr = writeNumberedFile(ctx, dir, repairBase, defaultNumberFmt, ".png", repairData)
+			if err != nil {
+				return saved, err
 			}
-			if repairErr == nil {
-				saved[len(saved)-1] = repairPath
-				logging.Log.Success("#%d 图片 #%d 已另存去水印版本，原图已保留", t.Index, i+1)
-			}
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return saved, ctxErr
-		}
-		if repairErr != nil {
-			logging.Log.Warning("#%d 图片 #%d 去水印版本保存失败，保留原图: %s", t.Index, i+1, repairErr)
 		}
 	}
 	if len(saved) > 0 {
 		e.traceTask(t, "save", fmt.Sprintf("#%d 保存 %d 张", t.Index, len(saved)), len(saved), 0, nil)
 	}
 	return saved, nil
+}
+
+func (e *Engine) writePreparedResult(ctx context.Context, t *Task, cand *preparedResult, fissionHashReserved bool) (string, error) {
+	i := cand.index
+	r := cand.result
+	data := cand.data
+	decoded := cand.decoded
+	format := cand.format
+	cfg := cand.cfg
+	hash := cand.hash
+	usingRaw := cand.usingRaw
+	if e.opts.Wash && cfg.Width >= 256 && cfg.Height >= 256 {
+		var srcSig *dedup.Signature
+		if len(t.Images) == 1 {
+			srcSig = e.sourceSignature(t.Images[0])
+		}
+		if rep := inspectWashQuality(decoded, srcSig); !rep.OK() {
+			note := rep.Summary()
+			if t.QualityNote == "" {
+				t.QualityNote = note
+			} else if !strings.Contains(t.QualityNote, note) {
+				t.QualityNote += "；" + note
+			}
+			logging.Log.Warning("#%d 图片 #%d 洗图质检提醒：%s（已正常保存）", t.Index, i+1, note)
+		}
+	}
+	// 单次解码/单次编码管线：去水印、洗图转 PNG 与尺寸调整都在已解码像素上串行完成，最后只编码一次。
+	needsEncode := false
+	if t.Platform == "豆包" && !usingRaw && !r.WatermarkRemoved && watermarkStaticImage(data, format) {
+		repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		if repairErr == nil && changed {
+			decoded, format, needsEncode = repaired, "png", true
+		} else if repairErr != nil {
+			logging.Log.Warning("#%d 图片 #%d 去水印失败，保留原图: %s", t.Index, i+1, repairErr)
+		} else {
+			logging.Log.Warning("#%d 图片 #%d 未匹配到已支持的水印，保留原图", t.Index, i+1)
+		}
+	}
+	targetFormat := format
+	ext := "." + format
+	if format == "jpeg" {
+		ext = ".jpg"
+	}
+	// 洗图结果统一存 PNG，白底主体图后面还要再加工。
+	if e.opts.Wash && targetFormat != "png" {
+		targetFormat, ext, needsEncode = "png", ".png", true
+	}
+	if supportsOutputSize(t.Platform) {
+		adjusted, resized, sizeErr := e.opts.OutputSize.processImage(ctx, decoded, targetFormat, cfg)
+		if sizeErr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", ctxErr
+			}
+			backupData := data
+			if needsEncode {
+				if encoded, encErr := images.EncodePNG(decoded); encErr == nil {
+					backupData = encoded
+				}
+			}
+			backup := e.opts
+			backup.OutputPath = filepath.Join(backup.OutputPath, "待核对")
+			backupStem, backupStyle := backup.resultName(t.Prompt, resultSource(t))
+			original, saveErr := writeNumberedFile(ctx, backup.ResultDir(time.Now()), backupStem, backupStyle, ext, backupData)
+			if saveErr != nil {
+				return "", errors.Join(fmt.Errorf("调整输出尺寸失败: %w", sizeErr), fmt.Errorf("保留未调整尺寸的图片失败: %w", saveErr))
+			}
+			return "", fmt.Errorf("调整输出尺寸失败，未调整尺寸的图片保存在 %s: %w", original, sizeErr)
+		}
+		if resized {
+			data, needsEncode = adjusted, false
+		}
+	}
+	if needsEncode {
+		encoded, encErr := images.EncodePNG(decoded)
+		if encErr != nil {
+			return "", fmt.Errorf("结果 #%d 编码 PNG 失败: %w", i+1, encErr)
+		}
+		data = encoded
+	}
+	dir := e.opts.ResultDir(time.Now())
+	stem, style := e.opts.resultName(t.Prompt, resultSource(t))
+	path, err := writeNumberedFile(ctx, dir, stem, style, ext, data)
+	if err != nil {
+		return "", err
+	}
+	if e.opts.Fission && !fissionHashReserved {
+		e.reserveFissionHash(decoded)
+	}
+	if t.savedHashes == nil {
+		t.savedHashes = make(map[string]bool)
+	}
+	t.savedHashes[hash] = true
+	// 扩展下载已经换成去水印 PNG 时，不再按实验开关另存一份。
+	if (t.Platform != "千问" && t.Platform != "千问国际") || !e.opts.RemoveWatermark || r.WatermarkRemoved {
+		return path, nil
+	}
+	if !watermarkStaticImage(data, format) {
+		logging.Log.Warning("#%d 图片 #%d 跳过去水印：仅支持静态 PNG/JPEG/WebP，原图已保留", t.Index, i+1)
+		return path, nil
+	}
+	logging.Log.Info("#%d 图片 #%d 正在计算去水印，原图已保留", t.Index, i+1)
+	repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return path, ctxErr
+	}
+	if repairErr != nil {
+		logging.Log.Warning("#%d 图片 #%d 去水印失败，保留原图: %s", t.Index, i+1, repairErr)
+		return path, nil
+	}
+	if !changed {
+		logging.Log.Warning("#%d 图片 #%d 未匹配到已支持的水印，保留原图", t.Index, i+1)
+		return path, nil
+	}
+	repairData, repairErr := images.EncodePNG(repaired)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return path, ctxErr
+	}
+	if repairErr == nil {
+		repairBase := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)) + "_去水印"
+		var repairPath string
+		repairPath, repairErr = writeResultFile(ctx, dir, repairBase, ".png", repairData)
+		if errors.Is(repairErr, os.ErrExist) {
+			repairPath, repairErr = writeNumberedFile(ctx, dir, repairBase, defaultNumberFmt, ".png", repairData)
+		}
+		if repairErr == nil {
+			path = repairPath
+			logging.Log.Success("#%d 图片 #%d 已另存去水印版本，原图已保留", t.Index, i+1)
+		}
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return path, ctxErr
+	}
+	if repairErr != nil {
+		logging.Log.Warning("#%d 图片 #%d 去水印版本保存失败，保留原图: %s", t.Index, i+1, repairErr)
+	}
+	return path, nil
 }
 
 // numberFmt 是文件名里序号的拼法。默认「词根_01」，自动编号时前缀直接拼补零序号（前缀001）。
@@ -1983,27 +2394,12 @@ func watermarkStaticImage(data []byte, format string) bool {
 
 // CloseSessions 关闭全部页面会话。
 func (e *Engine) CloseSessions() {
-	e.closeExtensionBridge()
 	e.mu.Lock()
 	for k, s := range e.sessions {
 		s.Close()
 		delete(e.sessions, k)
 	}
-	for id, timer := range e.idleClose {
-		if timer != nil {
-			timer.timer.Stop()
-		}
-		delete(e.idleClose, id)
-	}
-	var dirs []string
-	for id, dir := range e.firefoxAddons {
-		if dir != "" {
-			dirs = append(dirs, dir)
-		}
-		delete(e.firefoxAddons, id)
-	}
 	e.mu.Unlock()
-	for _, dir := range dirs {
-		_ = os.RemoveAll(dir)
-	}
+	e.srcHashCache.Clear()
+	e.srcSigs.Clear()
 }

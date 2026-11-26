@@ -2,146 +2,134 @@ package ui
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
-	"github.com/nsgo-dev/nsgo/tsx"
-
-	"github.com/xxww0098/tulai/internal/agy"
-	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/tasks"
 )
 
-func init() {
-	tsx.RegisterFunctions("tulai/backend", map[string]any{
-		"getSettingsState": getSettingsStateBridge,
-		"setSettingField":  setSettingFieldBridge,
-		"pickSettingDir":   pickSettingDirBridge,
-		"pickSettingFile":  pickSettingFileBridge,
-		"saveSettingsNow":  saveSettingsNowBridge,
-	})
+// SettingsService exposes application settings and preferences IPCs.
+type SettingsService struct {
+	app *App
 }
 
+// SettingsStateDTO represents all configurable application preferences.
 type SettingsStateDTO struct {
-	Tab                int // 0: 常规与输出 1: 账号与任务 2: 网络与高级 3: 关于与更新
-	OutputPath         string
-	ResolvedOutput     string
-	GenAutoNumber      bool
-	WashAutoNumber     bool
-	NumPrefix          string
-	NumStart           int
-	NumWidth           int
-	DlDir              string
-	ResolvedDlDir      string
-	DownloadConc       int
-	DownloadRetries    int
-	DownloadRateKB     int
-	RemoveWatermark    bool
-	ConcurrencyAuto    bool
-	SendStrategy       string
-	RetryCount         int
-	SendWait           int
-	DailyCapDoubao     int
-	DailyCapQianwen    int
-	DailyCapAgy        int
-	DailyCapChatGPT    int
-	ChatGPTModel       string
-	WaitBefore         int
-	WaitResult         bool
-	WaitResultSeconds  int
-	TaskSwitch         bool
-	SwitchCount        int
-	StartBrowserIdx    int
-	TaskBrowserVisible bool
-	RiskyWords         string
-	AgyBin             string
-	AgyHomeRoot        string
-	AgyModel           string
-	AgyTimeoutMin      float64
-	ProxyCustom        bool
-	ProxyURL           string
-	CaptchaEnabled     bool
-	CaptchaBackend     string
-	CustomURL          string
-	CustomKey          string
-	CustomModel        string
-	IkunocrKey         string
-	AutoCheck          bool
-	UpdateMirror       string
-	Version            string
-	UpdateBusy         bool
-	UpdateErr          string
-	UpdateNotice       string
+	Tab                int    `json:"tab"` // 0: 常规与输出 1: 账号与任务 2: 网络与高级 3: 关于与更新
+	OutputPath         string `json:"outputPath"`
+	ResolvedOutput     string `json:"resolvedOutput"`
+	GenAutoNumber      bool   `json:"genAutoNumber"`
+	WashAutoNumber     bool   `json:"washAutoNumber"`
+	NumPrefix          string `json:"numPrefix"`
+	NumStart           int    `json:"numStart"`
+	NumWidth           int    `json:"numWidth"`
+	DlDir              string `json:"dlDir"`
+	ResolvedDlDir      string `json:"resolvedDlDir"`
+	DownloadConc       int    `json:"downloadConc"`
+	DownloadRetries    int    `json:"downloadRetries"`
+	DownloadRateKB     int    `json:"downloadRateKb"`
+	RemoveWatermark    bool   `json:"removeWatermark"`
+	AutoDeleteHistory  bool   `json:"autoDeleteHistory"`
+	ConcurrencyAuto    bool   `json:"concurrencyAuto"`
+	ConcurrencyMax     int    `json:"concurrencyMax"`
+	SendStrategy       string `json:"sendStrategy"`
+	RetryCount         int    `json:"retryCount"`
+	SendWait           int    `json:"sendWait"`
+	DailyCapDoubao     int    `json:"dailyCapDoubao"`
+	DailyCapQianwen    int    `json:"dailyCapQianwen"`
+	DailyCapQwenIntl   int    `json:"dailyCapQwenIntl"`
+	WaitBefore         int    `json:"waitBefore"`
+	WaitResult         bool   `json:"waitResult"`
+	WaitResultSeconds  int    `json:"waitResultSeconds"`
+	TaskSwitch         bool   `json:"taskSwitch"`
+	SwitchCount        int    `json:"switchCount"`
+	StartBrowserIdx    int    `json:"startBrowserIdx"`
+	TaskBrowserVisible bool   `json:"taskBrowserVisible"`
+	RiskyWords         string `json:"riskyWords"`
+	ProxyCustom        bool   `json:"proxyCustom"`
+	ProxyURL           string `json:"proxyUrl"`
+	CaptchaEnabled     bool   `json:"captchaEnabled"`
+	CaptchaBackend     string `json:"captchaBackend"`
+	CustomURL          string `json:"customUrl"`
+	CustomKey          string `json:"customKey"`
+	CustomModel        string `json:"customModel"`
+	IkunocrKey         string `json:"ikunocrKey"`
+	AutoCheck          bool   `json:"autoCheck"`
+	UpdateMirror       string `json:"updateMirror"`
+	Version            string `json:"version"`
+	UpdateBusy         bool   `json:"updateBusy"`
+	UpdateErr          string `json:"updateErr"`
+	UpdateNotice       string `json:"updateNotice"`
+	DotMatrixEffect    string `json:"dotMatrixEffect"`
 }
 
-func getSettingsStateBridge() SettingsStateDTO {
-	a := getApp()
-	if a == nil {
-		return SettingsStateDTO{}
+// GetSettingsState returns the current application settings snapshot.
+func (s *SettingsService) GetSettingsState(ctx context.Context) SettingsStateDTO {
+	if s.app == nil {
+		return SettingsStateDTO{Version: currentVersion(), DotMatrixEffect: defaultDotMatrixEffect}
 	}
-	taskVisible := false
-	if a.store != nil {
-		taskVisible = a.store.GetBool(settingTaskBrowserVisible)
+	out, err := callValue(s.app, ctx, func() SettingsStateDTO {
+		a := s.app
+		taskVisible := false
+		if a.store != nil {
+			taskVisible = a.store.GetBool(settingTaskBrowserVisible)
+		}
+		return SettingsStateDTO{
+			Tab:                clampInt(a.settingsTab, 0, 3),
+			OutputPath:         a.outputPath,
+			ResolvedOutput:     a.resolvedOutputDir(),
+			GenAutoNumber:      a.genAutoNumber,
+			WashAutoNumber:     a.washAutoNumber,
+			NumPrefix:          a.numPrefix,
+			NumStart:           int(a.numStart),
+			NumWidth:           int(a.numWidth),
+			DlDir:              a.dlDir,
+			ResolvedDlDir:      a.downloadDir(),
+			DownloadConc:       int(a.downloadConc),
+			DownloadRetries:    int(a.downloadRetries),
+			DownloadRateKB:     int(a.downloadRateKB),
+			RemoveWatermark:    a.removeWatermark,
+			AutoDeleteHistory:  a.autoDeleteHistory,
+			ConcurrencyAuto:    a.concurrencyAutoFor("豆包"),
+			ConcurrencyMax:     a.concurrencyMaxFor("豆包"),
+			SendStrategy:       a.sendStrategy,
+			RetryCount:         int(a.retryCount),
+			SendWait:           int(a.sendWait),
+			DailyCapDoubao:     a.shownDailyCap(),
+			DailyCapQianwen:    a.shownDailyCapFor("千问"),
+			DailyCapQwenIntl:   a.shownDailyCapFor("千问国际"),
+			WaitBefore:         int(a.waitBefore),
+			WaitResult:         a.waitResult,
+			WaitResultSeconds:  int(a.waitResultS),
+			TaskSwitch:         a.taskSwitch,
+			SwitchCount:        int(a.switchCount),
+			StartBrowserIdx:    int(a.startBrowserIdx),
+			TaskBrowserVisible: taskVisible,
+			RiskyWords:         a.riskyWords,
+			ProxyCustom:        a.proxyCustom,
+			ProxyURL:           a.proxyURL,
+			CaptchaEnabled:     a.captchaEnabled,
+			CaptchaBackend:     a.captchaBackend,
+			CustomURL:          a.customURL,
+			CustomKey:          a.customKey,
+			CustomModel:        a.customModel,
+			IkunocrKey:         a.ikunocrKey,
+			AutoCheck:          a.autoCheck,
+			UpdateMirror:       a.updateMirror,
+			Version:            currentVersion(),
+			UpdateBusy:         a.updateBusy,
+			UpdateErr:          a.updateErr,
+			UpdateNotice:       a.updateNotice,
+			DotMatrixEffect:    a.resolvedDotMatrixEffect(),
+		}
+	})
+	if err != nil {
+		return SettingsStateDTO{Version: currentVersion(), DotMatrixEffect: defaultDotMatrixEffect}
 	}
-	return SettingsStateDTO{
-		Tab:                clampInt(a.settingsTab, 0, 3),
-		OutputPath:         a.outputPath,
-		ResolvedOutput:     a.resolvedOutputDir(),
-		GenAutoNumber:      a.genAutoNumber,
-		WashAutoNumber:     a.washAutoNumber,
-		NumPrefix:          a.numPrefix,
-		NumStart:           int(a.numStart),
-		NumWidth:           int(a.numWidth),
-		DlDir:              a.dlDir,
-		ResolvedDlDir:      a.downloadDir(),
-		DownloadConc:       int(a.downloadConc),
-		DownloadRetries:    int(a.downloadRetries),
-		DownloadRateKB:     int(a.downloadRateKB),
-		RemoveWatermark:    a.removeWatermark,
-		ConcurrencyAuto:    a.concurrencyAuto,
-		SendStrategy:       a.sendStrategy,
-		RetryCount:         int(a.retryCount),
-		SendWait:           int(a.sendWait),
-		DailyCapDoubao:     a.shownDailyCap(),
-		DailyCapQianwen:    a.shownDailyCapFor("千问"),
-		DailyCapAgy:        a.shownDailyCapFor(agy.Platform),
-		DailyCapChatGPT:    a.shownDailyCapFor("ChatGPT"),
-		ChatGPTModel:       a.chatGPTModel,
-		WaitBefore:         int(a.waitBefore),
-		WaitResult:         a.waitResult,
-		WaitResultSeconds:  int(a.waitResultS),
-		TaskSwitch:         a.taskSwitch,
-		SwitchCount:        int(a.switchCount),
-		StartBrowserIdx:    int(a.startBrowserIdx),
-		TaskBrowserVisible: taskVisible,
-		RiskyWords:         a.riskyWords,
-		AgyBin:             a.agyBin,
-		AgyHomeRoot:        a.agyHomeRoot,
-		AgyModel:           a.agyModel,
-		AgyTimeoutMin:      a.agyTimeoutMin,
-		ProxyCustom:        a.proxyCustom,
-		ProxyURL:           a.proxyURL,
-		CaptchaEnabled:     a.captchaEnabled,
-		CaptchaBackend:     a.captchaBackend,
-		CustomURL:          a.customURL,
-		CustomKey:          a.customKey,
-		CustomModel:        a.customModel,
-		IkunocrKey:         a.ikunocrKey,
-		AutoCheck:          a.autoCheck,
-		UpdateMirror:       a.updateMirror,
-		Version:            currentVersion(),
-		UpdateBusy:         a.updateBusy,
-		UpdateErr:          a.updateErr,
-		UpdateNotice:       a.updateNotice,
-	}
+	return out
 }
 
-func setSettingFieldBridge(field, value string) {
-	a := getApp()
-	if a == nil {
-		return
-	}
+func (a *App) setSettingFieldInternal(field, value string) {
 	switch field {
 	case "tab":
 		a.settingsTab = clampInt(parseIntDefault(value, 0), 0, 3)
@@ -163,12 +151,42 @@ func setSettingFieldBridge(field, value string) {
 		a.downloadConc = float64(clampInt(parseIntDefault(value, 4), 1, 8))
 	case "downloadRetries":
 		a.downloadRetries = float64(clampInt(parseIntDefault(value, 1), 0, 10))
-	case "downloadRateKB":
+	case "downloadRateKB", "downloadRateKb":
 		a.downloadRateKB = float64(clampInt(parseIntDefault(value, 0), 0, 102400))
 	case "removeWatermark":
 		a.removeWatermark = value == "true" || value == "1"
-	case "concurrencyAuto":
+	case "autoDeleteHistory":
+		a.autoDeleteHistory = value == "true" || value == "1"
+	case "concurrencyAuto", "concurrencyAutoDoubao":
 		a.concurrencyAuto = value == "true" || value == "1"
+		if a.engine != nil {
+			a.engine.SetConcurrency("豆包", a.taskConcurrencyFor("豆包"))
+		}
+	case "concurrencyMax", "concurrencyMaxDoubao":
+		a.concurrencyMax = float64(clampInt(parseIntDefault(value, tasks.PlatformInFlight), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+		if a.engine != nil {
+			a.engine.SetConcurrency("豆包", a.taskConcurrencyFor("豆包"))
+		}
+	case "concurrencyAutoQianwen":
+		a.concurrencyAutoQianwen = value == "true" || value == "1"
+		if a.engine != nil {
+			a.engine.SetConcurrency("千问", a.taskConcurrencyFor("千问"))
+		}
+	case "concurrencyMaxQianwen":
+		a.concurrencyMaxQianwen = float64(clampInt(parseIntDefault(value, tasks.PlatformInFlight), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+		if a.engine != nil {
+			a.engine.SetConcurrency("千问", a.taskConcurrencyFor("千问"))
+		}
+	case "concurrencyAutoQwenIntl":
+		a.concurrencyAutoQwenIntl = value == "true" || value == "1"
+		if a.engine != nil {
+			a.engine.SetConcurrency("千问国际", a.taskConcurrencyFor("千问国际"))
+		}
+	case "concurrencyMaxQwenIntl":
+		a.concurrencyMaxQwenIntl = float64(clampInt(parseIntDefault(value, tasks.PlatformInFlight), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+		if a.engine != nil {
+			a.engine.SetConcurrency("千问国际", a.taskConcurrencyFor("千问国际"))
+		}
 	case "sendStrategy":
 		a.sendStrategy = pickStr(value, "顺序循环", []string{"顺序循环", "随机循环"})
 	case "retryCount":
@@ -181,14 +199,9 @@ func setSettingFieldBridge(field, value string) {
 	case "dailyCapQianwen":
 		a.dailyCapQianwen = float64(clampInt(parseIntDefault(value, 0), 0, 200))
 		a.dailyCapQianwenSet = true
-	case "dailyCapAgy":
-		a.dailyCapAgy = float64(clampInt(parseIntDefault(value, 0), 0, 200))
-		a.dailyCapAgySet = true
-	case "dailyCapChatGPT":
-		a.dailyCapChatGPT = float64(clampInt(parseIntDefault(value, 0), 0, 200))
-		a.dailyCapChatGPTSet = true
-	case "chatGPTModel":
-		a.chatGPTModel = value
+	case "dailyCapQwenIntl":
+		a.dailyCapQwenIntl = float64(clampInt(parseIntDefault(value, 0), 0, 200))
+		a.dailyCapQwenIntlSet = true
 	case "waitBefore":
 		a.waitBefore = float64(clampInt(parseIntDefault(value, 0), 0, 60))
 	case "waitResult":
@@ -213,26 +226,10 @@ func setSettingFieldBridge(field, value string) {
 		a.riskyWords = value
 	case "resetRiskyWords":
 		a.riskyWords = tasks.RiskySetting()
-	case "agyBin":
-		a.agyBin = strings.TrimSpace(value)
-	case "agyHomeRoot":
-		a.agyHomeRoot = strings.TrimSpace(value)
-	case "agyModel":
-		a.agyModel = strings.TrimSpace(value)
-	case "agyTimeoutMin":
-		if m, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
-			if m < 1 {
-				m = 1
-			}
-			if m > 60 {
-				m = 60
-			}
-			a.agyTimeoutMin = m
-		}
 	case "proxyCustom":
 		a.proxyCustom = value == "true" || value == "1"
 		a.persistProxy()
-	case "proxyURL":
+	case "proxyURL", "proxyUrl":
 		a.proxyURL = strings.TrimSpace(value)
 		a.persistProxy()
 	case "captchaEnabled":
@@ -240,7 +237,7 @@ func setSettingFieldBridge(field, value string) {
 	case "captchaBackend":
 		a.captchaBackend = pickStr(value, "free", []string{"free", "custom", "ikunocr"})
 		a.captchaChoice = a.captchaBackend
-	case "customURL":
+	case "customURL", "customUrl":
 		a.customURL = value
 	case "customKey":
 		a.customKey = value
@@ -254,14 +251,30 @@ func setSettingFieldBridge(field, value string) {
 	case "updateMirror":
 		a.updateMirror = strings.TrimSpace(value)
 		a.persistUpdatePrefs()
+	case "dotMatrixEffect":
+		a.dotMatrixEffect = normalizeDotMatrixEffect(value)
 	}
 	a.saveSettings()
-	a.emit("settings", "workbench")
+	if field == "proxyCustom" || field == "proxyURL" || field == "proxyUrl" {
+		a.emit("settings", "shell", "workbench", "browsers")
+		return
+	}
+	a.emit("settings", "shell", "workbench")
 }
 
-func pickSettingDirBridge(ctx context.Context, field string) error {
-	a := getApp()
-	if a == nil {
+// SetSettingField updates one preference field and persists settings to SQLite.
+func (s *SettingsService) SetSettingField(ctx context.Context, field, value string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.setSettingFieldInternal(field, value)
+	})
+}
+
+// PickSettingDir opens a directory picker and updates the target path setting field.
+func (s *SettingsService) PickSettingDir(ctx context.Context, field string) error {
+	if s.app == nil {
 		return nil
 	}
 	title := "选择目录"
@@ -270,10 +283,8 @@ func pickSettingDirBridge(ctx context.Context, field string) error {
 		title = "选择输出目录"
 	case "dlDir":
 		title = "选择下载目录"
-	case "agyHomeRoot":
-		title = "选择 Antigravity 账号根目录"
 	}
-	paths, err := a.pickDirsAsync(ctx, title, false)
+	paths, err := s.app.pickDirsAsync(ctx, title, false)
 	if err != nil {
 		logging.Log.Errorf("选择目录失败: %v", err)
 		return err
@@ -281,34 +292,47 @@ func pickSettingDirBridge(ctx context.Context, field string) error {
 	if len(paths) == 0 {
 		return nil
 	}
-	return a.onScope(ctx, func() {
-		setSettingFieldBridge(field, paths[0])
+	return s.app.call(ctx, func() {
+		s.app.setSettingFieldInternal(field, paths[0])
 	})
 }
 
-func pickSettingFileBridge(ctx context.Context, field string) error {
-	a := getApp()
-	if a == nil {
+// PickSettingFile opens a file picker and updates the target file setting field.
+func (s *SettingsService) PickSettingFile(ctx context.Context, field string) error {
+	if s.app == nil {
 		return nil
 	}
-	paths, err := a.pickFilesAsync(ctx, "选择 agy 可执行文件", false, nil, "可执行文件")
+	paths, err := s.app.pickFilesAsync(ctx, "选择文件", false, nil, "文件")
 	if err != nil || len(paths) == 0 {
 		return err
 	}
-	return a.onScope(ctx, func() {
-		setSettingFieldBridge(field, paths[0])
+	return s.app.call(ctx, func() {
+		s.app.setSettingFieldInternal(field, paths[0])
 	})
 }
 
-func saveSettingsNowBridge() {
-	if a := getApp(); a != nil {
-		a.saveSettings()
-		a.pushToast("success", "设置已保存")
-		a.emit("settings", "workbench")
+// SaveSettingsNow explicitly flushes settings to SQLite and shows a confirmation toast.
+func (s *SettingsService) SaveSettingsNow(ctx context.Context) {
+	if s.app == nil {
+		return
 	}
+	_ = s.app.call(ctx, func() {
+		s.app.saveSettings()
+		s.app.pushToast("success", "设置已保存")
+		s.app.emit("settings", "workbench")
+	})
 }
 
-var (
-	_ = browser.KindCamoufox
-	_ = agy.Platform
-)
+// ---- Test bridge wrappers ----
+
+func getSettingsStateBridge() SettingsStateDTO {
+	return (&SettingsService{app: getApp()}).GetSettingsState(context.Background())
+}
+
+func setSettingFieldBridge(field, value string) {
+	(&SettingsService{app: getApp()}).SetSettingField(context.Background(), field, value)
+}
+
+func saveSettingsNowBridge() {
+	(&SettingsService{app: getApp()}).SaveSettingsNow(context.Background())
+}

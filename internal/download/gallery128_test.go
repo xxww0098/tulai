@@ -18,7 +18,7 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -233,16 +233,16 @@ func (fn gallery128RoundTrip) RoundTrip(r *http.Request) (*http.Response, error)
 func TestGallery128RenderedCapture(t *testing.T) {
 	runtime := os.Getenv("TULAI_GALLERY128_BROWSER_RUNTIME")
 	if runtime == "" {
-		t.Skip("set TULAI_GALLERY128_BROWSER_RUNTIME to an isolated Camoufox runtime")
+		t.Skip("set TULAI_GALLERY128_BROWSER_RUNTIME to an isolated Fingerprint runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	proc, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	proc, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(proc.Context())
-	tab := camoufox.PageContext(life, proc, proc.Page)
+	tab := fingerprint.PageContext(life, proc, proc.Page)
 	start := gallery128TestURL(t, "https://imhentai.xxx/view/123/1/")
 	getter := NewHTTPGetter("")
 	getter.client.Transport = gallery128RoundTrip(func(r *http.Request) (*http.Response, error) {
@@ -259,13 +259,13 @@ func TestGallery128RenderedCapture(t *testing.T) {
 		"https://imhentai.xxx/login/":      `<html><title>Login</title></html>`,
 	}
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(s.tab, func(event any) {
+	fingerprint.ListenTarget(s.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if body, ok := pages[paused.Request.URL]; ok && paused.ResourceType == network.ResourceTypeDocument {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{
 					{Name: "Content-Type", Value: "text/html; charset=utf-8"},
@@ -274,7 +274,7 @@ func TestGallery128RenderedCapture(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(s.tab, action); err != nil {
+			if err := fingerprint.Run(s.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -282,7 +282,7 @@ func TestGallery128RenderedCapture(t *testing.T) {
 			}
 		}()
 	})
-	if err := s.run(ctx, fetch.Enable(), camoufox.Navigate(start.String())); err != nil {
+	if err := s.run(ctx, fetch.Enable(), fingerprint.Navigate(start.String())); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Capture(ctx)
@@ -290,7 +290,7 @@ func TestGallery128RenderedCapture(t *testing.T) {
 		t.Fatalf("capture pages=%d err=%v", len(got.Items), err)
 	}
 	for _, raw := range []string{"https://imhentai.xxx/view/124/1/", "https://imhentai.xxx/login/"} {
-		if err := s.run(ctx, camoufox.Navigate(raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Navigate(raw)); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := s.Capture(ctx); err == nil || len(got.Items) != 0 {

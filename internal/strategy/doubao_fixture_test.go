@@ -250,6 +250,127 @@ func TestDoubaoFixturesDetectGeneratedImages(t *testing.T) {
 	})
 }
 
+func TestDoubaoSetOutputRatioPopoverFixture(t *testing.T) {
+	client := newFixtureClient(t)
+	html := `<!doctype html><html><head><meta charset="utf-8"><style>
+[data-testid="chat_input"] { padding: 12px; width: 640px; }
+textarea { width: 580px; height: 48px; }
+.trigger { display: inline-flex; align-items: center; padding: 4px 10px; height: 32px; cursor: pointer; }
+[data-radix-popper-content-wrapper] { position: fixed; left: 40px; top: 100px; width: 380px; }
+[role="dialog"] { width: 380px; background: #fff; padding: 12px; border: 1px solid #eee; }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.card { width: 80px; height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; }
+[role="dialog"][data-state="closed"] { opacity: 0.3; pointer-events: none; }
+</style></head><body>
+<div data-testid="chat_input">
+  <textarea data-testid="chat_input_input" placeholder="描述你想要的图片"></textarea>
+  <div data-testid="skill_input_exit_button">图像生成</div>
+  <div id="ratio-trigger" class="trigger" aria-haspopup="dialog" data-state="closed">自动比例</div>
+</div>
+<script>
+const ratios = ['自动', '9:16', '2:3', '3:4', '1:1', '4:3', '3:2', '16:9'];
+const trig = document.getElementById('ratio-trigger');
+let pop = null;
+let closeTimer = null;
+
+function removePop() {
+  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+  if (pop && pop.parentNode) pop.parentNode.removeChild(pop);
+  pop = null;
+  trig.setAttribute('data-state', 'closed');
+}
+
+function closePopAnimated() {
+  if (!pop) return;
+  const dlg = pop.querySelector('[role="dialog"]');
+  if (dlg) dlg.setAttribute('data-state', 'closed');
+  trig.setAttribute('data-state', 'closed');
+  if (closeTimer) clearTimeout(closeTimer);
+  closeTimer = setTimeout(removePop, 220);
+}
+
+function openPop() {
+  removePop();
+  trig.setAttribute('data-state', 'open');
+  pop = document.createElement('div');
+  pop.setAttribute('data-radix-popper-content-wrapper', '');
+  const dlg = document.createElement('div');
+  dlg.setAttribute('role', 'dialog');
+  dlg.setAttribute('data-slot', 'popover-content');
+  dlg.setAttribute('data-state', 'open');
+  const title = document.createElement('div');
+  title.textContent = '比例';
+  dlg.appendChild(title);
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  ratios.forEach(r => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const label = document.createElement('span');
+    label.textContent = r;
+    card.appendChild(label);
+    card.addEventListener('click', () => {
+      if (dlg.getAttribute('data-state') === 'closed') return;
+      trig.textContent = r === '自动' ? '自动比例' : r;
+      closePopAnimated();
+    });
+    grid.appendChild(card);
+  });
+  dlg.appendChild(grid);
+  pop.appendChild(dlg);
+  document.body.appendChild(pop);
+}
+
+trig.addEventListener('click', () => {
+  const dlg = pop && pop.querySelector('[role="dialog"]');
+  if (dlg && dlg.getAttribute('data-state') === 'open') {
+    closePopAnimated();
+  } else {
+    openPop();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  const dlg = pop && pop.querySelector('[role="dialog"]');
+  if (e.key === 'Escape' && dlg && dlg.getAttribute('data-state') === 'open') {
+    closePopAnimated();
+  }
+});
+</script></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
+	}))
+	defer srv.Close()
+
+	sess := openFixture(t, client, srv.URL+"/", "", "")
+	defer sess.Close()
+	db := Doubao{}
+
+	if ok, why := db.SetOutputRatio(sess, "自动"); !ok || why != "" {
+		t.Fatalf("already 自动 failed: ok=%v why=%q", ok, why)
+	}
+	for _, want := range []string{"9:16", "2:3", "3:4", "1:1", "4:3", "3:2", "16:9", "自动"} {
+		if ok, why := db.SetOutputRatio(sess, want); !ok {
+			t.Fatalf("SetOutputRatio(%q) on 2x4 popover failed: %q", want, why)
+		}
+		got, _ := sess.Evaluate(`document.getElementById('ratio-trigger').textContent`)
+		expected := want
+		if want == "自动" {
+			expected = "自动比例"
+		}
+		if strings.Trim(got, `"`) != expected {
+			t.Fatalf("after SetOutputRatio(%q), trigger=%s want %q", want, got, expected)
+		}
+	}
+	if ok, why := db.SetOutputRatio(sess, "5:4"); ok || !strings.Contains(why, "5:4") {
+		t.Fatalf("missing ratio 5:4: ok=%v why=%q", ok, why)
+	}
+	if sess.EvaluateBool(`!!document.querySelector('[role="dialog"][data-state="open"]')`) {
+		t.Fatal("popover remained open after missing ratio error")
+	}
+}
+
 func openFixture(t *testing.T, client *cdp.Client, url, hook, composer string) *cdp.Session {
 	t.Helper()
 	sess, err := client.NewIsolatedSession(url, nil)

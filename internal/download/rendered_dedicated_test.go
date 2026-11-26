@@ -22,7 +22,7 @@ import (
 	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 func TestRenderedSiteAccessRecovery(t *testing.T) {
@@ -51,13 +51,13 @@ func TestRenderedSiteAccessRecovery(t *testing.T) {
 	})
 	var status atomic.Int32
 	var acceptAfterRefresh atomic.Bool
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if body, ok := pages[paused.Request.URL]; ok && paused.ResourceType == network.ResourceTypeDocument {
 				code := status.Load()
 				if code == http.StatusForbidden && acceptAfterRefresh.CompareAndSwap(true, false) {
@@ -68,7 +68,7 @@ func TestRenderedSiteAccessRecovery(t *testing.T) {
 					WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).
 					WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 			}
-			if err := camoufox.Run(session.tab, action); err != nil && session.tab.Err() == nil {
+			if err := fingerprint.Run(session.tab, action); err != nil && session.tab.Err() == nil {
 				t.Logf("fixture interception: %v", err)
 			}
 		}()
@@ -128,13 +128,13 @@ func TestDedicatedBrowserBindsNavigatedTab(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	tab, closeTab, err := camoufox.NewPage(ctx, session.tab, false)
+	tab, closeTab, err := fingerprint.NewPage(ctx, session.tab, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeTab()
 	const route = "/search/pins/?q=Wallpaper%20aesthetic"
-	if err := runRendered(ctx, tab, camoufox.Navigate(server.URL+"/"), chromedp.Evaluate(
+	if err := runRendered(ctx, tab, fingerprint.Navigate(server.URL+"/"), chromedp.Evaluate(
 		`history.pushState(null, "", "`+route+`"); document.title = "Search results"; document.body.innerHTML = '<img src="/image.png">';`, nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
 	if err := session.OpenTarget(canceled, targetURL); err == nil {
 		t.Fatal("取消的目标导航未返回错误")
 	}
-	if err := session.run(ctx, camoufox.Navigate(targetURL+"/login")); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(targetURL+"/login")); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.OpenTarget(ctx, targetURL+"/gallery"); err != nil {
@@ -254,7 +254,7 @@ func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
 	}
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "other") }))
 	defer other.Close()
-	if err := session.run(ctx, camoufox.Navigate(other.URL)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(other.URL)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Capture(ctx); err == nil {
@@ -332,7 +332,7 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 
 	root := t.TempDir()
 	profile := filepath.Join(root, "config", "DownloadBrowser")
-	accountProfile := filepath.Join(root, "BrowserData", "Camoufox", "account-1")
+	accountProfile := filepath.Join(root, "BrowserData", "Fingerprint", "account-1")
 	first, err := openDedicatedFixture(t, runtimeDir, profile, server.URL+"/login", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 	if err := first.run(ctx, chromedp.Evaluate(fingerprintScript, &fingerprint), chromedp.Evaluate(`localStorage.setItem('download-test','saved')`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(profile, ".tulai-identity.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(profile, ".tulai-fingerprint.json")); err != nil {
 		t.Fatalf("专用指纹未保存在资料目录: %v", err)
 	}
 	page, err := first.Capture(ctx)

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
+
 	"github.com/xxww0098/tulai/internal/appdata"
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -20,6 +22,14 @@ import (
 )
 
 func main() {
+	if os.Getenv("MYGO_GENERATE") != "" {
+		ui.RegisterBindingsOnly()
+		if err := mygo.App.Run(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	executable, err := os.Executable()
 	var registrationSyncErr error
 	if err == nil {
@@ -74,13 +84,10 @@ func main() {
 	bm := browser.NewManager()
 	bm.SetStore(db)
 	defer bm.StopAll()
-	if err := db.PrepareCamoufoxProfiles(dataRoot); err != nil {
-		log.Fatalf("迁移 Camoufox 账号: %v", err)
-	}
 
 	engine := tasks.NewEngine(db, bm, nil, dataRoot)
 	defer engine.Shutdown()
-	// nsgo build 会把 nsgo.yaml 的版本链进二进制；go run 没有这段链接信息。
+	// mygo build 会把 mygo.json 的版本链进二进制；go run 没有这段链接信息。
 	if dataDir == "" {
 		dataDir, err = os.Getwd()
 		if err != nil {
@@ -88,7 +95,7 @@ func main() {
 		}
 	}
 	logging.Log.Info("tulai %s 启动（数据目录: %s）", runningVersion(), dataDir)
-	ui.Run(db, bm, engine, dataRoot, Root)
+	ui.Run(db, bm, engine, dataRoot)
 }
 
 func packagedDataDir(goos, executable string) (string, error) {

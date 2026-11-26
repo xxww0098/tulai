@@ -7,8 +7,6 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/xxww0098/tulai/internal/agy"
 )
 
 func TestTaskSwitchingUsesAccountSegments(t *testing.T) {
@@ -74,25 +72,6 @@ func TestTaskSwitchingSkipsDisabledAccounts(t *testing.T) {
 	want := []int64{first.ID, last.ID, first.ID, last.ID}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("disabled account must be skipped: got=%v want=%v err=%v", got, want, err)
-	}
-}
-
-func TestTaskSwitchingWorksForAntigravityAccounts(t *testing.T) {
-	st := openRotateStore(t)
-	first := addAgyAccount(t, st, "甲", t.TempDir(), "ok")
-	second := addAgyAccount(t, st, "乙", t.TempDir(), "ok")
-	e := NewEngine(st, nil, nil, "")
-	var got []int64
-	err := e.RunObserved(context.Background(), Options{
-		Platforms: []string{agy.Platform}, Images: []string{"1", "2", "3", "4"},
-		TaskSwitching: true, TaskSwitchingCount: 2,
-	}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
-		got = append(got, task.BrowserID)
-		return nil
-	})
-	want := []int64{first.ID, first.ID, second.ID, second.ID}
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("Antigravity account sequence = %v, want %v, err=%v", got, want, err)
 	}
 }
 

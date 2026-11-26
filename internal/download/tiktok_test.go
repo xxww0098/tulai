@@ -22,7 +22,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -178,16 +178,16 @@ func TestTikTokPhotoAliasAndRedirect(t *testing.T) {
 func TestTikTokRenderedCapture(t *testing.T) {
 	runtime := os.Getenv("TULAI_TIKTOK_BROWSER_RUNTIME")
 	if runtime == "" {
-		t.Skip("set TULAI_TIKTOK_BROWSER_RUNTIME to an isolated Camoufox runtime")
+		t.Skip("set TULAI_TIKTOK_BROWSER_RUNTIME to an isolated Fingerprint runtime")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	proc, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
+	proc, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(proc.Context())
-	tab := camoufox.PageContext(life, proc, proc.Page)
+	tab := fingerprint.PageContext(life, proc, proc.Page)
 	start := tiktokTestURL(t, "https://www.tiktok.com/@alice/photo/123")
 	s := &RenderedSession{process: proc, tab: tab, closeTab: closeTab, closeAllocator: func() { proc.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: start}
 	defer s.Close()
@@ -203,19 +203,19 @@ func TestTikTokRenderedCapture(t *testing.T) {
 		"https://www.tiktok.com/login":            `<html><title>登录</title><img src="https://evil.test/login.png"></html>`,
 	}
 	interceptErrors := make(chan error, 8)
-	camoufox.ListenTarget(s.tab, func(event any) {
+	fingerprint.ListenTarget(s.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if body, ok := pages[paused.Request.URL]; ok && paused.ResourceType == network.ResourceTypeDocument {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(s.tab, action); err != nil {
+			if err := fingerprint.Run(s.tab, action); err != nil {
 				select {
 				case interceptErrors <- err:
 				default:
@@ -227,7 +227,7 @@ func TestTikTokRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, raw := range []string{start.String(), "https://www.tiktok.com/@alice/video/123"} {
-		if err := s.run(ctx, camoufox.Navigate(raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Navigate(raw)); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Capture(ctx)
@@ -236,7 +236,7 @@ func TestTikTokRenderedCapture(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{"https://www.tiktok.com/@alice/video/124", "https://www.tiktok.com/@bob/video/123", "https://www.tiktok.com/login"} {
-		if err := s.run(ctx, camoufox.Navigate(raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Navigate(raw)); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Capture(ctx)
@@ -246,7 +246,7 @@ func TestTikTokRenderedCapture(t *testing.T) {
 	}
 	blocked := tiktokTestURL(t, "https://www.tiktok.com/@alice/video/125")
 	s.start = blocked
-	if err := s.run(ctx, camoufox.Navigate(blocked.String())); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate(blocked.String())); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.Capture(ctx); err == nil || !strings.Contains(err.Error(), "未允许") || len(got.Items) != 0 {
@@ -267,7 +267,7 @@ func TestTikTokRenderedCapture(t *testing.T) {
 func TestTikTokRenderedFallback(t *testing.T) {
 	runtime := os.Getenv("TULAI_TIKTOK_BROWSER_RUNTIME")
 	if runtime == "" {
-		t.Skip("set TULAI_TIKTOK_BROWSER_RUNTIME to an isolated Camoufox runtime")
+		t.Skip("set TULAI_TIKTOK_BROWSER_RUNTIME to an isolated Fingerprint runtime")
 	}
 	started := make(chan string, 2)
 	releaseCancel, releaseChange := make(chan struct{}), make(chan struct{})
@@ -361,17 +361,16 @@ func TestTikTokRenderedFallback(t *testing.T) {
 	defer proxy.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	geoip := false
-	proc, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true, Proxy: proxy.URL, GeoIP: &geoip, IgnoreHTTPSErrors: true}, nil)
+	proc, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true, Proxy: proxy.URL, IgnoreHTTPSErrors: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(proc.Context())
-	tab := camoufox.PageContext(life, proc, proc.Page)
+	tab := fingerprint.PageContext(life, proc, proc.Page)
 	s := &RenderedSession{process: proc, tab: tab, closeTab: closeTab, closeAllocator: func() { proc.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter("")}
 	defer s.Close()
 	closed := make(chan struct{}, 16)
-	unsubscribe := proc.Subscribe(func(event camoufox.Event) {
+	unsubscribe := proc.Subscribe(func(event fingerprint.Event) {
 		if event.Event == "closed" && event.Target != proc.Page {
 			select {
 			case closed <- struct{}{}:
@@ -384,7 +383,7 @@ func TestTikTokRenderedFallback(t *testing.T) {
 		t.Helper()
 		raw := "https://www.tiktok.com/@alice/photo/" + id
 		s.start = tiktokTestURL(t, raw)
-		if err := s.run(ctx, camoufox.Navigate(raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Navigate(raw)); err != nil {
 			t.Fatal(err)
 		}
 		return raw
@@ -440,7 +439,7 @@ func TestTikTokRenderedFallback(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("page-change fixture did not start")
 	}
-	if err := s.run(ctx, camoufox.Navigate("https://www.tiktok.com/@alice/photo/130")); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate("https://www.tiktok.com/@alice/photo/130")); err != nil {
 		t.Fatal(err)
 	}
 	close(releaseChange)
@@ -536,7 +535,7 @@ func TestTikTokProfileIdentityAndLinks(t *testing.T) {
 func TestTikTokProfileRenderedCapture(t *testing.T) {
 	runtime := os.Getenv("TULAI_TIKTOK_BROWSER_RUNTIME")
 	if runtime == "" {
-		t.Skip("set TULAI_TIKTOK_BROWSER_RUNTIME to an isolated Camoufox runtime")
+		t.Skip("set TULAI_TIKTOK_BROWSER_RUNTIME to an isolated Fingerprint runtime")
 	}
 	var mode atomic.Int32
 	var mu sync.Mutex
@@ -669,18 +668,17 @@ func TestTikTokProfileRenderedCapture(t *testing.T) {
 	defer proxy.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
-	geoip := false
-	proc, err := camoufox.Start(ctx, runtime, camoufox.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true, Proxy: proxy.URL, GeoIP: &geoip, IgnoreHTTPSErrors: true}, nil)
+	proc, err := fingerprint.Start(ctx, runtime, fingerprint.Options{Profile: filepath.Join(t.TempDir(), "profile"), Headless: true, Proxy: proxy.URL, IgnoreHTTPSErrors: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	life, closeTab := context.WithCancel(proc.Context())
-	tab := camoufox.PageContext(life, proc, proc.Page)
+	tab := fingerprint.PageContext(life, proc, proc.Page)
 	start := tiktokTestURL(t, "https://www.tiktok.com/@alice")
 	s := &RenderedSession{process: proc, tab: tab, closeTab: closeTab, closeAllocator: func() { proc.Close() }, releaseProfile: func() {}, getter: NewHTTPGetter(""), start: start}
 	defer s.Close()
 	closed := make(chan struct{}, 16)
-	unsubscribe := proc.Subscribe(func(e camoufox.Event) {
+	unsubscribe := proc.Subscribe(func(e fingerprint.Event) {
 		if e.Event == "closed" && e.Target != proc.Page {
 			select {
 			case closed <- struct{}{}:
@@ -700,7 +698,7 @@ func TestTikTokProfileRenderedCapture(t *testing.T) {
 		}
 	}
 	count := func(path string) int { mu.Lock(); defer mu.Unlock(); return requests[path] }
-	if err := s.run(ctx, camoufox.Navigate(start.String())); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate(start.String())); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Capture(ctx)
@@ -741,7 +739,7 @@ func TestTikTokProfileRenderedCapture(t *testing.T) {
 		want string
 	}{{2, "登录"}, {3, "验证"}} {
 		mode.Store(tc.m)
-		if err := s.run(ctx, camoufox.Navigate(start.String())); err != nil {
+		if err := s.run(ctx, fingerprint.Navigate(start.String())); err != nil {
 			t.Fatal(err)
 		}
 		before := count("/@alice/video/123")
@@ -752,7 +750,7 @@ func TestTikTokProfileRenderedCapture(t *testing.T) {
 		waitClosed(1)
 	}
 	mode.Store(4)
-	if err := s.run(ctx, camoufox.Navigate(start.String())); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate(start.String())); err != nil {
 		t.Fatal(err)
 	}
 	stopped, stop := context.WithCancel(ctx)
@@ -770,7 +768,7 @@ func TestTikTokProfileRenderedCapture(t *testing.T) {
 	}
 	waitClosed(2)
 	mode.Store(7)
-	if err := s.run(ctx, camoufox.Navigate(start.String())); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate(start.String())); err != nil {
 		t.Fatal(err)
 	}
 	type result struct {

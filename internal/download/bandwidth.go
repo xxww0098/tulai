@@ -21,7 +21,7 @@ func NewBandwidthLimiter(bytesPerSecond int64) *BandwidthLimiter {
 
 // WaitN 预约 bytes 个字节，等到它们的时间片到来才返回。
 func (b *BandwidthLimiter) WaitN(ctx context.Context, bytes int) error {
-	if bytes <= 0 {
+	if bytes <= 0 || b == nil || b.bytesPerSecond <= 0 {
 		return nil
 	}
 	b.mu.Lock()
@@ -38,7 +38,7 @@ func (b *BandwidthLimiter) WaitN(ctx context.Context, bytes int) error {
 
 // ReadSize 把一次读取限制在最多 100 毫秒的量，并且不超过 16KiB。
 func (b *BandwidthLimiter) ReadSize(maximum int) int {
-	if maximum <= 0 {
+	if maximum <= 0 || b == nil || b.bytesPerSecond <= 0 {
 		return maximum
 	}
 	size := int(b.bytesPerSecond / 10)

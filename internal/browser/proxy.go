@@ -14,7 +14,7 @@ import (
 )
 
 // proxyEnvKeys 是「跟随系统」时读取的变量，按这个顺序。
-// 同一设置用于 Camoufox 安装与账号默认代理。
+// 同一设置用于 Fingerprint 安装与账号默认代理。
 var proxyEnvKeys = []string{
 	"HTTPS_PROXY", "https_proxy",
 	"ALL_PROXY", "all_proxy",
@@ -39,7 +39,7 @@ func savedProxy() string {
 	return proxyCustom
 }
 
-// CurrentProxyServer 是这一次启动浏览器或安装 Camoufox时用的代理。
+// CurrentProxyServer 是这一次启动浏览器或安装 Fingerprint 时用的代理。
 func CurrentProxyServer() string {
 	return ProxyServer(savedProxy(), os.Getenv)
 }
@@ -61,7 +61,7 @@ func ResolveCurrentProxy() (string, error) {
 	return "", nil
 }
 
-// ProxyServer 把自定义代理或环境变量规范为 Camoufox 可用的代理地址。
+// ProxyServer 把自定义代理或环境变量规范为受管浏览器可用的代理地址。
 // custom 非空时只用它；写错了就返回空，不再改走环境变量。
 // custom 为空时依次看 HTTPS_PROXY、ALL_PROXY、HTTP_PROXY，以及对应的小写名字。
 func ProxyServer(custom string, env func(string) string) string {
@@ -110,13 +110,13 @@ func NormalizeProxyKey(raw string) string {
 	return scheme + "://" + addr
 }
 
-// SamePlatformSharedExit returns names of other enabled Camoufox accounts on an
-// overlapping platform (豆包/千问/ChatGPT) that resolve to the same exit key.
+// SamePlatformSharedExit returns names of other enabled managed accounts on an
+// overlapping platform (豆包/千问) that resolve to the same exit key.
 func SamePlatformSharedExit(browsers []store.Browser, target store.Browser, globalProxy string) []string {
-	if target.Disabled || strings.TrimSpace(target.ExtAccount) != "" {
+	if target.Disabled {
 		return nil
 	}
-	targetPlatforms := camoufoxPlatforms(target.Platform)
+	targetPlatforms := managedPlatforms(target.Platform)
 	if len(targetPlatforms) == 0 {
 		return nil
 	}
@@ -126,10 +126,10 @@ func SamePlatformSharedExit(browsers []store.Browser, target store.Browser, glob
 	}
 	var shared []string
 	for _, b := range browsers {
-		if sameBrowser(b, target) || b.Disabled || strings.TrimSpace(b.ExtAccount) != "" {
+		if sameBrowser(b, target) || b.Disabled {
 			continue
 		}
-		if !platformsOverlap(targetPlatforms, camoufoxPlatforms(b.Platform)) {
+		if !platformsOverlap(targetPlatforms, managedPlatforms(b.Platform)) {
 			continue
 		}
 		key, ok := effectiveExitKey(b.Proxy, globalProxy)
@@ -206,7 +206,7 @@ func effectiveExitKey(accountProxy, globalProxy string) (string, bool) {
 	return "", true
 }
 
-func camoufoxPlatforms(raw string) map[string]struct{} {
+func managedPlatforms(raw string) map[string]struct{} {
 	var out map[string]struct{}
 	for _, part := range strings.Split(raw, ",") {
 		canonical := ""
@@ -215,8 +215,8 @@ func camoufoxPlatforms(raw string) map[string]struct{} {
 			canonical = "豆包"
 		case "千问":
 			canonical = "千问"
-		case "chatgpt":
-			canonical = "ChatGPT"
+		case "千问国际":
+			canonical = "千问国际"
 		}
 		if canonical == "" {
 			continue

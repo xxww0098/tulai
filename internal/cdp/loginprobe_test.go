@@ -62,15 +62,16 @@ func TestLoginProbeUsesComposerAndScanLogin(t *testing.T) {
 			t.Fatalf("probe script missing %q", needle)
 		}
 	}
-	for _, needle := range []string{"evidence:'generating'", "evidence:'login_dialog'", "signedIn()", "passwordField()"} {
+	for _, needle := range []string{"evidence:'generating'", "evidence:'login_dialog'", "signedIn()", "passwordField()", ".header-right-auth-button", "button.stop-button", ".user-menu-btn", "Continue with Google"} {
 		if !strings.Contains(loginProbeJS, needle) {
 			t.Fatalf("probe script missing %q", needle)
 		}
 	}
 	busy := strings.Index(loginProbeJS, "if (generating()) return {state:'unknown', evidence:'generating'}")
+	toLogin := strings.Index(loginProbeJS, "if (toLoginButton()) return {state:'out', evidence:'to_login_button'}")
 	button := strings.Index(loginProbeJS, "if (loginButton() && !signedIn()) return {state:'out', evidence:'login_button'}")
 	loggedIn := strings.Index(loginProbeJS, "if (hasComposer || signedIn()) return {state:'in', evidence:'composer'}")
-	if busy < 0 || button < busy || loggedIn < button {
+	if busy < 0 || toLogin < busy || button < toLogin || loggedIn < button {
 		t.Fatal("generating must not count as logged out, and a login button still beats the composer")
 	}
 }
@@ -94,6 +95,55 @@ func TestNormalizeLoginState(t *testing.T) {
 	for raw, want := range cases {
 		if got := NormalizeLoginState(raw); got != want {
 			t.Errorf("NormalizeLoginState(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestSanitizeAccountUsername(t *testing.T) {
+	cases := map[string]string{
+		"xxww":                        "xxww",
+		"  Qwen3464 \n\t ":            "Qwen3464",
+		"小明\u200b同学":                  "小明 同学",
+		"登录":                          "",
+		"立即登录":                        "",
+		"登录/注册":                       "",
+		"退出登录":                        "",
+		"豆包":                          "",
+		"千问":                          "",
+		"千问国际":                        "",
+		"Qwen":                        "",
+		"Free":                        "",
+		"Upgrade":                     "",
+		"Sign up":                     "",
+		"Log out":                     "",
+		"谢威":                          "谢威",
+		"免费版":                         "",
+		"  ":                          "",
+		strings.Repeat("字", 49):       "",
+		strings.Repeat("字", 48):       strings.Repeat("字", 48),
+		"豆包用户8821":                    "豆包用户8821",
+	}
+	for raw, want := range cases {
+		if got := SanitizeAccountUsername(raw); got != want {
+			t.Errorf("SanitizeAccountUsername(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestAccountUsernameScriptAnchors(t *testing.T) {
+	for _, needle := range []string{
+		"data-sidebar-footer-account-menu",
+		"chat_header_avatar_button",
+		"window._ROUTER_DATA",
+		"is_visitor_account",
+		"#new-nav-tab-wrapper",
+		"data-session-switch-target",
+		"window._USER_",
+		"fromQwenIntlDOM",
+		".user-menu-btn-text",
+	} {
+		if !strings.Contains(accountUsernameJS, needle) {
+			t.Fatalf("accountUsernameJS missing %q", needle)
 		}
 	}
 }

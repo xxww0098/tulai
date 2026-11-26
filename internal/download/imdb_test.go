@@ -18,8 +18,8 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 
-	"github.com/xxww0098/tulai/internal/camoufox"
-	"github.com/xxww0098/tulai/internal/camoufoxtest"
+	"github.com/xxww0098/tulai/internal/fingerprint"
+	"github.com/xxww0098/tulai/internal/fingerprinttest"
 )
 
 const imdbTitleURL = "https://www.imdb.com/title/tt0111161/"
@@ -155,9 +155,9 @@ func (fn imdbRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { 
 
 func TestIMDbRenderedCapture(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
-	session, err := openDedicatedFixture(t, camoufoxtest.ConfigDir(t), t.TempDir(), "", nil)
+	session, err := openDedicatedFixture(t, fingerprinttest.ConfigDir(t), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,13 +175,13 @@ func TestIMDbRenderedCapture(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/html; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader(imdbFixture)), Request: r}, nil
 	})
 	responses := make(chan error, 8)
-	camoufox.ListenTarget(session.tab, func(event any) {
+	fingerprint.ListenTarget(session.tab, func(event any) {
 		paused, ok := event.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
 		go func() {
-			var action camoufox.Action
+			var action fingerprint.Action
 			if paused.ResourceType == network.ResourceTypeDocument && (paused.Request.URL == target || paused.Request.URL == root) {
 				body := imdbFixture
 				if paused.Request.URL == root {
@@ -191,7 +191,7 @@ func TestIMDbRenderedCapture(t *testing.T) {
 			} else {
 				action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			}
-			if err := camoufox.Run(session.tab, action); err != nil {
+			if err := fingerprint.Run(session.tab, action); err != nil {
 				select {
 				case responses <- err:
 				default:
@@ -204,14 +204,14 @@ func TestIMDbRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(target)
 	session.start = start
-	if err := session.run(ctx, camoufox.Navigate(target)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
 	if err != nil || len(got.Items) != 2 || calls.Load() != 0 {
 		t.Fatalf("index capture=%+v calls=%d err=%v", got.Items, calls.Load(), err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(root)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(root)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)

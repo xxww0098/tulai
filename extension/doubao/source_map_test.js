@@ -81,4 +81,43 @@ assert.deepStrictEqual(
   '复用会话中前几轮的源图 URI 不应误判为本轮冲突'
 )
 
+// SSE 结构化流直连映射：完整匹配、乱序匹配、以及缺失/歧义严格拒绝。
+{
+  const sseState = {
+    attachments: names.map((name, i) => ({ name, uri: `tos-input/${i + 1}` })),
+    creations: [3, 1, 2].map(i => ({
+      key: `/tos-images/output-${i}`,
+      url: preview(i),
+      rawUrl: raw(i),
+      imgUris: [`tos-input/${i}`],
+      imgUri: `tos-input/${i}`,
+    })),
+  }
+  const res = TULAIDoubaoSourceMap.resolveFromSSE(sseState, names, images)
+  assert.ok(res && res.images.length === 3)
+  assert.deepStrictEqual(res.indices, [3, 1, 2], 'SSE 完整映射应按参考 URI 正确关联')
+
+  // DOM 仅见 2 张时 SSE 应补全屏外第 3 张并附带 rawUrl
+  const sup = TULAIDoubaoSourceMap.resolveFromSSE(sseState, names, [{ url: preview(3) }, { url: preview(1) }])
+  assert.ok(sup && sup.images.length === 3)
+  assert.deepStrictEqual(sup.indices, [3, 1, 2])
+  assert.strictEqual(sup.images[0].rawUrl, raw(3))
+
+  const rec = TULAIDoubaoSourceMap.recoverFromSSE(sseState, names)
+  assert.deepStrictEqual(rec.indices, [1, 2, 3])
+  assert.deepStrictEqual(rec.images.map(x => x.rawUrl), [raw(1), raw(2), raw(3)])
+
+  // 附件不完整或 URI 冲突必须返回 null，严禁猜测
+  assert.strictEqual(TULAIDoubaoSourceMap.resolveFromSSE({ attachments: sseState.attachments.slice(0, 2), creations: sseState.creations }, names, images), null)
+  const conflict = {
+    attachments: sseState.attachments,
+    creations: [
+      sseState.creations[0],
+      { key: '/tos-images/output-1', url: preview(1), rawUrl: raw(1), imgUris: ['tos-input/3'], imgUri: 'tos-input/3' },
+      sseState.creations[2],
+    ],
+  }
+  assert.strictEqual(TULAIDoubaoSourceMap.resolveFromSSE(conflict, names, images), null)
+}
+
 console.log('doubao source mapping ok')

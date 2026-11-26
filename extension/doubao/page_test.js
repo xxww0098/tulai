@@ -7,6 +7,7 @@ const vm = require('vm')
 globalThis.getComputedStyle = (el) => ({
   display: (el && el.display) || 'block',
   visibility: (el && el.visibility) || 'visible',
+  opacity: el && el.opacity != null ? String(el.opacity) : '1',
 })
 
 class El {
@@ -37,6 +38,13 @@ class El {
     if (name === 'class') return this.className || null
     if (this.attrs[name] == null || this.attrs[name] === false) return null
     return String(this.attrs[name])
+  }
+
+  setAttribute(name, value) {
+    const str = String(value)
+    if (name === 'id') this.id = str
+    else if (name === 'class') this.className = str
+    this.attrs[name] = str
   }
 
   getBoundingClientRect() {
@@ -191,7 +199,6 @@ let rawEventListener
 globalThis.document = {
   addEventListener(type, fn) { if (type === '__pb_raw_images__') rawEventListener = fn },
 }
-vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'protocol.js'), 'utf8'))
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'page.js'), 'utf8'))
 delete globalThis.document
 const Page = globalThis.TULAIPage
@@ -407,6 +414,120 @@ async function testImageMode() {
   const modalGuest = surface()
   modalGuest.doc.body.append(new El('div', { role: 'dialog' })).addText('扫码登录')
   assert.strictEqual(Page.loginWall(modalGuest.doc), true, '出现登录弹窗时即使有输入框也要判为未登录')
+
+  // 2026-11 新版 deterministic-overflow-list：深层嵌套（6 层）且无 testid 时不得误判已激活，
+  // 且 opacity=0 的测量副本会被忽略，窄屏自动点击「技能」展开菜单并选中带副标题的「图像生成」。
+  const deepBar = surface()
+  const overflowList = deepBar.box.parentElement.append(new El('div', { class: 'deterministic-overflow-list-pbp6Jr' }))
+  const itemWrap = overflowList.append(new El('div', { class: 'overflow-visible-item-SVWIz6' }))
+  const spanWrap = itemWrap.append(new El('span'))
+  const deepBtn = spanWrap.append(new El('button')).addText('图像生成')
+  const layoutSpan = deepBtn.append(new El('span'))
+  const contentSpan = layoutSpan.append(new El('span'))
+  contentSpan.append(new El('div')).addText('图像生成')
+  overflowList.append(new El('button')).addText('PPT 生成')
+  assert.strictEqual(Page.imageModeActive(deepBar.doc), false, '新版深层嵌套技能栏未点击前不得误判已进入图像模式')
+
+  const narrow = surface()
+  const narrowList = narrow.box.parentElement.append(new El('div', { class: 'deterministic-overflow-list-pbp6Jr' }))
+  const ghost3 = narrowList.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  ghost3.opacity = '0'
+  const narrowMore = narrowList.append(new El('button', { 'data-testid': 'skill_bar_button_more' })).addText('技能')
+  narrowMore.click = function () {
+    narrowMore.clicked = (narrowMore.clicked || 0) + 1
+    const menu = narrow.doc.body.append(new El('div', { role: 'menu', 'data-state': 'open' }))
+    const entry = menu.append(new El('div', { role: 'menuitem' }))
+    entry.append(new El('span')).addText('图像生成')
+    entry.append(new El('span')).addText('描述画面生成图片')
+    entry.innerText = '图像生成\n描述画面生成图片'
+    entry.click = function () {
+      entry.clicked = (entry.clicked || 0) + 1
+      narrow.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+    }
+  }
+  assert.strictEqual((await Page.ensureImageMode(narrow.doc, null, 800)).ok, true, '窄屏隐藏测量副本后应通过「技能」菜单激活图像生成')
+  assert.strictEqual(ghost3.clicked, undefined, 'opacity=0 的测量副本不得被点击')
+  assert.strictEqual(narrowMore.clicked, 1)
+
+  // 下载电脑版推广弹窗（含「下载电脑版」+「立即下载」+「关闭」）应先关闭再点击「图像生成」。
+  const promoCase = surface()
+  const promoDlg = promoCase.doc.body.append(new El('div', { role: 'dialog' })).addText('下载电脑版 新用户领 30 天订阅权益')
+  promoDlg.append(new El('button')).addText('立即下载')
+  const promoClose = promoDlg.append(new El('button', { 'aria-label': '关闭' }))
+  promoClose.click = function () {
+    promoClose.clicked = (promoClose.clicked || 0) + 1
+    promoDlg.isConnected = false
+  }
+  const promoImgBtn = promoCase.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  promoImgBtn.click = function () {
+    promoImgBtn.clicked = (promoImgBtn.clicked || 0) + 1
+    if (promoDlg.isConnected) return
+    promoCase.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+  }
+  assert.strictEqual((await Page.ensureImageMode(promoCase.doc, null, 1000)).ok, true, '关闭下载电脑版推广弹窗后应成功激活图像生成')
+  assert.strictEqual(promoClose.clicked, 1)
+  assert.strictEqual(promoImgBtn.clicked, 1)
+
+  // 处于「工作 / 云电脑」模式时，应先切回「对话」再点击「图像生成」。
+  const workCase = surface()
+  const topSwitch = workCase.doc.body.append(new El('div'))
+  const topChat = topSwitch.append(new El('button')).addText('对话')
+  topSwitch.append(new El('button')).addText('工作')
+  const modeBtn = workCase.box.parentElement.append(new El('button', { 'data-testid': 'chat_input_action_mode' })).addText('云电脑')
+  workCase.box.parentElement.append(new El('button', { 'data-testid': 'general-agent-skill-button' })).addText('技能')
+  topChat.click = function () {
+    topChat.clicked = (topChat.clicked || 0) + 1
+    modeBtn.innerText = '对话'
+    const btn3 = workCase.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+    btn3.click = function () {
+      btn3.clicked = (btn3.clicked || 0) + 1
+      workCase.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+    }
+  }
+  assert.strictEqual((await Page.ensureImageMode(workCase.doc, null, 1200)).ok, true, '从云电脑工作模式切回对话后应成功进入图像生成')
+  assert.strictEqual(topChat.clicked, 1)
+
+  // 只有下拉菜单可切换模式时，点开 chat_input_action_mode 后应立刻选中菜单内的「对话」。
+  const workMenuCase = surface()
+  const menuModeBtn = workMenuCase.box.parentElement.append(new El('button', { 'data-testid': 'chat_input_action_mode' })).addText('云电脑')
+  menuModeBtn.click = function () {
+    menuModeBtn.clicked = (menuModeBtn.clicked || 0) + 1
+    const menu = workMenuCase.doc.body.append(new El('div', { role: 'menu', 'data-state': 'open' }))
+    const chatOpt = menu.append(new El('div', { role: 'menuitem' })).addText('对话')
+    chatOpt.click = function () {
+      chatOpt.clicked = (chatOpt.clicked || 0) + 1
+      menu.isConnected = false
+      menuModeBtn.innerText = '对话'
+      const btn3 = workMenuCase.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+      btn3.click = function () {
+        workMenuCase.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+      }
+    }
+  }
+  assert.strictEqual((await Page.ensureImageMode(workMenuCase.doc, null, 1200)).ok, true, '通过模式下拉菜单切回对话后应立即进入图像生成')
+  assert.strictEqual(menuModeBtn.clicked, 1)
+
+  // 可信点击 window.tulaiClick 存在时，ensureImageMode 应优先走 tulaiClick。
+  const trustedCase = surface()
+  const trustedBtn = trustedCase.box.parentElement.append(new El('button', { 'data-testid': 'skill_bar_button_3' })).addText('图像生成')
+  let trustedHits = 0
+  const prevWindow = globalThis.window
+  globalThis.window = {
+    tulaiClick: async (el) => {
+      if (el !== trustedBtn) return false
+      trustedHits++
+      trustedCase.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+      return true
+    },
+  }
+  try {
+    assert.strictEqual((await Page.ensureImageMode(trustedCase.doc, null, 800)).ok, true, '有 window.tulaiClick 时应通过可信点击激活图像生成')
+    assert.strictEqual(trustedHits, 1)
+    assert.strictEqual(trustedBtn.clicked, undefined, '可信点击成功时不再回退合成 click')
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window
+    else globalThis.window = prevWindow
+  }
 }
 
 {
@@ -621,15 +742,6 @@ function generatedCard(prompt) {
   assert.strictEqual(Page.isPlaceholderURL('blob:https://www.doubao.com/11111111-2222-3333-4444-555555555555'), true)
   assert.strictEqual(Page.isPlaceholderURL('https://cdn.example/shell.svg'), true)
   assert.strictEqual(Page.isPlaceholderURL('https://p3-flow-imagex-sign.byteimg.com/ocean-cloud-tos/a.jpeg'), false)
-  const shellBytes = Uint8Array.from(EMPTY_SVG, (ch) => ch.charCodeAt(0))
-  assert.strictEqual(globalThis.TULAI.looksLikeRaster(shellBytes), false)
-  assert.strictEqual(globalThis.TULAI.looksLikeRaster(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true)
-  assert.strictEqual(globalThis.TULAI.looksLikeRaster(Uint8Array.from([0xff, 0xd8, 0xff, 0x00])), true)
-  assert.strictEqual(globalThis.TULAI.looksLikeRaster(Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])), true)
-  const webp = new Uint8Array(12)
-  webp.set(Uint8Array.from('RIFF', (ch) => ch.charCodeAt(0)), 0)
-  webp.set(Uint8Array.from('WEBP', (ch) => ch.charCodeAt(0)), 8)
-  assert.strictEqual(globalThis.TULAI.looksLikeRaster(webp), true)
 }
 
 {
@@ -922,6 +1034,39 @@ async function testSetOutputRatio() {
   out = await Page.setOutputRatio(doc, '4:3')
   assert.strictEqual(out.ok && out.already, true, '已是目标比例时不再点开菜单')
 
+  out = await Page.setOutputRatio(doc, '自动')
+  assert.strictEqual(out.ok && !out.already, true, '允许从具体比例重置回「自动」')
+  assert.strictEqual(Page.ratioValue(Page.ratioControl(doc)), '')
+
+  out = await Page.setOutputRatio(doc, '自动')
+  assert.strictEqual(out.ok && out.already, true, '已是「自动」时不再重复打开菜单')
+
+  // 无空格的「比例4:3」也必须正常识别
+  trigger.innerText = '比例4:3'
+  assert.strictEqual(Page.ratioControl(doc), trigger, '「比例4:3」无空格标签也能识别')
+  assert.strictEqual(Page.ratioValue(trigger), '4:3')
+
+  // 选中后按钮文本始终不更新导致超时时，必须收起已打开的菜单，避免挡住输入区
+  const stuck = surface()
+  stuck.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button', 'data-value': '3' })).addText('图像生成')
+  const stuckTrigger = stuck.box.parentElement.append(new El('button', { 'aria-haspopup': 'menu' }))
+  stuckTrigger.addText('比例 1:1')
+  const stuckMenu = stuck.doc.body.append(new El('div', { role: 'menu', 'data-state': 'closed' }))
+  stuckMenu.rect = { width: 240, height: 180, left: 0, top: 0 }
+  const setStuckOpen = (isOpen) => {
+    stuckMenu.attrs['data-state'] = isOpen ? 'open' : 'closed'
+  }
+  stuckTrigger.click = () => setStuckOpen(stuckMenu.attrs['data-state'] !== 'open')
+  ;['自动', '1:1', '3:4'].forEach((label) => {
+    const it = stuckMenu.append(new El('button'))
+    it.addText(label)
+    it.rect = { width: 64, height: 48, left: 0, top: 0 }
+    // 故意不改写 trigger.innerText 且不关闭菜单，模拟页面未响应
+  })
+  const stuckOut = await Page.setOutputRatio(stuck.doc, '3:4', null, 300)
+  assert.strictEqual(stuckOut.error, '比例 3:4 未生效')
+  assert.strictEqual(stuckMenu.attrs['data-state'], 'closed', '超时未生效时必须关闭比例菜单')
+
   const none = surface()
   assert.strictEqual((await Page.setOutputRatio(none.doc, '1:1', null, 250)).error, '未找到「比例」入口', '图像模式未激活时没有比例入口')
 
@@ -963,4 +1108,411 @@ async function testSetOutputRatio() {
   void a1
 }
 
-testImageMode().then(testSetOutputRatio).then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })
+// SPA 新对话入口、多选检测、click 拟人偏移、以及 raw.js 的 Response.prototype.json 拦截。
+async function testDoubaoPageOptimizations() {
+  const { doc, box } = surface()
+  // 消息内的「新对话」和 target=_blank 链接都不能点
+  const msg = message(doc, 'assistant', '')
+  const fakeInMsg = msg.append(new El('button'))
+  fakeInMsg.addText('新对话')
+  const blankLink = doc.body.append(new El('a', { target: '_blank' }))
+  blankLink.addText('新对话')
+  assert.strictEqual(Page.clickNewChat(doc), false, '不应误点消息区或新标签入口')
+
+  const realNew = doc.body.append(new El('button', { 'data-testid': 'create_conversation_button' }))
+  realNew.addText('新对话')
+  realNew.click = function () { realNew.clicked = (realNew.clicked || 0) + 1 }
+  assert.strictEqual(Page.clickNewChat(doc), true)
+  assert.strictEqual(realNew.clicked, 1)
+
+  const multiInput = box.parentElement.append(new El('input', { type: 'file', 'data-testid': 'upload-file-input' }))
+  multiInput.multiple = false
+  assert.strictEqual(Page.canMultiUpload(doc, box), false)
+  multiInput.multiple = true
+  assert.strictEqual(Page.canMultiUpload(doc, box), true)
+
+  // 点击偏移应落在按钮矩形范围内（Node 下临时提供 MouseEvent 验证 clientX/clientY 构造）
+  const btn = doc.body.append(new El('button'))
+  btn.rect = { left: 100, top: 200, width: 80, height: 40 }
+  const points = []
+  btn.dispatchEvent = function (ev) {
+    if (ev.type === 'pointerdown') points.push({ x: ev.clientX, y: ev.clientY })
+  }
+  btn.click = function () {}
+  const prevMouseEvent = globalThis.MouseEvent
+  globalThis.MouseEvent = class MouseEvent {
+    constructor(type, init) {
+      this.type = type
+      Object.assign(this, init)
+    }
+  }
+  try {
+    for (let i = 0; i < 8; i++) Page.activate(btn)
+  } finally {
+    if (prevMouseEvent === undefined) delete globalThis.MouseEvent
+    else globalThis.MouseEvent = prevMouseEvent
+  }
+  assert.strictEqual(points.length, 8)
+  for (const pt of points) {
+    assert.ok(pt.x >= 100 && pt.x <= 180 && pt.y >= 200 && pt.y <= 240, '点击坐标必须在按钮矩形内: ' + JSON.stringify(pt))
+  }
+
+  // raw.js：同时拦截 Response.prototype.json，并保持 Function.prototype.toString 呈原生形态
+  const dispatched = []
+  function FakeResponse(data) { this._data = data }
+  FakeResponse.prototype.json = function json() { return Promise.resolve(this._data) }
+  const rawCtx = vm.createContext({
+    URL,
+    Response: FakeResponse,
+    location: { hostname: 'www.doubao.com', href: 'https://www.doubao.com/chat/1' },
+    CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init && init.detail } },
+    document: { dispatchEvent(ev) { dispatched.push(ev) } },
+    __tulaiAddResult() {},
+  })
+  rawCtx.window = rawCtx
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'raw.js'), 'utf8'), rawCtx)
+  const rawURL = 'https://p3.byteimg.com/tos-images/from-res-json~tplv-raw.png?x-expires=1&x-signature=1'
+  const prevURL = 'https://p6.byteimg.com/tos-images/from-res-json~tplv-prev.png?x-expires=1&x-signature=2'
+  const res = new rawCtx.Response({ image_ori_raw: { url: rawURL }, image_preview: { url: prevURL } })
+  await res.json()
+  assert.strictEqual(rawCtx.__tulaiDoubaoRaw.get(prevURL), rawURL, 'Response.prototype.json 应捕获 image_ori_raw')
+  assert.ok(dispatched.length >= 1, 'Response.prototype.json 捕获后应派发 __pb_raw_images__ 事件')
+  assert.ok(!rawCtx.Response.prototype.json.toString().includes('scanRaw'), 'toString 不得暴露拦截代码')
+
+  // orderedMessages O(M) 祖先去重与 pollResults 单轮扫描一致性校验
+  const nestedDoc = makeDoc('www.doubao.com')
+  const outerUser = message(nestedDoc, 'user', '')
+  outerUser.append(new El('div', { 'data-role': 'user' })).addText('单轮巡检提示词')
+  const outerAsst = message(nestedDoc, 'assistant', '')
+  const outerInnerAsst = outerAsst.append(new El('div', { 'data-role': 'assistant' }))
+  const outerCard = outerInnerAsst.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  outerCard.append(new El('img')).src = EMPTY_SVG_URL
+  const nestedMark = Page.mark(nestedDoc, '单轮巡检提示词')
+  assert.strictEqual(nestedMark.baseline.length, 2, 'orderedMessages 祖先去重后应只保留外层消息节点')
+  assert.strictEqual(nestedMark.userBodies.length, 1)
+
+  // mark 后再发一条用户消息与回复（模拟发送新轮次）
+  const pDoc = makeDoc('www.doubao.com')
+  const pMark = Page.mark(pDoc, '新轮次提示词')
+  const uMsg = message(pDoc, 'user', '')
+  uMsg.append(new El('div', { 'data-role': 'user' })).addText('新轮次提示词')
+  const aMsg = message(pDoc, 'assistant', '')
+  aMsg.attrs['data-streaming'] = 'true'
+  const c1 = aMsg.append(new El('div', { 'data-testid': 'mdbox_image' }))
+  const c1Svg = c1.append(new El('img'))
+  c1Svg.src = EMPTY_SVG_URL
+  c1Svg.currentSrc = c1Svg.src
+  let cardScrolled = 0
+  c1.scrollIntoView = function () { cardScrolled += 1 }
+
+  const p1 = Page.pollResults(pDoc, pMark)
+  assert.strictEqual(p1.assistants.length, 1)
+  assert.strictEqual(p1.busy, true)
+  assert.strictEqual(p1.images.length, 0)
+  assert.strictEqual(p1.signal.done, false)
+  assert.strictEqual(cardScrolled, 1, 'pollResults 遇到 SVG 占位卡片应就地触发揭开滚动')
+
+  aMsg.attrs['data-streaming'] = 'false'
+  const c1Real = c1.append(new El('img'))
+  c1Real.complete = true
+  c1Real.naturalWidth = 1024
+  c1Real.src = 'https://p26-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc_gen_image/poll.png~tplv-a9rns2rl98-cgen_lwm3.png'
+  c1Real.currentSrc = c1Real.src
+  const p2 = Page.pollResults(pDoc, pMark)
+  assert.strictEqual(p2.busy, false)
+  assert.strictEqual(p2.images.length, 1)
+  assert.strictEqual(p2.signal.done, true)
+  assert.strictEqual(pMark.anchor, uMsg)
+  assert.strictEqual(pMark.anchorConfirmed, true)
+}
+
+async function testLiveDoubao2026DOMUpdates() {
+  // 1) 新版图像生成模式下无 data-testid 的上传按钮（与 input[type="file"][data-testid="upload-file-input"] 同容器）
+  const upDoc = makeDoc('www.doubao.com')
+  const upShell = upDoc.body.append(new El('div', { class: 'guidance-input-surface' }))
+  const upBox = upShell.append(new El('textarea'))
+  const wrap = upShell.append(new El('div', { class: 'relative flex h-36 w-36' }))
+  const upBtn = wrap.append(new El('button', { type: 'button' }))
+  wrap.append(new El('input', { type: 'file', 'data-testid': 'upload-file-input', multiple: '' }))
+  assert.strictEqual(Page.uploadEntry(upDoc, upBox), upBtn, '新版图像生成模式应识别 file input 旁的上传按钮')
+
+  // 2) 新版删除附件图标 <svg data-testid="attachment-delete-btn" aria-label="delete">
+  // 真实豆包未悬停卡片时该 <svg> 为 display:none（0x0 rect），且卡片位于 [data-testid="chat_input"] 下而非 [data-chat-input-body] 内。
+  const card = upShell.append(new El('div', { 'data-testid': 'attachment-image-card', 'aria-label': 'a.png' }))
+  const delSvg = card.append(new El('svg', { 'data-testid': 'attachment-delete-btn', 'aria-label': 'delete' }))
+  delSvg.rect = { width: 0, height: 0, left: 0, top: 0 }
+  delSvg.style = { display: 'none', visibility: 'visible' }
+  assert.deepStrictEqual(Page.removeButtons(upDoc, upBox), [delSvg], '未悬停的 display:none svg attachment-delete-btn 只要所属卡片可见仍应被识别')
+
+  const chatDoc = makeDoc('www.doubao.com')
+  const chatInput = chatDoc.body.append(new El('div', { 'data-testid': 'chat_input' }))
+  const chatCard = chatInput.append(new El('div', { 'data-testid': 'attachment-image-card', 'aria-label': 'b.png' }))
+  const chatDel = chatCard.append(new El('svg', { 'data-testid': 'attachment-delete-btn', 'aria-label': 'delete' }))
+  chatDel.rect = { width: 0, height: 0, left: 0, top: 0 }
+  chatDel.style = { display: 'none', visibility: 'visible' }
+  const chatBody = chatInput.append(new El('div', { 'data-chat-input-body': '' }))
+  const chatBox = chatBody.append(new El('textarea'))
+  assert.deepStrictEqual(Page.removeButtons(chatDoc, chatBox), [chatDel], '附件卡在 chat_input 内但不在 data-chat-input-body 内时也应命中')
+
+  // 3) 新版比例控件文案「自动比例」/「3:4」与 aria-haspopup="menu"
+  const rt = surface()
+  const ratioBtn = rt.box.parentElement.append(new El('button', { 'aria-haspopup': 'menu' }))
+  ratioBtn.addText('自动比例')
+  assert.strictEqual(Page.ratioControl(rt.doc, rt.box), ratioBtn)
+  assert.strictEqual(Page.ratioValue(ratioBtn), '', '自动比例在 ratioValue 中返回空串')
+  ratioBtn.click = function () {
+    ratioBtn.clicked = (ratioBtn.clicked || 0) + 1
+    const menu = rt.doc.body.append(new El('div', { role: 'menu', 'data-state': 'open' }))
+    for (const label of ['自动', '3:4', '16:9']) {
+      const opt = menu.append(new El('div', { role: 'menuitem' })).addText(label)
+      opt.click = function () {
+        ratioBtn.innerText = label === '自动' ? '自动比例' : label
+        ratioBtn.textContent = ratioBtn.innerText
+        menu.isConnected = false
+        menu.parentElement.children = menu.parentElement.children.filter(c => c !== menu)
+      }
+    }
+  }
+  const setRes = await Page.setOutputRatio(rt.doc, '3:4', null, 800)
+  assert.strictEqual(setRes.ok, true, '新版比例按钮应能从 自动比例 切换到 3:4: ' + JSON.stringify(setRes))
+  assert.strictEqual(Page.ratioValue(ratioBtn), '3:4')
+  const nextRes = await Page.setOutputRatio(rt.doc, '16:9', null, 800)
+  assert.strictEqual(nextRes.ok, true, '新版比例按钮应能从 3:4 切换到 16:9: ' + JSON.stringify(nextRes))
+  assert.strictEqual(Page.ratioValue(ratioBtn), '16:9')
+
+  // 4) 2026-11 豆包官方 2×4 卡片 Popover（「自动比例 >」+ role="dialog" / popover-content + div 卡片网格）
+  const pop = surface()
+  pop.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button', 'data-value': '3' })).addText('图像生成')
+  const popTrigger = pop.box.parentElement.append(new El('div', { 'aria-haspopup': 'dialog', 'data-state': 'closed' }))
+  popTrigger.addText('自动比例')
+  assert.strictEqual(Page.ratioControl(pop.doc), popTrigger, '新版 div Popover 触发器应被识别')
+  let popWrap = null
+  const closePop = () => {
+    if (!popWrap) return
+    popWrap.isConnected = false
+    pop.doc.body.children = pop.doc.body.children.filter((c) => c !== popWrap)
+    popWrap = null
+    popTrigger.attrs['data-state'] = 'closed'
+  }
+  popTrigger.click = function () {
+    if (popWrap) { closePop(); return }
+    popTrigger.attrs['data-state'] = 'open'
+    popWrap = pop.doc.body.append(new El('div', { 'data-radix-popper-content-wrapper': '' }))
+    popWrap.rect = { width: 380, height: 240, left: 0, top: 0 }
+    const dialog = popWrap.append(new El('div', { role: 'dialog', 'data-slot': 'popover-content', 'data-state': 'open' }))
+    dialog.rect = { width: 380, height: 240, left: 0, top: 0 }
+    dialog.append(new El('div')).addText('比例')
+    const grid = dialog.append(new El('div'))
+    grid.rect = { width: 360, height: 180, left: 0, top: 0 }
+    for (const label of ['自动', '9:16', '2:3', '3:4', '1:1', '4:3', '3:2', '16:9']) {
+      const card = grid.append(new El('div', { class: 'ratio-card' }))
+      card.rect = { width: 80, height: 64, left: 0, top: 0 }
+      const lblSpan = card.append(new El('span')).addText(label)
+      lblSpan.rect = { width: 40, height: 18, left: 0, top: 0 }
+      card.innerText = label
+      card.textContent = label
+      card.click = function () {
+        card.clicked = (card.clicked || 0) + 1
+        popTrigger.innerText = label === '自动' ? '自动比例' : label
+        popTrigger.textContent = popTrigger.innerText
+        closePop()
+      }
+    }
+  }
+  const popSet1 = await Page.setOutputRatio(pop.doc, '16:9', null, 1200)
+  assert.strictEqual(popSet1.ok, true, '2×4 Popover 应能从 自动比例 切到 16:9: ' + JSON.stringify(popSet1))
+  assert.strictEqual(Page.ratioValue(popTrigger), '16:9')
+  const popSet2 = await Page.setOutputRatio(pop.doc, '3:2', null, 1200)
+  assert.strictEqual(popSet2.ok, true, '2×4 Popover 应能从 16:9 切到 3:2: ' + JSON.stringify(popSet2))
+  assert.strictEqual(Page.ratioValue(popTrigger), '3:2')
+  const popAuto = await Page.setOutputRatio(pop.doc, '自动', null, 1200)
+  assert.strictEqual(popAuto.ok, true, '2×4 Popover 应能从 3:2 切回 自动: ' + JSON.stringify(popAuto))
+  assert.strictEqual(Page.ratioValue(popTrigger), '')
+  const popMiss = await Page.setOutputRatio(pop.doc, '5:4', null, 1200)
+  assert.strictEqual(popMiss.error, '「比例」菜单没有 5:4')
+  assert.strictEqual(popWrap, null, '2×4 Popover 报错后必须关闭')
+}
+
+async function testDoubaoHistoryDeletion() {
+  const doc = makeDoc('www.doubao.com')
+  const sidebar = doc.body.append(new El('div', { 'data-testid': 'flow_chat_sidebar' }))
+  const listWrap = sidebar.append(new El('div', { 'data-testid': 'chat_list_wrapper' }))
+  // 按真实豆包 DOM 嵌套：conversation-list-v2-project 是根容器，同时包裹 project-grouped-section 与 conversation-section
+  const v2Root = listWrap.append(new El('div', {
+    'data-conversation-list-v2-root': 'true',
+    'data-empty-conversation': 'false',
+    'data-testid': 'conversation-list-v2-project',
+  }))
+  const projectSec = v2Root.append(new El('section', { 'data-testid': 'project-grouped-section' }))
+  const projLink = projectSec.append(new El('a', { href: '/chat/proj-1' }))
+  projLink.append(new El('div', { 'data-testid': 'conversation-list-v2-item', 'data-conversation-id': 'proj-1' })).addText('项目会话')
+  const convSec = v2Root.append(new El('section', { 'data-testid': 'conversation-section' }))
+
+  const removedIds = []
+  function addConv(id, title, active) {
+    const link = convSec.append(new El('a', { href: '/chat/' + id }))
+    const row = link.append(new El('div', {
+      'data-testid': 'conversation-list-v2-item',
+      'data-conversation-id': id,
+      'data-conversation-active': active ? 'true' : 'false',
+    })).addText(title)
+    const more = row.append(new El('button', {
+      'data-testid': 'chat_list_item_more_button',
+      'aria-label': '更多',
+      'aria-haspopup': 'menu',
+    }))
+    more.click = function () {
+      const menu = doc.body.append(new El('div', { role: 'menu', 'data-state': 'open' }))
+      menu.append(new El('div', { role: 'menuitem' })).addText('重命名')
+      const del = menu.append(new El('div', { role: 'menuitem' })).addText('删除')
+      del.click = function () {
+        menu.isConnected = false
+        doc.body.children = doc.body.children.filter(c => c !== menu)
+        const dlg = doc.body.append(new El('div', { role: 'alertdialog', 'data-state': 'open' }))
+        dlg.append(new El('button')).addText('取消')
+        const okBtn = dlg.append(new El('button')).addText('确认删除')
+        okBtn.click = function () {
+          dlg.isConnected = false
+          doc.body.children = doc.body.children.filter(c => c !== dlg)
+          row.isConnected = false
+          link.isConnected = false
+          convSec.children = convSec.children.filter(c => c !== link)
+          removedIds.push(id)
+        }
+      }
+    }
+    return { link, row, more }
+  }
+
+  addConv('c1', '第一条生图', true)
+  addConv('c2', '第二条洗图', false)
+  addConv('c3', '第三条裂变', false)
+
+  const items = Page.conversationItems(doc)
+  assert.deepStrictEqual(items.map(i => i.id), ['c1', 'c2', 'c3'], '应排除项目分组中的对话')
+
+  // keepRecent=1 时应跳过 c1，删除 c2
+  const r1 = await Page.deleteNextHistoryItem(doc, [], 1, null, 2000)
+  assert.strictEqual(r1.ok, true, 'deleteNextHistoryItem 应成功: ' + JSON.stringify(r1))
+  assert.strictEqual(r1.id, 'c2')
+  assert.strictEqual(r1.remaining, 2)
+
+  // 继续 keepRecent=1 应删 c3
+  const r2 = await Page.deleteNextHistoryItem(doc, [], 1, null, 2000)
+  assert.strictEqual(r2.ok, true)
+  assert.strictEqual(r2.id, 'c3')
+  assert.strictEqual(r2.remaining, 1)
+
+  // 只剩 1 条时 keepRecent=1 应完成不再删 c1
+  const r3 = await Page.deleteNextHistoryItem(doc, [], 1, null, 2000)
+  assert.strictEqual(r3.ok, true)
+  assert.strictEqual(r3.done, true)
+  assert.deepStrictEqual(removedIds, ['c2', 'c3'])
+
+  // 直接按 ID 删除 c1
+  const r4 = await Page.deleteConversation(doc, 'c1', null, 2000)
+  assert.strictEqual(r4.ok, true)
+  assert.deepStrictEqual(removedIds, ['c2', 'c3', 'c1'])
+}
+
+async function testDoubaoThreadListBatchDelete() {
+  // 模拟 /chat/thread/list「管理历史对话」页：右上角 ... → 批量删除对话 → 全选/按 keep 勾选 → 删除(N) → 确认
+  function buildThreadListPage(initialIds) {
+    const doc = makeDoc('www.doubao.com')
+    const sidebar = doc.body.append(new El('div', { id: 'flow_chat_sidebar', 'data-testid': 'flow_chat_sidebar' }))
+    const listWrap = sidebar.append(new El('div', { 'data-testid': 'chat_list_wrapper' }))
+    const v2Root = listWrap.append(new El('div', { 'data-testid': 'conversation-list-v2-project' }))
+    const convSec = v2Root.append(new El('section', { 'data-testid': 'conversation-section' }))
+    const main = doc.body.append(new El('main'))
+    const header = main.append(new El('header'))
+    header.append(new El('div')).addText('管理历史对话')
+    const moreBtn = header.append(new El('button', { 'aria-haspopup': 'menu', 'aria-label': '更多' }))
+    moreBtn.rect = { left: 1120, top: 20, width: 32, height: 32 }
+
+    let currentIds = [...initialIds]
+    const listArea = main.append(new El('div'))
+    let batchControls = null
+
+    function renderSidebar() {
+      convSec.children = []
+      for (const id of currentIds) {
+        const a = convSec.append(new El('a', { href: '/chat/' + id }))
+        a.append(new El('div', { 'data-testid': 'conversation-list-v2-item', 'data-conversation-id': id })).addText('对话 ' + id)
+      }
+    }
+    renderSidebar()
+
+    moreBtn.click = function () {
+      const menu = doc.body.append(new El('div', { role: 'menu', 'data-state': 'open' }))
+      const batchItem = menu.append(new El('div', { role: 'menuitem' })).addText('批量删除对话')
+      batchItem.click = function () {
+        menu.isConnected = false
+        doc.body.children = doc.body.children.filter(c => c !== menu)
+        batchControls = main.append(new El('div'))
+        const selectAll = batchControls.append(new El('button', { role: 'checkbox', 'aria-checked': 'false' })).addText('全选')
+        selectAll.rect = { left: 260, top: 130, width: 60, height: 24 }
+        const boxes = []
+        const delBtn = batchControls.append(new El('button')).addText('删除(0)')
+        delBtn.rect = { left: 960, top: 130, width: 80, height: 30 }
+        function syncBtn() {
+          const n = boxes.filter(b => b.el.getAttribute('aria-checked') === 'true').length
+          delBtn.innerText = '删除(' + n + ')'
+          delBtn.textContent = delBtn.innerText
+        }
+        currentIds.forEach((id, idx) => {
+          const cb = listArea.append(new El('button', { role: 'checkbox', 'aria-checked': 'false' }))
+          cb.rect = { left: 260, top: 180 + idx * 50, width: 20, height: 20 }
+          cb.click = function () {
+            const next = cb.getAttribute('aria-checked') === 'true' ? 'false' : 'true'
+            cb.setAttribute('aria-checked', next)
+            syncBtn()
+          }
+          boxes.push({ id, el: cb })
+        })
+        selectAll.click = function () {
+          selectAll.setAttribute('aria-checked', 'true')
+          boxes.forEach(b => b.el.setAttribute('aria-checked', 'true'))
+          syncBtn()
+        }
+        delBtn.click = function () {
+          const dlg = doc.body.append(new El('div', { role: 'alertdialog', 'data-state': 'open' }))
+          dlg.append(new El('button')).addText('取消')
+          const confirmBtn = dlg.append(new El('button')).addText('确认删除')
+          confirmBtn.click = function () {
+            dlg.isConnected = false
+            doc.body.children = doc.body.children.filter(c => c !== dlg)
+            const toRemove = new Set(boxes.filter(b => b.el.getAttribute('aria-checked') === 'true').map(b => b.id))
+            currentIds = currentIds.filter(id => !toRemove.has(id))
+            renderSidebar()
+            listArea.children.forEach(c => { c.isConnected = false })
+            listArea.children = []
+            if (batchControls) {
+              batchControls.isConnected = false
+              main.children = main.children.filter(c => c !== batchControls)
+              batchControls = null
+            }
+          }
+        }
+      }
+    }
+    return { doc, remaining: () => [...currentIds] }
+  }
+
+  // 1) keepRecent=0：走全选一次性清空
+  const p1 = buildThreadListPage(['t1', 't2', 't3', 't4'])
+  const r1 = await Page.batchDeleteOnThreadList(p1.doc, 0, 100, null, 3000)
+  assert.strictEqual(r1.ok, true, '全选批量删除应成功: ' + JSON.stringify(r1))
+  assert.strictEqual(r1.done, true)
+  assert.strictEqual(r1.deletedCount, 4)
+  assert.deepStrictEqual(p1.remaining(), [])
+
+  // 2) keepRecent=1：跳过第 1 条 t1，只勾选并删除 t2/t3/t4
+  const p2 = buildThreadListPage(['t1', 't2', 't3', 't4'])
+  const r2 = await Page.batchDeleteOnThreadList(p2.doc, 1, 100, null, 3000)
+  assert.strictEqual(r2.ok, true, 'keepRecent=1 批量删除应成功: ' + JSON.stringify(r2))
+  assert.strictEqual(r2.done, true)
+  assert.strictEqual(r2.deletedCount, 3)
+  assert.deepStrictEqual(p2.remaining(), ['t1'])
+}
+
+testImageMode().then(testSetOutputRatio).then(testDoubaoPageOptimizations).then(testLiveDoubao2026DOMUpdates).then(testDoubaoHistoryDeletion).then(testDoubaoThreadListBatchDelete).then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })

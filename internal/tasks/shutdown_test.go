@@ -8,31 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/tulai/internal/extbridge"
 	"github.com/xxww0098/tulai/internal/logging"
 )
 
 func TestShutdownStopsRunAndWaitsBeforeStoreClose(t *testing.T) {
 	st := openRotateStore(t)
-	st.Set(extbridge.SettingBrowserBackend, "camoufox_extension")
-	st.Set(extbridge.SettingExtPort, freePort(t))
 	addNamed(t, st, "豆包", "豆包2")
 
 	e := NewEngine(st, nil, nil, "")
 	t.Cleanup(func() { e.Shutdown() })
-
-	release := make(chan struct{})
-	defer close(release)
-	sess := dialFakeExt(t, extbridge.PlatformDoubao, func(env extbridge.Envelope) extbridge.Envelope {
-		name, _ := env.Name()
-		if name == extbridge.CmdWaitResult {
-			select {
-			case <-release:
-			case <-time.After(10 * time.Second):
-			}
-		}
-		return ackOK(env, nil)
-	})
 
 	var sources []string
 	for i := 1; i <= 15; i++ {
@@ -63,15 +47,15 @@ func TestShutdownStopsRunAndWaitsBeforeStoreClose(t *testing.T) {
 			case inWait <- struct{}{}:
 			default:
 			}
-			_, err := extCall(ctx, sess, extbridge.CmdWaitResult, "1", "", map[string]any{"timeoutMs": 10000}, 10*time.Second, "豆包")
-			return err
+			<-ctx.Done()
+			return ctx.Err()
 		})
 	}()
 
 	select {
 	case <-inWait:
 	case <-time.After(5 * time.Second):
-		t.Fatal("batch did not enter extCall")
+		t.Fatal("batch did not enter attempt wait")
 	}
 
 	e.Shutdown()
@@ -99,7 +83,7 @@ func TestShutdownStopsRunAndWaitsBeforeStoreClose(t *testing.T) {
 	snapshotLogs := append([]string(nil), logged...)
 	logMu.Unlock()
 	for _, line := range snapshotLogs {
-		if strings.Contains(line, "database is closed") || strings.Contains(line, extbridge.ENotConnected) {
+		if strings.Contains(line, "database is closed") {
 			t.Fatalf("unexpected shutdown error log: %q", line)
 		}
 	}

@@ -60,6 +60,14 @@ func NewHTTPGetter(proxy string) *HTTPGetter {
 	}
 }
 
+// CloseIdleConnections 关闭该下载器持有的空闲连接。
+func (g *HTTPGetter) CloseIdleConnections() {
+	if g == nil || g.client == nil {
+		return
+	}
+	g.client.CloseIdleConnections()
+}
+
 func proxyFunc(raw string) func(*http.Request) (*url.URL, error) {
 	if raw == "" {
 		return nil

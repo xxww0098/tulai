@@ -49,7 +49,7 @@ func ReviewFissionResults(items, fresh []Task) []Task {
 			task.Error = "裂变相似度检查失败：每个方向需要一张结果"
 			continue
 		}
-		sig, err := dedup.Hash(task.Results[0])
+		sig, err := dedup.PerceptualHashFile(task.Results[0])
 		if err != nil {
 			task.Status = StatusNeedsReview
 			task.Error = "裂变相似度检查失败：无法读取结果图片"
@@ -68,4 +68,56 @@ func ReviewFissionResults(items, fresh []Task) []Task {
 		}
 	}
 	return out
+}
+
+type fissionCandidate struct {
+	index int
+	sig   dedup.Signature
+}
+
+// pickBestFissionCandidate 在多候选结果中选出与已接受裂变结果（以及母图）视觉结构差异最大的一张，
+// 优先非平坦有效图且满足与所有已保存结果 pHash 距离 >= 26（相似度 <= 60%），无先验哈希时按距离母图更远择优。
+func pickBestFissionCandidate(candidates []fissionCandidate, priorHashes []uint64, motherSig *dedup.Signature) int {
+	if len(candidates) == 0 {
+		return -1
+	}
+	if len(candidates) == 1 {
+		return candidates[0].index
+	}
+	bestPos := 0
+	bestValid := false
+	bestPass := false
+	bestMinPrior := -1
+	bestMother := -1
+	hasPrior := len(priorHashes) > 0
+	hasMother := motherSig != nil && !motherSig.Flat
+
+	for pos, c := range candidates {
+		valid := !c.sig.Flat
+		minPrior := 64
+		if hasPrior {
+			for _, h := range priorHashes {
+				if d := bits.OnesCount64(c.sig.Hash ^ h); d < minPrior {
+					minPrior = d
+				}
+			}
+		}
+		pass := valid && (!hasPrior || minPrior >= 26)
+		motherDist := 0
+		if hasMother && valid {
+			motherDist = bits.OnesCount64(c.sig.Hash ^ motherSig.Hash)
+		}
+		if pos == 0 ||
+			(valid && !bestValid) ||
+			(valid == bestValid && pass && !bestPass) ||
+			(valid == bestValid && pass == bestPass && hasPrior && minPrior > bestMinPrior) ||
+			(valid == bestValid && pass == bestPass && (!hasPrior || minPrior == bestMinPrior) && motherDist > bestMother) {
+			bestPos = pos
+			bestValid = valid
+			bestPass = pass
+			bestMinPrior = minPrior
+			bestMother = motherDist
+		}
+	}
+	return candidates[bestPos].index
 }

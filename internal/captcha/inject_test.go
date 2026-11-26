@@ -1,8 +1,6 @@
 package captcha
 
 import (
-	"context"
-	"encoding/json"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -49,7 +47,7 @@ const window={addEventListener(){},tulaiCall(name,value){events.push([name,value
 const source=` + strconv.Quote(InjectJS()) + `;
 const staleWindow={__tulaiCaptchaInstalled:true};vm.runInNewContext(source,{window:staleWindow});
 assert.equal(staleWindow.__tulaiCaptchaRevision,undefined,'old installed guard must not claim a new revision');
-vm.runInNewContext(source,{window,document,console:{log(){}},getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1'}),setInterval:fn=>{report=fn},setTimeout:()=>0});
+vm.runInNewContext(source,{window,document,console:{log(){}},getComputedStyle:el=>({display:'block',visibility:'visible',opacity:(el&&el.attrs&&el.attrs.opacity)||'1'}),setInterval:fn=>{report=fn},setTimeout:()=>0});
 assert.equal(window.__tulaiCaptchaRevision,` + strconv.Quote(injectRevision) + `);
 window.__tulaiCaptcha.setManual(true);
 window.__tulaiCaptcha.start();
@@ -71,6 +69,8 @@ check(new Element('div',{class:'dialog'},[canvas()],'安全验证：请拖动滑
 check(new Element('div',{class:'dialog'},[canvas()],'Please drag the slider to verify'),true,'aliyun slider prompt stays verifying');
 check(new Element('button',{},[],'Please click me to try again(error:verify)'),true,'aliyun slider retry stays verifying');
 check(new Element('iframe',{src:'https://example.test/captcha'}),true,'dedicated captcha iframe');
+check(new Element('iframe',{id:'baxia-dialog-content',src:'https://chat2.qianwen.com/api/v2/chat/_____tmd_____/punish?x5secdata=abc'}),true,'aliyun baxia punish iframe');
+check(new Element('div',{class:'baxia-dialog',opacity:'0'},[new Element('iframe',{id:'baxia-dialog-content',src:'https://chat2.qianwen.com/api/v2/chat/_____tmd_____/punish?x5secdata=abc'})]),false,'opacity-0 ancestor must not keep baxia iframe blocking');
 check(editor(),false,'normal editor clears prior captcha blocking');
 window.__tulaiCaptcha.stop();
 assert.equal(events.some(([name])=>name==='captchaSolve'),false,'classification fixture must never solve a challenge');
@@ -151,72 +151,5 @@ async function check(kind,enabled,disableAt){
 	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("隔离验证码开关 fixture: %v\n%s", err, out)
-	}
-}
-
-type preparePageFixture struct {
-	ctx         context.Context
-	ego         bool
-	installed   bool
-	revision    string
-	blocked     bool
-	autoSolve   bool
-	manualCalls int
-	afterRead   func()
-	evaluations int
-	renewals    int
-}
-
-func (s *preparePageFixture) IsEgo() bool { return s.ego }
-
-func (s *preparePageFixture) Ctx() context.Context {
-	if s.ctx != nil {
-		return s.ctx
-	}
-	return context.Background()
-}
-
-func (s *preparePageFixture) EgoEvaluate(expression string, out any) error {
-	s.evaluations++
-	if strings.Contains(expression, "tulai captcha:manual") {
-		s.manualCalls++
-		return nil
-	}
-	if s.afterRead != nil {
-		s.afterRead()
-	}
-	data, err := json.Marshal(map[string]any{"installed": s.installed, "revision": s.revision, "blocked": s.blocked, "autoSolve": s.autoSolve})
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, out)
-}
-
-func (s *preparePageFixture) RenewPage() error {
-	s.renewals++
-	return nil
-}
-
-func TestPreparePageRenewsOnlyOldEgoCaptchaDocument(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		page      preparePageFixture
-		wantEval  int
-		wantRenew int
-	}{
-		{"old-without-revision", preparePageFixture{ego: true, installed: true}, 1, 1},
-		{"old-revision", preparePageFixture{ego: true, installed: true, revision: "old"}, 1, 1},
-		{"current", preparePageFixture{ego: true, installed: true, revision: injectRevision}, 1, 0},
-		{"first-page", preparePageFixture{ego: true}, 1, 0},
-		{"chrome", preparePageFixture{installed: true}, 0, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := PreparePage(&tc.page); err != nil {
-				t.Fatal(err)
-			}
-			if tc.page.evaluations != tc.wantEval || tc.page.renewals != tc.wantRenew {
-				t.Fatalf("page preparation = %+v, want evaluations=%d, renewals=%d", tc.page, tc.wantEval, tc.wantRenew)
-			}
-		})
 	}
 }

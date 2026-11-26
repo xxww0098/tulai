@@ -46,38 +46,45 @@
     }
   }
   attachStore();
+  function isDoubaoHost() {
+    var host = (typeof window.__tulaiAddResult === 'function' ? window.__tulaiPageHost : '') || location.hostname || '';
+    return /(^|\.)doubao\.com$/.test(host);
+  }
+  function scanRaw(result) {
+    if (!result || typeof result !== 'object' || !isDoubaoHost()) return;
+    try {
+      var stack = [result], seen = new WeakSet(), count = 0, pairs = [];
+      while (stack.length && count++ < 10000) {
+        var item = stack.pop();
+        if (!item || typeof item !== 'object' || seen.has(item)) continue;
+        seen.add(item);
+        var raw = item.image_ori_raw && item.image_ori_raw.url;
+        if (key(raw)) {
+          ['image_ori_raw', 'image_ori', 'image_preview', 'image_thumb'].forEach(function (name) {
+            var source = item[name] && item[name].url, path = key(source);
+            if (path) {
+              if (urls.size >= 2048 && !urls.has(path)) urls.delete(urls.keys().next().value);
+              urls.set(path, raw);
+              if (pairs.length < 2048) pairs.push({ source: source, raw: raw });
+            }
+          });
+        }
+        Object.keys(item).forEach(function (name) {
+          if (item[name] && typeof item[name] === 'object') stack.push(item[name]);
+        });
+      }
+      if (pairs.length && typeof document !== 'undefined' && document && typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+        document.dispatchEvent(new CustomEvent(RAW_EVENT, { detail: JSON.stringify(pairs) }));
+      }
+    } catch (e) {}
+  }
   var originalParse = JSON.parse;
   var parseDesc = Object.getOwnPropertyDescriptor(JSON, 'parse');
   var wrappedParse = new Proxy(originalParse, {apply: function (target, receiver, args) {
     var result = Reflect.apply(target, receiver, args);
     attachStore();
-    var host = (typeof window.__tulaiAddResult === 'function' ? window.__tulaiPageHost : '') || location.hostname || '';
-    if (/(^|\.)doubao\.com$/.test(host) && typeof args[0] === 'string' && args[0].indexOf('image_ori_raw') !== -1) {
-      try {
-        var stack = [result], seen = new WeakSet(), count = 0, pairs = [];
-        while (stack.length && count++ < 10000) {
-          var item = stack.pop();
-          if (!item || typeof item !== 'object' || seen.has(item)) continue;
-          seen.add(item);
-          var raw = item.image_ori_raw && item.image_ori_raw.url;
-          if (key(raw)) {
-            ['image_ori_raw', 'image_ori', 'image_preview', 'image_thumb'].forEach(function (name) {
-              var source = item[name] && item[name].url, path = key(source);
-              if (path) {
-                if (urls.size >= 2048 && !urls.has(path)) urls.delete(urls.keys().next().value);
-                urls.set(path, raw);
-                if (pairs.length < 2048) pairs.push({ source: source, raw: raw });
-              }
-            });
-          }
-          Object.keys(item).forEach(function (name) {
-            if (item[name] && typeof item[name] === 'object') stack.push(item[name]);
-          });
-        }
-        if (pairs.length && typeof document !== 'undefined' && document && typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
-          document.dispatchEvent(new CustomEvent(RAW_EVENT, { detail: JSON.stringify(pairs) }));
-        }
-      } catch (e) {}
+    if (typeof args[0] === 'string' && args[0].indexOf('image_ori_raw') !== -1) {
+      scanRaw(result);
     }
     return result;
   }});
@@ -91,5 +98,31 @@
     });
   } else {
     JSON.parse = wrappedParse;
+  }
+  if (typeof Response !== 'undefined' && Response && Response.prototype && typeof Response.prototype.json === 'function') {
+    var originalJson = Response.prototype.json;
+    var jsonDesc = Object.getOwnPropertyDescriptor(Response.prototype, 'json');
+    var wrappedJson = new Proxy(originalJson, {apply: function (target, receiver, args) {
+      var p = Reflect.apply(target, receiver, args);
+      if (p && typeof p.then === 'function') {
+        return p.then(function (result) {
+          attachStore();
+          scanRaw(result);
+          return result;
+        });
+      }
+      return p;
+    }});
+    originals.set(wrappedJson, originalJson);
+    if (!jsonDesc || jsonDesc.configurable) {
+      try {
+        Object.defineProperty(Response.prototype, 'json', {
+          value: wrappedJson,
+          writable: jsonDesc ? jsonDesc.writable : true,
+          enumerable: jsonDesc ? jsonDesc.enumerable : false,
+          configurable: true
+        });
+      } catch (e) {}
+    }
   }
 })();

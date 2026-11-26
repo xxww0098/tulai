@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"io"
 	"net"
 	"net/http"
@@ -321,7 +321,7 @@ func TestQzoneGroupListRequestLimit(t *testing.T) {
 
 func TestQzoneRenderedGroupAlbum(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	const secret = "synthetic-cookie-value"
 	const token = "synthetic-qzonetoken"
@@ -418,10 +418,10 @@ func TestQzoneRenderedGroupAlbum(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -441,7 +441,7 @@ func TestQzoneRenderedGroupAlbum(t *testing.T) {
 	}
 	before := posts.Load()
 	for _, suffix := range []string{"?mismatch=1", "?login=1"} {
-		if err := session.run(ctx, camoufox.Navigate(page.String()+suffix)); err != nil {
+		if err := session.run(ctx, fingerprint.Navigate(page.String()+suffix)); err != nil {
 			t.Fatal(err)
 		}
 		result, err := session.Capture(ctx)
@@ -452,7 +452,7 @@ func TestQzoneRenderedGroupAlbum(t *testing.T) {
 	redirect.Store(false)
 	listPage, _ := url.Parse("https://h5.qzone.qq.com" + listPath)
 	session.start = listPage
-	if err := session.run(ctx, camoufox.Navigate(listPage.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(listPage.String())); err != nil {
 		t.Fatal(err)
 	}
 	before = posts.Load()
@@ -595,7 +595,7 @@ func TestQzonePersonalPartialPaginationAndCancellation(t *testing.T) {
 
 func TestQzoneRenderedPersonalAlbum(t *testing.T) {
 	if os.Getenv("TULAI_RENDERED_E2E") != "1" {
-		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Camoufox integration")
+		t.Skip("set TULAI_RENDERED_E2E=1 for isolated Fingerprint integration")
 	}
 	const secret = "synthetic-personal-skey"
 	const pagePath = "/123/photo/"
@@ -690,10 +690,10 @@ func TestQzoneRenderedPersonalAlbum(t *testing.T) {
 	defer session.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	if err := camoufox.Run(tab); err != nil {
+	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, camoufox.Navigate(page.String())); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String())); err != nil {
 		t.Fatal(err)
 	}
 	session.mu.Lock()

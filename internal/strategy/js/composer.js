@@ -51,24 +51,71 @@
     }
     return fallback;
   }
-  // 仅有占位/隐藏文本时视为空；有可编辑正文时保留浏览器的多行 innerText。
+  // 仅有占位/隐藏文本时视为空；有可编辑正文时按块级节点读取，避免 ProseMirror/Slate 的 innerText 把单换行翻倍。
   window.tulaiReadComposer = function (comp) {
     if (!comp) return null;
     if (comp.tagName === 'TEXTAREA' || comp.tagName === 'INPUT') return comp.value;
-    var slate = comp.querySelector && comp.querySelector('[data-slate-placeholder]');
-    if (!slate) {
-      var walker = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), text;
-      while ((text = walker.nextNode())) {
-        if (!String(text.nodeValue || '').trim()) continue;
-        var excluded = false;
-        for (var node = text.parentElement; node && node !== comp; node = node.parentElement) {
-          var style = getComputedStyle(node);
-          if (node.getAttribute('contenteditable') === 'false' || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden') { excluded = true; break; }
-        }
-        if (!excluded) return comp.innerText;
+    var hasVisibleText = false;
+    var walker = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), text;
+    while ((text = walker.nextNode())) {
+      if (!String(text.nodeValue || '').replace(/\uFEFF/g, '').trim()) continue;
+      var excluded = false;
+      for (var node = text.parentElement; node && node !== comp; node = node.parentElement) {
+        var style = getComputedStyle(node);
+        if (node.getAttribute('contenteditable') === 'false' || node.getAttribute('data-slate-placeholder') === 'true' || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility === 'hidden') { excluded = true; break; }
       }
-      return '';
+      if (!excluded) { hasVisibleText = true; break; }
     }
+    if (!hasVisibleText) return '';
+    // Tiptap / ProseMirror / Slate puts each line in a block child; innerText doubles newlines between <p>s.
+    var isSlateEditor = comp.getAttribute && comp.getAttribute('data-slate-editor') === 'true';
+    var blockChildren = comp.children && Array.from(comp.children).filter(function (child) {
+      return /^(P|DIV|LI)$/.test(child.tagName || '');
+    });
+    if (blockChildren && blockChildren.length > 0 && (isSlateEditor || (comp.classList && comp.classList.contains('ProseMirror')) || comp.querySelector('p'))) {
+      var readNode = function (el) {
+        if (!el) return '';
+        if (el.nodeType === 3) return String(el.nodeValue || '').replace(/\uFEFF/g, '');
+        if (el.nodeType !== 1) return '';
+        if (el !== comp) {
+          var st = getComputedStyle(el);
+          if (el.getAttribute('contenteditable') === 'false' || el.getAttribute('data-slate-placeholder') === 'true' || el.getAttribute('aria-hidden') === 'true' || st.display === 'none' || st.visibility === 'hidden') return '';
+        }
+        if (el.tagName === 'BR') {
+          if (el.classList && el.classList.contains('ProseMirror-trailingBreak')) return '';
+          if (el.parentElement && el.parentElement.hasAttribute && el.parentElement.hasAttribute('data-slate-zero-width')) return '';
+          return '\n';
+        }
+        if (el !== comp && el.children && Array.from(el.children).some(function (c) { return /^(P|DIV|LI)$/.test(c.tagName || ''); })) {
+          var sub = [];
+          for (var c2 = el.firstChild; c2; c2 = c2.nextSibling) {
+            if (c2.nodeType === 1 && /^(P|DIV|LI)$/.test(c2.tagName || '')) {
+              sub.push(readNode(c2));
+            } else {
+              var inlinePart = readNode(c2);
+              if (inlinePart) sub.push(inlinePart);
+            }
+          }
+          return sub.join('\n');
+        }
+        var s = '';
+        for (var c = el.firstChild; c; c = c.nextSibling) s += readNode(c);
+        return s;
+      };
+      var lines = [];
+      for (var k = 0; k < comp.childNodes.length; k++) {
+        var child = comp.childNodes[k];
+        if (child.nodeType === 1 && /^(P|DIV|LI)$/.test(child.tagName || '')) {
+          lines.push(readNode(child));
+        } else {
+          var chunk = readNode(child);
+          if (chunk) lines.push(chunk);
+        }
+      }
+      return lines.join('\n').replace(/\uFEFF/g, '');
+    }
+    var slate = comp.querySelector && comp.querySelector('[data-slate-placeholder]');
+    if (!slate) return comp.innerText;
     var out = '', seen = document.createTreeWalker(comp, NodeFilter.SHOW_TEXT), leaf;
     while ((leaf = seen.nextNode())) {
       var skip = false;
@@ -107,6 +154,7 @@
     var p = comp;
     for (var d = 0; d < 8 && p; d++) {
       if (p.hasAttribute && p.hasAttribute('data-chat-input-body')) return p;
+      if (p.classList && p.classList.contains('message-input-container')) return p;
       p = p.parentElement;
     }
     var q = comp;
@@ -127,7 +175,7 @@
     try { return await window.tulaiClick(el); } catch (e) { return false; }
   }
 
-  var MODE_KW = ['AI生图', 'AI生视频', 'PPT创作', 'AI写作', '智能体', '模板', '海报', '电商', '人像', '视频生成', '音乐', '翻译', '画图', '代码', '千问高考', '办公助理', '研究'];
+  var MODE_KW = ['AI生图', 'AI生视频', 'PPT创作', 'AI写作', '智能体', '模板', '海报', '电商', '人像', '视频生成', '音乐', '翻译', '画图', '代码', '千问高考', '办公助理', '研究', '生成图像', '生成圖像', 'Create Image', '创建视频', 'Create Video', '网页开发', 'Web Dev', 'Agent 模式'];
 
   function isMode(t) {
     for (var i = 0; i < MODE_KW.length; i++) if (t.indexOf(MODE_KW[i]) >= 0) return true;
@@ -138,7 +186,7 @@
   // 上传面板：弹出的菜单/浮层
   function findUploadPanel(comp, excluded) {
     var cr = comp ? comp.getBoundingClientRect() : null;
-    var all = document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[popover]');
+    var all = document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[popover],.qwen-chat-v2-dropdown-menu-popup');
     for (var i = 0; i < all.length; i++) {
       var el = all[i];
       if (!visible(el) || (excluded && excluded.has(el))) continue;
@@ -146,7 +194,7 @@
       if (r.width < 40 || r.height < 40) continue;
       if (cr && r.left < cr.left - 120) continue;
       var tx = el.textContent || '';
-      if (!/参考图|上传|本地|从相册|选择|导入|我的文件|图片|文件|附件/i.test(tx)) continue;
+      if (!/参考图|上传|本地|从相册|选择|导入|我的文件|图片|文件|附件|upload|attachment|add files|photo|image/i.test(tx)) continue;
       return el;
     }
     return null;
@@ -155,8 +203,8 @@
   function fileCount() { return document.querySelectorAll('input[type=file]').length; }
 
   function attachmentScope(comp, uploadEntry) {
-    var surface = comp.closest('.guidance-input-surface');
-    if (surface && uploadEntry && surface.contains(uploadEntry)) return surface;
+    var surface = comp.closest('.guidance-input-surface') || comp.closest('.message-input-container');
+    if (surface && (!uploadEntry || surface.contains(uploadEntry))) return surface;
     var scope = findScope(comp), peer = uploadEntry || findSendButton(comp);
     if (peer) {
       for (var p = comp.parentElement; p && p !== document.body; p = p.parentElement) {
@@ -169,13 +217,23 @@
 
   // 只打开当前编辑器的真实上传动作，文件由本轮浏览器 chooser 接收。
   window.tulaiOpenUpload = async function () {
+    window.__tulaiChooserOpened = false;
     var comp = findComposer(), log = [];
     window.__tulaiUploadDiagnostic = log;
     if (!comp) throw new Error('未找到输入框');
-    var entry = null;
+    var entry = null, directFileButton = false;
     for (var scope = comp.parentElement; scope && scope !== document.body; scope = scope.parentElement) {
       var exact = scope.querySelector('button[data-testid="upload_file_button"]');
       if (visible(exact)) { entry = exact; break; }
+    }
+    // 千问「AI生图」模式提供直出文件选择器的「参考图」按钮，避开 Radix 下拉菜单动画竞态。
+    for (scope = comp.parentElement; !entry && scope && scope !== document.body; scope = scope.parentElement) {
+      var refBtn = scope.querySelector('button[aria-label="参考图"],[role="button"][aria-label="参考图"]');
+      if (visible(refBtn) && !refBtn.getAttribute('aria-haspopup')) {
+        entry = refBtn;
+        directFileButton = true;
+        break;
+      }
     }
     for (scope = comp.parentElement; !entry && scope && scope !== document.body; scope = scope.parentElement) {
       var buttons = scope.querySelectorAll('button,[role=button]');
@@ -183,28 +241,72 @@
         if (visible(buttons[i]) && /添加附件/.test(combined(buttons[i]))) { entry = buttons[i]; break; }
       }
     }
+    // 千问国际（chat.qwen.ai）的「+」按钮 .mode-select-open 位于 #filesUpload 同级容器内但没有 aria-haspopup，
+    // 点击后会弹出 .qwen-chat-v2-dropdown-menu-popup 菜单，再点「上传附件 / Upload attachment」才触发文件选择器。
+    for (scope = comp.parentElement; !entry && scope && scope !== document.body; scope = scope.parentElement) {
+      var modeOpen = scope.querySelector('.mode-select-open,[role="button"][aria-label="Select Mode"],[role="button"][aria-label="选择模式"],button[aria-label="Select Mode"],button[aria-label="选择模式"]');
+      if (visible(modeOpen)) {
+        entry = modeOpen;
+        directFileButton = false;
+        break;
+      }
+    }
+    // 豆包图像生成模式去掉了 upload_file_button testid，把按钮与 upload-file-input 放在同一 36×36 容器内。
+    for (scope = comp.parentElement; !entry && scope && scope !== document.body; scope = scope.parentElement) {
+      var fileInputs = scope.querySelectorAll('input[type="file"][data-testid="upload-file-input"],input[type="file"]');
+      for (var f = 0; f < fileInputs.length && !entry; f++) {
+        var inp = fileInputs[f];
+        var accept = String(inp.getAttribute('accept') || '');
+        if (accept && !/image|png|jpe?g|webp|gif|\*/i.test(accept)) continue;
+        var wrap = inp.parentElement;
+        if (!wrap || wrap === document.body) continue;
+        var peers = wrap.querySelectorAll('button,[role=button]');
+        for (var p = 0; p < peers.length; p++) {
+          if (visible(peers[p])) {
+            entry = peers[p];
+            var isModeMenu = (entry.classList && entry.classList.contains('mode-select-open')) || /select mode|选择模式/i.test(labelOf(entry));
+            directFileButton = !isModeMenu && !entry.getAttribute('aria-haspopup');
+            break;
+          }
+        }
+      }
+    }
     if (!entry) throw new Error('未找到当前输入区上传入口');
     var previewScope = attachmentScope(comp, entry), initialImages = new Map();
     Array.from(document.images).forEach(function (img) { initialImages.set(img, img.currentSrc || img.src); });
-    var doubaoBaseline = window.__tulaiWashPage && new Set(document.querySelectorAll('img,[data-testid="attachment-image-card"]'));
+    var doubaoBaseline = new Set(document.querySelectorAll('img,[data-testid="attachment-image-card"]'));
     window.__tulaiUploadState = { scope: previewScope, entry: entry, images: initialImages, doubaoBaseline: doubaoBaseline, files: new Map(Array.from(document.querySelectorAll('input[type=file]')).map(function(input){return [input,input.files]})) };
     log.push('scope=' + (previewScope ? previewScope.tagName + '#' + (previewScope.id || '').slice(0, 40) + '.' + cls(previewScope).slice(0, 60) + '; role=' + (previewScope.getAttribute('role') || '').slice(0, 40) : 'none'));
-    log.push('entry=' + entry.tagName + '; testid=' + (entry.getAttribute('data-testid') || '').slice(0, 60) + '; id=' + (entry.id || '').slice(0, 50) + '; aria=' + (entry.getAttribute('aria-label') || '').slice(0, 60));
-    var oldPanels = new Set(Array.from(document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[popover]')).filter(visible));
+    log.push('entry=' + entry.tagName + '; testid=' + (entry.getAttribute('data-testid') || '').slice(0, 60) + '; id=' + (entry.id || '').slice(0, 50) + '; aria=' + (entry.getAttribute('aria-label') || '').slice(0, 60) + '; direct=' + directFileButton);
+    var oldPanels = new Set(Array.from(document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[popover],.qwen-chat-v2-dropdown-menu-popup')).filter(visible));
     if (!await clickEl(entry)) throw new Error('点击上传入口失败');
+    if (directFileButton || window.__tulaiChooserOpened) {
+      return JSON.stringify({ opened: true });
+    }
     // 直接打开 chooser 时没有菜单；有菜单时只处理本次新出现的面板。
     var panel = null;
     for (var deadline = Date.now() + 800; Date.now() < deadline;) {
+      if (window.__tulaiChooserOpened) return JSON.stringify({ opened: true });
       panel = findUploadPanel(comp, oldPanels);
       if (panel && !oldPanels.has(panel)) break;
       panel = null;
-      await sleep(100);
+      await sleep(20);
     }
-    if (panel) {
-      var items = panel.querySelectorAll('[role=menuitem],[role=option],button,a');
+    if (panel && !window.__tulaiChooserOpened) {
+      if (panel.getAttribute && (panel.getAttribute('data-state') === 'open' || panel.hasAttribute('data-radix-popper-content-wrapper') || (panel.closest && panel.closest('[data-radix-popper-content-wrapper]')))) {
+        for (var readyUntil = Date.now() + 150; Date.now() < readyUntil;) {
+          if (window.__tulaiChooserOpened) return JSON.stringify({ opened: true });
+          var op = parseFloat(getComputedStyle(panel).opacity || '1');
+          if (isNaN(op) || op > 0.5) break;
+          await sleep(15);
+        }
+      }
+      var items = panel.querySelectorAll('[role=menuitem],[role=option],.qwen-chat-v2-dropdown-menu-item,button,a');
       for (var j = 0; j < items.length; j++) {
         var item = items[j], text = combined(item);
-        if (!visible(item) || isMode(text) || !/本地图片|上传图片|本地上传|上传文件|选择图片|选择文件/.test(text)) continue;
+        if (!visible(item) || /(?:^|[\s_-])disabled(?:$|[\s_-])/i.test(cls(item))) continue;
+        if (isMode(text) || !/本地图片|上传图片|本地上传|上传文件|上传附件|选择图片|选择文件|upload attachment|upload image|upload file|add files?|attach file/i.test(text)) continue;
+        if (window.__tulaiChooserOpened) return JSON.stringify({ opened: true });
         log.push('menu-item=' + item.tagName + '#' + (item.id || '').slice(0, 50));
         if (!await clickEl(item)) throw new Error('点击上传菜单失败');
         break;
@@ -213,6 +315,11 @@
     return JSON.stringify({ opened: true });
   };
 
+  function isSvgPlaceholderSrc(src) {
+    var value = String(src || '').trim();
+    return /^data:image\/svg/i.test(value) || /\.svg(?:[?#]|$)/i.test(value);
+  }
+
   window.tulaiWaitForUpload = async function (expected) {
     var deadline = Date.now() + 30000, stable = 0, count = 0, busy = false;
     var state = window.__tulaiUploadState;
@@ -220,16 +327,20 @@
       var comp = findComposer(), scope = comp && attachmentScope(comp, state && state.entry);
       if (state && state.scope && state.scope.isConnected && state.scope.contains(comp)) scope = state.scope;
       if (!comp || !state || !scope) break;
-      busy = Array.from(scope.querySelectorAll('[aria-busy="true"],[role="progressbar"]')).some(visible);
+      busy = Array.from(scope.querySelectorAll('[aria-busy="true"],[role="progressbar"],.qwpcicon-loading2,.vision-item-loading')).some(visible);
+      var newCards = Array.from(scope.querySelectorAll('[data-testid="attachment-image-card"]')).filter(function (card) {
+        return visible(card) && (!state.doubaoBaseline || !state.doubaoBaseline.has(card));
+      }).length;
       count = Array.from(scope.querySelectorAll('img')).filter(function (img) {
         var src = img.currentSrc || img.src;
-        return src && visible(img) && img.complete && img.naturalWidth > 0 && (!state.images.has(img) || state.images.get(img) !== src);
+        return src && !isSvgPlaceholderSrc(src) && visible(img) && img.complete && img.naturalWidth > 0 && (!state.images.has(img) || state.images.get(img) !== src);
       }).length;
-      if (expected === 1 && !count && state.doubaoBaseline && window.__tulaiWashPage.freshAttachment(document, state.doubaoBaseline)) count = 1;
+      if (newCards > count) count = newCards;
+      if (expected === 1 && !count && state.doubaoBaseline && window.__tulaiWashPage && window.__tulaiWashPage.freshAttachment(document, state.doubaoBaseline)) count = 1;
       if (!busy && count >= expected) {
         if (++stable >= 2) return JSON.stringify({ ready: true });
       } else stable = 0;
-      await sleep(100);
+      await sleep(30);
     }
     var diagnostic = ['expected=' + expected + '; composerAttachments=' + count + '; busy=' + busy + '; scope=' + (state && state.scope ? state.scope.tagName : 'none')];
     Array.from(document.querySelectorAll('input[type=file]')).slice(-8).forEach(function (input, index) {
@@ -273,6 +384,7 @@
   function shown(el) {
     if (!el) return false;
     if (visible(el)) return true;
+    if (el.classList && el.classList.contains('send-button')) return true;
     var target = el.getAttribute && el.getAttribute('data-session-switch-target');
     if (target === 'send-query') return true;
     return !!(el.getAttribute && el.getAttribute('data-testid') === 'chat_input_send_button');
@@ -282,13 +394,13 @@
   }
   function findSendButton(comp) {
     // 上传区/“更多”可能只包住编辑器，发送按钮在其外层兄弟中。
-    // 千问箭头是 data-session-switch-target=send-query。屏幕外时布局盒可以是 0。
+    // 千问箭头是 data-session-switch-target=send-query，千问国际是 button.send-button。屏幕外时布局盒可以是 0。
     for (var scope = comp.parentElement; scope; scope = scope.parentElement) {
       var buttons = scope.querySelectorAll('button,[role=button]');
       for (var i = buttons.length - 1; i >= 0; i--) {
         var el = buttons[i];
         if (!shown(el)) continue;
-        if (el.getAttribute('data-session-switch-target') === 'send-query' || el.getAttribute('data-testid') === 'chat_input_send_button' || /发送|发消息|\bsend\b/i.test(combined(el))) return el;
+        if ((el.classList && el.classList.contains('send-button')) || el.getAttribute('data-session-switch-target') === 'send-query' || el.getAttribute('data-testid') === 'chat_input_send_button' || /发送|发消息|\bsend\b/i.test(combined(el))) return el;
       }
     }
     return null;
@@ -321,7 +433,10 @@
     try {
       var parts = new URL(String(href || ''), location.href).pathname.split('/').filter(Boolean);
       var i = parts.indexOf('chat');
-      return i >= 0 && parts[i + 1] ? parts[i + 1] : '';
+      if (i >= 0 && parts[i + 1]) return parts[i + 1];
+      var c = parts.indexOf('c');
+      if (c >= 0 && parts[c + 1] && !/^(new-chat|new-branch|guest|local)$/i.test(parts[c + 1])) return parts[c + 1];
+      return '';
     } catch (e) { return ''; }
   }
 
@@ -329,7 +444,7 @@
   function userBubbles() {
     var nodes = document.querySelectorAll('[data-testid="send_message"][data-message-role="user"]');
     if (nodes.length) return nodes;
-    return document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"],.chat-question-card-wrap');
+    return document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"],.chat-question-card-wrap,.chat-user-message');
   }
   function promptMatches(prompt) {
     var want = String(prompt || '').replace(/\s+/g, '');
@@ -342,8 +457,8 @@
     }
     return n;
   }
-  // 发送成功要看到一条新的用户气泡（正文含这次提示词），或地址变成新的 /chat/<id>。输入框空了不算。
-  // 千问复用标签时，首页壳会把地址写回上一轮的 /chat/<id>，问答卡里却没有这次提示词。那不是发出去了。
+  // 发送成功要看到一条新的用户气泡（正文含这次提示词），或地址变成新的 /chat/<id> 或 /c/<id>。输入框空了不算。
+  // 国内千问复用标签时，首页壳会把地址写回上一轮的 /chat/<id>，问答卡里却没有这次提示词。那不是发出去了。
   window.tulaiSendAccepted = function (beforeHref, prompt, beforeMatches) {
     var href = String(location.href || '');
     var nowID = conversationKey(href);
@@ -352,7 +467,7 @@
     if (promptMatches(prompt) > floor) return true;
     if (!(nowID && nowID !== thenID)) return false;
     var host = String((window.__tulaiPageHost || location.hostname) || '');
-    if (!/(qianwen|tongyi|qwen)/i.test(host)) return true;
+    if (!/(^|\.)(qianwen|tongyi)\.com$/i.test(host)) return true;
     return document.querySelectorAll('.chat-question-card-wrap').length === 0;
   };
 
@@ -374,6 +489,8 @@
   function realSendButton(comp) {
     var exact = document.querySelector('button[data-testid="chat_input_send_button"]');
     if (exact && !hiddenComposer(exact)) return exact;
+    var qwenIntlSend = document.querySelector('.chat-prompt-send-button button.send-button,button.send-button');
+    if (qwenIntlSend && !hiddenComposer(qwenIntlSend)) return qwenIntlSend;
     return comp ? findSendButton(comp) : null;
   }
 
@@ -388,7 +505,7 @@
       button = realSendButton(comp);
       if (sendEnabled(button)) break;
       button = null;
-      await sleep(100);
+      await sleep(30);
     }
     var beforeHref = String(location.href || '');
     var promptText = window.tulaiReadComposer(comp);
@@ -419,7 +536,7 @@
         var note = window.__tulaiQwenNote ? __tulaiQwenNote() : {};
         return JSON.stringify({ sent: true, chat: (note && note.url) || '', wrap: (note && note.wrap) || '' });
       }
-      await sleep(100);
+      await sleep(30);
     }
     var latest = findComposer();
     var remaining = window.tulaiReadComposer(latest);
@@ -427,29 +544,67 @@
     return JSON.stringify({ attempted: true, error: '平台未接受消息：发送后没有出现用户消息，地址也没有变成对话', chat: (missed && missed.url) || '', wrap: (missed && missed.wrap) || '', diagnostic: ['accept composer=' + (latest ? latest.tagName : 'none') + '; chars=' + String(remaining || '').trim().length + '; nodeChanged=' + (latest !== comp) + '; oldConnected=' + comp.isConnected].concat(window.tulaiComposerDiagnostic(latest)) });
   };
 
+  function cleanScope(comp) {
+    if (!comp) return null;
+    if (comp.closest) {
+      var surface = comp.closest('.guidance-input-surface') || comp.closest('[data-testid="chat_input"]') || comp.closest('.message-input-container');
+      if (surface) return surface;
+    }
+    var scope = findScope(comp);
+    if (scope && scope !== document && scope !== document.body && scope !== document.documentElement) {
+      for (var p = scope, d = 0; p && p !== document.body && p !== document.documentElement && d < 3; p = p.parentElement, d++) {
+        if (p.querySelector && p.querySelector('[class*="imageBoxWrapper"],[data-testid="attachment-image-card"],.vision-item-container,.message-input-column-file')) {
+          return p;
+        }
+      }
+      return scope;
+    }
+    return null;
+  }
+
+  var CLEAN_DEL_SEL = '[data-testid="attachment-delete-btn"],[aria-label="delete" i],[class*="imageBoxWrapper"] [data-icon-type="qwpcicon-close2"],[class*="imageBoxWrapper"] [class*="closeIcon"],.message-input-column-file .icon-close,.vision-item-container .icon-close,.file-card-list [class*="close"],[class*="preview"] [class*="delete"],[class*="preview"] [class*="remove"],[class*="image-container"] [class*="close"],[aria-label*="删除" i],[aria-label*="移除" i]';
+
   // 文本由可信 InsertText 全文替换，只清理输入区附件。
   window.tulaiCleanComposer = async function () {
     var comp = findComposer();
     if (!comp) return false;
-    var scope = findScope(comp);
-    if (scope === document || scope === document.body || scope === document.documentElement) return true;
-    // 移除已上传的预览缩略图（关闭按钮）
-    var dels = scope.querySelectorAll('[class*="preview"] [class*="delete"],[class*="preview"] [class*="remove"],[class*="image-container"] [class*="close"],[aria-label*="删除" i],[aria-label*="移除" i]');
-    for (var i = 0; i < Math.min(dels.length, 9); i++) {
-      try { await clickEl(dels[i]); } catch (e) {}
+    var scope = cleanScope(comp);
+    if (!scope || scope === document || scope === document.body || scope === document.documentElement) return true;
+    // 移除已上传的预览缩略图（关闭按钮）；逐张点击并重新查询以适配 React 异步重绘列表。
+    var clicked = typeof WeakSet === 'function' ? new WeakSet() : null;
+    var prevCount = -1;
+    for (var step = 0; step < 20; step++) {
+      var dels = Array.from(scope.querySelectorAll(CLEAN_DEL_SEL));
+      if (!dels.length) break;
+      if (prevCount >= 0 && dels.length < prevCount && clicked) clicked = new WeakSet();
+      prevCount = dels.length;
+      var target = null;
+      for (var i = 0; i < dels.length; i++) {
+        if (!clicked || !clicked.has(dels[i])) { target = dels[i]; break; }
+      }
+      if (!target) break;
+      if (clicked) clicked.add(target);
+      try {
+        if (!await clickEl(target) && typeof target.dispatchEvent === 'function') {
+          target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        }
+      } catch (e) {}
+      if (typeof target.isConnected === 'boolean') await sleep(30);
     }
     return true;
   };
 
   // 正则与 extension/quota.js、internal/tasks/fault.go 保持一致。
-  var QUOTA_RE = /额度不足|额度已用尽|额度已用|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|免费次数已|已达上限|超出.{0,8}限额|生成次数已|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|已达上限)|quota exceeded|daily limit/i;
+  var QUOTA_RE = /额度不足|额度已用尽|额度已用|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|免费次数已|已达上限|超出.{0,8}限额|生成次数已|积分不足|免费额度已用完|今日对话次数已达上限|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|已达上限)|quota exceeded|daily limit|not enough credits|insufficient credits|out of credits|daily free allowance|today['’]s chat limit has been reached|already use(?:d)? up .{0,24}credits/i;
   var REPLY_QUOTA_RE = /^(?:(?:很)?抱歉[，,：:\s]*)?(?:(?:您|你)的?\s*)?(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天)?\s*(?:图片生成|图像生成|生图|绘图)?\s*(?:免费)?\s*(?:生成)?(?:额度|次数)(?:已)?(?:用完|用尽|耗尽|达上限|已达上限)(?:[，,。.!！;；\s]|$)/;
+  var REPLY_QUOTA_EN_RE = /^(?:sorry[,:\s]*)?(?:not enough credits|insufficient credits|out of credits|today['’]s chat limit has been reached|you(?:'ve| have)?\s+(?:already\s+)?use(?:d)?\s+up\b.{0,40}(?:credits|daily free allowance)|daily free allowance\b.{0,24}(?:reached|used up|exhausted))/i;
+  var RATE_LIMIT_RE = /过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests|operation is too frequent|too many files uploaded|too many requests in the queue|chat limited|global limited|file upload limited/i;
 
   function replyQuota(text) {
     var lines = String(text || '').split('\n');
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i].replace(/\s+/g, ' ').trim();
-      if (line && REPLY_QUOTA_RE.test(line) && !/[?？]/.test(line.split(/[。.!！]/)[0])) return true;
+      if (line && (REPLY_QUOTA_RE.test(line) || REPLY_QUOTA_EN_RE.test(line)) && !/[?？]/.test(line.split(/[。.!！]/)[0])) return true;
     }
     return false;
   }
@@ -463,6 +618,17 @@
     return '';
   }
 
+  // 仅读取额度/限流/审核信号，避免发送前读取整页 document.body.innerText 触发同步回流。
+  window.tulaiAccountFault = function () {
+    var rateLimit = accountNotice(document, RATE_LIMIT_RE);
+    var quota = accountNotice(document, QUOTA_RE);
+    if (!quota && (replyQuota(freshReplyText()) || replyQuota(doubaoTurnReplyText()))) {
+      var body = (document.body && document.body.innerText) || '';
+      if (!/生成中|正在生成|绘制中|Drawing|Generating/i.test(body)) quota = true;
+    }
+    return { quota: quota, rateLimit: rateLimit, moderation: refusalText() };
+  };
+
   // 页面状态探测
   window.tulaiPageState = function () {
     var body = (document.body && document.body.innerText) || '';
@@ -473,7 +639,7 @@
       generating: generating,
       failed: /生成失败|请重试|敏感|违规/i.test(body),
       quota: accountNotice(document, QUOTA_RE) || (!generating && (replyQuota(freshReplyText()) || replyQuota(doubaoTurnReplyText()))),
-      rateLimit: accountNotice(document, /过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests/i),
+      rateLimit: accountNotice(document, RATE_LIMIT_RE),
       moderation: refusalText(),
     };
   };
@@ -481,7 +647,7 @@
   // 只看这一轮新出现的助手回复，加上短提示条。话术表在 extension/refuse.js。
   function refusalText() {
     if (!window.TULAIRefuse) return '';
-    return window.TULAIRefuse.match(freshReplyText()) || window.TULAIRefuse.match(noticeBlob(document)) || '';
+    return window.TULAIRefuse.match(doubaoTurnReplyText()) || window.TULAIRefuse.match(freshReplyText()) || window.TULAIRefuse.match(noticeBlob(document)) || '';
   }
 
   function freshReplyText() {

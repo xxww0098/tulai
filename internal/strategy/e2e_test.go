@@ -1,9 +1,9 @@
 package strategy
 
-// 端到端测试：本地 mock 页面 + 无头 Camoufox，验证真实链路
+// 端到端测试：本地 mock 页面 + 无头 Fingerprint，验证真实链路
 //   - TestChatFlowE2E：composer 打开上传 → 文件注入 → 发送 → hook 截获结果 → 抓字节
 //   - TestCaptchaGridE2E：验证码检测 → 截图 → free CV 求解 → 拟人拖拽 → 验证通过
-// 无 Camoufox 或 -short 时跳过。
+// 无 Fingerprint 或 -short 时跳过。
 
 import (
 	"bytes"

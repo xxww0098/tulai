@@ -91,7 +91,6 @@ func (v *PageView) Frame(ctx context.Context) (PageFrame, error) {
 	var out struct{ Data string }
 	err := v.conn.call(ctx, v.session, "Page.captureScreenshot", map[string]any{
 		"format": "jpeg", "quality": 80, "captureBeyondViewport": false,
-		"clip": map[string]any{"x": frame.ScrollX, "y": frame.ScrollY, "width": frame.Width, "height": frame.Height, "scale": 1},
 	}, &out)
 	if err != nil {
 		return frame, err
@@ -104,6 +103,12 @@ func (v *PageView) LoginState(ctx context.Context) (string, error) {
 	var result loginProbeResult
 	err := v.conn.readOnlyJSON(ctx, v.target, loginProbeJS, &result)
 	return NormalizeLoginState(result.State), err
+}
+
+func (v *PageView) AccountUsername(ctx context.Context) (string, error) {
+	var result accountUsernameResult
+	err := v.conn.readOnlyJSON(ctx, v.target, accountUsernameJS, &result)
+	return SanitizeAccountUsername(result.Username), err
 }
 
 // Input 返回复制或剪切的文字，其它操作返回空串。文字作为协议参数发送，不拼成脚本。

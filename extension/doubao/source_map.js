@@ -244,5 +244,120 @@
     return null
   }
 
-  globalThis.TULAIDoubaoSourceMap = { match, resolve, recover, parse, fromConversation, resolveFromConversation, recoverFromConversation }
+  // 从流式 SSE 捕获的附件与生成项直接构建严格 1-to-1 映射，跳过 8MB SSR 页面抓包。
+  // 任何附件不全、URI 缺失或一对多歧义都返回 null，由调用方回退到完整对话核对。
+  function analyzeSSE(sseState, names) {
+    if (!sseState || !Array.isArray(names) || names.length < 2 || new Set(names).size !== names.length) return null
+    const attachments = Array.isArray(sseState.attachments) ? sseState.attachments : []
+    const creations = Array.isArray(sseState.creations) ? sseState.creations : []
+    if (!attachments.length || !creations.length) return null
+    const group = new Map()
+    const seenNames = new Set()
+    for (const entry of attachments) {
+      if (!entry || typeof entry.name !== 'string' || typeof entry.uri !== 'string' || !entry.uri) continue
+      const idx = names.indexOf(entry.name)
+      if (idx < 0) continue
+      if (seenNames.has(entry.name)) {
+        // 同一文件名在流中多次出现但 URI 不同则有歧义。
+        if (!group.get(entry.uri) || group.get(entry.uri)[0] !== idx + 1) return null
+        continue
+      }
+      seenNames.add(entry.name)
+      group.set(entry.uri, (group.get(entry.uri) || []).concat(idx + 1))
+    }
+    const sourceIndices = [...group.values()].flat()
+    if (group.size !== names.length || sourceIndices.length !== names.length || new Set(sourceIndices).size !== names.length) {
+      return null
+    }
+    const refs = new Map()
+    const uriOwners = new Map()
+    const byKey = new Map()
+    for (const creation of creations) {
+      const raw = creation && creation.rawUrl
+      const url = creation && creation.url
+      const key = imageKey(raw || url)
+      if (!key) continue
+      const imgUris = Array.isArray(creation.imgUris) ? creation.imgUris : []
+      const imgUri = typeof creation.imgUri === 'string' ? creation.imgUri : ''
+      const valid = imgUris.length === 1 && typeof imgUris[0] === 'string' && imgUris[0] && (!imgUri || imgUri === imgUris[0])
+      const uris = refs.get(key) || new Set()
+      uris.add(valid ? imgUris[0] : '')
+      refs.set(key, uris)
+      for (const uri of imgUris) {
+        if (typeof uri === 'string' && uri) {
+          const owners = uriOwners.get(uri) || new Set()
+          owners.add(key)
+          uriOwners.set(uri, owners)
+        }
+      }
+      if (valid) {
+        const prev = byKey.get(key)
+        if (!prev || (!prev.rawUrl && imageKey(raw))) {
+          byKey.set(key, { key, url: url || raw, rawUrl: imageKey(raw) ? raw : '' })
+        }
+      }
+    }
+    function indexFor(key) {
+      const uris = refs.get(key)
+      if (!uris || uris.size !== 1) return 0
+      const uri = [...uris][0]
+      if (!uri) return 0
+      const owners = uriOwners.get(uri)
+      if (!owners || owners.size !== 1) return 0
+      return group.get(uri)?.[0] || 0
+    }
+    return { indexFor, byKey }
+  }
+
+  function resolveFromSSE(sseState, names, images) {
+    if (!Array.isArray(images) || images.length < 1 || !Array.isArray(names) || images.length > names.length) return null
+    const keys = images.map(item => imageKey(item && (item.rawUrl || item.url)))
+    if (keys.some(key => !key) || new Set(keys).size !== keys.length) return null
+    const analysis = analyzeSSE(sseState, names)
+    if (!analysis) return null
+    const indices = keys.map(key => analysis.indexFor(key))
+    if (indices.includes(0) || new Set(indices).size !== keys.length) return null
+    const present = new Set(keys)
+    const outImages = images.map((item, i) => {
+      const fromSSE = analysis.byKey.get(keys[i])
+      if (fromSSE && fromSSE.rawUrl && !item.rawUrl) {
+        return { url: item.url, rawUrl: fromSSE.rawUrl }
+      }
+      return item
+    })
+    const outIndices = indices.slice()
+    if (outImages.length < names.length) {
+      const usedSources = new Set(outIndices)
+      for (const [key, item] of analysis.byKey) {
+        if (present.has(key)) continue
+        const idx = analysis.indexFor(key)
+        if (!idx || usedSources.has(idx)) continue
+        present.add(key)
+        usedSources.add(idx)
+        outImages.push({ url: item.url, rawUrl: item.rawUrl || undefined })
+        outIndices.push(idx)
+      }
+    }
+    if (outImages.length > names.length || new Set(outIndices).size !== outIndices.length) return null
+    return { images: outImages, indices: outIndices }
+  }
+
+  function recoverFromSSE(sseState, names) {
+    const analysis = analyzeSSE(sseState, names)
+    if (!analysis) return null
+    const bySource = new Map()
+    for (const [key, item] of analysis.byKey) {
+      const idx = analysis.indexFor(key)
+      if (idx && (!bySource.has(idx) || item.rawUrl)) bySource.set(idx, item)
+    }
+    const indices = [...bySource.keys()].sort((a, b) => a - b)
+    if (!indices.length) return null
+    const images = indices.map(idx => {
+      const item = bySource.get(idx)
+      return { url: item.url, rawUrl: item.rawUrl || undefined }
+    })
+    return { images, indices }
+  }
+
+  globalThis.TULAIDoubaoSourceMap = { match, resolve, recover, parse, fromConversation, resolveFromConversation, recoverFromConversation, resolveFromSSE, recoverFromSSE }
 })()

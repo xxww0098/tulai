@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/chromedp/chromedp"
@@ -16,8 +17,9 @@ import (
 	extbundle "github.com/xxww0098/tulai/extension"
 )
 
-var temuSearchPath = regexp.MustCompile(`^/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?/)?search_result\.html$`)
-var temuHomePath = regexp.MustCompile(`^/(?:[a-zA-Z]{2}(?:-[a-zA-Z]{2})?/?)?$`)
+var temuSearchPath = regexp.MustCompile(`^/(?:[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?/)?search_result\.html$`)
+var temuHomePath = regexp.MustCompile(`^/(?:[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?/?)?$`)
+var temuGoodsQueryPath = regexp.MustCompile(`^/(?:[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?/)?goods\.html$`)
 var temuSearchGoodsID = regexp.MustCompile(`^[1-9][0-9]{14,19}$`)
 
 // shortcut: cap a single search at 10000 cards; use narrower searches for larger collections.
@@ -108,6 +110,38 @@ type temuSearchSnapshot struct {
 // Only read visible cards from the current page; no network response interception.
 var temuSearchSnapshotScript = "(() => {\n" + extbundle.TemuSearchJS() + "\nreturn tulaiTemuSnapshot(); })()"
 
+func temuSearchLinkID(u *url.URL) string {
+	if id := temuProductID(u); id != "" {
+		return id
+	}
+	if !temuSearchSite(u) || strings.Contains(u.Path, "..") || !temuGoodsQueryPath.MatchString(u.Path) {
+		return ""
+	}
+	var id string
+	for _, key := range []string{"goods_id", "goodsId"} {
+		values := u.Query()[key]
+		if len(values) > 1 {
+			return ""
+		}
+		if len(values) == 1 {
+			if id != "" && id != values[0] {
+				return ""
+			}
+			id = values[0]
+		}
+	}
+	if !temuSearchGoodsID.MatchString(id) {
+		return ""
+	}
+	return id
+}
+
+func temuSearchURLMatches(rawURL, observed string) bool {
+	want, errA := crawlInputURL(rawURL)
+	got, errB := crawlInputURL(observed)
+	return errA == nil && errB == nil && temuSearchSameSearch(want, got)
+}
+
 func temuSearchCollect(ctx context.Context, page *url.URL, snapshot temuSearchSnapshot) (Discovery, error) {
 	result := Discovery{IsPage: true}
 	if err := ctx.Err(); err != nil {
@@ -128,7 +162,7 @@ func temuSearchCollect(ctx context.Context, page *url.URL, snapshot temuSearchSn
 			return result, err
 		}
 		link, linkErr := crawlURL(page, row.Link)
-		if !temuSearchGoodsID.MatchString(row.ID) || linkErr != nil || link.Scheme != "https" || temuProductID(link) != row.ID {
+		if !temuSearchGoodsID.MatchString(row.ID) || linkErr != nil || link.Scheme != "https" || temuSearchLinkID(link) != row.ID {
 			invalid = true
 			continue
 		}
@@ -193,13 +227,6 @@ func temuSearchCapture(ctx context.Context, s *RenderedSession, start, page *url
 	if err := s.run(ctx, chromedp.Evaluate(temuSearchSnapshotScript, &snapshot)); err != nil {
 		return result, err
 	}
-	var current string
-	if err := s.run(ctx, chromedp.Location(&current)); err != nil {
-		return result, err
-	}
-	if current != snapshot.URL {
-		return result, errors.New("采集期间 TEMU 搜索页面发生变化")
-	}
 	var cached struct {
 		Value    string `json:"value"`
 		TooLarge bool   `json:"tooLarge"`
@@ -211,6 +238,22 @@ func temuSearchCapture(ctx context.Context, s *RenderedSession, start, page *url
 })()`, fmt.Sprintf("[%s]", markers.HostAttr), markers.SnapshotAttr)
 	if err := s.run(ctx, chromedp.Evaluate(snapshotScript, &cached)); err != nil {
 		return result, err
+	}
+	if len(snapshot.Rows) == 0 && !snapshot.Blocked && cached.Value == "" && !cached.TooLarge {
+		// Allow a brief hydration tick for dynamically rendered search cards before failing.
+		if err := Wait(ctx, 600*time.Millisecond); err != nil {
+			return result, err
+		}
+		if err := s.run(ctx, chromedp.Evaluate(temuSearchSnapshotScript, &snapshot)); err != nil {
+			return result, err
+		}
+	}
+	var current string
+	if err := s.run(ctx, chromedp.Location(&current)); err != nil {
+		return result, err
+	}
+	if current != snapshot.URL && !temuSearchURLMatches(snapshot.URL, current) {
+		return result, errors.New("采集期间 TEMU 搜索页面发生变化")
 	}
 	if cached.TooLarge {
 		return result, errors.New("TEMU 商品信息过多，请缩小搜索范围后下载")

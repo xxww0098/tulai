@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/xxww0098/tulai/internal/camoufox"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"image"
 	"io"
 	"net/http"
@@ -241,19 +241,19 @@ func TestSoukuanRenderedCapture(t *testing.T) {
 				body = strings.Replace(body, `big="`+soukuanTestImage+`"`, `big="https://img1.vvic.com/upload/other.jpg"`, 1)
 			}
 			interceptErrors := make(chan error, 8)
-			camoufox.ListenTarget(session.tab, func(event any) {
+			fingerprint.ListenTarget(session.tab, func(event any) {
 				paused, ok := event.(*fetch.EventRequestPaused)
 				if !ok {
 					return
 				}
 				go func() {
-					var action camoufox.Action
+					var action fingerprint.Action
 					if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == soukuanTestPage {
 						action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(body)))
 					} else {
 						action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 					}
-					if err := camoufox.Run(session.tab, action); err != nil {
+					if err := fingerprint.Run(session.tab, action); err != nil {
 						select {
 						case interceptErrors <- err:
 						default:
@@ -265,7 +265,7 @@ func TestSoukuanRenderedCapture(t *testing.T) {
 				t.Fatal(err)
 			}
 			session.start = soukuanTestURL(t, soukuanTestPage)
-			if err := session.run(ctx, camoufox.Navigate(soukuanTestPage)); err != nil {
+			if err := session.run(ctx, fingerprint.Navigate(soukuanTestPage)); err != nil {
 				t.Fatal(err)
 			}
 			if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
