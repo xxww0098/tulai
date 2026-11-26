@@ -128,4 +128,7 @@ func TestQwenIntlFactoryAndURLHelpers(t *testing.T) {
 	if got := qwenChatURLFor(nil, "千问", "uuid-123"); got != "https://www.qianwen.com/chat/uuid-123" {
 		t.Fatalf("qwenChatURLFor(千问) = %q, want https://www.qianwen.com/chat/uuid-123", got)
 	}
+	if got := Factory("千问").HomeURL(); got != "https://www.qianwen.com/" {
+		t.Fatalf("Qianwen.HomeURL() = %q, want https://www.qianwen.com/", got)
+	}
 }

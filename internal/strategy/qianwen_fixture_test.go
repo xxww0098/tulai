@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestQianwenLiveFixtures(t *testing.T) {
@@ -483,6 +484,27 @@ document.addEventListener('keydown', (e) => {
 	// Invalid format rejected without opening menu
 	if ok, why := qw.SetOutputRatio(sess, "invalid"); ok || why == "" {
 		t.Fatalf("invalid ratio should fail: ok=%v why=%q", ok, why)
+	}
+	// After uploading a reference image, Qianwen disables the ratio button while keeping the chosen ratio visible.
+	if _, err := sess.Evaluate(`(() => { const b = document.getElementById('ratio-btn'); b.textContent = '比例 16:9'; b.disabled = true; })()`); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Now()
+	if ok, why := qw.SetOutputRatio(sess, "16:9"); !ok || why != "" {
+		t.Fatalf("disabled matching ratio 16:9 must confirm immediately: ok=%v why=%q", ok, why)
+	}
+	if d := time.Since(t0); d > 1500*time.Millisecond {
+		t.Fatalf("disabled matching ratio took too long (%v), expected instant confirmation", d)
+	}
+	if err := ensureQianwenImageModeWithTimeout(sess, 1500); err != nil {
+		t.Fatalf("disabled ratio button must still count as active AI生图 mode: %v", err)
+	}
+	t1 := time.Now()
+	if ok, why := qw.SetOutputRatio(sess, "4:3"); ok || !strings.Contains(why, "已锁定") {
+		t.Fatalf("disabled mismatched ratio should fail fast with locked message: ok=%v why=%q", ok, why)
+	}
+	if d := time.Since(t1); d > 3*time.Second {
+		t.Fatalf("disabled mismatched ratio stalled (%v), expected fast failure", d)
 	}
 }
 

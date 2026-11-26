@@ -713,7 +713,14 @@ export interface UpdateStateDTO {
   current: string;
   checking: boolean;
   downloading: boolean;
+  phase: string;
   fraction: number;
+  doneBytes: number;
+  totalBytes: number;
+  speedBps: number;
+  etaSeconds: number;
+  source: string;
+  assetName: string;
   progressText: string;
   notes: string;
   detailsOpen: boolean;
@@ -874,7 +881,7 @@ export const Core = {
   setTab: bind<[number], void>("Core.SetTab", (tab: number) => [tab]),
   /** ToggleLogItem expands or collapses a log entry detail block. */
   toggleLogItem: bind<[number], void>("Core.ToggleLogItem", (seq: number) => [seq]),
-  /** UpdateAction handles release update actions (check, install, dismiss, skip, toggleDetails, toggleNotes). */
+  /** UpdateAction handles release update actions (check, install, cancel, dismiss, skip, toggleDetails, toggleNotes). */
   updateAction: bind<[string], void>("Core.UpdateAction", (action: string) => [action]),
   /** WizardAction executes a step action inside the onboarding wizard. */
   wizardAction: bind<[string, string], void>("Core.WizardAction", (action: string, value: string) => [action, value]),

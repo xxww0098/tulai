@@ -300,6 +300,36 @@ describe("App shell contracts", () => {
     );
   });
 
+  it("renders live download progress in sidebar update card when downloading", () => {
+    act(() => {
+      useAppStore.setState((st) => ({
+        shell: {
+          ...st.shell,
+          update: {
+            ...st.shell.update,
+            visible: true,
+            version: "0.1.41",
+            downloading: true,
+            phase: "downloading",
+            fraction: 0.64,
+            doneBytes: 64 * 1024 * 1024,
+            totalBytes: 100 * 1024 * 1024,
+            speedBps: 6 * 1024 * 1024,
+            etaSeconds: 6,
+            source: "edgeone.gh-proxy.org",
+          },
+        },
+      }));
+    });
+
+    render(<App />);
+    const card = screen.getByTestId("sidebar-update-card");
+    expect(card).toHaveTextContent("更新 v0.1.41");
+    expect(screen.getByTestId("sidebar-update-percent")).toHaveTextContent("64%");
+    expect(screen.getByTestId("sidebar-update-progress")).toHaveAttribute("aria-valuenow", "64");
+    expect(card).toHaveTextContent("6.0 MB/s · 剩余 6 秒");
+  });
+
   it("forwards mouse drag buttons bitmask and flushes pending move before mouseReleased", async () => {
     const { Browser } = await import("@/lib/ipc");
     const sendSpy = vi.spyOn(Browser, "sendBrowserDrawerInput").mockResolvedValue(true);

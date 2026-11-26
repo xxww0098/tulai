@@ -392,4 +392,17 @@ func TestSubmitOnceAppliesNativeRatioByClickOnlyWithoutPromptSuffix(t *testing.T
 			t.Fatalf("ratios = %v, want [自动 自动]", strat.ratios)
 		}
 	})
+
+	t.Run("image task without readable dimensions still verifies image mode before and after upload", func(t *testing.T) {
+		e := NewEngine(nil, nil, nil, "")
+		strat := &stubRatioStrategy{}
+		missingSrc := filepath.Join(t.TempDir(), "unreadable.png")
+		task := &Task{Index: 10, Platform: "千问", Prompt: "洗图", Images: []string{missingSrc}}
+		if err := e.submitOnce(task, strat, nil); err != nil {
+			t.Fatalf("submitOnce failed: %v", err)
+		}
+		if strat.uploadCalls != 1 || strat.ensureCalls != 2 {
+			t.Fatalf("uploadCalls=%d ensureCalls=%d, want 1/2 (before and after upload when targetRatio is empty)", strat.uploadCalls, strat.ensureCalls)
+		}
+	})
 }

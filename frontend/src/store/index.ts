@@ -353,8 +353,8 @@ function enqueueTabRefreshTasks(
   } else if (tab === TAB_IMAGE_EDIT && !queued.has("imageedit") && needs("imageedit")) {
     queued.add("imageedit");
     tasks.push(refreshImageEdit());
-  } else if (tab === TAB_SETTINGS && needs("settings", "update", "browser", "browsers")) {
-    if (!queued.has("settings") && needs("settings", "update")) {
+  } else if (tab === TAB_SETTINGS && needs("settings", "browser", "browsers")) {
+    if (!queued.has("settings") && needs("settings")) {
       queued.add("settings");
       tasks.push(refreshSettings());
     }

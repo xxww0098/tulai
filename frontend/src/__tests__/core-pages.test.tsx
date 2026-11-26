@@ -1557,6 +1557,122 @@ describe("SettingsPage", () => {
     expect(updateSpy).toHaveBeenCalledWith("install");
   });
 
+  it("renders rich update progress phases (probing, downloading, stalled, verifying, deferred) and supports cancel", () => {
+    const updateSpy = vi.spyOn(ipc.Core, "updateAction").mockResolvedValue(undefined);
+
+    useAppStore.setState((st) => ({
+      shell: {
+        ...st.shell,
+        update: {
+          ...st.shell.update,
+          visible: true,
+          version: "0.1.41",
+          current: "0.1.40",
+          downloading: true,
+          phase: "probing",
+          fraction: -1,
+          progressText: "正在测速选择最快的下载源...",
+        },
+      },
+      settings: makeSettingsState({ tab: 3 }),
+    }));
+
+    const { rerender } = renderPage(<SettingsPage />);
+    expect(screen.getByTestId("settings-update-progress-card")).toBeInTheDocument();
+    expect(screen.getByTestId("settings-update-percent")).toHaveTextContent("测速中");
+    expect(screen.getByTestId("settings-update-progress")).toHaveAttribute(
+      "data-indeterminate",
+      "true",
+    );
+    fireEvent.click(screen.getByTestId("settings-cancel-update-btn"));
+    expect(updateSpy).toHaveBeenCalledWith("cancel");
+
+    // Determinate downloading with speed, ETA, bytes, and mirror badge
+    act(() => {
+      useAppStore.setState((st) => ({
+        shell: {
+          ...st.shell,
+          update: {
+            ...st.shell.update,
+            downloading: true,
+            phase: "downloading",
+            fraction: 0.426,
+            doneBytes: Math.round(42.6 * 1024 * 1024),
+            totalBytes: 100 * 1024 * 1024,
+            speedBps: 8 * 1024 * 1024,
+            etaSeconds: 8,
+            source: "edgeone.gh-proxy.org",
+            assetName: "tulai.Setup.0.1.41.amd64.exe",
+          },
+        },
+      }));
+    });
+    rerender(<SettingsPage />);
+    expect(screen.getByTestId("settings-update-percent")).toHaveTextContent("42.6%");
+    expect(screen.getByTestId("settings-update-progress")).toHaveAttribute("aria-valuenow", "43");
+    expect(screen.getByTestId("settings-update-source")).toHaveTextContent("edgeone.gh-proxy.org");
+    const meta = screen.getByTestId("settings-update-meta");
+    expect(meta).toHaveTextContent("tulai.Setup.0.1.41.amd64.exe");
+    expect(meta).toHaveTextContent("42.6 MB / 100.0 MB");
+    expect(meta).toHaveTextContent("8.0 MB/s");
+    expect(meta).toHaveTextContent("剩余 8 秒");
+
+    // Stalled download (speed decayed to 0 before completion)
+    act(() => {
+      useAppStore.setState((st) => ({
+        shell: {
+          ...st.shell,
+          update: {
+            ...st.shell.update,
+            speedBps: 0,
+            etaSeconds: 0,
+          },
+        },
+      }));
+    });
+    rerender(<SettingsPage />);
+    expect(screen.getByTestId("settings-update-meta")).toHaveTextContent("等待响应 / 切换线路中…");
+
+    // Verifying integrity (100%, emerald, cancel hidden)
+    act(() => {
+      useAppStore.setState((st) => ({
+        shell: {
+          ...st.shell,
+          update: {
+            ...st.shell.update,
+            phase: "verifying",
+            fraction: 1,
+            doneBytes: 100 * 1024 * 1024,
+            totalBytes: 100 * 1024 * 1024,
+          },
+        },
+      }));
+    });
+    rerender(<SettingsPage />);
+    expect(screen.getByTestId("settings-update-percent")).toHaveTextContent("100%");
+    expect(screen.queryByTestId("settings-cancel-update-btn")).not.toBeInTheDocument();
+
+    // Deferred state when tasks are running
+    act(() => {
+      useAppStore.setState((st) => ({
+        shell: {
+          ...st.shell,
+          update: {
+            ...st.shell.update,
+            downloading: false,
+            deferred: true,
+            phase: "deferred",
+            fraction: -1,
+            progressText: "任务进行中，结束后将自动更新",
+          },
+        },
+      }));
+    });
+    rerender(<SettingsPage />);
+    expect(screen.getByTestId("settings-update-progress-card")).toHaveTextContent("等待当前任务结束");
+    expect(screen.getByTestId("settings-cancel-update-btn")).toHaveTextContent("取消等待");
+  });
+
   it("renders custom update mirror input when custom mirror is configured", async () => {
     const setFieldSpy = vi.spyOn(ipc.Settings, "setSettingField").mockResolvedValue(undefined);
     vi.spyOn(ipc.Settings, "getSettingsState").mockResolvedValue(

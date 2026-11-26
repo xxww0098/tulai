@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -36,11 +37,11 @@ func (a *App) checkForUpdates() {
 		return
 	}
 	a.updateBusy = true
-	a.emit("update")
+	a.emit("update", "settings")
 	go func() {
 		defer a.onUI(func() {
 			a.updateBusy = false
-			a.emit("update")
+			a.emit("update", "settings")
 		})
 		a.runUpdateCheck(true)
 	}()
@@ -78,7 +79,7 @@ func (a *App) silentCheck() {
 	a.syncUI(func() { a.updateBusy = true })
 	defer a.onUI(func() {
 		a.updateBusy = false
-		a.emit("update")
+		a.emit("update", "settings")
 	})
 	a.runUpdateCheck(false)
 }
@@ -89,7 +90,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		if manual {
 			a.onUI(func() {
 				a.updateErr = "开发版本不支持应用内自动更新"
-				a.emit("update")
+				a.emit("update", "settings")
 			})
 		}
 		return
@@ -99,7 +100,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		if manual {
 			a.onUI(func() {
 				a.updateErr = err.Error()
-				a.emit("update")
+				a.emit("update", "settings")
 			})
 		}
 		return
@@ -109,7 +110,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		if manual {
 			a.onUI(func() {
 				a.updateErr = "当前安装方式不支持应用内自动更新"
-				a.emit("update")
+				a.emit("update", "settings")
 			})
 		}
 		return
@@ -129,7 +130,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		if manual {
 			a.onUI(func() {
 				a.updateErr = "检查更新失败：" + err.Error()
-				a.emit("update")
+				a.emit("update", "settings")
 			})
 		}
 		return
@@ -142,7 +143,7 @@ func (a *App) runUpdateCheck(manual bool) {
 			if manual {
 				a.pushToast("info", "当前已是最新版本")
 			}
-			a.emit("update")
+			a.emit("update", "settings")
 		})
 		return
 	}
@@ -159,7 +160,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		a.updateNotes = strings.TrimSpace(rel.Body)
 		a.updateHidden = false
 		a.updateErr = ""
-		a.emit("update")
+		a.emit("update", "settings")
 	})
 }
 
@@ -190,6 +191,141 @@ func (a *App) maybeInstallPending() {
 	go a.downloadAndInstall()
 }
 
+func (a *App) resetUpdateTransferState() {
+	a.updatePhase = ""
+	a.updateFraction = 0
+	a.updateDone = 0
+	a.updateTotal = 0
+	a.updateSpeed = 0
+	a.updateEta = 0
+	a.updateSource = ""
+	a.updateAssetName = ""
+	a.updateLastAt = time.Time{}
+	a.updateProgressText = ""
+}
+
+func (a *App) applyUpdateProgressAt(now time.Time, p update.Progress) {
+	a.updateDownloading = true
+	a.updateLastAt = now
+	if p.Name != "" {
+		a.updateAssetName = p.Name
+	}
+	if p.Source != "" {
+		a.updateSource = p.Source
+	}
+	switch p.Phase {
+	case update.PhaseChecksums:
+		a.updatePhase = "checksums"
+		a.updateFraction = -1
+		a.updateDone = 0
+		a.updateTotal = p.Total
+		a.updateSpeed = 0
+		a.updateEta = 0
+		a.updateProgressText = "正在获取校验清单..."
+	case update.PhaseProbing:
+		a.updatePhase = "probing"
+		a.updateFraction = -1
+		a.updateDone = 0
+		a.updateTotal = p.Total
+		a.updateSpeed = 0
+		a.updateEta = 0
+		a.updateProgressText = "正在测速选择最快的下载源..."
+	case update.PhaseVerifying:
+		a.updatePhase = "verifying"
+		a.updateFraction = 1
+		if p.Total > 0 {
+			a.updateDone = p.Total
+			a.updateTotal = p.Total
+		} else if p.Done > 0 {
+			a.updateDone = p.Done
+		}
+		a.updateSpeed = 0
+		a.updateEta = 0
+		a.updateProgressText = "下载完成，正在校验 SHA-256 完整性..."
+	default:
+		a.updatePhase = "downloading"
+		a.updateDone = p.Done
+		a.updateTotal = p.Total
+		if p.Total > 0 {
+			frac := float64(p.Done) / float64(p.Total)
+			if frac < 0 {
+				frac = 0
+			} else if frac > 1 {
+				frac = 1
+			}
+			a.updateFraction = frac
+		} else {
+			a.updateFraction = -1
+		}
+		if p.BytesPerSec > 0 {
+			instant := int64(math.Round(p.BytesPerSec))
+			if a.updateSpeed <= 0 {
+				a.updateSpeed = instant
+			} else {
+				a.updateSpeed = (a.updateSpeed*2 + instant) / 3
+			}
+		}
+		if p.Total > 0 && p.Done >= p.Total {
+			a.updateSpeed = 0
+			a.updateEta = 0
+		} else if p.Total > 0 && p.Done < p.Total && a.updateSpeed >= 1024 {
+			eta := int(math.Ceil(float64(p.Total-p.Done) / float64(a.updateSpeed)))
+			if eta < 1 {
+				eta = 1
+			}
+			a.updateEta = eta
+		} else {
+			a.updateEta = 0
+		}
+		a.updateProgressText = formatUpdateProgress(p)
+	}
+}
+
+func (a *App) tickUpdateProgress(now time.Time) bool {
+	if !a.updateDownloading || a.updatePhase != "downloading" || a.updateLastAt.IsZero() {
+		return false
+	}
+	if now.Sub(a.updateLastAt) >= 2500*time.Millisecond && (a.updateSpeed > 0 || a.updateEta > 0) {
+		a.updateSpeed = 0
+		a.updateEta = 0
+		return true
+	}
+	return false
+}
+
+func (a *App) updateProgressTick(done <-chan struct{}) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case now := <-ticker.C:
+			a.onUI(func() {
+				if a.tickUpdateProgress(now) {
+					a.emit("update")
+				}
+			})
+		}
+	}
+}
+
+func (a *App) cancelUpdate() {
+	if a.updateCancel != nil {
+		cancel := a.updateCancel
+		a.updateCancel = nil
+		a.updateCancelled = true
+		cancel()
+	}
+	a.updateDownloading = false
+	a.updatePending = false
+	a.updateDeferred = false
+	a.updateHidden = false
+	a.updateErr = ""
+	a.resetUpdateTransferState()
+	a.emit("update", "settings")
+}
+
 func (a *App) downloadAndInstall() {
 	var running bool
 	var rel update.Release
@@ -206,8 +342,11 @@ func (a *App) downloadAndInstall() {
 			a.updatePending = true
 			a.updateDeferred = true
 			a.updateDownloading = false
+			a.resetUpdateTransferState()
+			a.updatePhase = "deferred"
+			a.updateFraction = -1
 			a.updateProgressText = update.DeferMessage
-			a.emit("update")
+			a.emit("update", "settings")
 		})
 		return
 	}
@@ -230,24 +369,43 @@ func (a *App) downloadAndInstall() {
 		client.ProxyURL = browser.CurrentProxyServer()
 		client.ApplyMirrorSetting(mirror)
 		client.OnProgress = func(p update.Progress) {
+			now := time.Now()
 			a.onUI(func() {
-				a.updateDownloading = true
-				a.updateProgressText = formatUpdateProgress(p)
-				if p.Total > 0 {
-					a.updateFraction = float64(p.Done) / float64(p.Total)
+				if a.updateCancelled {
+					return
 				}
+				a.applyUpdateProgressAt(now, p)
 				a.emit("update")
 			})
 		}
-		a.onUI(func() {
+		a.syncUI(func() {
 			a.updateDownloading = true
-			a.updateProgressText = "正在测速选择最快的下载源..."
-			a.updateFraction = 0
+			a.updateDeferred = false
+			a.updateHidden = false
+			a.updateCancelled = false
+			a.updateCancel = cancel
 			a.updateErr = ""
-			a.emit("update")
+			a.resetUpdateTransferState()
+			a.updatePhase = "probing"
+			a.updateFraction = -1
+			a.updateProgressText = "正在测速选择最快的下载源..."
+			a.emit("update", "settings")
 		})
+		tickDone := make(chan struct{})
+		go a.updateProgressTick(tickDone)
 		prepared, err := client.Download(ctx, rel, current, mode, runtime.GOARCH)
+		close(tickDone)
+		wasCancelled := false
+		a.syncUI(func() {
+			a.updateCancel = nil
+			wasCancelled = a.updateCancelled
+			a.updateCancelled = false
+		})
 		if err != nil {
+			if wasCancelled && errors.Is(err, context.Canceled) {
+				logging.Log.Info("已取消更新下载")
+				return
+			}
 			logging.Log.Errorf("下载更新失败: %v", err)
 			a.failUpdate(err)
 			return
@@ -257,7 +415,8 @@ func (a *App) downloadAndInstall() {
 				a.updateNotice = ""
 				a.updatePending = false
 				a.updateDownloading = false
-				a.emit("update")
+				a.resetUpdateTransferState()
+				a.emit("update", "settings")
 			})
 			return
 		}
@@ -276,22 +435,30 @@ func (a *App) downloadAndInstall() {
 			a.updatePending = true
 			a.updateDeferred = true
 			a.updateDownloading = false
+			a.resetUpdateTransferState()
+			a.updatePhase = "deferred"
+			a.updateFraction = -1
 			a.updateProgressText = update.DeferMessage
-			a.emit("update")
+			a.emit("update", "settings")
 		})
 		return
 	}
 	a.onUI(func() {
 		a.updatePending = true
-		a.updateProgressText = "正在准备安装 " + ver
+		a.updateDownloading = true
+		a.updatePhase = "installing"
+		a.updateFraction = 1
+		a.updateSpeed = 0
+		a.updateEta = 0
+		a.updateProgressText = "正在准备安装 v" + ver + "..."
 		a.emit("update")
 	})
 	if mode == update.ModeWindowsSetup && !a.confirmUpdateQuit("将启动新版本安装程序并关闭当前窗口。") {
 		a.onUI(func() {
 			a.updateDownloading = false
-			a.updateProgressText = ""
 			a.updatePending = false
-			a.emit("update")
+			a.resetUpdateTransferState()
+			a.emit("update", "settings")
 		})
 		return
 	}
@@ -324,7 +491,8 @@ func (a *App) downloadAndInstall() {
 		a.updatePending = false
 		a.updateDownloading = false
 		a.updateInstalled = ver
-		a.emit("update")
+		a.resetUpdateTransferState()
+		a.emit("update", "settings")
 	})
 	if outcome.Quit {
 		if a.host != nil {
@@ -349,12 +517,14 @@ func (a *App) confirmUpdateRestart(ver string) bool {
 
 func (a *App) failUpdate(err error) {
 	a.onUI(func() {
+		a.updateCancel = nil
+		a.updateCancelled = false
 		a.updateDownloading = false
 		a.updatePending = false
 		a.updateDeferred = false
-		a.updateProgressText = ""
+		a.resetUpdateTransferState()
 		a.updateErr = err.Error()
-		a.emit("update")
+		a.emit("update", "settings")
 	})
 }
 
@@ -369,7 +539,7 @@ func (a *App) dismissUpdate() {
 	a.updateDetailsOpen = false
 	a.updateNotesOpen = false
 	a.updateErr = ""
-	a.emit("update")
+	a.emit("update", "settings")
 }
 
 func (a *App) skipUpdate() {
@@ -388,16 +558,18 @@ func formatUpdateProgress(p update.Progress) string {
 		b.WriteString(p.Name)
 	}
 	var meta []string
-	if p.Source != "" {
-		meta = append(meta, p.Source)
-	}
 	if p.Done > 0 && p.Total > 0 {
+		pct := math.Min(100, math.Max(0, float64(p.Done)*100/float64(p.Total)))
+		meta = append(meta, fmt.Sprintf("%.0f%%", pct))
 		meta = append(meta, formatBytes(p.Done)+" / "+formatBytes(p.Total))
 	} else if p.Done > 0 {
 		meta = append(meta, formatBytes(p.Done))
 	}
 	if p.BytesPerSec > 0 {
 		meta = append(meta, formatSpeed(int64(p.BytesPerSec)))
+	}
+	if p.Source != "" {
+		meta = append(meta, p.Source)
 	}
 	if len(meta) > 0 {
 		b.WriteString("（")

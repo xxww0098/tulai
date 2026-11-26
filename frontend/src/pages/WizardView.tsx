@@ -118,7 +118,10 @@ export function WizardView() {
                         ? st.runtimeStatus || "正在下载"
                         : `${st.runtimeStatus || "正在下载"} · ${dlProgress.labelPct}%`}
                     </span>
-                    <Progress value={dlProgress.indeterminate ? 0.15 : dlProgress.fraction} />
+                    <Progress
+                      value={dlProgress.fraction}
+                      indeterminate={dlProgress.indeterminate}
+                    />
                   </div>
                 ) : null}
                 {st.planBlocked || st.err ? (

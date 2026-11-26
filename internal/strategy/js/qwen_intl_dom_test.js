@@ -379,6 +379,18 @@ async function run() {
     assert.strictEqual(uploadItemClicked, true, '必须点击弹出菜单里的 Upload attachment，不可把 .mode-select-open 误判为 directFileButton')
     assert.strictEqual(clicked[1], plusBtn)
 
+    // 验证当 .chat-prompt-recommend-detail-container 遮挡 .mode-select-open（tulaiClick 返回 false）时仍能打开上传菜单并通过可信点击触发 Upload attachment
+    uploadItemClicked = false
+    const origClick = ctx.tulaiClick
+    ctx.tulaiClick = (target) => {
+      if (target === plusBtn) return Promise.resolve(false)
+      return origClick(target)
+    }
+    const openCoveredRes = JSON.parse(await ctx.tulaiOpenUpload())
+    assert.strictEqual(openCoveredRes.opened, true, '推荐浮层遮挡 .mode-select-open 时应回退派发打开下拉菜单')
+    assert.strictEqual(uploadItemClicked, true, '回退打开菜单后仍须点击 Upload attachment 触发文件选择器')
+    ctx.tulaiClick = origClick
+
     // 验证英文额度/限流/审核提示识别
     const toast = el('div', { attrs: { role: 'alert' }, text: 'Not Enough Credits' })
     body.appendChild(toast)

@@ -12,6 +12,7 @@ import {
   Button,
   Icon,
   IconButton,
+  Progress,
   Select,
   Tabs,
   Toaster,
@@ -22,6 +23,7 @@ import {
 import { cn } from "@/lib/cn";
 import { Core, fireIpc } from "@/lib/ipc";
 import { installGlobalShortcuts, modKeyLabel } from "@/lib/shortcuts";
+import { describeUpdateProgress } from "@/lib/updateProgress";
 import { BrowserPage } from "@/pages/BrowserPage";
 import { DedupPage } from "@/pages/DedupPage";
 import { DownloadPage } from "@/pages/DownloadPage";
@@ -381,6 +383,25 @@ export function App() {
   const navPlatforms = s.platforms && s.platforms.length > 0 ? s.platforms : DEFAULT_PLATFORMS;
   const folded = Boolean(s.navCollapsed || (!s.navManual && winWidth < 960));
   const isMac = s.os === "darwin";
+  const updateProg = describeUpdateProgress(s.update);
+  const showSidebarUpdate = Boolean(
+    (s.update.visible && s.update.version) || s.update.deferred,
+  );
+  const sidebarUpdateTooltip = updateProg.active
+    ? [
+        updateProg.stageLabel,
+        updateProg.percentLabel,
+        updateProg.speedText,
+        updateProg.etaText,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : `发现新版本 v${s.update.version}`;
+  const openUpdateSettings = () => {
+    clearHoverPreview();
+    void goTab(TAB_SETTINGS);
+    void updateSettingField("tab", "3");
+  };
 
   return (
     <TooltipProvider>
@@ -642,57 +663,146 @@ export function App() {
                 folded ? "w-full items-center" : "items-stretch",
               )}
             >
-              {s.update.visible && s.update.version ? (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    clearHoverPreview();
-                    void goTab(TAB_SETTINGS);
-                    void updateSettingField("tab", "3");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      clearHoverPreview();
-                      void goTab(TAB_SETTINGS);
-                      void updateSettingField("tab", "3");
-                    }
-                  }}
-                  className={cn(
-                    "animate-tulai-banner-in mb-1 flex cursor-pointer flex-col gap-1 rounded-[12px] border border-accent-border bg-accent-soft p-2 transition-colors hover:bg-accent-border/35",
-                    folded && "items-center px-1 py-1.5",
-                  )}
-                >
-                  <span className="tnum text-[11px] font-medium text-accent">
-                    {folded ? "更新" : `新版本 v${s.update.version}`}
-                  </span>
-                  {!folded ? (
-                    <div className="flex items-center gap-1">
-                      <Button
-                        text="查看"
-                        size="xs"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          clearHoverPreview();
-                          void goTab(TAB_SETTINGS);
-                          void updateSettingField("tab", "3");
-                        }}
-                      />
-                      <Button
-                        text="忽略"
-                        size="xs"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          fireIpc(() => Core.updateAction("dismiss"));
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              {showSidebarUpdate ? (() => {
+                const card = (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    data-testid="sidebar-update-card"
+                    onClick={openUpdateSettings}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openUpdateSettings();
+                      }
+                    }}
+                    className={cn(
+                      "animate-tulai-banner-in mb-1 flex cursor-pointer flex-col gap-1.5 rounded-[12px] border p-2 transition-colors",
+                      updateProg.tone === "warn"
+                        ? "border-[var(--status-warn-border)] bg-[var(--status-warn-bg)] hover:opacity-90"
+                        : updateProg.tone === "success"
+                          ? "border-[var(--status-ok-border)] bg-[var(--status-ok-bg)] hover:opacity-90"
+                          : "border-accent-border bg-accent-soft hover:bg-accent-border/35",
+                      folded && "w-full items-center px-1.5 py-1.5",
+                    )}
+                  >
+                    {updateProg.active ? (
+                      folded ? (
+                        <>
+                          <span
+                            className={cn(
+                              "tnum text-[10px] leading-none font-semibold",
+                              updateProg.tone === "warn"
+                                ? "text-status-warn"
+                                : updateProg.tone === "success"
+                                  ? "text-status-ok"
+                                  : "text-accent",
+                            )}
+                          >
+                            {updateProg.compactPercent}
+                          </span>
+                          <Progress
+                            size="xs"
+                            value={updateProg.fraction}
+                            indeterminate={updateProg.indeterminate}
+                            active={updateProg.shimmerActive}
+                            tone={updateProg.tone}
+                            aria-label="侧边栏更新进度"
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between gap-1">
+                            <span
+                              className={cn(
+                                "min-w-0 truncate text-[11px] font-medium",
+                                updateProg.tone === "warn"
+                                  ? "text-status-warn"
+                                  : updateProg.tone === "success"
+                                    ? "text-status-ok"
+                                    : "text-accent",
+                              )}
+                            >
+                              {updateProg.phase === "deferred"
+                                ? "等待更新"
+                                : s.update.version
+                                  ? `更新 v${s.update.version}`
+                                  : "正在更新"}
+                            </span>
+                            <span
+                              data-testid="sidebar-update-percent"
+                              className={cn(
+                                "tnum shrink-0 text-[10px] font-semibold",
+                                updateProg.tone === "warn"
+                                  ? "text-status-warn"
+                                  : updateProg.tone === "success"
+                                    ? "text-status-ok"
+                                    : "text-accent",
+                              )}
+                            >
+                              {updateProg.compactPercent}
+                            </span>
+                          </div>
+                          <Progress
+                            data-testid="sidebar-update-progress"
+                            size="xs"
+                            value={updateProg.fraction}
+                            indeterminate={updateProg.indeterminate}
+                            active={updateProg.shimmerActive}
+                            tone={updateProg.tone}
+                            aria-label="侧边栏更新进度"
+                          />
+                          <span className="tnum truncate text-[10px] text-muted">
+                            {updateProg.speedText
+                              ? updateProg.etaText
+                                ? `${updateProg.speedText} · ${updateProg.etaText}`
+                                : updateProg.speedText
+                              : updateProg.stalled
+                                ? "等待响应中…"
+                                : updateProg.stageLabel}
+                          </span>
+                        </>
+                      )
+                    ) : (
+                      <>
+                        <span className="tnum text-[11px] font-medium text-accent">
+                          {folded ? "更新" : `新版本 v${s.update.version}`}
+                        </span>
+                        {!folded ? (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              text="查看"
+                              size="xs"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openUpdateSettings();
+                              }}
+                            />
+                            <Button
+                              text="忽略"
+                              size="xs"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                fireIpc(() => Core.updateAction("dismiss"));
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                );
+
+                return folded ? (
+                  <Tooltip content={sidebarUpdateTooltip} side="right">
+                    {card}
+                  </Tooltip>
+                ) : (
+                  card
+                );
+              })() : null}
 
               <SidebarLogButton
                 open={Boolean(s.logOpen)}

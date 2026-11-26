@@ -1515,4 +1515,30 @@ async function testDoubaoThreadListBatchDelete() {
   assert.deepStrictEqual(p2.remaining(), ['t1'])
 }
 
-testImageMode().then(testSetOutputRatio).then(testDoubaoPageOptimizations).then(testLiveDoubao2026DOMUpdates).then(testDoubaoHistoryDeletion).then(testDoubaoThreadListBatchDelete).then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })
+async function testImageModeFalsePositiveAndLockedRatio() {
+  // 1) 冷加载期间只有未选中按钮（无已知类名/无 testid/无兄弟技能按钮）时绝不可误判为已进入图像模式
+  const cold = surface()
+  const outer = cold.box.parentElement.append(new El('div', { class: 'renamed-wrapper' }))
+  const innerSpan = outer.append(new El('span'))
+  const btn = innerSpan.append(new El('button')).addText('图像生成')
+  btn.append(new El('span')).append(new El('div')).addText('图像生成')
+  outer.innerText = '图像生成'
+  innerSpan.innerText = '图像生成'
+  assert.strictEqual(Page.imageModeActive(cold.doc), false, '未选中的工具栏按钮及外层容器不得误判为已激活图像模式')
+
+  // 2) 上传参考图后比例按钮若被页面置为 disabled，仍应识别处于图像模式，匹配时 0ms 确认、不匹配时快速报错
+  const locked = surface()
+  locked.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button' })).addText('图像生成')
+  const ratioBtn = locked.box.parentElement.append(new El('button', { 'aria-haspopup': 'dialog' })).addText('16:9')
+  ratioBtn.disabled = true
+  assert.strictEqual(Page.imageModeActive(locked.doc), true, '禁用态比例按钮仍代表处于图像模式')
+  const okRes = await Page.setOutputRatio(locked.doc, '16:9', null, 1500)
+  assert.strictEqual(okRes.ok, true, '已锁定且等于目标比例时应立刻返回 ok')
+  assert.strictEqual(okRes.already, true)
+  const missRes = await Page.setOutputRatio(locked.doc, '4:3', null, 1500)
+  assert.strictEqual(Boolean(missRes.ok), false, '已锁定且不等于目标比例时应快速返回失败')
+  assert.ok(String(missRes.error || '').includes('已锁定'), '错误应写明比例已锁定: ' + JSON.stringify(missRes))
+  assert.notStrictEqual(missRes.lostMode, true, '比例锁定不应误判为 lostMode')
+}
+
+testImageMode().then(testSetOutputRatio).then(testImageModeFalsePositiveAndLockedRatio).then(testDoubaoPageOptimizations).then(testLiveDoubao2026DOMUpdates).then(testDoubaoHistoryDeletion).then(testDoubaoThreadListBatchDelete).then(function () { console.log('doubao image mode ok') }).catch(function (err) { console.error(err); process.exitCode = 1 })

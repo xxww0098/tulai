@@ -215,3 +215,24 @@ func TestUpdateUsage(t *testing.T) {
 		t.Fatalf("stderr %s", stderr.String())
 	}
 }
+
+func TestFormatCLIUpdateProgress(t *testing.T) {
+	if got := formatCLIUpdateProgress(update.Progress{Phase: update.PhaseProbing}); !strings.Contains(got, "测速") {
+		t.Fatalf("probing = %q", got)
+	}
+	if got := formatCLIUpdateProgress(update.Progress{Phase: update.PhaseVerifying}); !strings.Contains(got, "SHA-256") {
+		t.Fatalf("verifying = %q", got)
+	}
+	dl := formatCLIUpdateProgress(update.Progress{
+		Phase:       update.PhaseDownloading,
+		Done:        50 << 20,
+		Total:       100 << 20,
+		BytesPerSec: float64(5 << 20),
+		Source:      "edgeone.gh-proxy.org",
+	})
+	for _, want := range []string{"50%", "50.0 MB / 100.0 MB", "5.0 MB/s", "剩余 10 秒", "edgeone.gh-proxy.org"} {
+		if !strings.Contains(dl, want) {
+			t.Fatalf("cli progress %q missing %q", dl, want)
+		}
+	}
+}

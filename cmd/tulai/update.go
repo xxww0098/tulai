@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xxww0098/tulai/internal/browser"
@@ -144,7 +146,30 @@ func runUpdateWith(args []string, run updateRun) int {
 		return printRelease(run.Stdout, current, rel)
 	}
 	fmt.Fprintln(run.Stderr, update.UnsignedWarning)
+	var finishCLIProgress func()
+	if run.Client.OnProgress == nil && isTerminalWriter(run.Stderr) {
+		var mu sync.Mutex
+		var printed bool
+		run.Client.OnProgress = func(p update.Progress) {
+			line := formatCLIUpdateProgress(p)
+			mu.Lock()
+			printed = true
+			_, _ = fmt.Fprintf(run.Stderr, "\r\x1b[K%s", line)
+			mu.Unlock()
+		}
+		finishCLIProgress = func() {
+			mu.Lock()
+			if printed {
+				_, _ = fmt.Fprintln(run.Stderr)
+				printed = false
+			}
+			mu.Unlock()
+		}
+	}
 	prepared, err := run.Client.Download(ctx, rel, current, mode, run.GOARCH)
+	if finishCLIProgress != nil {
+		finishCLIProgress()
+	}
 	if err != nil {
 		fmt.Fprintf(run.Stderr, "下载更新失败: %v\n", err)
 		return 1
@@ -245,4 +270,85 @@ func printRelease(w io.Writer, current string, rel update.Release) int {
 	}
 	fmt.Fprintln(w, "已是最新版本")
 	return 0
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+func formatCLIUpdateProgress(p update.Progress) string {
+	switch p.Phase {
+	case update.PhaseChecksums:
+		return "正在获取校验清单..."
+	case update.PhaseProbing:
+		return "正在测速选择最快的下载源..."
+	case update.PhaseVerifying:
+		return "下载完成，正在校验 SHA-256..."
+	}
+	const barWidth = 22
+	pct := 0.0
+	filled := 0
+	if p.Total > 0 {
+		pct = math.Min(100, math.Max(0, float64(p.Done)*100/float64(p.Total)))
+		filled = int(math.Round(pct / 100 * barWidth))
+		if filled > barWidth {
+			filled = barWidth
+		}
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	parts := []string{fmt.Sprintf("[%s] %3.0f%%", bar, pct)}
+	if p.Done > 0 && p.Total > 0 {
+		parts = append(parts, formatCLIBytes(p.Done)+" / "+formatCLIBytes(p.Total))
+	} else if p.Done > 0 {
+		parts = append(parts, formatCLIBytes(p.Done))
+	}
+	if p.BytesPerSec > 0 {
+		parts = append(parts, formatCLIBytes(int64(p.BytesPerSec))+"/s")
+		if p.Total > 0 && p.Done < p.Total && p.BytesPerSec >= 1024 {
+			sec := int(math.Ceil(float64(p.Total-p.Done) / p.BytesPerSec))
+			if sec < 1 {
+				sec = 1
+			}
+			parts = append(parts, "剩余 "+formatCLIDuration(sec))
+		}
+	}
+	if p.Source != "" {
+		parts = append(parts, p.Source)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func formatCLIBytes(n int64) string {
+	const (
+		kb = 1024.0
+		mb = 1024.0 * 1024.0
+	)
+	switch {
+	case n >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(n)/mb)
+	case n >= 1024:
+		return fmt.Sprintf("%.0f KB", float64(n)/kb)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+func formatCLIDuration(sec int) string {
+	if sec < 60 {
+		return fmt.Sprintf("%d 秒", sec)
+	}
+	m := sec / 60
+	s := sec % 60
+	if s == 0 {
+		return fmt.Sprintf("%d 分", m)
+	}
+	return fmt.Sprintf("%d 分 %d 秒", m, s)
 }

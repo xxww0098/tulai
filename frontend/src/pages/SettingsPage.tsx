@@ -25,6 +25,7 @@ import {
   formatBytes,
   normalizeInstallProgress,
 } from "@/lib/browserRuntime";
+import { describeUpdateProgress } from "@/lib/updateProgress";
 import { cn } from "@/lib/cn";
 import { DotMatrixImageBox } from "@/components/dotmatrix/DotMatrixImageBox";
 import previewPhoto from "@/assets/teton-preview.webp";
@@ -445,6 +446,9 @@ export function SettingsPage() {
   const activeTab = Math.max(0, Math.min(3, st.tab ?? 0));
 
   const installProg = normalizeInstallProgress(browserSt.percent);
+  const updateProg = useMemo(() => describeUpdateProgress(upd), [upd]);
+  const updateNoticeVer = (upd.version || st.updateNotice || "").trim();
+  const updateErrorText = (upd.err || st.updateErr || "").trim();
   const installTransferMeta = useMemo(() => {
     const parts: string[] = [];
     if (browserSt.done > 0 && browserSt.total > 0) {
@@ -1008,7 +1012,9 @@ export function SettingsPage() {
                             ) : null}
                           </div>
                           <Progress
-                            value={installProg.indeterminate ? 0.15 : installProg.fraction}
+                            value={installProg.fraction}
+                            indeterminate={installProg.indeterminate}
+                            active={!installProg.indeterminate && browserSt.speed > 0}
                             aria-label="内置浏览器下载进度"
                           />
                         </InsetPillRow>
@@ -1183,16 +1189,24 @@ export function SettingsPage() {
                           icon="refresh-cw"
                           variant="outline"
                           busy={Boolean(upd.checking)}
+                          disabled={Boolean(upd.downloading)}
                           onClick={() => invokeSafe(() => Core.updateAction("check"))}
                         />
                         {upd.version ? (
                           <Button
                             data-testid="settings-install-update-btn"
-                            text={upd.downloading ? "下载更新中..." : `更新到 v${upd.version}`}
+                            text={
+                              upd.downloading
+                                ? "更新中..."
+                                : upd.deferred
+                                  ? "等待安装..."
+                                  : `更新到 v${upd.version}`
+                            }
                             size="small"
                             icon="download"
                             variant="primary"
                             busy={Boolean(upd.downloading)}
+                            disabled={Boolean(upd.downloading || upd.deferred)}
                             onClick={() => invokeSafe(() => Core.updateAction("install"))}
                           />
                         ) : null}
@@ -1240,31 +1254,152 @@ export function SettingsPage() {
                         </InsetPillRow>
                       ) : null}
 
-                      {upd.downloading ? (
-                        <InsetPillRow className="gap-1.5">
-                          <span className="tnum text-xs text-accent">
-                            {upd.progressText || "正在下载更新包并验证校验和..."}
-                          </span>
+                      {updateProg.active ? (
+                        <div
+                          data-testid="settings-update-progress-card"
+                          className={cn(
+                            "animate-tulai-banner-in flex flex-col gap-2 rounded-[12px] border px-3 py-2.5",
+                            updateProg.tone === "success"
+                              ? "border-[var(--status-ok-border)] bg-[var(--status-ok-bg)]"
+                              : updateProg.tone === "warn"
+                                ? "border-[var(--status-warn-border)] bg-[var(--status-warn-bg)]"
+                                : "border-accent-border bg-accent-soft/55 dark:bg-accent-soft/40",
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              {updateProg.phase === "deferred" ? (
+                                <Icon name="clock" size={14} className="text-status-warn" />
+                              ) : updateProg.phase === "downloading" ? (
+                                <span
+                                  aria-hidden="true"
+                                  className="relative flex size-2 shrink-0 items-center justify-center"
+                                >
+                                  {!updateProg.stalled ? (
+                                    <span className="animate-tulai-live-ring absolute inset-0 rounded-full bg-accent" />
+                                  ) : null}
+                                  <span
+                                    className={cn(
+                                      "relative size-2 rounded-full",
+                                      updateProg.stalled ? "bg-status-warn" : "bg-accent",
+                                    )}
+                                  />
+                                </span>
+                              ) : (
+                                <Icon
+                                  name="loader-2"
+                                  size={14}
+                                  className={cn(
+                                    "animate-spin",
+                                    updateProg.tone === "success"
+                                      ? "text-status-ok"
+                                      : "text-accent",
+                                  )}
+                                />
+                              )}
+                              <span className="truncate text-xs font-semibold text-ink">
+                                {updateProg.stageLabel}
+                              </span>
+                              {updateProg.source ? (
+                                <span
+                                  data-testid="settings-update-source"
+                                  className="font-mono-console hidden shrink-0 rounded-full border border-hairline bg-card/90 px-2 py-0.5 text-[10px] text-muted sm:inline-flex"
+                                >
+                                  {updateProg.source}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span
+                                data-testid="settings-update-percent"
+                                className={cn(
+                                  "tnum text-xs font-semibold",
+                                  updateProg.tone === "success"
+                                    ? "text-status-ok"
+                                    : updateProg.tone === "warn"
+                                      ? "text-status-warn"
+                                      : "text-accent",
+                                )}
+                              >
+                                {updateProg.percentLabel}
+                              </span>
+                              {updateProg.cancellable ? (
+                                <Button
+                                  data-testid="settings-cancel-update-btn"
+                                  text={updateProg.phase === "deferred" ? "取消等待" : "取消"}
+                                  size="xs"
+                                  variant="ghost"
+                                  onClick={() => invokeSafe(() => Core.updateAction("cancel"))}
+                                />
+                              ) : null}
+                            </div>
+                          </div>
+
                           <Progress
-                            value={Math.min(1, Math.max(0, upd.fraction))}
+                            data-testid="settings-update-progress"
+                            size="md"
+                            value={updateProg.fraction}
+                            indeterminate={updateProg.indeterminate}
+                            active={updateProg.shimmerActive}
+                            tone={updateProg.tone}
                             aria-label="更新下载进度"
                           />
-                        </InsetPillRow>
+
+                          <div
+                            data-testid="settings-update-meta"
+                            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-muted"
+                          >
+                            <span className="min-w-0 truncate">{updateProg.hint}</span>
+                            {updateProg.transferText ||
+                            updateProg.speedText ||
+                            updateProg.etaText ||
+                            updateProg.stalled ? (
+                              <div className="tnum flex shrink-0 items-center gap-2">
+                                {updateProg.transferText ? (
+                                  <span>{updateProg.transferText}</span>
+                                ) : null}
+                                {updateProg.speedText ? (
+                                  <span className="font-medium text-ink">
+                                    {updateProg.speedText}
+                                  </span>
+                                ) : updateProg.stalled ? (
+                                  <span className="text-status-warn">等待响应 / 切换线路中…</span>
+                                ) : null}
+                                {updateProg.etaText ? (
+                                  <span className="text-subtle">{updateProg.etaText}</span>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                       ) : null}
 
-                      {st.updateNotice || upd.installed ? (
+                      {upd.installed ? (
                         <div className="flex">
-                          <Badge
-                            text={st.updateNotice || `已准备更新 ${upd.installed}`}
-                            variant="success"
+                          <StatusBadge
+                            text={`已准备更新 v${upd.installed.replace(/^v/i, "")}`}
+                            tone="ok"
+                            dot
+                          />
+                        </div>
+                      ) : !updateProg.active && updateNoticeVer ? (
+                        <div className="flex">
+                          <StatusBadge
+                            text={`发现新版本 v${updateNoticeVer.replace(/^v/i, "")}`}
+                            tone="info"
+                            dot
                           />
                         </div>
                       ) : null}
 
-                      {st.updateErr || upd.err ? (
-                        <p className="select-text text-xs text-status-danger">
-                          {st.updateErr || upd.err}
-                        </p>
+                      {updateErrorText ? (
+                        <div
+                          data-testid="settings-update-error"
+                          className="flex items-start gap-2 rounded-[10px] border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-2.5 py-2 text-xs text-status-danger"
+                        >
+                          <Icon name="alert-circle" size={14} className="mt-0.5 shrink-0" />
+                          <p className="select-text leading-relaxed">{updateErrorText}</p>
+                        </div>
                       ) : null}
                     </div>
                   </BentoCard>

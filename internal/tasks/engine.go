@@ -957,18 +957,25 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	}
 	// 上传源图
 	if len(t.Images) > 0 {
-		e.setTaskPhase(t, PhaseUploading)
-		if err := strat.UploadFiles(sess, t.Images); err != nil {
-			return fmt.Errorf("上传: %w", err)
-		}
-		e.traceTask(t, "upload", fmt.Sprintf("#%d 已上传 %d 张源图", t.Index, len(t.Images)), len(t.Images), 0, nil)
-		// 上传参考图后页面可能重绘输入区工具栏（豆包/千问/千问国际），再确认一次图像模式与原生比例（已一致时零点击秒过）。
-		if targetRatio != "" {
+		if targetRatio == "" {
 			if ensurer, ok := strat.(interface{ EnsureImageMode(*cdp.Session) error }); ok {
 				if err := ensurer.EnsureImageMode(sess); err != nil {
 					return fmt.Errorf("确认图像模式: %w", err)
 				}
 			}
+		}
+		e.setTaskPhase(t, PhaseUploading)
+		if err := strat.UploadFiles(sess, t.Images); err != nil {
+			return fmt.Errorf("上传: %w", err)
+		}
+		e.traceTask(t, "upload", fmt.Sprintf("#%d 已上传 %d 张源图", t.Index, len(t.Images)), len(t.Images), 0, nil)
+		// 上传参考图后页面可能重绘输入区工具栏（豆包/千问/千问国际），无论是否指定比例都必须确认仍在图像模式；已一致时零点击秒过。
+		if ensurer, ok := strat.(interface{ EnsureImageMode(*cdp.Session) error }); ok {
+			if err := ensurer.EnsureImageMode(sess); err != nil {
+				return fmt.Errorf("确认图像模式: %w", err)
+			}
+		}
+		if targetRatio != "" {
 			if setter, ok := strat.(interface {
 				SetOutputRatio(*cdp.Session, string) (bool, string)
 			}); ok {

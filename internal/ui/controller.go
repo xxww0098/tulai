@@ -412,8 +412,18 @@ type App struct {
 	updateDeferred     bool
 	updatePending      bool
 	updateDownloading  bool
+	updatePhase        string
 	updateFraction     float64
+	updateDone         int64
+	updateTotal        int64
+	updateSpeed        int64
+	updateEta          int
+	updateSource       string
+	updateAssetName    string
+	updateLastAt       time.Time
 	updateProgressText string
+	updateCancel       context.CancelFunc
+	updateCancelled    bool
 	updateAsset        string
 	updateInstalled    string
 	updateStop         chan struct{}

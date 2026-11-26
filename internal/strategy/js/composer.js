@@ -175,6 +175,85 @@
     try { return await window.tulaiClick(el); } catch (e) { return false; }
   }
 
+  function syntheticPress(el) {
+    if (!el || el.isConnected === false) return false;
+    try {
+      if (typeof el.focus === 'function') el.focus();
+      var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+      var opts = { bubbles: true, cancelable: true, button: 0, buttons: 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+      if (typeof PointerEvent === 'function') {
+        el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts)));
+      }
+      if (typeof MouseEvent === 'function') el.dispatchEvent(new MouseEvent('mousedown', opts));
+      if (typeof PointerEvent === 'function') {
+        el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts)));
+      }
+      if (typeof MouseEvent === 'function') el.dispatchEvent(new MouseEvent('mouseup', opts));
+      if (typeof el.click === 'function') el.click();
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function coveringElement(el) {
+    if (!el || !el.getBoundingClientRect || typeof document.elementFromPoint !== 'function') return null;
+    var r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    var hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || el.contains(hit)) return null;
+    return hit;
+  }
+
+  function hasAnimatingClosingMenu() {
+    if (!document.querySelectorAll) return false;
+    var nodes = document.querySelectorAll('[role="menu"][data-state="closed"],[role="listbox"][data-state="closed"]');
+    for (var i = 0; i < nodes.length; i++) {
+      var m = nodes[i];
+      if (!m || m.isConnected === false) continue;
+      var st = getComputedStyle(m);
+      if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) <= 0.05) continue;
+      var r = m.getBoundingClientRect ? m.getBoundingClientRect() : { width: 0, height: 0 };
+      if (r.width > 5 && r.height > 5) return true;
+    }
+    return false;
+  }
+
+  async function waitClosingMenus(maxMs) {
+    var deadline = Date.now() + (maxMs || 400);
+    while (Date.now() < deadline) {
+      if (!hasAnimatingClosingMenu()) return;
+      await sleep(25);
+    }
+  }
+
+  async function openUploadEntry(el, directFileButton) {
+    if (!el) return false;
+    await waitClosingMenus(380);
+    if (await clickEl(el)) return true;
+    if (el.isConnected === false) return false;
+    var cover = coveringElement(el);
+    // 若被上一个未收起的 Radix 菜单或千问国际推荐浮层挡住，先尝试收起浮层再重走可信点击。
+    if (cover) {
+      var recOverlay = cover.closest && cover.closest('.chat-prompt-recommend-detail-container');
+      if (recOverlay) {
+        var recClose = recOverlay.querySelector && recOverlay.querySelector('button,[role="button"],[class*="close"]');
+        if (recClose && visible(recClose)) {
+          await clickEl(recClose);
+          await sleep(60);
+        }
+      } else if (cover.closest && cover.closest('[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) {
+        try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); } catch (e) {}
+        await sleep(120);
+        await waitClosingMenus(300);
+      }
+      if (await clickEl(el)) return true;
+    }
+    // 仅对弹出二级菜单的入口（如千问国际 .mode-select-open）允许合成派发，二级菜单项本身仍走可信 tulaiClick 以触发文件选择器。
+    if (!directFileButton && el.isConnected !== false && visible(el)) {
+      return syntheticPress(el);
+    }
+    return false;
+  }
+
   var MODE_KW = ['AI生图', 'AI生视频', 'PPT创作', 'AI写作', '智能体', '模板', '海报', '电商', '人像', '视频生成', '音乐', '翻译', '画图', '代码', '千问高考', '办公助理', '研究', '生成图像', '生成圖像', 'Create Image', '创建视频', 'Create Video', '网页开发', 'Web Dev', 'Agent 模式'];
 
   function isMode(t) {
@@ -234,6 +313,15 @@
         directFileButton = true;
         break;
       }
+      var refCandidates = scope.querySelectorAll('button,[role=button]');
+      for (var ri = 0; ri < refCandidates.length; ri++) {
+        var rc = refCandidates[ri];
+        if (visible(rc) && !rc.getAttribute('aria-haspopup') && String(rc.innerText || rc.textContent || '').replace(/\s+/g, ' ').trim() === '参考图') {
+          entry = rc;
+          directFileButton = true;
+          break;
+        }
+      }
     }
     for (scope = comp.parentElement; !entry && scope && scope !== document.body; scope = scope.parentElement) {
       var buttons = scope.querySelectorAll('button,[role=button]');
@@ -279,7 +367,7 @@
     log.push('scope=' + (previewScope ? previewScope.tagName + '#' + (previewScope.id || '').slice(0, 40) + '.' + cls(previewScope).slice(0, 60) + '; role=' + (previewScope.getAttribute('role') || '').slice(0, 40) : 'none'));
     log.push('entry=' + entry.tagName + '; testid=' + (entry.getAttribute('data-testid') || '').slice(0, 60) + '; id=' + (entry.id || '').slice(0, 50) + '; aria=' + (entry.getAttribute('aria-label') || '').slice(0, 60) + '; direct=' + directFileButton);
     var oldPanels = new Set(Array.from(document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[popover],.qwen-chat-v2-dropdown-menu-popup')).filter(visible));
-    if (!await clickEl(entry)) throw new Error('点击上传入口失败');
+    if (!await openUploadEntry(entry, directFileButton)) throw new Error('点击上传入口失败');
     if (directFileButton || window.__tulaiChooserOpened) {
       return JSON.stringify({ opened: true });
     }

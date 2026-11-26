@@ -123,6 +123,9 @@ func ClassifyFailure(status Status, raw string) FailHint {
 	if isCaptchaText(text) {
 		return FailHint{FailCaptcha, "需要在网页里完成验证", "重试"}
 	}
+	if strings.Contains(text, "会员专属") || strings.Contains(text, "开通创作会员") {
+		return FailHint{FailQuota, "当前账号触发会员专属限制，请换账号重试", "换账号重试"}
+	}
 	if strings.Contains(text, "输出比例") {
 		return FailHint{FailUnknown, "网页端输出比例设置失败，请重试", "重试"}
 	}

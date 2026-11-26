@@ -37,6 +37,8 @@ type speedSample struct {
 type speedMeter struct {
 	mu      sync.Mutex
 	samples []speedSample
+	maxDone int64
+	ema     float64
 }
 
 func newSpeedMeter() *speedMeter {
@@ -47,8 +49,13 @@ func (m *speedMeter) record(done int64) float64 {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if done < m.maxDone {
+		done = m.maxDone
+	} else {
+		m.maxDone = done
+	}
 	m.samples = append(m.samples, speedSample{at: now, done: done})
-	cutoff := now.Add(-3 * time.Second)
+	cutoff := now.Add(-2500 * time.Millisecond)
 	trim := 0
 	for trim < len(m.samples)-1 && m.samples[trim].at.Before(cutoff) {
 		trim++
@@ -57,14 +64,20 @@ func (m *speedMeter) record(done int64) float64 {
 		m.samples = append(m.samples[:0], m.samples[trim:]...)
 	}
 	if len(m.samples) < 2 {
-		return 0
+		return m.ema
 	}
 	oldest := m.samples[0]
 	dt := now.Sub(oldest.at).Seconds()
 	if dt < 0.15 || done <= oldest.done {
-		return 0
+		return m.ema
 	}
-	return float64(done-oldest.done) / dt
+	raw := float64(done-oldest.done) / dt
+	if m.ema <= 0 {
+		m.ema = raw
+	} else {
+		m.ema = m.ema*0.55 + raw*0.45
+	}
+	return m.ema
 }
 
 type contentRangeInfo struct {
@@ -146,10 +159,10 @@ func (p *probeState) closeBody() {
 	}
 }
 
-func (c *Client) downloadLargeAsset(ctx context.Context, cands []downloadCandidate, asset Asset, dest string) ([]string, error) {
+func (c *Client) downloadLargeAsset(ctx context.Context, cands []downloadCandidate, asset Asset, dest string, reportProgress bool) ([]string, string, int64, error) {
 	winner, rankedRange, err := c.probeDownloadSources(ctx, cands, asset)
 	if err != nil {
-		return nil, err
+		return nil, "", 0, err
 	}
 	usedSet := map[string]bool{winner.cand.url: true}
 	collectUsed := func(extra []string) []string {
@@ -168,43 +181,51 @@ func (c *Client) downloadLargeAsset(ctx context.Context, cands []downloadCandida
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		winner.closeBody()
-		return collectUsed(nil), err
+		return collectUsed(nil), winner.cand.label, 0, err
 	}
 
-	report := c.makeProgressReporter(asset.Name)
+	report := func(done, total int64, bps float64, source string, force bool) {}
+	if reportProgress {
+		report = c.makeProgressReporter(asset.Name)
+	}
 
 	if winner.supportsRange {
+		initialSpeed := winner.speed()
 		written, writeErr := f.Write(winner.buf)
 		total := winner.totalSize
 		if writeErr != nil {
 			_ = f.Close()
 			winner.closeBody()
-			return collectUsed(nil), writeErr
+			return collectUsed(nil), winner.cand.label, total, writeErr
 		}
 		winner.buf = nil
 		winner.closeBody()
-		report(int64(written), total, 0, winner.cand.label, int64(written) >= total)
+		lastLabel := winner.cand.label
+		report(int64(written), total, initialSpeed, lastLabel, int64(written) >= total)
 		if int64(written) < total {
 			ordered := buildOrderedRangeSources(winner.cand, rankedRange, cands)
-			used, rerr := c.downloadRanges(ctx, f, ordered, int64(written), total, asset.Name, report)
+			used, rangeLabel, rerr := c.downloadRanges(ctx, f, ordered, int64(written), total, asset.Name, report)
 			closeErr := f.Close()
+			if rangeLabel != "" {
+				lastLabel = rangeLabel
+			}
 			if rerr != nil {
-				return collectUsed(used), rerr
+				return collectUsed(used), lastLabel, total, rerr
 			}
 			if closeErr != nil {
-				return collectUsed(used), closeErr
+				return collectUsed(used), lastLabel, total, closeErr
 			}
 			for _, u := range used {
 				usedSet[u] = true
 			}
 		} else if closeErr := f.Close(); closeErr != nil {
-			return collectUsed(nil), closeErr
+			return collectUsed(nil), lastLabel, total, closeErr
 		}
 		if err := finalizeTempDownload(tmp, dest, total, maxDownload); err != nil {
-			return collectUsed(nil), err
+			return collectUsed(nil), lastLabel, total, err
 		}
-		report(total, total, 0, winner.cand.label, true)
-		return collectUsed(nil), nil
+		report(total, total, 0, lastLabel, true)
+		return collectUsed(nil), lastLabel, total, nil
 	}
 
 	// Non-Range 200 OK stream with stall + low-speed failover to Range mirrors.
@@ -234,35 +255,38 @@ func (c *Client) downloadLargeAsset(ctx context.Context, cands []downloadCandida
 	winner.closeBody()
 	if !completed {
 		if totalSize > 0 && downloaded > 0 && downloaded < totalSize && len(fallbacks) > 0 && ctx.Err() == nil {
-			used, rerr := c.downloadRanges(ctx, f, fallbacks, downloaded, totalSize, asset.Name, report)
+			used, rangeLabel, rerr := c.downloadRanges(ctx, f, fallbacks, downloaded, totalSize, asset.Name, report)
 			closeErr := f.Close()
+			if rangeLabel == "" {
+				rangeLabel = fallbacks[0].label
+			}
 			if rerr == nil && closeErr == nil {
 				if err := finalizeTempDownload(tmp, dest, totalSize, maxDownload); err != nil {
-					return collectUsed(used), err
+					return collectUsed(used), rangeLabel, totalSize, err
 				}
-				report(totalSize, totalSize, 0, fallbacks[0].label, true)
-				return collectUsed(used), nil
+				report(totalSize, totalSize, 0, rangeLabel, true)
+				return collectUsed(used), rangeLabel, totalSize, nil
 			}
-			return collectUsed(used), firstNonNil(rerr, closeErr)
+			return collectUsed(used), rangeLabel, totalSize, firstNonNil(rerr, closeErr)
 		}
 		_ = f.Close()
 		if streamErr == nil {
 			streamErr = fmt.Errorf("下载 %s 中断", asset.Name)
 		}
-		return collectUsed(nil), streamErr
+		return collectUsed(nil), winner.cand.label, totalSize, streamErr
 	}
 	if closeErr := f.Close(); closeErr != nil {
-		return collectUsed(nil), closeErr
+		return collectUsed(nil), winner.cand.label, totalSize, closeErr
 	}
 	finalTotal := totalSize
 	if finalTotal <= 0 {
 		finalTotal = downloaded
 	}
 	if err := finalizeTempDownload(tmp, dest, finalTotal, maxDownload); err != nil {
-		return collectUsed(nil), err
+		return collectUsed(nil), winner.cand.label, finalTotal, err
 	}
 	report(finalTotal, finalTotal, 0, winner.cand.label, true)
-	return collectUsed(nil), nil
+	return collectUsed(nil), winner.cand.label, finalTotal, nil
 }
 
 func buildOrderedRangeSources(winner downloadCandidate, ranked []downloadCandidate, all []downloadCandidate) []downloadCandidate {
@@ -304,6 +328,7 @@ func finalizeTempDownload(tmp, dest string, wantSize, limit int64) error {
 func (c *Client) makeProgressReporter(name string) func(done, total int64, bps float64, source string, force bool) {
 	var mu sync.Mutex
 	var maxReported int64
+	var lastSource string
 	var lastEmit time.Time
 	return func(done, total int64, bps float64, source string, force bool) {
 		if c.OnProgress == nil {
@@ -318,21 +343,26 @@ func (c *Client) makeProgressReporter(name string) func(done, total int64, bps f
 		}
 		now := time.Now()
 		mu.Lock()
-		if !force && clamped <= maxReported && !lastEmit.IsZero() && now.Sub(lastEmit) < 150*time.Millisecond {
+		sourceChanged := source != "" && source != lastSource
+		if !force && !sourceChanged && clamped <= maxReported && !lastEmit.IsZero() && now.Sub(lastEmit) < 150*time.Millisecond {
 			mu.Unlock()
 			return
 		}
-		if !force && !lastEmit.IsZero() && now.Sub(lastEmit) < 100*time.Millisecond {
+		if !force && !sourceChanged && !lastEmit.IsZero() && now.Sub(lastEmit) < 100*time.Millisecond {
 			mu.Unlock()
 			return
 		}
 		if clamped > maxReported {
 			maxReported = clamped
 		}
+		if source != "" {
+			lastSource = source
+		}
 		reported := maxReported
 		lastEmit = now
 		mu.Unlock()
 		c.OnProgress(Progress{
+			Phase:       PhaseDownloading,
 			Name:        name,
 			Done:        reported,
 			Total:       total,
@@ -887,7 +917,7 @@ func (c *Client) downloadRanges(
 	startOffset, totalSize int64,
 	assetName string,
 	report func(done, total int64, bps float64, source string, force bool),
-) ([]string, error) {
+) ([]string, string, error) {
 	var chunks []*rangeChunk
 	for idx, start := 0, startOffset; start < totalSize; idx, start = idx+1, start+rangeChunkSize {
 		end := start + rangeChunkSize - 1
@@ -897,7 +927,11 @@ func (c *Client) downloadRanges(
 		chunks = append(chunks, &rangeChunk{index: idx, start: start, end: end})
 	}
 	if len(chunks) == 0 {
-		return nil, nil
+		label := ""
+		if len(candidates) > 0 {
+			label = candidates[0].label
+		}
+		return nil, label, nil
 	}
 
 	var (
@@ -1176,12 +1210,12 @@ func (c *Client) downloadRanges(
 		outUsed = append(outUsed, u)
 	}
 	if fatalErr != nil {
-		return outUsed, fatalErr
+		return outUsed, currentLabel, fatalErr
 	}
 	if nextToWrite != len(chunks) {
-		return outUsed, fmt.Errorf("%s 下载未完整写入", assetName)
+		return outUsed, currentLabel, fmt.Errorf("%s 下载未完整写入", assetName)
 	}
-	return outUsed, nil
+	return outUsed, currentLabel, nil
 }
 
 func (c *Client) fetchRangeChunk(

@@ -29,7 +29,14 @@ type UpdateStateDTO struct {
 	Current      string  `json:"current"`
 	Checking     bool    `json:"checking"`
 	Downloading  bool    `json:"downloading"`
+	Phase        string  `json:"phase"`
 	Fraction     float64 `json:"fraction"`
+	DoneBytes    int64   `json:"doneBytes"`
+	TotalBytes   int64   `json:"totalBytes"`
+	SpeedBps     int64   `json:"speedBps"`
+	EtaSeconds   int     `json:"etaSeconds"`
+	Source       string  `json:"source"`
+	AssetName    string  `json:"assetName"`
 	ProgressText string  `json:"progressText"`
 	Notes        string  `json:"notes"`
 	DetailsOpen  bool    `json:"detailsOpen"`
@@ -237,7 +244,14 @@ func (a *App) buildShellState() ShellStateDTO {
 			Current:      currentVersion(),
 			Checking:     a.updateBusy,
 			Downloading:  a.updateDownloading,
+			Phase:        a.updatePhase,
 			Fraction:     a.updateFraction,
+			DoneBytes:    a.updateDone,
+			TotalBytes:   a.updateTotal,
+			SpeedBps:     a.updateSpeed,
+			EtaSeconds:   a.updateEta,
+			Source:       a.updateSource,
+			AssetName:    a.updateAssetName,
 			ProgressText: a.updateProgressText,
 			Notes:        a.updateNotes,
 			DetailsOpen:  a.updateDetailsOpen,
@@ -709,7 +723,7 @@ func (a *App) applyWizardAction(action, value string) {
 	a.emit("wizard", "shell", "browsers")
 }
 
-// UpdateAction handles release update actions (check, install, dismiss, skip, toggleDetails, toggleNotes).
+// UpdateAction handles release update actions (check, install, cancel, dismiss, skip, toggleDetails, toggleNotes).
 func (s *CoreService) UpdateAction(ctx context.Context, action string) {
 	if s.app == nil {
 		return
@@ -720,6 +734,8 @@ func (s *CoreService) UpdateAction(ctx context.Context, action string) {
 			s.app.checkForUpdates()
 		case "install":
 			s.app.applyUpdate()
+		case "cancel":
+			s.app.cancelUpdate()
 		case "dismiss":
 			s.app.dismissUpdate()
 		case "skip":
@@ -729,7 +745,7 @@ func (s *CoreService) UpdateAction(ctx context.Context, action string) {
 		case "toggleNotes":
 			s.app.updateNotesOpen = !s.app.updateNotesOpen
 		}
-		s.app.emit("update", "shell")
+		s.app.emit("update", "shell", "settings")
 	})
 }
 

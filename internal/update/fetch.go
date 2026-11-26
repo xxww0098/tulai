@@ -22,13 +22,31 @@ const (
 	minRangeAssetBytes = 1 << 20
 )
 
+// ProgressPhase describes the current stage of an update download.
+type ProgressPhase string
+
+const (
+	PhaseChecksums   ProgressPhase = "checksums"
+	PhaseProbing     ProgressPhase = "probing"
+	PhaseDownloading ProgressPhase = "downloading"
+	PhaseVerifying   ProgressPhase = "verifying"
+)
+
 // Progress is one download progress callback.
 type Progress struct {
+	Phase       ProgressPhase
 	Name        string
 	Done        int64
 	Total       int64
 	BytesPerSec float64
 	Source      string
+}
+
+func (c *Client) reportProgress(p Progress) {
+	if c == nil || c.OnProgress == nil {
+		return
+	}
+	c.OnProgress(p)
 }
 
 type statusError struct {
@@ -461,20 +479,24 @@ func checkChecksumsFile(path string) error {
 }
 
 func (c *Client) downloadFile(ctx context.Context, tag string, asset Asset, dest string) error {
-	return c.fetchAsset(ctx, tag, asset, dest, nil, nil)
+	return c.fetchAsset(ctx, tag, asset, dest, nil, nil, true)
 }
 
 // downloadVerified downloads asset from the fastest available source and checks wants.
 // A finished download that does not match is discarded and remaining sources are tried.
 func (c *Client) downloadVerified(ctx context.Context, tag string, asset Asset, dest string, wants ...string) error {
-	return c.fetchAsset(ctx, tag, asset, dest, nil, wants)
+	return c.fetchAsset(ctx, tag, asset, dest, nil, wants, true)
 }
 
 func (c *Client) downloadChecked(ctx context.Context, tag string, asset Asset, dest string, extra func(string) error, wants ...string) error {
-	return c.fetchAsset(ctx, tag, asset, dest, extra, wants)
+	return c.fetchAsset(ctx, tag, asset, dest, extra, wants, true)
 }
 
-func (c *Client) fetchAsset(ctx context.Context, tag string, asset Asset, dest string, extraCheck func(string) error, wants []string) error {
+func (c *Client) downloadCheckedSilent(ctx context.Context, tag string, asset Asset, dest string, extra func(string) error, wants ...string) error {
+	return c.fetchAsset(ctx, tag, asset, dest, extra, wants, false)
+}
+
+func (c *Client) fetchAsset(ctx context.Context, tag string, asset Asset, dest string, extraCheck func(string) error, wants []string, reportProgress bool) error {
 	if asset.Name == "" || asset.Name != filepath.Base(asset.Name) || strings.Contains(asset.Name, "..") {
 		return fmt.Errorf("拒绝的文件名 %q", asset.Name)
 	}
@@ -505,6 +527,14 @@ func (c *Client) fetchAsset(ctx context.Context, tag string, asset Asset, dest s
 			break
 		}
 
+		if reportProgress {
+			c.reportProgress(Progress{
+				Phase: PhaseProbing,
+				Name:  asset.Name,
+				Total: asset.Size,
+			})
+		}
+
 		// Small assets (<1 MiB) and tiny fixtures use direct GET+resume
 		// without initial Range headers so tiny transfers finish in 1 RTT.
 		if asset.Size > 0 && asset.Size < minRangeAssetBytes {
@@ -515,7 +545,7 @@ func (c *Client) fetchAsset(ctx context.Context, tag string, asset Asset, dest s
 			if len(active) > 1 {
 				maxRetries = 1
 			}
-			if err := c.downloadWithResume(ctx, cand, asset, dest, maxRetries); err != nil {
+			if err := c.downloadWithResume(ctx, cand, asset, dest, maxRetries, reportProgress); err != nil {
 				last = err
 				excluded[cand.url] = true
 				os.Remove(dest)
@@ -524,6 +554,15 @@ func (c *Client) fetchAsset(ctx context.Context, tag string, asset Asset, dest s
 					return err
 				}
 				continue
+			}
+			if reportProgress && (len(wants) > 0 || extraCheck != nil) {
+				c.reportProgress(Progress{
+					Phase:  PhaseVerifying,
+					Name:   asset.Name,
+					Done:   asset.Size,
+					Total:  asset.Size,
+					Source: cand.label,
+				})
 			}
 			if err := validateDownloadedFile(dest, asset.Name, extraCheck, wants); err != nil {
 				last = err
@@ -535,7 +574,7 @@ func (c *Client) fetchAsset(ctx context.Context, tag string, asset Asset, dest s
 			return nil
 		}
 
-		usedURLs, err := c.downloadLargeAsset(ctx, active, asset, dest)
+		usedURLs, lastSource, finalTotal, err := c.downloadLargeAsset(ctx, active, asset, dest, reportProgress)
 		if err != nil {
 			last = err
 			os.Remove(dest)
@@ -552,6 +591,19 @@ func (c *Client) fetchAsset(ctx context.Context, tag string, asset Asset, dest s
 				}
 			}
 			continue
+		}
+		if reportProgress && (len(wants) > 0 || extraCheck != nil) {
+			total := finalTotal
+			if total <= 0 {
+				total = asset.Size
+			}
+			c.reportProgress(Progress{
+				Phase:  PhaseVerifying,
+				Name:   asset.Name,
+				Done:   total,
+				Total:  total,
+				Source: lastSource,
+			})
 		}
 		if err := validateDownloadedFile(dest, asset.Name, extraCheck, wants); err != nil {
 			last = err
@@ -592,7 +644,7 @@ func validateDownloadedFile(dest, name string, extraCheck func(string) error, wa
 	return nil
 }
 
-func (c *Client) downloadWithResume(ctx context.Context, cand downloadCandidate, asset Asset, dest string, maxRetries int) error {
+func (c *Client) downloadWithResume(ctx context.Context, cand downloadCandidate, asset Asset, dest string, maxRetries int, reportProgress bool) error {
 	if maxRetries < 1 {
 		maxRetries = 1
 	}
@@ -603,7 +655,7 @@ func (c *Client) downloadWithResume(ctx context.Context, cand downloadCandidate,
 	}
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		try, cancel := context.WithTimeout(ctx, timeout)
-		err := c.downloadOnce(try, cand, asset, dest)
+		err := c.downloadOnce(try, cand, asset, dest, reportProgress)
 		cancel()
 		if err == nil {
 			return nil
@@ -621,7 +673,7 @@ func (c *Client) downloadWithResume(ctx context.Context, cand downloadCandidate,
 	return last
 }
 
-func (c *Client) downloadOnce(ctx context.Context, cand downloadCandidate, asset Asset, dest string) error {
+func (c *Client) downloadOnce(ctx context.Context, cand downloadCandidate, asset Asset, dest string, reportProgress bool) error {
 	tmp := dest + ".partial"
 	var offset int64
 	if info, err := os.Stat(tmp); err == nil && !info.IsDir() {
@@ -674,6 +726,10 @@ func (c *Client) downloadOnce(ctx context.Context, cand downloadCandidate, asset
 	if remain < 0 {
 		remain = 0
 	}
+	var progressFn func(Progress)
+	if reportProgress {
+		progressFn = c.OnProgress
+	}
 	writer := &progressWriter{
 		w:      f,
 		base:   offset,
@@ -681,7 +737,7 @@ func (c *Client) downloadOnce(ctx context.Context, cand downloadCandidate, asset
 		name:   asset.Name,
 		source: cand.label,
 		meter:  newSpeedMeter(),
-		fn:     c.OnProgress,
+		fn:     progressFn,
 	}
 	n, copyErr := io.Copy(writer, io.LimitReader(resp.Body, remain+1))
 	closeErr := f.Close()
@@ -707,12 +763,12 @@ func (c *Client) downloadOnce(ctx context.Context, cand downloadCandidate, asset
 	if err := os.Rename(tmp, dest); err != nil {
 		return err
 	}
-	if c.OnProgress != nil {
+	if progressFn != nil {
 		total := asset.Size
 		if total <= 0 {
 			total = got
 		}
-		c.OnProgress(Progress{Name: asset.Name, Done: got, Total: total, Source: cand.label})
+		progressFn(Progress{Phase: PhaseDownloading, Name: asset.Name, Done: got, Total: total, Source: cand.label})
 	}
 	return nil
 }
@@ -736,9 +792,9 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	if p.meter != nil && n > 0 {
 		bps = p.meter.record(p.base + p.n)
 	}
-	if p.fn != nil && (p.last.IsZero() || time.Since(p.last) > 120*time.Millisecond) {
+	if p.fn != nil && (p.last.IsZero() || time.Since(p.last) > 100*time.Millisecond) {
 		p.last = time.Now()
-		p.fn(Progress{Name: p.name, Done: p.base + p.n, Total: p.total, BytesPerSec: bps, Source: p.source})
+		p.fn(Progress{Phase: PhaseDownloading, Name: p.name, Done: p.base + p.n, Total: p.total, BytesPerSec: bps, Source: p.source})
 	}
 	return n, err
 }

@@ -336,6 +336,24 @@
   }
 }
 
+@keyframes tulai-progress-indeterminate {
+  0% {
+    transform: translate3d(-110%, 0, 0);
+  }
+  100% {
+    transform: translate3d(280%, 0, 0);
+  }
+}
+
+@keyframes tulai-progress-shimmer {
+  0% {
+    transform: translate3d(-120%, 0, 0);
+  }
+  100% {
+    transform: translate3d(260%, 0, 0);
+  }
+}
+
 .animate-tulai-fade {
   animation: tulai-fade-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -443,6 +461,31 @@
   animation: tulai-sheen-counter 1.7s linear infinite;
 }
 
+.tulai-progress-indeterminate {
+  will-change: transform;
+  animation: tulai-progress-indeterminate 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.tulai-progress-shimmer {
+  will-change: transform;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.38) 50%,
+    transparent 100%
+  );
+  animation: tulai-progress-shimmer 1.5s linear infinite;
+}
+
+.dark .tulai-progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 100%
+  );
+}
+
 /* Keep hover-only row affordances reachable on touch devices */
 @media (hover: none) {
   .touch-visible {
@@ -498,5 +541,15 @@
 
   .tulai-collapse {
     transition: opacity 120ms ease !important;
+  }
+
+  .tulai-progress-indeterminate {
+    animation: none !important;
+    transform: translate3d(82%, 0, 0) !important;
+    opacity: 0.72;
+  }
+
+  .tulai-progress-shimmer {
+    display: none !important;
   }
 }

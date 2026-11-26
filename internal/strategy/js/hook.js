@@ -666,12 +666,17 @@
     else reason = 'images-ready';
     return { busy: busy, done: done, expect: expect, bar: false, replies: replies.length, reason: reason, fault: fault, here: window.__tulaiConversationKey(location.href), images: images };
   }
-  // 千问拒绝请求时，回复里只有一行报错和「重新生成」图标，没有图卡。
-  var qwenFaultPattern = /请求异常|网络连接|网络异常|服务异常|服务繁忙|系统繁忙|出错了|生成失败|请稍后重试|请重试/;
+  // 千问拒绝请求或命中会员专属拦截卡时，回复里没有图卡，必须立刻结束等待而不是死等到超时。
+  var qwenFaultPattern = /请求异常|网络连接|网络异常|服务异常|服务繁忙|系统繁忙|出错了|生成失败|请稍后重试|请重试|会员专属功能|开通创作会员|订阅会员后可用/;
   function qwenFault(root) {
+    var payCard = root.querySelector('[data-qianwen-card="zd_membership_payment_buttons_card"]');
+    if (payCard) {
+      var payText = String(payCard.innerText || payCard.textContent || '').replace(/\s+/g, ' ').trim();
+      return (payText || '本次生成使用了会员专属功能，开通后立即可用').slice(0, 120);
+    }
     var box = root.querySelector('[class*="retry-container"]');
     var text = String((box || root).textContent || '').replace(/\s+/g, ' ').trim();
-    if (!text || text.length > 80) return '';
+    if (!text || text.length > 120) return '';
     return box || qwenFaultPattern.test(text) ? text : '';
   }
   // 豆包服务端偶发返回纯文字报错（「出了点问题，请稍后重试。」），不早停会死等到 3 分钟超时。

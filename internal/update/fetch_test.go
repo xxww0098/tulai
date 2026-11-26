@@ -587,3 +587,105 @@ func TestDiscoverLatestTagRacesMirrors(t *testing.T) {
 		t.Fatalf("discoverLatestTag = %q err = %v", tag, err)
 	}
 }
+
+func TestDownloadProgressPhasesExcludeChecksumsBytes(t *testing.T) {
+	payload := make([]byte, (2<<20)+123)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	sumHex := hex.EncodeToString(sum[:])
+	assetName := "tulai-0.2.0-linux-amd64.tar.gz"
+	sumsText := sumHex + "  " + assetName + "\n"
+	sumsSum := sha256.Sum256([]byte(sumsText))
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sums":
+			w.Header().Set("Content-Length", strconv.Itoa(len(sumsText)))
+			_, _ = w.Write([]byte(sumsText))
+		case "/asset":
+			serveRangePayload(w, r, payload)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	rel := Release{
+		Tag: "v0.2.0",
+		Assets: []Asset{
+			{
+				Name:               "SHA256SUMS",
+				State:              "uploaded",
+				BrowserDownloadURL: srv.URL + "/sums",
+				Size:               int64(len(sumsText)),
+				Digest:             "sha256:" + hex.EncodeToString(sumsSum[:]),
+			},
+			{
+				Name:               assetName,
+				State:              "uploaded",
+				BrowserDownloadURL: srv.URL + "/asset",
+				Size:               int64(len(payload)),
+				Digest:             "sha256:" + sumHex,
+			},
+		},
+	}
+
+	client := NewClient("0.1.0")
+	client.DownloadDir = t.TempDir()
+	var mu sync.Mutex
+	var events []Progress
+	client.OnProgress = func(p Progress) {
+		mu.Lock()
+		events = append(events, p)
+		mu.Unlock()
+	}
+
+	if _, err := client.Download(context.Background(), rel, "0.1.0", ModeLinuxUser, "amd64"); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var sawChecksums, sawProbing, sawDownloading, sawVerifying bool
+	for _, ev := range events {
+		if ev.Name == "SHA256SUMS" {
+			t.Fatalf("SHA256SUMS bytes leaked into progress callback: %+v", ev)
+		}
+		switch ev.Phase {
+		case PhaseChecksums:
+			sawChecksums = true
+		case PhaseProbing:
+			sawProbing = true
+		case PhaseDownloading:
+			sawDownloading = true
+		case PhaseVerifying:
+			sawVerifying = true
+		}
+	}
+	if !sawChecksums || !sawProbing || !sawDownloading || !sawVerifying {
+		t.Fatalf("missing phases: checksums=%v probing=%v downloading=%v verifying=%v", sawChecksums, sawProbing, sawDownloading, sawVerifying)
+	}
+	last := events[len(events)-1]
+	if last.Phase != PhaseVerifying || last.Done != int64(len(payload)) || last.Total != int64(len(payload)) || last.Source == "" {
+		t.Fatalf("unexpected final event: %+v", last)
+	}
+}
+
+func TestSpeedMeterRemainsMonotonicOnChunkRollback(t *testing.T) {
+	m := newSpeedMeter()
+	base := time.Now().Add(-1 * time.Second)
+	m.samples = append(m.samples, speedSample{at: base, done: 0})
+	m.maxDone = 2 << 20
+	bps1 := m.record(2 << 20)
+	if bps1 <= 0 {
+		t.Fatalf("expected positive speed, got %v", bps1)
+	}
+	// Simulate a failed in-flight chunk causing reported totalDone to dip temporarily.
+	bps2 := m.record(1 << 20)
+	if bps2 <= 0 {
+		t.Fatalf("speed dropped to %v on chunk rollback", bps2)
+	}
+}

@@ -376,10 +376,13 @@ globalThis.TULAIPage = (function () {
     if (all(scope, '[data-testid="skill_input_exit_button"]').some(function (el) {
       return visible(el) && exactText(el, '图像生成')
     })) return true
-    if (ratioControl(doc)) return true
+    if (ratioControlShown(doc)) return true
     return all(scope, 'button,[role="button"],span,div').some(function (el) {
       if (!visible(el) || !exactText(el, '图像生成')) return false
       if (el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true') return true
+      // 未选中的工具栏按钮及其内外包裹层绝不可误判为已进入图像模式，即使 DOM 类名变动或兄弟技能尚未水合。
+      if (closest(el, 'button,[role="button"],[role="menuitem"],[role="option"],[role="menu"],[role="listbox"]')) return false
+      if (all(el, 'button,[role="button"],[role="menuitem"],[role="option"]').length > 0) return false
       // 普通工具栏始终有同名入口，只有输入区里的已选模式标签才算切换成功。
       return !inSkillToolbar(el, comp)
     })
@@ -448,22 +451,22 @@ globalThis.TULAIPage = (function () {
         }
       }
       const control = imageModeControl(doc)
-      if (control && enabled(control) && clicks < 3 && (clicks === 0 || Date.now() - lastClick >= 3500)) {
+      if (control && enabled(control) && clicks < 3 && (clicks === 0 || Date.now() - lastClick >= 2800)) {
         if (!await pressMenuControl(control)) return { error: '无法点击「图像生成」，未开始任务', code: 'E_SELECTOR_MISS' }
         clicks++
         lastClick = Date.now()
       } else if (!control) {
-        const allowOpenMode = modeSwitchClicks < 2 && (modeSwitchClicks === 0 || Date.now() - lastModeSwitch >= 2500)
+        const allowOpenMode = modeSwitchClicks < 2 && (modeSwitchClicks === 0 || Date.now() - lastModeSwitch >= 1800)
         const switched = await switchBackToChatMode(doc, allowOpenMode)
         if (switched) {
           if (switched === 'opened') {
             modeSwitchClicks++
             lastModeSwitch = Date.now()
           }
-          await new Promise(function (resolve) { setTimeout(resolve, 120) })
+          await new Promise(function (resolve) { setTimeout(resolve, 100) })
           continue
         }
-        if (moreClicks < 2 && (moreClicks === 0 || Date.now() - lastMoreClick >= 2500)) {
+        if (moreClicks < 2 && (moreClicks === 0 || Date.now() - lastMoreClick >= 1800)) {
           const toolbar = skillToolbarScope(doc)
           const more = all(toolbar, '[data-testid="skill_bar_button_more"]').find(enabled) ||
             all(toolbar, 'button,[role="button"]').find(function (el) {
@@ -477,7 +480,7 @@ globalThis.TULAIPage = (function () {
           }
         }
       }
-      await new Promise(function (resolve) { setTimeout(resolve, 40) })
+      await new Promise(function (resolve) { setTimeout(resolve, 30) })
     }
     if (!clicks && !all(doc, '[data-testid="chat_header_avatar_button"]').some(visible) && hasVisibleLoginButton(doc)) {
       return { error: '请先登录平台账号', code: 'E_NOT_LOGGED_IN' }
@@ -491,10 +494,11 @@ globalThis.TULAIPage = (function () {
     return normalize(el.innerText || (el.getAttribute && el.getAttribute('aria-label')) || '')
   }
 
-  function ratioControl(doc) {
+  function ratioControlCandidates(doc, allowDisabled) {
     const scope = imageModeScope(doc)
-    const candidates = all(scope, 'button,[role="button"],[aria-haspopup="menu"],[aria-haspopup="dialog"],[aria-haspopup="listbox"]').filter(function (el) {
-      if (!enabled(el) || closest(el, USER_Q + ',' + ASSISTANT_Q)) return false
+    const check = allowDisabled ? visible : enabled
+    return all(scope, 'button,[role="button"],[aria-haspopup="menu"],[aria-haspopup="dialog"],[aria-haspopup="listbox"]').filter(function (el) {
+      if (!check(el) || closest(el, USER_Q + ',' + ASSISTANT_Q)) return false
       const text = ratioLabelText(el)
       if (!text) return false
       if (/^比例/.test(text)) {
@@ -506,6 +510,16 @@ globalThis.TULAIPage = (function () {
       const meta = (el.getAttribute && ((el.getAttribute('data-testid') || '') + ' ' + (el.getAttribute('aria-label') || ''))) || ''
       return (hasPopup || /ratio|比例/i.test(meta)) && /^\d+:\d+$/.test(text)
     })
+  }
+
+  function ratioControl(doc) {
+    const candidates = ratioControlCandidates(doc, false)
+    if (!candidates.length) return null
+    return candidates.find(function (el) { return el.getAttribute && el.getAttribute('aria-haspopup') !== null }) || candidates[0]
+  }
+
+  function ratioControlShown(doc) {
+    const candidates = ratioControlCandidates(doc, true)
     if (!candidates.length) return null
     return candidates.find(function (el) { return el.getAttribute && el.getAttribute('aria-haspopup') !== null }) || candidates[0]
   }
@@ -598,12 +612,22 @@ globalThis.TULAIPage = (function () {
     }) || matches[0]
   }
 
-  function closeRatioMenu(doc, control) {
+  async function closeRatioMenu(doc, control, waitNatural) {
+    if (waitNatural) {
+      for (let i = 0; i < 10 && ratioMenu(doc); i++) {
+        await new Promise(function (resolve) { setTimeout(resolve, 30) })
+      }
+    }
+    if (!ratioMenu(doc)) return
     try {
       (doc || document).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     } catch (e) {}
-    if (ratioMenu(doc) && control) {
+    for (let i = 0; i < 6 && ratioMenu(doc); i++) {
+      await new Promise(function (resolve) { setTimeout(resolve, 30) })
+    }
+    if (ratioMenu(doc) && control && enabled(control)) {
       try { activate(control) } catch (e) {}
+      await new Promise(function (resolve) { setTimeout(resolve, 40) })
     }
   }
 
@@ -628,45 +652,63 @@ globalThis.TULAIPage = (function () {
     let control = null
     while (Date.now() < deadline) {
       if (cancelled && cancelled()) return { error: '设置比例已取消', code: 'E_CANCELLED' }
-      control = ratioControl(doc)
+      control = ratioControlShown(doc)
       if (control) break
-      await new Promise(function (resolve) { setTimeout(resolve, 40) })
+      await new Promise(function (resolve) { setTimeout(resolve, 30) })
     }
     if (!control) return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
-    if (ratioMatches(control, want)) return { ok: true, already: true }
+    if (ratioMatches(control, want)) {
+      if (ratioMenu(doc)) await closeRatioMenu(doc, control, false)
+      return { ok: true, already: true }
+    }
+    if (!enabled(control)) {
+      const unlockUntil = Math.min(deadline, Date.now() + 600)
+      while (Date.now() < unlockUntil) {
+        const cur = ratioControlShown(doc)
+        if (!cur) return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
+        control = cur
+        if (ratioMatches(control, want)) return { ok: true, already: true }
+        if (enabled(control)) break
+        await new Promise(function (resolve) { setTimeout(resolve, 30) })
+      }
+      if (!enabled(control)) {
+        const locked = ratioValue(control) || (isRatioAuto(control) ? '自动' : '')
+        return { error: '上传参考图后比例已锁定' + (locked ? '为 ' + locked : '') + '，无法改为 ' + want, code: 'E_SELECTOR_MISS' }
+      }
+    }
     let lastError = '比例 ' + want + ' 未生效'
     for (let round = 0; round < 3 && Date.now() < deadline; round++) {
-      if (cancelled && cancelled()) { closeRatioMenu(doc, control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
+      if (cancelled && cancelled()) { await closeRatioMenu(doc, control, false); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
       const liveRound = ratioControl(doc)
       if (liveRound) control = liveRound
       else if (!control || control.isConnected === false) {
-        closeRatioMenu(doc, null)
+        await closeRatioMenu(doc, null, false)
         return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
       }
       if (control && ratioMatches(control, want)) {
-        if (ratioMenu(doc)) closeRatioMenu(doc, control)
+        if (ratioMenu(doc)) await closeRatioMenu(doc, control, true)
         return { ok: true }
       }
       let menu = ratioMenu(doc)
       let lastOpen = 0
-      const openUntil = Math.min(deadline, Date.now() + 2600)
+      const openUntil = Math.min(deadline, Date.now() + 2400)
       while (!menu && Date.now() < openUntil) {
-        if (cancelled && cancelled()) { closeRatioMenu(doc, control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
+        if (cancelled && cancelled()) { await closeRatioMenu(doc, control, false); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
         const liveOpen = ratioControl(doc)
         if (liveOpen) control = liveOpen
         else if (!control || control.isConnected === false) {
-          closeRatioMenu(doc, null)
+          await closeRatioMenu(doc, null, false)
           return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
         }
         if (control && ratioMatches(control, want)) {
-          if (ratioMenu(doc)) closeRatioMenu(doc, control)
+          if (ratioMenu(doc)) await closeRatioMenu(doc, control, true)
           return { ok: true }
         }
-        if (lastOpen === 0 || Date.now() - lastOpen >= 1200) {
+        if (lastOpen === 0 || Date.now() - lastOpen >= 1000) {
           if (!await pressMenuControl(control)) return { error: '无法点击「比例」', code: 'E_SELECTOR_MISS' }
           lastOpen = Date.now()
         }
-        await new Promise(function (resolve) { setTimeout(resolve, 40) })
+        await new Promise(function (resolve) { setTimeout(resolve, 30) })
         menu = ratioMenu(doc)
       }
       if (!menu) {
@@ -682,7 +724,7 @@ globalThis.TULAIPage = (function () {
       const liveAfterReady = ratioControl(doc)
       if (liveAfterReady) control = liveAfterReady
       else if (!control || control.isConnected === false) {
-        closeRatioMenu(doc, null)
+        await closeRatioMenu(doc, null, false)
         return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
       }
       if (!isRatioMenuContainer(menu)) {
@@ -695,30 +737,30 @@ globalThis.TULAIPage = (function () {
       })
       if (!item) {
         if (!ratioControl(doc) && (!control || control.isConnected === false)) {
-          closeRatioMenu(doc, null)
+          await closeRatioMenu(doc, null, false)
           return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
         }
-        closeRatioMenu(doc, control)
+        await closeRatioMenu(doc, control, false)
         return { error: '「比例」菜单没有 ' + want, code: 'E_SELECTOR_MISS' }
       }
       if (!await pressMenuControl(item)) {
-        closeRatioMenu(doc, control)
+        await closeRatioMenu(doc, control, false)
         return { error: '无法点击比例 ' + want, code: 'E_SELECTOR_MISS' }
       }
       const confirmUntil = Math.min(deadline, Date.now() + 1800)
       while (Date.now() < confirmUntil) {
-        if (cancelled && cancelled()) { closeRatioMenu(doc, ratioControl(doc) || control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
-        const again = ratioControl(doc)
+        if (cancelled && cancelled()) { await closeRatioMenu(doc, ratioControl(doc) || control, false); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
+        const again = ratioControlShown(doc)
         if (again && ratioMatches(again, want)) {
-          if (ratioMenu(doc)) closeRatioMenu(doc, again)
+          await closeRatioMenu(doc, again, true)
           return { ok: true }
         }
-        await new Promise(function (resolve) { setTimeout(resolve, 40) })
+        await new Promise(function (resolve) { setTimeout(resolve, 30) })
       }
       lastError = '比例 ' + want + ' 未生效'
-      if (ratioMenu(doc)) closeRatioMenu(doc, ratioControl(doc) || control)
+      if (ratioMenu(doc)) await closeRatioMenu(doc, ratioControl(doc) || control, false)
     }
-    closeRatioMenu(doc, ratioControl(doc) || control)
+    await closeRatioMenu(doc, ratioControl(doc) || control, false)
     return { error: lastError, code: 'E_SELECTOR_MISS' }
   }
 

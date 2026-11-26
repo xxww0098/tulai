@@ -46,6 +46,17 @@ func TestReplyFaultAndDoubaoReady(t *testing.T) {
 		if ok.Reason == "error-reply" {
 			t.Fatal("没有报错时不能判成回复异常")
 		}
+		vip := readLive(t, sess, `window.__tulaiPageHost='www.qianwen.com'; (() => {
+			var reply = document.querySelector('.chat-answers-card-wrap[data-chat-answers-wrap]');
+			var card = document.createElement('div');
+			card.setAttribute('data-qianwen-card', 'zd_membership_payment_buttons_card');
+			card.textContent = '本次生成使用了会员专属功能，开通后立即可用 开通创作会员';
+			reply.appendChild(card);
+			return JSON.stringify(__tulaiLiveImages());
+		})()`)
+		if vip.Reason != "error-reply" || vip.Busy || len(vip.Images) != 0 || !strings.Contains(vip.Fault, "会员专属功能") {
+			t.Fatalf("会员专属拦截卡应立即报 error-reply reason=%s busy=%t images=%d fault=%q", vip.Reason, vip.Busy, len(vip.Images), vip.Fault)
+		}
 	})
 
 	t.Run("doubao empty chat while loading", func(t *testing.T) {

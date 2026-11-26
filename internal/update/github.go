@@ -219,6 +219,11 @@ func (c *Client) Download(ctx context.Context, rel Release, current string, mode
 	if err != nil {
 		return Prepared{}, fmt.Errorf("%s: %w", rel.Tag, err)
 	}
+	c.reportProgress(Progress{
+		Phase: PhaseChecksums,
+		Name:  asset.Name,
+		Total: asset.Size,
+	})
 	sums, err := c.checksums(ctx, rel)
 	if err != nil {
 		return Prepared{}, err
@@ -263,10 +268,10 @@ func (c *Client) checksums(ctx context.Context, rel Release) (map[string]string,
 	}
 	dest := filepath.Join(dir, "SHA256SUMS")
 	if digest, ok := digestHex(sumsAsset.Digest); ok {
-		if err := c.downloadChecked(ctx, rel.Tag, sumsAsset, dest, checkChecksumsFile, digest); err != nil {
+		if err := c.downloadCheckedSilent(ctx, rel.Tag, sumsAsset, dest, checkChecksumsFile, digest); err != nil {
 			return nil, fmt.Errorf("SHA256SUMS: %w", err)
 		}
-	} else if err := c.downloadChecked(ctx, rel.Tag, sumsAsset, dest, checkChecksumsFile); err != nil {
+	} else if err := c.downloadCheckedSilent(ctx, rel.Tag, sumsAsset, dest, checkChecksumsFile); err != nil {
 		return nil, err
 	}
 	defer os.Remove(dest)

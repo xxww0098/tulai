@@ -195,8 +195,11 @@ func pageAccountFault(s *cdp.Session) error {
 }
 
 // SendPrompt 可信输入后点击一次发送，等待平台清空输入确认接收。
-func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
-	s.EnsureBase()
+func (b base) SendPrompt(s *cdp.Session, prompt string) error {
+	return b.sendPromptWithPostInsertGuard(s, prompt, nil, nil)
+}
+
+func (base) fillAndVerifyComposer(s *cdp.Session, prompt string) error {
 	out, err := s.Evaluate(`window.tulaiMarkComposer ? tulaiMarkComposer() : false`)
 	if err != nil {
 		return fmt.Errorf("定位输入框: %w", err)
@@ -229,6 +232,33 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 		}
 		return fmt.Errorf("输入区内容与本次提示词不一致，未发送")
 	}
+	return nil
+}
+
+// sendPromptWithPostInsertGuard 在写入提示词之后、点击发送之前再次核对图像模式是否仍激活，
+// 避免富文本编辑器全选替换时误删模式标签导致在普通对话中直接发图和提示词。
+func (b base) sendPromptWithPostInsertGuard(s *cdp.Session, prompt string, ensure func(*cdp.Session) error, activeCheck func(*cdp.Session) (bool, error)) (sendErr error) {
+	s.EnsureBase()
+	if err := b.fillAndVerifyComposer(s, prompt); err != nil {
+		return err
+	}
+	if activeCheck != nil {
+		if active, err := activeCheck(s); err == nil && !active {
+			if ensure != nil {
+				if err := ensure(s); err != nil {
+					return err
+				}
+				if err := b.fillAndVerifyComposer(s, prompt); err != nil {
+					return err
+				}
+				if stillActive, checkErr := activeCheck(s); checkErr == nil && !stillActive {
+					return fmt.Errorf("写入提示词后脱离图像模式，已中止发送")
+				}
+			} else {
+				return fmt.Errorf("写入提示词后脱离图像模式，已中止发送")
+			}
+		}
+	}
 	if err := pageAccountFault(s); err != nil {
 		return err
 	}
@@ -244,7 +274,7 @@ func (b base) SendPrompt(s *cdp.Session, prompt string) (sendErr error) {
 			sendErr = fmt.Errorf("%w: %w", ErrSubmissionUncertain, sendErr)
 		}
 	}()
-	out, err = s.EvaluateAsync(`window.tulaiSendPrompt ? tulaiSendPrompt() : '{"error":"发送脚本未注入"}'`)
+	out, err := s.EvaluateAsync(`window.tulaiSendPrompt ? tulaiSendPrompt() : '{"error":"发送脚本未注入"}'`)
 	if err != nil {
 		return fmt.Errorf("点击发送: %w", err)
 	}
@@ -396,13 +426,14 @@ func waitForResult(s *cdp.Session, timeout time.Duration, washAttachments []stri
 func waitForResultFor(s *cdp.Session, platform string, timeout time.Duration, washAttachments []string) ([]Result, error) {
 	deadline := time.Now().Add(timeout)
 	nextProbe := time.Now().Add(time.Minute)
-	poll := 300 * time.Millisecond
+	poll := 250 * time.Millisecond
 	var since time.Time
 	var key string
 	var held []Result
 	var lastDetect, lastFail string
 	var offSince, faultSince time.Time
 	reopened := false
+	tick := 0
 	for {
 		if err := s.Ctx().Err(); err != nil {
 			return nil, err
@@ -410,16 +441,39 @@ func waitForResultFor(s *cdp.Session, platform string, timeout time.Duration, wa
 		if blocked, vErr := captcha.Visible(s); vErr == nil && blocked {
 			return nil, captcha.ErrVisible
 		}
-		if err := pageAccountFault(s); err != nil {
-			return nil, err
+		urlID, wrapID := s.BoundChat()
+		dismissPopups := tick%5 == 0
+		tick++
+		// 合并对话绑定、弹窗清理、账号故障探测与实时结果检测为单次 CDP 往返，降低并发场景开销。
+		expr := fmt.Sprintf(`(() => {
+			window.__tulaiQwenURL=%q;
+			window.__tulaiQwenChat=%q;
+			if (%t && window.__tulaiDismissPopups) { try { window.__tulaiDismissPopups(); } catch (e) {} }
+			var fault = window.tulaiAccountFault ? tulaiAccountFault() : (window.tulaiPageState ? tulaiPageState() : {});
+			var live = window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false,done:false,reason:'missing'};
+			return JSON.stringify({fault: fault, live: live});
+		})()`, urlID, wrapID, dismissPopups)
+		out, err := s.Evaluate(expr)
+		var snapshot struct {
+			Fault struct {
+				Quota      bool   `json:"quota"`
+				RateLimit  bool   `json:"rateLimit"`
+				Moderation string `json:"moderation"`
+			} `json:"fault"`
+			Live liveShot `json:"live"`
 		}
-		applyQwenBind(s)
-		_, _ = s.Evaluate(`window.__tulaiDismissPopups ? String(__tulaiDismissPopups()) : '0'`)
-		out, err := s.Evaluate(`JSON.stringify(window.__tulaiLiveImages ? __tulaiLiveImages() : {images:[],busy:false,done:false,reason:'missing'})`)
-		var live liveShot
-		if err == nil && cdp.ParseJSValue(out, &live) == nil {
+		if err == nil && cdp.ParseJSValue(out, &snapshot) == nil {
+			if snapshot.Fault.RateLimit {
+				return nil, ErrAccountRate
+			}
+			if snapshot.Fault.Quota {
+				return nil, ErrAccountQuota
+			}
+			if msg := strings.TrimSpace(snapshot.Fault.Moderation); msg != "" {
+				return nil, fmt.Errorf("%w: %s", ErrModeration, msg)
+			}
+			live := snapshot.Live
 			if live.Reason == "off-chat" {
-				urlID, _ := s.BoundChat()
 				if offSince.IsZero() {
 					offSince = time.Now()
 				}
