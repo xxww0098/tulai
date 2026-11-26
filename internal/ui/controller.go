@@ -1236,7 +1236,7 @@ func (a *App) loadPlatformWorkspaceFromStore(platform string, s *store.Store) {
 			a.prompts = defaultWashPromptFor(platform)
 		} else if platform == "豆包" && prompts.SameText(a.prompts, DefaultWashPrompt) {
 			a.prompts = defaultWashPromptFor(platform)
-		} else if platform == "豆包" && (prompts.SameText(a.prompts, prompts.LegacyDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PreviousDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.ReviewedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PixelReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FrameReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.WindowReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FullBleedDoubaoWashPrompt)) {
+		} else if platform == "豆包" && (prompts.SameText(a.prompts, prompts.LegacyDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PreviousDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.ReviewedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.PixelReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FrameReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.WindowReviewDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.FullBleedDoubaoWashPrompt) || prompts.SameText(a.prompts, prompts.RatioDoubaoWashPrompt)) {
 			a.prompts = prompts.DoubaoWashPrompt
 		}
 		a.stageTab = s.GetInt(platformSettingKey(platform, "wash_stage"))

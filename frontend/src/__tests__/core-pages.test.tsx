@@ -186,8 +186,8 @@ function makePromptsState(overrides: Partial<PromptsStateDTO> = {}): PromptsStat
     items: [
       {
         id: "doubao_wash",
-        name: "豆包洗图",
-        label: "豆包洗图",
+        name: "洗图",
+        label: "洗图",
         kind: "wash",
         kindLbl: "洗图",
         text: "保留主体并重绘为二维手绘风格",
@@ -1099,7 +1099,7 @@ describe("PromptsPage", () => {
       useAppStore.setState({
         prompts: makePromptsState({
           selectedId: "doubao_wash",
-          selectedName: "豆包洗图",
+          selectedName: "洗图",
           selectedKind: "洗图",
           selectedText: "保留主体并重绘为二维手绘风格",
           selectedIsBln: true,
@@ -1149,7 +1149,7 @@ describe("PromptsPage", () => {
     useAppStore.setState({
       prompts: makePromptsState({
         selectedId: "doubao_wash",
-        selectedName: "豆包洗图",
+        selectedName: "洗图",
         selectedKind: "洗图",
         selectedText: "总原则。\n\n无框优先：去掉外围画框与帷幕。\n\n二维优先：改画成二维手绘插画。",
         selectedIsBln: true,
@@ -1177,7 +1177,7 @@ describe("PromptsPage", () => {
     expect(screen.getByTestId("prompts-dirty-badge")).toHaveTextContent("未保存");
     expect(screen.getByTestId("prompts-save-btn")).toBeEnabled();
     fireEvent.click(screen.getByTestId("prompts-save-btn"));
-    expect(saveSpy).toHaveBeenCalledWith("豆包洗图", "洗图", "修改后的洗图指令");
+    expect(saveSpy).toHaveBeenCalledWith("洗图", "洗图", "修改后的洗图指令");
 
     // Switch to user prompt and verify 2-step delete confirmation
     act(() => {

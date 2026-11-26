@@ -139,9 +139,6 @@ type WorkbenchStateDTO struct {
 	OutputMode       string           `json:"outputMode"`
 	OutputRatio      string           `json:"outputRatio"`
 	OutputRatios     []string         `json:"outputRatios"`
-	OutputWidth      string           `json:"outputWidth"`
-	OutputHeight     string           `json:"outputHeight"`
-	OutputCrop       bool             `json:"outputCrop"`
 	Sources          []SourceItemDTO  `json:"sources"`
 	SourcesTotal     int              `json:"sourcesTotal"`
 	WashedCount      int              `json:"washedCount"`
@@ -538,9 +535,6 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		OutputMode:       outputPrefs.mode,
 		OutputRatio:      outputPrefs.ratio,
 		OutputRatios:     outputRatios,
-		OutputWidth:      outputPrefs.width,
-		OutputHeight:     outputPrefs.height,
-		OutputCrop:       outputPrefs.crop,
 		Sources:          srcs,
 		SourcesTotal:     len(a.sources),
 		WashedCount:      washedCount,
@@ -763,14 +757,18 @@ func (s *WorkbenchService) SetPlatformSelected(ctx context.Context, platform str
 	})
 }
 
-// SetOutputSize updates the output image size preset, ratio, dimensions, and crop behavior.
-func (s *WorkbenchService) SetOutputSize(ctx context.Context, preset, mode, ratio, width, height string, crop bool) {
+// SetOutputSize updates the web-native output aspect ratio preset.
+// Changes are ignored while tasks are running.
+func (s *WorkbenchService) SetOutputSize(ctx context.Context, preset, mode, ratio string) {
 	if s.app == nil {
 		return
 	}
 	_ = s.app.call(ctx, func() {
 		a := s.app
-		a.activeOutputPrefs().update(preset, mode, ratio, width, height, crop)
+		if a.running {
+			return
+		}
+		a.activeOutputPrefs().update(preset, mode, ratio)
 		a.saveOutputSize()
 		a.emit("workbench")
 	})

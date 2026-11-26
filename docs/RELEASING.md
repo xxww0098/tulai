@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.39
+# 发布 tulai 0.1.40
 
-当前桌面端版本是 **0.1.39**，标签 **`v0.1.39`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+当前桌面端版本是 **0.1.40**，标签 **`v0.1.40`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+
+## 0.1.40
+
+提示词与输出尺寸解耦（提示词不再包含或注入尺寸/比例）；输出尺寸收口为网页端原生支持的 7 个比例与原比例/自动比例，移除自定义像素尺寸与保存期二次缩放/裁剪，并在生图过程中锁定不可变更；修复千问国际/千问/豆包冷加载模式重置导致比例点击失败的竞态问题；内置「豆包洗图」模板重命名为「洗图」。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.39
 
@@ -180,8 +184,8 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.39` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
-| Go 模块 | `v0.1.39` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
+| 桌面端 | `0.1.40` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.40` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
 
 ## 流水线
 
@@ -213,8 +217,8 @@ git push origin vX.Y.Z
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows 安装器 | `tulai.Setup.0.1.39.amd64.exe`、`tulai.Setup.0.1.39.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
-| Windows 便携版 | `tulai-0.1.39-windows-amd64.exe`、`tulai-0.1.39-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
+| Windows 安装器 | `tulai.Setup.0.1.40.amd64.exe`、`tulai.Setup.0.1.40.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.40-windows-amd64.exe`、`tulai-0.1.40-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
 
 `SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。
 

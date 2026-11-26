@@ -211,17 +211,21 @@ func TestServicesWorkbenchModesSourcesAndRewash(t *testing.T) {
 		t.Fatalf("after batchMode=0, got %d, want 0", got)
 	}
 
-	// Unified output size presets include 3:2 / 2:3 and custom dimensions round-trip cleanly
-	svcs.Workbench.SetOutputSize(ctx, "3:2（相机横）", "", "", "", "", false)
+	// Web-native output size presets only (no custom dimensions or fixed pixel sizes)
+	svcs.Workbench.SetOutputSize(ctx, "3:2（相机横）", "", "")
 	wb = svcs.Workbench.GetWorkbenchState(ctx)
 	if wb.OutputPreset != "3:2（相机横）" || wb.OutputRatio != "3:2" {
 		t.Fatalf("unexpected 3:2 preset state: preset=%q ratio=%q mode=%q", wb.OutputPreset, wb.OutputRatio, wb.OutputMode)
 	}
-	svcs.Workbench.SetOutputSize(ctx, "自定义尺寸", "", "", "", "", false)
-	svcs.Workbench.SetOutputSize(ctx, "自定义尺寸", "固定尺寸", "", "1200", "900", true)
+	for _, preset := range wb.OutputPresets {
+		if preset == "自定义尺寸" || preset == "1024×1024" || preset == "2048×2048" {
+			t.Fatalf("non-native preset %q must not be exposed", preset)
+		}
+	}
+	svcs.Workbench.SetOutputSize(ctx, "自定义尺寸", "", "")
 	wb = svcs.Workbench.GetWorkbenchState(ctx)
-	if wb.OutputPreset != "自定义尺寸" || wb.OutputMode != "固定尺寸" || wb.OutputWidth != "1200" || wb.OutputHeight != "900" || !wb.OutputCrop {
-		t.Fatalf("unexpected custom output state: %+v", wb)
+	if wb.OutputPreset != "3:2（相机横）" || wb.OutputRatio != "3:2" {
+		t.Fatalf("custom output size must be rejected: %+v", wb)
 	}
 }
 

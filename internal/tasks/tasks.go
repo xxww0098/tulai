@@ -121,7 +121,6 @@ type Options struct {
 	StartBrowserIndex  int
 	OutputPath         string
 	OutputSize         OutputSize
-	QianwenOutputRatio string // 千问显式选择的原生比例（如 "16:9"）；留空按默认策略（图生图贴合原图、文生图 3:4）
 	RepeatCount        int    // 自由生图每条提示词或每张参考图的生成次数（<=1 视为 1）
 	RemoveWatermark    bool   // 千问另存去水印版本，保留原图
 	AutoDeleteHistory  bool // 确认保存结果后自动删除本次平台聊天记录（发送未确认/失败不删）

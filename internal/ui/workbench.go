@@ -591,6 +591,8 @@ func HumanReason(raw string) string {
 		return "需要在网页里完成验证"
 	case strings.Contains(s, "扩展") && (strings.Contains(s, "未连接") || strings.Contains(s, "没连")):
 		return "扩展没有连上"
+	case strings.Contains(s, "输出比例"):
+		return "网页端输出比例设置失败，请重试"
 	case strings.Contains(s, "上传"):
 		return "图片上传失败"
 	case strings.Contains(s, "下载") || strings.Contains(s, "校验失败"):

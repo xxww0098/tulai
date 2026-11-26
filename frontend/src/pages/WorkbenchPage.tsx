@@ -77,9 +77,6 @@ function buildFallbackWorkbench(shell: ShellStateDTO): WorkbenchStateDTO {
     outputMode: "",
     outputRatio: "",
     outputRatios: [],
-    outputWidth: "",
-    outputHeight: "",
-    outputCrop: false,
     sources: [],
     sourcesTotal: 0,
     washedCount: 0,
@@ -219,68 +216,10 @@ export function WorkbenchPage() {
     { debounceMs: 90 },
   );
 
-  const outputWidthRef = useRef(wb.outputWidth || "");
-  const outputHeightRef = useRef(wb.outputHeight || "");
-  outputWidthRef.current = wb.outputWidth || "";
-  outputHeightRef.current = wb.outputHeight || "";
-
-  const commitOutputWidth = useCallback(
-    (nextWidth: string) => {
-      outputWidthRef.current = nextWidth;
-      fireIpc(
-        Workbench.setOutputSize(
-          "自定义尺寸",
-          "固定尺寸",
-          wb.outputRatio || "",
-          nextWidth,
-          outputHeightRef.current,
-          Boolean(wb.outputCrop),
-        ),
-      );
-    },
-    [wb.outputRatio, wb.outputCrop],
-  );
-
-  const commitOutputHeight = useCallback(
-    (nextHeight: string) => {
-      outputHeightRef.current = nextHeight;
-      fireIpc(
-        Workbench.setOutputSize(
-          "自定义尺寸",
-          "固定尺寸",
-          wb.outputRatio || "",
-          outputWidthRef.current,
-          nextHeight,
-          Boolean(wb.outputCrop),
-        ),
-      );
-    },
-    [wb.outputRatio, wb.outputCrop],
-  );
-
-  const outputWidthDraft = useSyncedDraft(
-    wb.outputWidth || "",
-    `output-w-${platform}-${wb.outputPreset || ""}`,
-    commitOutputWidth,
-    { debounceMs: 140 },
-  );
-
-  const outputHeightDraft = useSyncedDraft(
-    wb.outputHeight || "",
-    `output-h-${platform}-${wb.outputPreset || ""}`,
-    commitOutputHeight,
-    { debounceMs: 140 },
-  );
-
-  outputWidthRef.current = outputWidthDraft.value;
-  outputHeightRef.current = outputHeightDraft.value;
-
   const flushDrafts = useCallback(() => {
     promptDraft.flush();
     suffixDraft.flush();
-    outputWidthDraft.flush();
-    outputHeightDraft.flush();
-  }, [promptDraft, suffixDraft, outputWidthDraft, outputHeightDraft]);
+  }, [promptDraft, suffixDraft]);
 
   const { isDragging } = useFileDrop({
     enabled: Boolean(!loading && !wb.running),
@@ -497,7 +436,6 @@ export function WorkbenchPage() {
     label: p === "原比例" ? originalRatioLabel : p,
   }));
   const showOutputSize = presetList.length > 0;
-  const isCustomOutput = wb.outputPreset === "自定义尺寸";
 
   const outputSizeSection = showOutputSize ? (
     <div className="flex flex-col gap-1.5">
@@ -511,77 +449,14 @@ export function WorkbenchPage() {
           options={presetList}
           value={wb.outputPreset || ""}
           placeholder={originalRatioLabel}
+          disabled={Boolean(wb.running)}
           size="small"
           className="flex-1"
           onValueChange={(value) =>
-            fireIpc(
-              Workbench.setOutputSize(
-                value,
-                wb.outputMode || "",
-                wb.outputRatio || "",
-                outputWidthDraft.value,
-                outputHeightDraft.value,
-                Boolean(wb.outputCrop),
-              ),
-            )
+            fireIpc(Workbench.setOutputSize(value, "", ""))
           }
         />
       </div>
-      {isCustomOutput ? (
-        <div
-          data-testid="wb-output-custom-row"
-          className="animate-tulai-banner-in flex items-center gap-1.5 pl-[56px]"
-        >
-          <Input
-            data-testid="wb-output-width"
-            size="small"
-            inputMode="numeric"
-            aria-label="输出宽度"
-            placeholder="宽"
-            value={outputWidthDraft.value}
-            onChange={(e) => outputWidthDraft.onChange(e.target.value)}
-            onCompositionStart={outputWidthDraft.onCompositionStart}
-            onCompositionEnd={(e) => outputWidthDraft.onCompositionEnd(e.currentTarget.value)}
-            onBlur={outputWidthDraft.onBlur}
-            className="tnum min-w-0 flex-1 text-center"
-          />
-          <span className="text-[11px] text-muted select-none">×</span>
-          <Input
-            data-testid="wb-output-height"
-            size="small"
-            inputMode="numeric"
-            aria-label="输出高度"
-            placeholder="高"
-            value={outputHeightDraft.value}
-            onChange={(e) => outputHeightDraft.onChange(e.target.value)}
-            onCompositionStart={outputHeightDraft.onCompositionStart}
-            onCompositionEnd={(e) => outputHeightDraft.onCompositionEnd(e.currentTarget.value)}
-            onBlur={outputHeightDraft.onBlur}
-            className="tnum min-w-0 flex-1 text-center"
-          />
-          <Checkbox
-            data-testid="wb-output-crop"
-            size="small"
-            label="裁剪"
-            checked={Boolean(wb.outputCrop)}
-            onCheckedChange={(checked) => {
-              outputWidthDraft.flush();
-              outputHeightDraft.flush();
-              fireIpc(
-                Workbench.setOutputSize(
-                  "自定义尺寸",
-                  "固定尺寸",
-                  wb.outputRatio || "",
-                  outputWidthDraft.value,
-                  outputHeightDraft.value,
-                  checked,
-                ),
-              );
-            }}
-            className="shrink-0"
-          />
-        </div>
-      ) : null}
     </div>
   ) : null;
 

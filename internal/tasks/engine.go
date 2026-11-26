@@ -951,7 +951,10 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	if err := strat.CleanComposer(sess); err != nil {
 		return fmt.Errorf("清理输入区: %w", err)
 	}
-	prompt, targetRatio := e.applyOutputRatio(t, strat, sess)
+	targetRatio, explicitRatio, err := e.applyOutputRatio(t, strat, sess)
+	if err != nil {
+		return err
+	}
 	// 上传源图
 	if len(t.Images) > 0 {
 		e.setTaskPhase(t, PhaseUploading)
@@ -969,16 +972,21 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 			if setter, ok := strat.(interface {
 				SetOutputRatio(*cdp.Session, string) (bool, string)
 			}); ok {
-				if applied, why := setter.SetOutputRatio(sess, targetRatio); applied {
-					if e.opts.OutputSize.NativeRatio(t.Platform) == targetRatio {
-						prompt = strings.TrimSpace(t.Prompt)
+				if applied, why := setter.SetOutputRatio(sess, targetRatio); !applied {
+					if explicitRatio {
+						if why == "" {
+							why = "未生效"
+						}
+						return fmt.Errorf("上传源图后设置%s输出比例 %s 失败: %s", t.Platform, targetRatio, why)
 					}
-				} else if why != "" {
-					logging.Log.Debugf("#%d 上传源图后%s原生比例未恢复 %s（%s）", t.Index, t.Platform, targetRatio, why)
+					if why != "" {
+						logging.Log.Debugf("#%d 上传源图后%s原生比例未恢复 %s（%s）", t.Index, t.Platform, targetRatio, why)
+					}
 				}
 			}
 		}
 	}
+	prompt := strings.TrimSpace(t.Prompt)
 	// 上传预览就绪后再标记，避免把源图回显当作生成结果。
 	if err := strat.MarkTask(sess); err != nil {
 		return err
@@ -1016,68 +1024,36 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	return nil
 }
 
-// applyOutputRatio 在网页端设置平台原生「比例」控件，并返回发送用提示词与期望的原生比例（供上传源图后复核）。
-func (e *Engine) applyOutputRatio(t *Task, strat strategy.Strategy, sess *cdp.Session) (string, string) {
-	prompt := e.opts.OutputSize.prompt(t.Platform, t.Prompt)
+// applyOutputRatio 在网页端通过点击切换平台原生「比例」控件，绝不向提示词写入尺寸或比例说明。
+// 返回目标原生比例（供上传源图后复核）、是否为用户显式指定的比例，以及显式设置失败时的错误。
+func (e *Engine) applyOutputRatio(t *Task, strat strategy.Strategy, sess *cdp.Session) (string, bool, error) {
 	setter, ok := strat.(interface {
 		SetOutputRatio(*cdp.Session, string) (bool, string)
 	})
 	if !ok {
-		return prompt, ""
+		return "", false, nil
 	}
 	if ratio := e.opts.OutputSize.NativeRatio(t.Platform); ratio != "" {
 		if applied, why := setter.SetOutputRatio(sess, ratio); applied {
-			prompt = strings.TrimSpace(t.Prompt)
 			logging.Log.Info("#%d 已设置%s原生比例 %s", t.Index, t.Platform, ratio)
-		} else if why != "" {
-			logging.Log.Info("#%d %s原生比例未设置（%s），改用提示词比例", t.Index, t.Platform, why)
+			return ratio, true, nil
+		} else {
+			if why == "" {
+				why = "未生效"
+			}
+			return "", true, fmt.Errorf("设置%s输出比例 %s 失败: %s", t.Platform, ratio, why)
 		}
-		if supportsOutputSize(t.Platform) {
-			return prompt, ratio
-		}
-		return prompt, ""
 	}
 	if t.Platform == "豆包" {
-		if rw, rh, err := e.opts.OutputSize.ratio(); err == nil && rw > 0 {
-			if closest := ClosestNativeRatio(rw, rh); closest != "" {
-				if applied, why := setter.SetOutputRatio(sess, closest); applied {
-					logging.Log.Info("#%d 已按目标比例最接近的豆包原生比例设置 %s", t.Index, closest)
-				} else if why != "" {
-					logging.Log.Debugf("#%d 豆包原生比例未设置（%s）", t.Index, why)
-				}
-				return prompt, closest
-			}
-		}
 		if applied, why := setter.SetOutputRatio(sess, "自动"); applied {
 			logging.Log.Debugf("#%d 豆包原生比例已确认自动", t.Index)
 		} else if why != "" {
 			logging.Log.Debugf("#%d 豆包原生比例重置自动未生效（%s）", t.Index, why)
 		}
-		return prompt, "自动"
+		return "自动", false, nil
 	}
 	if t.Platform != "千问" && t.Platform != "千问国际" {
-		return prompt, ""
-	}
-	if rw, rh, err := e.opts.OutputSize.ratio(); err == nil && rw > 0 {
-		if closest := ClosestNativeRatio(rw, rh); closest != "" {
-			if applied, why := setter.SetOutputRatio(sess, closest); applied {
-				logging.Log.Info("#%d 已按目标比例最接近的%s原生比例设置 %s", t.Index, t.Platform, closest)
-			} else if why != "" {
-				logging.Log.Debugf("#%d %s原生比例未设置（%s）", t.Index, t.Platform, why)
-			}
-			return prompt, closest
-		}
-		return prompt, ""
-	}
-	if t.Platform == "千问" {
-		if ratio := strings.TrimSpace(e.opts.QianwenOutputRatio); ratio != "" {
-			if applied, why := setter.SetOutputRatio(sess, ratio); applied {
-				logging.Log.Info("#%d 已设置千问原生比例 %s", t.Index, ratio)
-			} else if why != "" {
-				logging.Log.Debugf("#%d 千问原生比例未设置（%s）", t.Index, why)
-			}
-			return prompt, ratio
-		}
+		return "", false, nil
 	}
 	if len(t.Images) > 0 {
 		if ratio := closestImageNativeRatio(t.Images[0]); ratio != "" {
@@ -1086,9 +1062,9 @@ func (e *Engine) applyOutputRatio(t *Task, strat strategy.Strategy, sess *cdp.Se
 			} else if why != "" {
 				logging.Log.Debugf("#%d %s原生比例未设置（%s）", t.Index, t.Platform, why)
 			}
-			return prompt, ratio
+			return ratio, false, nil
 		}
-		return prompt, ""
+		return "", false, nil
 	}
 	// 纯文生图避免继承上一单发送前失败遗留在空白页的横屏/方图比例，回正至默认比例（千问 3:4，千问国际 16:9）。
 	defaultRatio := "3:4"
@@ -1100,7 +1076,7 @@ func (e *Engine) applyOutputRatio(t *Task, strat strategy.Strategy, sess *cdp.Se
 	} else if why != "" {
 		logging.Log.Debugf("#%d %s文生图原生比例重置未生效（%s）", t.Index, t.Platform, why)
 	}
-	return prompt, defaultRatio
+	return defaultRatio, false, nil
 }
 
 func adoptSentChat(t *Task, sess *cdp.Session) bool {
@@ -2097,7 +2073,7 @@ func (e *Engine) writePreparedResult(ctx context.Context, t *Task, cand *prepare
 			logging.Log.Warning("#%d 图片 #%d 洗图质检提醒：%s（已正常保存）", t.Index, i+1, note)
 		}
 	}
-	// 单次解码/单次编码管线：去水印、洗图转 PNG 与尺寸调整都在已解码像素上串行完成，最后只编码一次。
+	// 单次解码/单次编码管线：去水印与洗图转 PNG 在已解码像素上串行完成，保持网页原图尺寸不二次变更。
 	needsEncode := false
 	if t.Platform == "豆包" && !usingRaw && !r.WatermarkRemoved && watermarkStaticImage(data, format) {
 		repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
@@ -2120,31 +2096,6 @@ func (e *Engine) writePreparedResult(ctx context.Context, t *Task, cand *prepare
 	// 洗图结果统一存 PNG，白底主体图后面还要再加工。
 	if e.opts.Wash && targetFormat != "png" {
 		targetFormat, ext, needsEncode = "png", ".png", true
-	}
-	if supportsOutputSize(t.Platform) {
-		adjusted, resized, sizeErr := e.opts.OutputSize.processImage(ctx, decoded, targetFormat, cfg)
-		if sizeErr != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return "", ctxErr
-			}
-			backupData := data
-			if needsEncode {
-				if encoded, encErr := images.EncodePNG(decoded); encErr == nil {
-					backupData = encoded
-				}
-			}
-			backup := e.opts
-			backup.OutputPath = filepath.Join(backup.OutputPath, "待核对")
-			backupStem, backupStyle := backup.resultName(t.Prompt, resultSource(t))
-			original, saveErr := writeNumberedFile(ctx, backup.ResultDir(time.Now()), backupStem, backupStyle, ext, backupData)
-			if saveErr != nil {
-				return "", errors.Join(fmt.Errorf("调整输出尺寸失败: %w", sizeErr), fmt.Errorf("保留未调整尺寸的图片失败: %w", saveErr))
-			}
-			return "", fmt.Errorf("调整输出尺寸失败，未调整尺寸的图片保存在 %s: %w", original, sizeErr)
-		}
-		if resized {
-			data, needsEncode = adjusted, false
-		}
 	}
 	if needsEncode {
 		encoded, encErr := images.EncodePNG(decoded)

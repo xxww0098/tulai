@@ -178,10 +178,10 @@ func TestImportPromptTextFileAndQianwenNativeRatio(t *testing.T) {
 		t.Fatalf("unexpected prompts after UTF-16 import: prompts=%q units=%d", wbAfterU16.Prompts, wbAfterU16.PromptUnitCount)
 	}
 
-	// Switch to 千问 and configure full unified output size without affecting Doubao OutputSize
-	svc.SetOutputSize(ctx, "4:3（标准横）", "", "", "", "", false)
+	// Switch to 千问 and configure web-native output ratios independently without affecting Doubao
+	svc.SetOutputSize(ctx, "4:3（标准横）", "", "")
 	svc.SetPlatformSelected(ctx, "千问", true)
-	svc.SetOutputSize(ctx, "16:9（宽屏）", "", "", "", "", false)
+	svc.SetOutputSize(ctx, "16:9（宽屏）", "", "")
 
 	wbQ := svc.GetWorkbenchState(ctx)
 	if !wbQ.Qianwen || wbQ.OutputPreset != "16:9（宽屏）" || wbQ.OutputRatio != "16:9" {
@@ -192,16 +192,31 @@ func TestImportPromptTextFileAndQianwenNativeRatio(t *testing.T) {
 		t.Fatalf("taskOptions OutputSize.Ratio = %q, want 16:9", qOpts.OutputSize.Ratio)
 	}
 
-	// Custom dimensions & crop also work identically on Qianwen and persist across reload
-	svc.SetOutputSize(ctx, "自定义尺寸", "", "", "", "", false)
-	svc.SetOutputSize(ctx, "自定义尺寸", "固定尺寸", "", "1200", "900", true)
-	wbQCustom := svc.GetWorkbenchState(ctx)
-	if wbQCustom.OutputPreset != "自定义尺寸" || wbQCustom.OutputMode != "固定尺寸" || wbQCustom.OutputWidth != "1200" || wbQCustom.OutputHeight != "900" || !wbQCustom.OutputCrop {
-		t.Fatalf("unexpected Qianwen custom output state: %+v", wbQCustom)
+	// Custom dimensions, fixed pixel presets, and non-native ratios are rejected; running tasks lock output size
+	svc.SetOutputSize(ctx, "自定义尺寸", "", "")
+	svc.SetOutputSize(ctx, "1024×1024", "", "")
+	svc.SetOutputSize(ctx, "", "ratio", "5:4")
+	if wbAfterInvalid := svc.GetWorkbenchState(ctx); wbAfterInvalid.OutputPreset != "16:9（宽屏）" || wbAfterInvalid.OutputRatio != "16:9" {
+		t.Fatalf("invalid/custom output size mutated Qianwen state: %+v", wbAfterInvalid)
+	}
+	a.running = true
+	svc.SetOutputSize(ctx, "3:4（标准竖）", "", "")
+	a.running = false
+	if wbLocked := svc.GetWorkbenchState(ctx); wbLocked.OutputPreset != "16:9（宽屏）" || wbLocked.OutputRatio != "16:9" {
+		t.Fatalf("output size changed while running: preset=%q ratio=%q", wbLocked.OutputPreset, wbLocked.OutputRatio)
 	}
 	reloadedQ := NewApp(st, nil, nil, dir)
-	if qCustom := reloadedQ.outputSizeFor("千问"); qCustom.Width != 1200 || qCustom.Height != 900 || !qCustom.Crop {
-		t.Fatalf("Qianwen custom output size lost across reload: %+v", qCustom)
+	if qReloaded := reloadedQ.outputSizeFor("千问"); qReloaded.Ratio != "16:9" {
+		t.Fatalf("Qianwen native output ratio lost across reload: %+v", qReloaded)
+	}
+
+	// Legacy stored custom pixel settings fall back cleanly to 原比例 on reload
+	st.Set("qianwen_output_size_mode", "固定尺寸")
+	st.Set("qianwen_output_width", "1200")
+	st.Set("qianwen_output_height", "900")
+	migrated := NewApp(st, nil, nil, dir)
+	if got := migrated.outputSizeFor("千问"); got.Ratio != "" {
+		t.Fatalf("legacy custom pixel setting should reset to 原比例, got %+v", got)
 	}
 
 	// Switching back to Doubao preserves Doubao's 4:3 setting

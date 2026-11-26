@@ -84,24 +84,33 @@ func (Doubao) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 		return false, err.Error()
 	}
 	s.EnsureBase()
-	out, err := s.EvaluateAsync(`(async () => {
-		` + doubaoPagePrelude() + `
-		if (!window.__tulaiWashPage || typeof window.__tulaiWashPage.setOutputRatio !== 'function') {
-			return JSON.stringify({ ok: false, error: '页面脚本不支持原生比例' });
+	for attempt := 0; attempt < 2; attempt++ {
+		out, err := s.EvaluateAsync(`(async () => {
+			` + doubaoPagePrelude() + `
+			if (!window.__tulaiWashPage || typeof window.__tulaiWashPage.setOutputRatio !== 'function') {
+				return JSON.stringify({ ok: false, error: '页面脚本不支持原生比例' });
+			}
+			return JSON.stringify(await window.__tulaiWashPage.setOutputRatio(document, ` + string(arg) + `));
+		})()`)
+		if err != nil {
+			return false, err.Error()
 		}
-		return JSON.stringify(await window.__tulaiWashPage.setOutputRatio(document, ` + string(arg) + `));
-	})()`)
-	if err != nil {
-		return false, err.Error()
+		var res struct {
+			OK       bool   `json:"ok"`
+			Error    string `json:"error"`
+			LostMode bool   `json:"lostMode"`
+		}
+		if err := cdp.ParseJSValue(out, &res); err != nil {
+			return false, err.Error()
+		}
+		if res.OK || !res.LostMode || attempt > 0 {
+			return res.OK, res.Error
+		}
+		if err := ensureDoubaoImageMode(s); err != nil {
+			return false, err.Error()
+		}
 	}
-	var res struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := cdp.ParseJSValue(out, &res); err != nil {
-		return false, err.Error()
-	}
-	return res.OK, res.Error
+	return false, "未找到「比例」入口"
 }
 
 // SendPrompt 发送前再确认图像模式：文生图只靠清理时切一次不够，
@@ -212,10 +221,11 @@ func ensureQianwenImageModeWithTimeout(s *cdp.Session, timeoutMs int) error {
 			return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.05 && st.pointerEvents !== 'none' && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
 		}
 		async function press(el) {
-			if (!el) return false;
+			if (!el || !el.isConnected) return false;
 			if (typeof window.tulaiClick === 'function') {
 				try { if (await window.tulaiClick(el)) return true; } catch (e) {}
 			}
+			if (!el.isConnected) return false;
 			try {
 				if (typeof el.focus === 'function') el.focus();
 				var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
@@ -390,7 +400,8 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 		return false, err.Error()
 	}
 	s.EnsureBase()
-	out, err := s.EvaluateAsync(`(async () => {
+	for attempt := 0; attempt < 2; attempt++ {
+		out, err := s.EvaluateAsync(`(async () => {
 		var want = String(` + string(arg) + ` || '').trim();
 		if (!/^\d+:\d+$/.test(want)) return JSON.stringify({ ok: false, error: '比例格式应为 4:3' });
 		function visible(el) {
@@ -440,16 +451,17 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				await new Promise(function (r) { setTimeout(r, 30); });
 				if (!findMenu()) return;
 			}
-			if (findMenu() && ctrl) {
+			if (findMenu() && ctrl && ctrl.isConnected) {
 				try { await press(ctrl); } catch (e) {}
 				await new Promise(function (r) { setTimeout(r, 50); });
 			}
 		}
 		async function press(el) {
-			if (!el) return false;
+			if (!el || !el.isConnected) return false;
 			if (typeof window.tulaiClick === 'function') {
 				try { if (await window.tulaiClick(el)) return true; } catch (e) {}
 			}
+			if (!el.isConnected) return false;
 			try {
 				if (typeof el.focus === 'function') el.focus();
 				var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
@@ -473,7 +485,7 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			if (ctrl) break;
 			await new Promise(function (r) { setTimeout(r, 40); });
 		}
-		if (!ctrl) return JSON.stringify({ ok: false, error: '未找到千问比例入口' });
+		if (!ctrl) return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
 		if (ratioOf(ctrl) === want) return JSON.stringify({ ok: true, already: true });
 		// 若上一个 Radix 菜单正在 300ms fade-out 退场，先等退场结束再开新菜单。
 		while (Date.now() < deadline && document.querySelector('[role="menu"][data-state="closed"],[role="listbox"][data-state="closed"]')) {
@@ -481,7 +493,12 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 		}
 		var lastError = '千问比例 ' + want + ' 未生效';
 		for (var round = 0; round < 3 && Date.now() < deadline; round++) {
-			ctrl = findControl() || ctrl;
+			var liveCtrl = findControl();
+			if (liveCtrl) ctrl = liveCtrl;
+			else if (!ctrl || !ctrl.isConnected) {
+				await closeMenu(null);
+				return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
+			}
 			if (ctrl && ratioOf(ctrl) === want) {
 				await closeMenu(ctrl);
 				return JSON.stringify({ ok: true });
@@ -490,13 +507,22 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			var openUntil = Math.min(deadline, Date.now() + 2600);
 			var lastOpen = 0;
 			while (!menu && Date.now() < openUntil) {
-				ctrl = findControl() || ctrl;
+				liveCtrl = findControl();
+				if (liveCtrl) ctrl = liveCtrl;
+				else if (!ctrl || !ctrl.isConnected) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
+				}
 				if (ctrl && ratioOf(ctrl) === want) {
 					await closeMenu(ctrl);
 					return JSON.stringify({ ok: true });
 				}
 				if (lastOpen === 0 || Date.now() - lastOpen >= 1200) {
 					if (!await press(ctrl)) {
+						if (!findControl()) {
+							await closeMenu(null);
+							return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
+						}
 						lastError = '无法点击千问比例入口';
 						break;
 					}
@@ -506,12 +532,28 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				menu = findMenu();
 			}
 			if (!menu) {
+				if (!findControl()) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
+				}
 				lastError = '千问比例菜单未出现';
 				continue;
 			}
 			await new Promise(function (r) { setTimeout(r, 30); });
+			if (!findControl()) {
+				await closeMenu(null);
+				return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
+			}
+			if (!visible(menu)) {
+				lastError = '千问比例菜单已关闭';
+				continue;
+			}
 			var item = findOption(menu);
 			if (!item) {
+				if (!findControl()) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
+				}
 				await closeMenu(ctrl);
 				return JSON.stringify({ ok: false, error: '千问比例菜单没有 ' + want });
 			}
@@ -527,24 +569,36 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 					await closeMenu(again);
 					return JSON.stringify({ ok: true });
 				}
+				if (!again && (!ctrl || !ctrl.isConnected)) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问比例入口' });
+				}
 				await new Promise(function (r) { setTimeout(r, 40); });
 			}
-			await closeMenu(findControl() || ctrl);
+			await closeMenu(findControl());
 		}
-		await closeMenu(findControl() || ctrl);
+		await closeMenu(findControl());
 		return JSON.stringify({ ok: false, error: lastError });
 	})()`)
-	if err != nil {
-		return false, err.Error()
+		if err != nil {
+			return false, err.Error()
+		}
+		var res struct {
+			OK       bool   `json:"ok"`
+			Error    string `json:"error"`
+			LostMode bool   `json:"lostMode"`
+		}
+		if err := cdp.ParseJSValue(out, &res); err != nil {
+			return false, err.Error()
+		}
+		if res.OK || !res.LostMode || attempt > 0 {
+			return res.OK, res.Error
+		}
+		if err := ensureQianwenImageMode(s); err != nil {
+			return false, err.Error()
+		}
 	}
-	var res struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := cdp.ParseJSValue(out, &res); err != nil {
-		return false, err.Error()
-	}
-	return res.OK, res.Error
+	return false, "未找到千问比例入口"
 }
 
 // SendPrompt 发送前再次确认千问仍处于「AI生图」模式，防止上传附件或重绘切回普通对话。
@@ -589,10 +643,11 @@ func ensureQwenIntlImageModeWithTimeout(s *cdp.Session, timeoutMs int) error {
 			return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.05 && st.pointerEvents !== 'none' && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
 		}
 		async function press(el) {
-			if (!el) return false;
+			if (!el || !el.isConnected) return false;
 			if (typeof window.tulaiClick === 'function') {
 				try { if (await window.tulaiClick(el)) return true; } catch (e) {}
 			}
+			if (!el.isConnected) return false;
 			try {
 				if (typeof el.focus === 'function') el.focus();
 				var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
@@ -734,20 +789,22 @@ func (q QwenIntl) CleanComposer(s *cdp.Session) error {
 }
 
 // SetOutputRatio 在千问国际「Create Image / 生成图像」模式下切换原生比例下拉菜单。
+// 冷加载时页面异步水合可能短暂重置掉「生成图像」模式，检测到入口脱离 DOM 时会自动重进图像模式并重试。
 func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 	ratio = strings.TrimSpace(ratio)
 	if s == nil || ratio == "" {
 		return false, ""
-	}
-	if err := ensureQwenIntlImageMode(s); err != nil {
-		return false, err.Error()
 	}
 	arg, err := json.Marshal(ratio)
 	if err != nil {
 		return false, err.Error()
 	}
 	s.EnsureBase()
-	out, err := s.EvaluateAsync(`(async () => {
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ensureQwenIntlImageMode(s); err != nil {
+			return false, err.Error()
+		}
+		out, err := s.EvaluateAsync(`(async () => {
 		var want = String(` + string(arg) + ` || '').trim();
 		if (!/^\d+:\d+$/.test(want)) return JSON.stringify({ ok: false, error: '比例格式应为 4:3' });
 		function norm(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
@@ -790,10 +847,11 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			}) || null;
 		}
 		async function press(el) {
-			if (!el) return false;
+			if (!el || !el.isConnected) return false;
 			if (typeof window.tulaiClick === 'function') {
 				try { if (await window.tulaiClick(el)) return true; } catch (e) {}
 			}
+			if (!el.isConnected) return false;
 			try {
 				if (typeof el.focus === 'function') el.focus();
 				var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
@@ -817,7 +875,7 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				await new Promise(function (r) { setTimeout(r, 30); });
 				if (!findMenu()) return;
 			}
-			if (findMenu() && ctrl) {
+			if (findMenu() && ctrl && ctrl.isConnected) {
 				try { await press(ctrl); } catch (e) {}
 				await new Promise(function (r) { setTimeout(r, 50); });
 			}
@@ -829,11 +887,19 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			if (ctrl) break;
 			await new Promise(function (r) { setTimeout(r, 40); });
 		}
-		if (!ctrl) return JSON.stringify({ ok: false, error: '未找到千问国际比例入口' });
+		if (!ctrl) return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
 		if (ratioOf(ctrl) === want) return JSON.stringify({ ok: true, already: true });
+		while (Date.now() < deadline && document.querySelector('[role="menu"][data-state="closed"],[role="listbox"][data-state="closed"]')) {
+			await new Promise(function (r) { setTimeout(r, 30); });
+		}
 		var lastError = '千问国际比例 ' + want + ' 未生效';
 		for (var round = 0; round < 3 && Date.now() < deadline; round++) {
-			ctrl = findControl() || ctrl;
+			var liveCtrl = findControl();
+			if (liveCtrl) ctrl = liveCtrl;
+			else if (!ctrl || !ctrl.isConnected) {
+				await closeMenu(null);
+				return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
+			}
 			if (ctrl && ratioOf(ctrl) === want) {
 				await closeMenu(ctrl);
 				return JSON.stringify({ ok: true });
@@ -842,13 +908,22 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			var openUntil = Math.min(deadline, Date.now() + 2600);
 			var lastOpen = 0;
 			while (!menu && Date.now() < openUntil) {
-				ctrl = findControl() || ctrl;
+				liveCtrl = findControl();
+				if (liveCtrl) ctrl = liveCtrl;
+				else if (!ctrl || !ctrl.isConnected) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
+				}
 				if (ctrl && ratioOf(ctrl) === want) {
 					await closeMenu(ctrl);
 					return JSON.stringify({ ok: true });
 				}
 				if (lastOpen === 0 || Date.now() - lastOpen >= 1200) {
 					if (!await press(ctrl)) {
+						if (!findControl()) {
+							await closeMenu(null);
+							return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
+						}
 						lastError = '无法点击千问国际比例入口';
 						break;
 					}
@@ -858,12 +933,28 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				menu = findMenu();
 			}
 			if (!menu) {
+				if (!findControl()) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
+				}
 				lastError = '千问国际比例菜单未出现';
 				continue;
 			}
 			await new Promise(function (r) { setTimeout(r, 30); });
+			if (!findControl()) {
+				await closeMenu(null);
+				return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
+			}
+			if (!visible(menu)) {
+				lastError = '千问国际比例菜单已关闭';
+				continue;
+			}
 			var item = findOption(menu);
 			if (!item) {
+				if (!findControl()) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
+				}
 				await closeMenu(ctrl);
 				return JSON.stringify({ ok: false, error: '千问国际比例菜单没有 ' + want });
 			}
@@ -879,24 +970,33 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 					await closeMenu(again);
 					return JSON.stringify({ ok: true });
 				}
+				if (!again && (!ctrl || !ctrl.isConnected)) {
+					await closeMenu(null);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到千问国际比例入口' });
+				}
 				await new Promise(function (r) { setTimeout(r, 40); });
 			}
-			await closeMenu(findControl() || ctrl);
+			await closeMenu(findControl());
 		}
-		await closeMenu(findControl() || ctrl);
+		await closeMenu(findControl());
 		return JSON.stringify({ ok: false, error: lastError });
 	})()`)
-	if err != nil {
-		return false, err.Error()
+		if err != nil {
+			return false, err.Error()
+		}
+		var res struct {
+			OK       bool   `json:"ok"`
+			Error    string `json:"error"`
+			LostMode bool   `json:"lostMode"`
+		}
+		if err := cdp.ParseJSValue(out, &res); err != nil {
+			return false, err.Error()
+		}
+		if res.OK || !res.LostMode {
+			return res.OK, res.Error
+		}
 	}
-	var res struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := cdp.ParseJSValue(out, &res); err != nil {
-		return false, err.Error()
-	}
-	return res.OK, res.Error
+	return false, "未找到千问国际比例入口"
 }
 
 // SendPrompt 发送前确认千问国际仍处于「Create Image / 生成图像」模式。

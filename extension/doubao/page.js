@@ -608,7 +608,7 @@ globalThis.TULAIPage = (function () {
   }
 
   async function pressMenuControl(el) {
-    if (!el) return false
+    if (!el || el.isConnected === false) return false
     if (typeof window !== 'undefined' && typeof window.tulaiClick === 'function') {
       try {
         if (await window.tulaiClick(el)) return true
@@ -632,12 +632,17 @@ globalThis.TULAIPage = (function () {
       if (control) break
       await new Promise(function (resolve) { setTimeout(resolve, 40) })
     }
-    if (!control) return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS' }
+    if (!control) return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
     if (ratioMatches(control, want)) return { ok: true, already: true }
     let lastError = '比例 ' + want + ' 未生效'
     for (let round = 0; round < 3 && Date.now() < deadline; round++) {
       if (cancelled && cancelled()) { closeRatioMenu(doc, control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
-      control = ratioControl(doc) || control
+      const liveRound = ratioControl(doc)
+      if (liveRound) control = liveRound
+      else if (!control || control.isConnected === false) {
+        closeRatioMenu(doc, null)
+        return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
+      }
       if (control && ratioMatches(control, want)) {
         if (ratioMenu(doc)) closeRatioMenu(doc, control)
         return { ok: true }
@@ -647,7 +652,12 @@ globalThis.TULAIPage = (function () {
       const openUntil = Math.min(deadline, Date.now() + 2600)
       while (!menu && Date.now() < openUntil) {
         if (cancelled && cancelled()) { closeRatioMenu(doc, control); return { error: '设置比例已取消', code: 'E_CANCELLED' } }
-        control = ratioControl(doc) || control
+        const liveOpen = ratioControl(doc)
+        if (liveOpen) control = liveOpen
+        else if (!control || control.isConnected === false) {
+          closeRatioMenu(doc, null)
+          return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
+        }
         if (control && ratioMatches(control, want)) {
           if (ratioMenu(doc)) closeRatioMenu(doc, control)
           return { ok: true }
@@ -669,11 +679,25 @@ globalThis.TULAIPage = (function () {
         if (isNaN(op) || op > 0.5) break
         await new Promise(function (resolve) { setTimeout(resolve, 20) })
       }
+      const liveAfterReady = ratioControl(doc)
+      if (liveAfterReady) control = liveAfterReady
+      else if (!control || control.isConnected === false) {
+        closeRatioMenu(doc, null)
+        return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
+      }
+      if (!isRatioMenuContainer(menu)) {
+        lastError = '「比例」菜单已关闭'
+        continue
+      }
       const item = ratioMenuItems(menu).find(function (el) {
         const text = normalize(el.innerText)
         return want === '自动' ? (text === '自动' || text === '自动比例') : text === want
       })
       if (!item) {
+        if (!ratioControl(doc) && (!control || control.isConnected === false)) {
+          closeRatioMenu(doc, null)
+          return { error: '未找到「比例」入口', code: 'E_SELECTOR_MISS', lostMode: true }
+        }
         closeRatioMenu(doc, control)
         return { error: '「比例」菜单没有 ' + want, code: 'E_SELECTOR_MISS' }
       }
@@ -1462,7 +1486,7 @@ globalThis.TULAIPage = (function () {
   }
 
   function activate(el) {
-    if (!el) return false
+    if (!el || el.isConnected === false) return false
     poke(el)
     try { el.click() } catch (e) { return false }
     return true

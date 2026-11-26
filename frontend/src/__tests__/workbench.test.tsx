@@ -136,14 +136,11 @@ function makeWorkbench(overrides: Partial<WorkbenchStateDTO> = {}): WorkbenchSta
     useSuffix: false,
     washStyle: "纯白电商底",
     washStyleOptions: ["纯白电商底", "透明提取"],
-    outputPreset: "1024×1024",
-    outputPresets: ["1024×1024", "2048×2048"],
-    outputMode: "preset",
-    outputRatio: "1:1",
-    outputRatios: ["自动", "1:1", "3:4"],
-    outputWidth: "",
-    outputHeight: "",
-    outputCrop: false,
+    outputPreset: "原比例",
+    outputPresets: ["原比例", "1:1（正方形）", "4:3（标准横）", "3:4（标准竖）", "16:9（宽屏）", "9:16（竖屏）", "3:2（相机横）", "2:3（海报竖）"],
+    outputMode: "原比例",
+    outputRatio: "",
+    outputRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"],
     sources: [],
     sourcesTotal: 0,
     washedCount: 0,
@@ -479,6 +476,7 @@ describe("WorkbenchPage modes, contracts & CJK IME", () => {
     ).toBeTruthy();
     expect(screen.getByTestId("wb-stop-btn")).toBeInTheDocument();
     expect(screen.queryByTestId("wb-start-btn")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wb-output-preset-select")).toBeDisabled();
 
     // Switching batch mode to 图生图 sends "1"
     fireEvent.click(within(screen.getByTestId("wb-batch-mode-tabs")).getByRole("tab", { name: /图生图/ }));
@@ -487,7 +485,7 @@ describe("WorkbenchPage modes, contracts & CJK IME", () => {
     fireEvent.click(screen.getByTestId("wb-stop-btn"));
     expect(Workbench.stopTasks).toHaveBeenCalledTimes(1);
 
-    // Enable suffix & custom output size reveal inline controls progressively above the prompt editor;
+    // Enable suffix reveals inline input above the prompt editor; no custom output size inputs exist;
     // switching to 图生图 (batchMode=1) reveals the reference images card
     act(() => {
       useAppStore.setState({
@@ -495,11 +493,11 @@ describe("WorkbenchPage modes, contracts & CJK IME", () => {
           mode: "free",
           batchMode: 1,
           useSuffix: true,
-          outputPreset: "自定义尺寸",
-          outputPresets: ["原比例", "自定义尺寸"],
-          outputMode: "固定尺寸",
-          outputWidth: "1200",
-          outputHeight: "900",
+          running: false,
+          outputPreset: "16:9（宽屏）",
+          outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）"],
+          outputMode: "宽高比",
+          outputRatio: "16:9",
         }),
       });
     });
@@ -510,16 +508,10 @@ describe("WorkbenchPage modes, contracts & CJK IME", () => {
     );
     expect(screen.getByTestId("wb-sources-card")).toHaveClass("h-[212px]", "shrink-0");
     expect(screen.getByTestId("wb-suffix-input")).toBeInTheDocument();
-    expect(screen.getByTestId("wb-output-custom-row")).toBeInTheDocument();
-    expect(screen.getByTestId("wb-output-width")).toHaveValue("1200");
-    expect(screen.getByTestId("wb-output-height")).toHaveValue("900");
+    expect(screen.queryByTestId("wb-output-custom-row")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wb-output-preset-select")).not.toBeDisabled();
     expect(
       screen.getByTestId("wb-suffix-input").compareDocumentPosition(
-        screen.getByTestId("wb-prompt-editor"),
-      ) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      screen.getByTestId("wb-output-custom-row").compareDocumentPosition(
         screen.getByTestId("wb-prompt-editor"),
       ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
@@ -560,7 +552,7 @@ describe("WorkbenchPage modes, contracts & CJK IME", () => {
 
   it("renders prompt template dropdown in wash, free, and fission modes (including skipImages) and applies built-in or user templates", async () => {
     const washTemplates = [
-      { id: "doubao_wash", label: "豆包洗图", kindLbl: "洗图", builtin: true, matched: true },
+      { id: "doubao_wash", label: "洗图", kindLbl: "洗图", builtin: true, matched: true },
       { id: "u1", label: "电商纯白洗图", kindLbl: "洗图", builtin: false, matched: true },
       { id: "u2", label: "赛博生图词", kindLbl: "生图", builtin: false, matched: false },
     ];
@@ -568,7 +560,7 @@ describe("WorkbenchPage modes, contracts & CJK IME", () => {
       makeWorkbench({
         mode: "wash",
         promptChoice: "选择提示词",
-        promptOptions: ["选择提示词", "豆包洗图", "电商纯白洗图"],
+        promptOptions: ["选择提示词", "洗图", "电商纯白洗图"],
         promptTemplates: washTemplates,
       }),
     );
@@ -578,12 +570,12 @@ describe("WorkbenchPage modes, contracts & CJK IME", () => {
     fireEvent.keyDown(washTplBtn, { key: "Enter" });
     expect(await screen.findByText("恢复默认洗图词")).toBeInTheDocument();
     expect(screen.getByText("默认词")).toBeInTheDocument();
-    expect(screen.getByText("豆包洗图")).toBeInTheDocument();
+    expect(screen.getByText("洗图")).toBeInTheDocument();
     expect(screen.getByText("内置")).toBeInTheDocument();
     expect(screen.getByText("其他分类")).toBeInTheDocument();
     expect(screen.getByText("赛博生图词")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("豆包洗图"));
-    expect(Workbench.applyWorkbenchPrompt).toHaveBeenCalledWith("豆包洗图");
+    fireEvent.click(screen.getByText("洗图"));
+    expect(Workbench.applyWorkbenchPrompt).toHaveBeenCalledWith("洗图");
 
     fireEvent.keyDown(washTplBtn, { key: "Enter" });
     fireEvent.click(await screen.findByText("恢复默认洗图词"));
@@ -1793,7 +1785,7 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
           doubao: false,
           qianwen: true,
           outputPreset: "原比例",
-          outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）", "自定义尺寸"],
+          outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）"],
         }),
       });
     });
@@ -1815,7 +1807,7 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     expect(screen.getByTestId("wb-prompt-meta-bar")).toHaveTextContent("3 条提示词");
     expect(screen.getAllByTestId("wb-prompt-line-num").map((el) => el.textContent).join("")).toBe("123");
 
-    // Switch to 图生图 on Qianwen: shows 参考图 card, unified 原比例 label, custom size inputs, and 统一描述/逐行配对 toggle
+    // Switch to 图生图 on Qianwen: shows 参考图 card, unified 原比例 label, and 统一描述/逐行配对 toggle
     act(() => {
       useAppStore.setState({
         workbench: makeWorkbench({
@@ -1829,7 +1821,7 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
           sources: [makeSource({ index: 0, name: "参考图1.png" })],
           sourcesTotal: 1,
           outputPreset: "原比例",
-          outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）", "自定义尺寸"],
+          outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）"],
           repeatCount: 2,
           plannedTasks: 2,
           startLabel: "开始图生图 (2)",
@@ -1849,19 +1841,19 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     fireEvent.click(screen.getByTestId("wb-img-prompt-mode-btn"));
     expect(Workbench.setWorkbenchField).toHaveBeenCalledWith("imagePromptMode", "per_line");
 
-    // Custom dimensions & crop inputs are available on Qianwen identically to Doubao
+    // Running wash mode locks the output size selector and never renders custom dimension inputs
     act(() => {
       useAppStore.setState({
         workbench: makeWorkbench({
           mode: "wash",
           page: TAB_WASH,
+          running: true,
           doubao: false,
           qianwen: true,
-          outputPreset: "自定义尺寸",
-          outputPresets: ["原比例", "自定义尺寸"],
-          outputWidth: "1200",
-          outputHeight: "900",
-          outputCrop: true,
+          outputPreset: "16:9（宽屏）",
+          outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）"],
+          outputMode: "宽高比",
+          outputRatio: "16:9",
         }),
       });
     });
@@ -1870,10 +1862,8 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
         <WorkbenchPage />
       </TooltipProvider>,
     );
-    expect(screen.getByTestId("wb-output-custom-row")).toBeInTheDocument();
-    expect(screen.getByTestId("wb-output-width")).toHaveValue("1200");
-    expect(screen.getByTestId("wb-output-height")).toHaveValue("900");
-    expect(screen.getByTestId("wb-output-crop")).toBeChecked();
+    expect(screen.getByTestId("wb-output-preset-select")).toBeDisabled();
+    expect(screen.queryByTestId("wb-output-custom-row")).not.toBeInTheDocument();
   });
 
   it("provides copy, put-back-to-source, send-to-edit, and remove actions in result tile right-click menu", async () => {

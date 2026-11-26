@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -36,7 +35,6 @@ const (
 const (
 	outputOriginal = "原比例"
 	outputRatio    = "宽高比"
-	outputPixels   = "固定尺寸"
 )
 
 const washStyleOriginal = "保持原风格"
@@ -48,7 +46,7 @@ type washStylePreset struct {
 
 var washStyles = []washStylePreset{
 	{washStyleOriginal, ""},
-	{"像素风格", "把选中的整幅图重新画成低分辨率的二维游戏像素画：以约 48×60 的逻辑像素组织主体和背景，再用最近邻方式放大到目标尺寸。画面各处都要有清楚可见的方形色块，主体轮廓、曲线和镶嵌线都呈粗方块阶梯，不能保留平滑矢量曲线。色块紧密无缝、内部纯色，不能给每个像素画边框、留缝或加圆点高光。去除原图的细格线、填色数字、印刷网点、珠粒与纸面纹理；不要在高清原图上叠加网格，也不要做成拼豆或钻石画。保留主体主要形状和颜色，图案内部必要的深色轮廓可以由方块组成。"},
+	{"像素风格", "把选中的整幅图重新画成低分辨率的二维游戏像素画：以粗粒度逻辑像素块组织主体和背景，保持锐利清晰的像素边缘。画面各处都要有清楚可见的方形色块，主体轮廓、曲线和镶嵌线都呈粗方块阶梯，不能保留平滑矢量曲线。色块紧密无缝、内部纯色，不能给每个像素画边框、留缝或加圆点高光。去除原图的细格线、填色数字、印刷网点、珠粒与纸面纹理；不要在高清原图上叠加网格，也不要做成拼豆或钻石画。保留主体主要形状和颜色，图案内部必要的深色轮廓可以由方块组成。"},
 	{"水彩插画", "使用透明水彩叠色、柔和晕染和轻微纸面肌理，呈现二维水彩插画。"},
 	{"油画风格", "使用可见的油画笔触、丰富的色彩层次和适度画布肌理，呈现二维油画。"},
 	{"动漫插画", "使用清晰线条、概括的色块和柔和赛璐璐光影，呈现二维动漫插画。"},
@@ -61,10 +59,8 @@ var washStyles = []washStylePreset{
 var outputRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
 
 type outputPresetSpec struct {
-	label  string
-	ratio  string
-	width  int
-	height int
+	label string
+	ratio string
 }
 
 var outputPresets = []outputPresetSpec{
@@ -76,18 +72,12 @@ var outputPresets = []outputPresetSpec{
 	{label: "9:16（竖屏）", ratio: "9:16"},
 	{label: "3:2（相机横）", ratio: "3:2"},
 	{label: "2:3（海报竖）", ratio: "2:3"},
-	{label: "1024×1024", width: 1024, height: 1024},
-	{label: "2048×2048", width: 2048, height: 2048},
-	{label: "自定义尺寸"},
 }
 
 type outputSizePrefs struct {
 	mode   string
 	preset string
 	ratio  string
-	width  string
-	height string
-	crop   bool
 }
 
 func outputPresetLabels() []string {
@@ -169,31 +159,28 @@ func (p *outputSizePrefs) ensureInit() {
 	}
 }
 
+func normalizeOutputRatio(raw string) string {
+	norm := strings.TrimSpace(strings.ReplaceAll(raw, "：", ":"))
+	return pickStr(norm, "", outputRatios)
+}
+
 func loadPlatformOutputPrefs(s *store.Store, platform string) outputSizePrefs {
 	if s == nil {
 		return outputSizePrefs{mode: outputOriginal, preset: outputOriginal}
 	}
 	prefix := outputStorePrefix(platform)
-	rawMode := s.Get(prefix + "size_mode")
-	ratio := s.Get(prefix + "ratio")
+	rawMode := strings.TrimSpace(s.Get(prefix + "size_mode"))
+	ratio := normalizeOutputRatio(s.Get(prefix + "ratio"))
 	// Migrate legacy qianwen_output_ratio when qianwen_output_size_mode has not been stored yet.
 	if platform == "千问" && rawMode == "" && ratio != "" {
-		if picked := pickStr(ratio, "", outputRatios); picked != "" {
-			rawMode = outputRatio
-			ratio = picked
-		} else {
-			ratio = ""
-		}
+		rawMode = outputRatio
 	}
-	p := outputSizePrefs{
-		mode:   pickStr(rawMode, outputOriginal, []string{outputOriginal, outputRatio, outputPixels}),
-		ratio:  ratio,
-		width:  s.Get(prefix + "width"),
-		height: s.Get(prefix + "height"),
-		crop:   s.GetBool(prefix + "crop"),
+	if rawMode == outputRatio && ratio != "" {
+		p := outputSizePrefs{mode: outputRatio, ratio: ratio}
+		p.syncPreset()
+		return p
 	}
-	p.syncPreset()
-	return p
+	return outputSizePrefs{mode: outputOriginal, preset: outputOriginal}
 }
 
 func savePlatformOutputPrefs(s *store.Store, platform string, p outputSizePrefs) {
@@ -202,11 +189,12 @@ func savePlatformOutputPrefs(s *store.Store, platform string, p outputSizePrefs)
 	}
 	prefix := outputStorePrefix(platform)
 	p.ensureInit()
+	p.syncPreset()
 	s.Set(prefix+"size_mode", p.mode)
 	s.Set(prefix+"ratio", p.ratio)
-	s.Set(prefix+"width", p.width)
-	s.Set(prefix+"height", p.height)
-	s.SetInt(prefix+"crop", boolInt(p.crop))
+	s.Set(prefix+"width", "")
+	s.Set(prefix+"height", "")
+	s.SetInt(prefix+"crop", 0)
 }
 
 func (a *App) loadOutputSize() {
@@ -222,89 +210,89 @@ func (a *App) saveOutputSize() {
 }
 
 func (p *outputSizePrefs) syncPreset() {
-	switch p.mode {
-	case outputRatio:
-		for _, spec := range outputPresets {
-			if spec.ratio != "" && spec.ratio == p.ratio {
-				p.preset = spec.label
-				return
+	if p.mode == outputRatio {
+		if picked := normalizeOutputRatio(p.ratio); picked != "" {
+			p.ratio = picked
+			for _, spec := range outputPresets {
+				if spec.ratio == picked {
+					p.preset = spec.label
+					return
+				}
 			}
 		}
-		p.preset = "自定义尺寸"
-	case outputPixels:
-		w, _ := strconv.Atoi(strings.TrimSpace(p.width))
-		h, _ := strconv.Atoi(strings.TrimSpace(p.height))
-		for _, spec := range outputPresets {
-			if spec.width > 0 && spec.width == w && spec.height == h {
-				p.preset = spec.label
-				return
-			}
-		}
-		p.preset = "自定义尺寸"
-	default:
-		p.mode = outputOriginal
-		p.preset = outputOriginal
 	}
+	p.mode = outputOriginal
+	p.ratio = ""
+	p.preset = outputOriginal
 }
 
-func (p *outputSizePrefs) applyPreset(label string) {
-	p.preset = label
+func (p *outputSizePrefs) applyPreset(label string) bool {
 	for _, spec := range outputPresets {
 		if spec.label != label {
 			continue
 		}
-		switch {
-		case spec.ratio != "":
+		if spec.ratio != "" {
 			p.mode = outputRatio
 			p.ratio = spec.ratio
-		case spec.width > 0 && spec.height > 0:
-			p.mode = outputPixels
-			p.width = strconv.Itoa(spec.width)
-			p.height = strconv.Itoa(spec.height)
-		case label == "自定义尺寸":
-			p.mode = outputPixels
-		default:
+			p.preset = spec.label
+		} else {
 			p.mode = outputOriginal
+			p.ratio = ""
+			p.preset = outputOriginal
 		}
-		return
+		return true
 	}
+	return false
 }
 
-func (p *outputSizePrefs) update(preset, mode, ratio, width, height string, crop bool) {
+func (p *outputSizePrefs) update(preset, mode, ratio string) {
 	p.ensureInit()
-	if preset != "" && preset != p.preset {
-		p.applyPreset(preset)
+	preset = strings.TrimSpace(preset)
+	if preset != "" {
+		if p.applyPreset(preset) {
+			return
+		}
+		if picked := normalizeOutputRatio(preset); picked != "" {
+			p.mode = outputRatio
+			p.ratio = picked
+			p.syncPreset()
+			return
+		}
+		// Reject unsupported or custom preset labels; keep existing valid selection.
+		p.syncPreset()
 		return
 	}
-	switch mode {
-	case "ratio":
-		mode = outputRatio
-	case "pixels":
-		mode = outputPixels
-	case "original":
-		mode = outputOriginal
+	switch strings.TrimSpace(mode) {
+	case "original", outputOriginal:
+		p.mode = outputOriginal
+		p.ratio = ""
+		p.preset = outputOriginal
+		return
+	case "ratio", outputRatio, "":
+		trimmed := strings.TrimSpace(ratio)
+		if trimmed == "" {
+			p.mode = outputOriginal
+			p.ratio = ""
+			p.preset = outputOriginal
+			return
+		}
+		if picked := normalizeOutputRatio(trimmed); picked != "" {
+			p.mode = outputRatio
+			p.ratio = picked
+			p.syncPreset()
+			return
+		}
 	}
-	if mode != "" {
-		p.mode = mode
-	}
-	p.ratio = ratio
-	p.width = width
-	p.height = height
-	p.crop = crop
 	p.syncPreset()
 }
 
 func (p outputSizePrefs) taskOutputSize() tasks.OutputSize {
-	w, _ := strconv.Atoi(strings.TrimSpace(p.width))
-	h, _ := strconv.Atoi(strings.TrimSpace(p.height))
-	switch p.mode {
-	case outputRatio:
-		return tasks.OutputSize{Ratio: strings.TrimSpace(p.ratio), Crop: p.crop}
-	case outputPixels:
-		return tasks.OutputSize{Width: w, Height: h, Crop: p.crop}
-	default:
-		return tasks.OutputSize{}
+	if p.mode == outputRatio {
+		if picked := normalizeOutputRatio(p.ratio); picked != "" {
+			return tasks.OutputSize{Ratio: picked}
+		}
 	}
+	return tasks.OutputSize{}
 }
 
 func (a *App) outputSizeFor(platform string) tasks.OutputSize {

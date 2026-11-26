@@ -675,6 +675,177 @@ document.getElementById('more-real').addEventListener('click', () => {
 	})
 }
 
+func TestQwenIntlSetOutputRatioFixture(t *testing.T) {
+	client := newFixtureClient(t)
+	html := `<!doctype html><html><head><meta charset="utf-8"><style>
+.bar { position: relative; display: flex; gap: 12px; padding: 40px; }
+.mode-select-open, .mode-select-current-mode, .qwen-chat-v2-dropdown-menu-select {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 68px; height: 32px; padding: 0 10px; border: 1px solid #ddd; cursor: pointer;
+}
+.chat-prompt-recommend-detail-container {
+  position: fixed; left: 0; top: 52px; width: 420px; height: 24px; z-index: 1000;
+  background: rgba(255,255,255,0.6);
+}
+.qwen-chat-v2-dropdown-menu-popup {
+  position: fixed; left: 160px; top: 96px; width: 120px; background: #fff; border: 1px solid #ccc; z-index: 1200;
+}
+.qwen-chat-v2-dropdown-menu-item { height: 28px; display: flex; align-items: center; padding: 0 8px; cursor: pointer; }
+</style></head><body>
+<div class="bar" id="bar">
+  <div class="mode-select-open" role="button" aria-label="选择模式">选择模式</div>
+  <div class="message-input-subconfig-visible-item" id="subconfig"></div>
+</div>
+<div class="chat-prompt-recommend-detail-container" id="recommend-overlay">推荐浮层</div>
+<script>
+const ratios = ['3:4', '9:16', '2:3', '1:1', '3:2', '4:3', '16:9'];
+const bar = document.getElementById('bar');
+const sub = document.getElementById('subconfig');
+const modeTrigger = bar.querySelector('.mode-select-open');
+let currentRatio = '16:9';
+let modeMenu = null;
+let ratioMenu = null;
+let dropNextOpen = false;
+let dropAfterMenuOpen = false;
+window.__modeEnters = 0;
+
+function closeAllMenus() {
+  if (modeMenu) { modeMenu.remove(); modeMenu = null; }
+  if (ratioMenu) { ratioMenu.remove(); ratioMenu = null; }
+}
+
+function exitImageMode() {
+  closeAllMenus();
+  const badge = bar.querySelector('.mode-select-current-mode');
+  if (badge) badge.remove();
+  sub.innerHTML = '';
+}
+
+function enterImageMode() {
+  closeAllMenus();
+  exitImageMode();
+  window.__modeEnters++;
+  const badge = document.createElement('div');
+  badge.className = 'mode-select-current-mode';
+  badge.textContent = '生成图像';
+  bar.insertBefore(badge, sub);
+
+  const sel = document.createElement('div');
+  sel.id = 'qwen-ratio-select';
+  sel.className = 'qwen-chat-v2-dropdown-menu-select';
+  sel.textContent = currentRatio;
+  sel.addEventListener('click', () => {
+    if (dropNextOpen) {
+      dropNextOpen = false;
+      exitImageMode();
+      return;
+    }
+    if (ratioMenu) { ratioMenu.remove(); ratioMenu = null; return; }
+    ratioMenu = document.createElement('div');
+    ratioMenu.setAttribute('role', 'menu');
+    ratioMenu.className = 'qwen-chat-v2-dropdown-menu-popup';
+    ratios.forEach(r => {
+      const item = document.createElement('div');
+      item.setAttribute('role', 'menuitem');
+      item.className = 'qwen-chat-v2-dropdown-menu-item';
+      item.textContent = r;
+      item.addEventListener('click', () => {
+        currentRatio = r;
+        sel.textContent = r;
+        closeAllMenus();
+      });
+      ratioMenu.appendChild(item);
+    });
+    document.body.appendChild(ratioMenu);
+    if (dropAfterMenuOpen) {
+      dropAfterMenuOpen = false;
+      setTimeout(exitImageMode, 10);
+    }
+  });
+  sub.appendChild(sel);
+}
+
+modeTrigger.addEventListener('click', () => {
+  if (modeMenu) { modeMenu.remove(); modeMenu = null; return; }
+  modeMenu = document.createElement('div');
+  modeMenu.setAttribute('role', 'menu');
+  modeMenu.className = 'qwen-chat-v2-dropdown-menu-popup';
+  const item = document.createElement('div');
+  item.setAttribute('role', 'menuitem');
+  item.className = 'qwen-chat-v2-dropdown-menu-item';
+  item.textContent = '生成图像';
+  item.addEventListener('click', enterImageMode);
+  modeMenu.appendChild(item);
+  document.body.appendChild(modeMenu);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeAllMenus();
+});
+
+window.__armModeDrop = () => { dropNextOpen = true; };
+window.__armMenuOpenModeDrop = () => { dropAfterMenuOpen = true; };
+</script></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
+	}))
+	defer srv.Close()
+
+	sess := openFixture(t, client, srv.URL+"/", "", "")
+	defer sess.Close()
+	qi := QwenIntl{}
+
+	// 1. Entering image mode + switching even when recommend overlay covers ratio trigger center
+	for _, want := range []string{"16:9", "1:1", "3:4", "4:3", "9:16", "3:2", "2:3"} {
+		if ok, why := qi.SetOutputRatio(sess, want); !ok {
+			t.Fatalf("SetOutputRatio(%q) failed: %q", want, why)
+		}
+		got, _ := sess.Evaluate(`document.getElementById('qwen-ratio-select')?.textContent`)
+		if strings.Trim(got, `"`) != want {
+			t.Fatalf("after SetOutputRatio(%q), select=%s", want, got)
+		}
+	}
+
+	// 2. Simulate cold-hydration reset detaching image mode on ratio click; SetOutputRatio must recover automatically.
+	if _, err := sess.Evaluate(`window.__armModeDrop()`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, why := qi.SetOutputRatio(sess, "4:3"); !ok {
+		t.Fatalf("SetOutputRatio after mid-click mode drop failed: %q", why)
+	}
+	if got, _ := sess.Evaluate(`document.getElementById('qwen-ratio-select')?.textContent`); strings.Trim(got, `"`) != "4:3" {
+		t.Fatalf("after recovery select=%s want 4:3", got)
+	}
+	if !sess.EvaluateBool(`window.__modeEnters === 2`) {
+		out, _ := sess.Evaluate(`window.__modeEnters`)
+		t.Fatalf("expected exactly 2 mode enters (initial + 1 recovery), got %s", out)
+	}
+
+	// 2b. Simulate cold-hydration reset detaching image mode 10ms AFTER ratio menu opens (during the 30ms settle).
+	if _, err := sess.Evaluate(`window.__armMenuOpenModeDrop()`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, why := qi.SetOutputRatio(sess, "1:1"); !ok {
+		t.Fatalf("SetOutputRatio after post-menu-open mode drop failed: %q", why)
+	}
+	if got, _ := sess.Evaluate(`document.getElementById('qwen-ratio-select')?.textContent`); strings.Trim(got, `"`) != "1:1" {
+		t.Fatalf("after post-menu-open recovery select=%s want 1:1", got)
+	}
+	if !sess.EvaluateBool(`window.__modeEnters === 3`) {
+		out, _ := sess.Evaluate(`window.__modeEnters`)
+		t.Fatalf("expected 3 mode enters after post-menu-open recovery, got %s", out)
+	}
+
+	// 3. Missing option closes menu cleanly and returns explicit error.
+	if ok, why := qi.SetOutputRatio(sess, "5:4"); ok || !strings.Contains(why, "5:4") {
+		t.Fatalf("missing ratio 5:4: ok=%v why=%q", ok, why)
+	}
+	if sess.EvaluateBool(`!!document.querySelector('[role="menu"]')`) {
+		t.Fatal("menu remained open after missing ratio error")
+	}
+}
+
 func staticFixtureKeepJSON(html string) string {
 	html = scriptTag.ReplaceAllStringFunc(html, func(tag string) string {
 		head := tag

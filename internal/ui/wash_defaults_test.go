@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 )
 
 func TestDoubaoWashDefaultFromDraftToTask(t *testing.T) {
-	for _, draft := range []string{"", DefaultWashPrompt, prompts.WindowReviewDoubaoWashPrompt, prompts.FullBleedDoubaoWashPrompt, "只把背景换成蓝色"} {
+	for _, draft := range []string{"", DefaultWashPrompt, prompts.WindowReviewDoubaoWashPrompt, prompts.FullBleedDoubaoWashPrompt, prompts.RatioDoubaoWashPrompt, "只把背景换成蓝色"} {
 		t.Run(draft, func(t *testing.T) {
 			st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
 			if err != nil {
@@ -423,17 +424,17 @@ func TestPromptTemplatesInjectAndIsolateAcrossAllThreeWorkbenchModes(t *testing.
 	psvc.CreateNewPrompt(ctx, "多角度主图", "裂变", "保留包装瓶型，多角度重绘")
 	psvc.CreateNewPrompt(ctx, "通用极简", "通用", "极简杂志质感")
 
-	// 1) Wash mode (on 千问): exposes built-in 豆包洗图 + 洗图/通用 first, plus other user templates; injects cleanly
+	// 1) Wash mode (on 千问): exposes built-in 洗图 + 洗图/通用 first, plus other user templates; injects cleanly
 	wbWash := svc.GetWorkbenchState(ctx)
 	if wbWash.Mode != "wash" || len(wbWash.PromptTemplates) != 5 {
 		t.Fatalf("unexpected wash prompt templates: mode=%s len=%d items=%+v", wbWash.Mode, len(wbWash.PromptTemplates), wbWash.PromptTemplates)
 	}
-	if wbWash.PromptTemplates[0].Label != "豆包洗图" || !wbWash.PromptTemplates[0].Builtin || !wbWash.PromptTemplates[0].Matched {
-		t.Fatalf("expected built-in 豆包洗图 matched first in wash mode: %+v", wbWash.PromptTemplates[0])
+	if wbWash.PromptTemplates[0].Label != "洗图" || !wbWash.PromptTemplates[0].Builtin || !wbWash.PromptTemplates[0].Matched {
+		t.Fatalf("expected built-in 洗图 matched first in wash mode: %+v", wbWash.PromptTemplates[0])
 	}
-	svc.ApplyWorkbenchPrompt(ctx, "豆包洗图")
-	if got := svc.GetWorkbenchState(ctx); got.Prompts != prompts.DoubaoWashPrompt || got.PromptChoice != "豆包洗图" {
-		t.Fatalf("failed to inject built-in 豆包洗图 in wash mode: choice=%q", got.PromptChoice)
+	svc.ApplyWorkbenchPrompt(ctx, "洗图")
+	if got := svc.GetWorkbenchState(ctx); got.Prompts != prompts.DoubaoWashPrompt || got.PromptChoice != "洗图" {
+		t.Fatalf("failed to inject built-in 洗图 in wash mode: choice=%q", got.PromptChoice)
 	}
 	// Editing text clears wash template choice badge, and resetWashPrompt restores Qianwen default
 	svc.SetWorkbenchField(ctx, "prompts", "自定义改写洗图词")
@@ -511,5 +512,18 @@ func TestPromptTemplatesInjectAndIsolateAcrossAllThreeWorkbenchModes(t *testing.
 	psvc2.DeleteUserPrompt(ctx)
 	if got := rsvc.GetWorkbenchState(ctx); got.PromptChoice != choosePromptLabel {
 		t.Fatalf("deleting active prompt should reset PromptChoice, got %q", got.PromptChoice)
+	}
+}
+
+func TestWashStylesAndHumanReasonHaveNoSizeConflicts(t *testing.T) {
+	for _, style := range washStyles {
+		for _, bad := range []string{"尺寸", "比例", "48×60", "1024", "2048"} {
+			if strings.Contains(style.instruction, bad) {
+				t.Errorf("wash style %q must not contain %q", style.label, bad)
+			}
+		}
+	}
+	if got := HumanReason("设置豆包输出比例 16:9 失败: 未找到「比例」入口"); got != "网页端输出比例设置失败，请重试" {
+		t.Fatalf("HumanReason misclassified ratio click error: %q", got)
 	}
 }

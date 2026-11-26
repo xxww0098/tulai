@@ -781,9 +781,6 @@ export interface WorkbenchStateDTO {
   outputMode: string;
   outputRatio: string;
   outputRatios: string[];
-  outputWidth: string;
-  outputHeight: string;
-  outputCrop: boolean;
   sources: SourceItemDTO[];
   sourcesTotal: number;
   washedCount: number;
@@ -938,8 +935,11 @@ export const Workbench = {
   setAllGallerySelect: bind<[boolean], void>("Workbench.SetAllGallerySelect", (on: boolean) => [on]),
   /** SetGalleryOpen opens or closes the source gallery modal. */
   setGalleryOpen: bind<[boolean], void>("Workbench.SetGalleryOpen", (open: boolean) => [open]),
-  /** SetOutputSize updates the output image size preset, ratio, dimensions, and crop behavior. */
-  setOutputSize: bind<[string, string, string, string, string, boolean], void>("Workbench.SetOutputSize", (preset: string, mode: string, ratio: string, width: string, height: string, crop: boolean) => [preset, mode, ratio, width, height, crop]),
+  /**
+   * SetOutputSize updates the web-native output aspect ratio preset.
+   * Changes are ignored while tasks are running.
+   */
+  setOutputSize: bind<[string, string, string], void>("Workbench.SetOutputSize", (preset: string, mode: string, ratio: string) => [preset, mode, ratio]),
   /** SetPlatformSelected switches the active single-selected provider platform (豆包 / 千问). */
   setPlatformSelected: bind<[string, boolean], void>("Workbench.SetPlatformSelected", (platform: string, on: boolean) => [platform, on]),
   /** SetPreviewPath opens the full-size lightbox preview for path, or closes it when empty. */

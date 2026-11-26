@@ -1004,7 +1004,7 @@ func TestQwenIntlSettingsAndWorkspaceStayIsolatedFromDomesticQianwen(t *testing.
 	wbSvc := &WorkbenchService{app: a}
 	setPlatformSelectedBridge("千问", true)
 	setWorkbenchFieldBridge("prompts", "国内千问提示词")
-	wbSvc.SetOutputSize(context.Background(), "", "ratio", "3:4", "", "", false)
+	wbSvc.SetOutputSize(context.Background(), "", "ratio", "3:4")
 	wbDomestic := getWorkbenchStateBridge()
 	if wbDomestic.Platform != "千问" || wbDomestic.ConcurrencyAuto || wbDomestic.ConcurrencyMax != 2 {
 		t.Fatalf("unexpected domestic qianwen workbench: %+v", wbDomestic)
@@ -1022,7 +1022,7 @@ func TestQwenIntlSettingsAndWorkspaceStayIsolatedFromDomesticQianwen(t *testing.
 		t.Fatalf("qwen intl concurrency = (auto=%v, max=%d), want (true, 6)", wbIntl.ConcurrencyAuto, wbIntl.ConcurrencyMax)
 	}
 	setWorkbenchFieldBridge("prompts", "国际站专属提示词")
-	wbSvc.SetOutputSize(context.Background(), "", "ratio", "16:9", "", "", false)
+	wbSvc.SetOutputSize(context.Background(), "", "ratio", "16:9")
 
 	// Switching back to domestic 千问 must retain its own workspace & output ratio.
 	setPlatformSelectedBridge("千问", true)

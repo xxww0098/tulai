@@ -608,7 +608,7 @@ export function PromptsPage() {
               data-testid="prompts-suffix-input"
               size="small"
               value={suffixDraft.value}
-              placeholder="如：4K 超清摄影质感，无水印"
+              placeholder="如：超清摄影质感，光影自然，无水印"
               aria-label="全局提示词后缀"
               onChange={(e) => suffixDraft.onChange(e.target.value)}
               onCompositionStart={suffixDraft.onCompositionStart}
