@@ -362,6 +362,8 @@ func loginSite(host string) string {
 		return "qwen_intl"
 	case host == "gemini.google.com" || strings.HasSuffix(host, ".gemini.google.com"):
 		return "gemini"
+	case host == "jimeng.jianying.com" || strings.HasSuffix(host, ".jimeng.jianying.com"):
+		return "jimeng"
 	default:
 		return ""
 	}

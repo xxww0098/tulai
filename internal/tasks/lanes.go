@@ -473,7 +473,7 @@ func filterLaneRows(all []store.Browser) []store.Browser {
 	}
 	out := make([]store.Browser, 0, len(all))
 	for _, b := range all {
-		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" && b.Platform != "Gemini" {
+		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" && b.Platform != "Gemini" && b.Platform != "即梦" {
 			continue
 		}
 		out = append(out, b)

@@ -19,7 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	fpprocess "github.com/xxww0098/realbrowser/fingerprintkernel/process"
+	fpprofile "github.com/xxww0098/realbrowser/fingerprintkernel/profile"
 )
 
 var ansiEscapeRe = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
@@ -28,20 +29,23 @@ func stripANSI(s string) string {
 	return ansiEscapeRe.ReplaceAllString(s, "")
 }
 
+const legacyIdentityFile = ".tulai-fingerprint.json"
+
 type Options struct {
-	Profile           string                        `json:"profile"`
-	Proxy             string                        `json:"proxy,omitempty"`
-	DirectNetwork     bool                          `json:"directNetwork,omitempty"`
-	Headless          bool                          `json:"headless"`
-	Executable        string                        `json:"executable,omitempty"`
-	Addons            []string                      `json:"addons,omitempty"`
-	CollisionRoots    []string                      `json:"collisionRoots,omitempty"`
-	IgnoreHTTPSErrors bool                          `json:"ignoreHTTPSErrors,omitempty"`
-	Timezone          string                        `json:"timezone,omitempty"`
-	Lang              string                        `json:"lang,omitempty"`
-	WindowWidth       int                           `json:"windowWidth,omitempty"`
-	WindowHeight      int                           `json:"windowHeight,omitempty"`
-	ColorScheme       browserkernel.ColorSchemeMode `json:"colorScheme,omitempty"`
+	Profile           string                     `json:"profile"`
+	Proxy             string                     `json:"proxy,omitempty"`
+	DirectNetwork     bool                       `json:"directNetwork,omitempty"`
+	Headless          bool                       `json:"headless"`
+	Executable        string                     `json:"executable,omitempty"`
+	Addons            []string                   `json:"addons,omitempty"`
+	CollisionRoots    []string                   `json:"collisionRoots,omitempty"`
+	IgnoreHTTPSErrors bool                       `json:"ignoreHTTPSErrors,omitempty"`
+	Timezone          string                     `json:"timezone,omitempty"`
+	Lang              string                     `json:"lang,omitempty"`
+	WindowWidth       int                        `json:"windowWidth,omitempty"`
+	WindowHeight      int                        `json:"windowHeight,omitempty"`
+	ColorScheme       fpprofile.ColorSchemeMode  `json:"colorScheme,omitempty"`
+	Identity          *fpprofile.FingerprintSpec `json:"identity,omitempty"`
 }
 
 type Event struct {
@@ -58,7 +62,7 @@ type reply struct {
 }
 
 type Process struct {
-	child     *browserkernel.Process
+	child     *fpprocess.Process
 	in        io.WriteCloser
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -70,6 +74,25 @@ type Process struct {
 	next      atomic.Int64
 	closeOnce sync.Once
 	Page      string
+}
+
+func applyProfileIdentity(ctx context.Context, profile string, roots []string, options *Options) error {
+	prefs, err := fpprofile.EnsureProfile(ctx, profile, fpprofile.EnsureOptions{
+		CollisionRoots:     roots,
+		LegacyIdentityFile: legacyIdentityFile,
+	})
+	if err != nil {
+		return fmt.Errorf("读取指纹配置: %w", err)
+	}
+	if options.Timezone == "" {
+		options.Timezone = prefs.Timezone
+	}
+	if options.Lang == "" {
+		options.Lang = prefs.Lang
+	}
+	options.WindowWidth, options.WindowHeight, options.ColorScheme = prefs.WindowWidth, prefs.WindowHeight, prefs.ColorScheme
+	options.Identity = &prefs
+	return nil
 }
 
 // Start opens the active managed Fingerprint runtime for this profile.
@@ -98,22 +121,14 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 	if err != nil {
 		return nil, err
 	}
-	prefs, err := browserkernel.ReadProfile(profile)
-	if err != nil {
-		return nil, fmt.Errorf("读取指纹配置: %w", err)
-	}
-	if options.Timezone == "" {
-		options.Timezone = prefs.Timezone
-	}
-	if options.Lang == "" {
-		options.Lang = prefs.Lang
-	}
-	options.WindowWidth, options.WindowHeight, options.ColorScheme = prefs.WindowWidth, prefs.WindowHeight, prefs.ColorScheme
-	options.Profile = profile
 	roots, err := absUniquePaths(options.CollisionRoots)
 	if err != nil {
 		return nil, err
 	}
+	if err := applyProfileIdentity(ctx, profile, roots, &options); err != nil {
+		return nil, err
+	}
+	options.Profile = profile
 	options.CollisionRoots = roots
 	options.Executable = runtime.Executable
 	args := []string{filepath.Join(runtime.Dir, "bridge.mjs")}
@@ -131,7 +146,7 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 		return nil, err
 	}
 	cmd.Stdout = writer
-	child, err := browserkernel.StartProcess(cmd, browserkernel.PrivateDriver)
+	child, err := fpprocess.StartProcess(cmd, fpprocess.PrivateDriver)
 	_ = writer.Close()
 	if err != nil {
 		in.Close()

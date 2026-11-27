@@ -21,8 +21,8 @@ func TestUpdateBrowserQuotaPersistenceAndRecovery(t *testing.T) {
 		t.Fatalf("new browser should start unsynced with remain=-1, got synced=%v remain=%d", b.QuotaSynced(), b.CreditsRemain)
 	}
 
-	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.Local)
-	resetAt := time.Date(2026, 11, 27, 23, 59, 59, 0, time.Local).Unix()
+	now := time.Now().Truncate(time.Second)
+	resetAt := now.Add(12 * time.Hour).Unix()
 
 	// 模拟因积分不足进入 exhausted 状态
 	st.UpdateBrowserHealth(b.ID, HealthExhausted, resetAt, "积分不足，请购买积分或开通创作会员")
@@ -166,6 +166,25 @@ func TestDoubaoQuotaPersistenceLimitedAndAutoRecovery(t *testing.T) {
 	if got.Health != HealthReady || got.CoolUntil != 0 || got.LastError != "" {
 		t.Fatalf("expected limited doubao account to auto-recover when healthy, got health=%q cool=%d err=%q", got.Health, got.CoolUntil, got.LastError)
 	}
+
+	// 账号被标记为服务端生图能力降级后，豆包公开额度接口仍返回 0% / 未限额，绝不能被健康额度同步误清空。
+	degradedUntil := now.Add(6 * time.Hour).Unix()
+	const degradedMsg = "账号生图能力受限（已降级纯文本）（flow.agent.shell）"
+	st.UpdateBrowserHealth(b.ID, HealthExhausted, degradedUntil, degradedMsg)
+	if err := st.UpdateBrowserQuota(b.ID, AccountQuota{
+		CreditsRemain:   -1,
+		MemberTier:      "free",
+		MemberName:      "免费体验",
+		UsagePercent:    0,
+		PlatformLimited: false,
+		SyncedAt:        now.Add(5 * time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("UpdateBrowserQuota on degraded doubao: %v", err)
+	}
+	got = st.Browsers()[0]
+	if got.Health != HealthExhausted || got.CoolUntil != degradedUntil || got.LastError != degradedMsg {
+		t.Fatalf("healthy quota sync must not clear degraded health: got health=%q cool=%d err=%q", got.Health, got.CoolUntil, got.LastError)
+	}
 }
 
 func TestSyncedZeroCreditsMarksAccountUnusableAndExhausted(t *testing.T) {
@@ -179,7 +198,7 @@ func TestSyncedZeroCreditsMarksAccountUnusableAndExhausted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 11, 27, 13, 20, 0, 0, time.Local)
+	now := time.Now().Truncate(time.Second)
 	resetAt := now.Add(5 * 24 * time.Hour).Unix()
 
 	if err := st.UpdateBrowserQuota(b.ID, AccountQuota{
@@ -209,5 +228,55 @@ func TestSyncedZeroCreditsMarksAccountUnusableAndExhausted(t *testing.T) {
 	afterReset := time.Unix(resetAt, 0)
 	if got.QuotaExhausted(afterReset) || !got.Usable(afterReset) {
 		t.Fatalf("expected quota to recover after resetAt %v", afterReset)
+	}
+}
+
+func TestSyncedCreditsBelowSingleImageCostMarksExhausted(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	b, err := st.AddBrowser("即梦", "即梦不足1张", filepath.Join(t.TempDir(), "jm_low"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Second)
+	resetAt := now.Add(10 * time.Hour).Unix()
+
+	if err := st.UpdateBrowserQuota(b.ID, AccountQuota{
+		CreditsRemain:  1,
+		CreditsTotal:   60,
+		CreditCost:     2,
+		CreditsResetAt: resetAt,
+		CreditsCycle:   "daily",
+		MemberTier:     "free",
+		MemberName:     "免费版",
+		SyncedAt:       now.Unix(),
+	}); err != nil {
+		t.Fatalf("UpdateBrowserQuota: %v", err)
+	}
+	got := st.Browsers()[0]
+	if got.Health != HealthExhausted || !got.QuotaExhausted(now) || got.Usable(now) {
+		t.Fatalf("expected remain=1 with cost=2 to be exhausted/unusable, got %+v", got)
+	}
+
+	// 积分恢复到 >= cost（如 5 分，2 分/张）后自动恢复可用。
+	if err := st.UpdateBrowserQuota(b.ID, AccountQuota{
+		CreditsRemain:  5,
+		CreditsTotal:   60,
+		CreditCost:     2,
+		CreditsResetAt: resetAt,
+		CreditsCycle:   "daily",
+		MemberTier:     "free",
+		MemberName:     "免费版",
+		SyncedAt:       now.Add(time.Minute).Unix(),
+	}); err != nil {
+		t.Fatalf("UpdateBrowserQuota recover: %v", err)
+	}
+	recovered := st.Browsers()[0]
+	if recovered.Health != HealthReady || recovered.QuotaExhausted(now) || !recovered.Usable(now) {
+		t.Fatalf("expected remain=5 with cost=2 to recover ready/usable, got %+v", recovered)
 	}
 }

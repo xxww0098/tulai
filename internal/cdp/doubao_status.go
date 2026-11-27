@@ -46,14 +46,14 @@ const doubaoStatusProbeJS = `(async () => {
 		return { ok: false };
 	}
 	const q = 'version_code=20800&language=zh&device_platform=web&doubao_device_platform=web&aid=497858&region=CN&sys_region=CN&samantha_web=1&web_platform=browser&use-olympus-account=1';
-	const postJSON = async (url, payload) => {
+	const postJSON = async (url, payload, contentType) => {
 		const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
 		const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 2500) : null;
 		try {
 			const res = await fetch(url, {
 				method: 'POST',
 				credentials: 'include',
-				headers: { 'content-type': 'application/json' },
+				headers: { 'content-type': contentType || 'application/json' },
 				body: JSON.stringify(payload || {}),
 				signal: ctrl ? ctrl.signal : undefined,
 			});
@@ -75,7 +75,7 @@ const doubaoStatusProbeJS = `(async () => {
 			uplink_body: { check_message_send_rate_limit_uplink_body: {} },
 			channel: 2,
 			version: '1',
-		}),
+		}, 'application/json; encoding=utf-8'),
 	]);
 
 	const out = {
@@ -158,7 +158,8 @@ const doubaoStatusProbeJS = `(async () => {
 		out.resetCardCount = Math.max(0, Math.round(Number(balData.available_count || 0)));
 	}
 
-	const rlBody = rateRes && rateRes.downlink_body && rateRes.downlink_body.check_message_send_rate_limit_downlink_body;
+	const rateOK = rateRes && (rateRes.status_code === undefined || rateRes.status_code === 0);
+	const rlBody = rateOK && rateRes.downlink_body && rateRes.downlink_body.check_message_send_rate_limit_downlink_body;
 	if (rlBody && typeof rlBody === 'object') {
 		out.rateLimited = Boolean(rlBody.is_limit);
 		out.rateLimitTime = Number(rlBody.limit_time || 0);

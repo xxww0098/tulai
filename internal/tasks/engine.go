@@ -82,6 +82,8 @@ type Engine struct {
 	gap            func(time.Duration) time.Duration // 测试把发送间隔钉死。空则 base±随机
 	deleteConvFn   func(context.Context, string, *cdp.Session, string) error
 	convIDFn       func(*cdp.Session) string
+	jimengLiveCost map[string]int // 本轮运行在即梦网页实测到的各分辨率单张积分消耗（key 为小写分辨率如 "2k"/"4k"）
+	jimengProbeFn  func(int64, *cdp.Session) (cdp.JimengStatus, error)
 	noAccountNoted bool
 
 	liveMu      sync.Mutex
@@ -272,6 +274,7 @@ func (e *Engine) driveLocked(ctx context.Context, opts Options, queue []Task, on
 	e.srcHashes = nil
 	e.srcHashCache.Clear()
 	e.liveConcurrency = nil
+	e.jimengLiveCost = nil
 	e.clearAccountMeta()
 	ctx, cancel := context.WithCancel(ctx)
 	nudge := make(chan struct{}, 1)
@@ -604,6 +607,25 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			}
 			return t
 		}
+		if errors.Is(err, errJimengBatchShrink) {
+			if t.Attempts > 0 {
+				t.Attempts--
+			}
+			t.noUse = true
+			t.rotated = true
+			t.Status = StatusPending
+			t.Error = ""
+			t.pauseNote = "shrink"
+			if t.jimengShrinkCap <= 0 {
+				if row, ok := e.browserByID(t.BrowserID); ok {
+					if maxN := e.jimengBatchMaxFor(row, true, time.Now()); maxN > 0 {
+						logging.Log.Info("#%d 即梦「%s」剩余积分仅够生成 %d 张，本批由 %d 张缩减重派",
+							t.Index, e.accountName(t.BrowserID), maxN, max(len(t.batch), len(t.Images)))
+					}
+				}
+			}
+			return t
+		}
 		if errors.Is(err, errHumanGaveUp) {
 			if e.maybeRotate(&t, err, time.Now()) {
 				return t
@@ -623,21 +645,22 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			return t
 		}
 		if len(t.batch) > 1 && t.submitted {
-			if kind := classifyFault(err); kind == faultQuota || kind == faultRate {
+			if kind := classifyFault(err); kind == faultQuota || kind == faultRate || kind == faultDegraded || kind == faultReply {
 				id := t.ranOnOr(t.BrowserID)
 				e.noteFault(id, kind, err, time.Now())
 				e.announceAccount(id, kind)
 			}
 			t.Status = StatusFailed
+			plat := washPlatformLabel(t.Platform)
 			if t.washWaitTimedOut {
-				t.Error = "豆包已确认接收本批，等待生成结果超时，请在原对话核对结果后再重试"
+				t.Error = fmt.Sprintf("%s已确认接收本批，等待生成结果超时，请在原对话核对结果后再重试", plat)
 				return t
 			}
 			msg := err.Error()
 			if strings.Contains(msg, "未按源图保存") || strings.Contains(msg, "已按源图关联保存") || strings.Contains(msg, "未匹配结果保存在 ") || isModeration(err) || classifyFault(err) != faultNone || errors.Is(err, strategy.ErrSubmissionUncertain) || errors.Is(err, strategy.ErrPlatformReply) {
 				t.Error = msg
 			} else {
-				t.Error = "本批已发送或发送状态未确认，请检查豆包结果后再重试：" + msg
+				t.Error = fmt.Sprintf("本批已发送或发送状态未确认，请检查%s结果后再重试：%s", plat, msg)
 			}
 			return t
 		}
@@ -692,7 +715,7 @@ func (e *Engine) execute(ctx context.Context, t Task, attempt func(context.Conte
 			t.Status = StatusNeedsUser
 			return t
 		}
-		if kind == faultQuota || kind == faultRate || kind == faultAuth {
+		if kind == faultQuota || kind == faultRate || kind == faultAuth || kind == faultDegraded {
 			t.Status = StatusFailed
 			return t
 		}
@@ -789,6 +812,27 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 		}
 		defer cleanup()
 	}
+	if jimeng, ok := strat.(*strategy.Jimeng); ok {
+		if res := e.opts.OutputSize.NativeResolution("即梦"); res != "" {
+			jimeng.SetOutputResolution(res)
+		}
+		switch {
+		case t.submitted && t.jimengCount > 0:
+			jimeng.SetImageCount(t.jimengCount)
+		case e.opts.Wash:
+			jimeng.SetImageCount(min(max(len(t.Images), 1), strategy.JimengMaxUploadImages))
+		case e.opts.Fission:
+			jimeng.SetImageCount(1)
+		default:
+			count := strategy.JimengDefaultCount
+			if row, found := e.browserByID(t.BrowserID); found {
+				if maxByCredits := e.jimengBatchMaxFor(row, true, time.Now()); maxByCredits > 0 {
+					count = min(count, maxByCredits)
+				}
+			}
+			jimeng.SetImageCount(count)
+		}
+	}
 	if t.ranOn <= 0 {
 		t.ranOn = t.BrowserID
 	}
@@ -878,6 +922,9 @@ func (e *Engine) attempt(ctx context.Context, t *Task) (attemptErr error) {
 	}
 	e.tracePhase(t, "submit", "上传并发送", time.Since(submitAt), len(t.Images), nil)
 	if !e.opts.WaitResult {
+		if t.Platform == "即梦" && sess != nil {
+			e.syncJimengQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
+		}
 		return nil
 	}
 	return e.waitAndSave(work, t, strat, sess)
@@ -949,13 +996,20 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	if err := strat.CleanComposer(sess); err != nil {
 		return fmt.Errorf("清理输入区: %w", err)
 	}
-	targetRatio, explicitRatio, err := e.applyOutputRatio(t, strat, sess)
+	targetRatio, targetRes, explicitRatio, err := e.applyOutputRatio(t, strat, sess)
 	if err != nil {
 		return err
 	}
+	// 每次调用即梦（洗图、自由生图、裂变）上传参考图与发送提示词之前，实时分析当前账号剩余积分
+	// 与当前模型/分辨率单张消耗：够 6 张按 6 张发，不够则按余额可生张数发，不足 1 张直接换号/停跑。
+	if !t.submitted && t.Platform == "即梦" && (sess != nil || e.jimengProbeFn != nil) {
+		if _, err := e.analyzeJimengCreditsBeforeSend(t, strat, sess); err != nil {
+			return err
+		}
+	}
 	// 上传源图
 	if len(t.Images) > 0 {
-		if targetRatio == "" {
+		if targetRatio == "" && targetRes == "" {
 			if ensurer, ok := strat.(interface{ EnsureImageMode(*cdp.Session) error }); ok {
 				if err := ensurer.EnsureImageMode(sess); err != nil {
 					return fmt.Errorf("确认图像模式: %w", err)
@@ -967,26 +1021,38 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 			return fmt.Errorf("上传: %w", err)
 		}
 		e.traceTask(t, "upload", fmt.Sprintf("#%d 已上传 %d 张源图", t.Index, len(t.Images)), len(t.Images), 0, nil)
-		// 上传参考图后页面可能重绘输入区工具栏（豆包/千问/千问国际），无论是否指定比例都必须确认仍在图像模式；已一致时零点击秒过。
+		// 上传参考图后页面可能重绘输入区工具栏（豆包/千问/千问国际/即梦），无论是否指定比例都必须确认仍在图像模式；已一致时零点击秒过。
 		if ensurer, ok := strat.(interface{ EnsureImageMode(*cdp.Session) error }); ok {
 			if err := ensurer.EnsureImageMode(sess); err != nil {
 				return fmt.Errorf("确认图像模式: %w", err)
 			}
 		}
-		if targetRatio != "" {
-			if setter, ok := strat.(interface {
-				SetOutputRatio(*cdp.Session, string) (bool, string)
+		if targetRatio != "" || targetRes != "" {
+			var applied bool
+			var why string
+			var hasSetter bool
+			if sizeSetter, ok := strat.(interface {
+				SetOutputSize(*cdp.Session, string, string) (bool, string)
 			}); ok {
-				if applied, why := setter.SetOutputRatio(sess, targetRatio); !applied {
-					if explicitRatio {
-						if why == "" {
-							why = "未生效"
-						}
-						return fmt.Errorf("上传源图后设置%s输出比例 %s 失败: %s", t.Platform, targetRatio, why)
+				hasSetter = true
+				applied, why = sizeSetter.SetOutputSize(sess, targetRatio, targetRes)
+			} else if targetRatio != "" {
+				if setter, ok := strat.(interface {
+					SetOutputRatio(*cdp.Session, string) (bool, string)
+				}); ok {
+					hasSetter = true
+					applied, why = setter.SetOutputRatio(sess, targetRatio)
+				}
+			}
+			if hasSetter && !applied {
+				if explicitRatio {
+					if why == "" {
+						why = "未生效"
 					}
-					if why != "" {
-						logging.Log.Debugf("#%d 上传源图后%s原生比例未恢复 %s（%s）", t.Index, t.Platform, targetRatio, why)
-					}
+					return fmt.Errorf("上传源图后设置%s输出比例 %s 失败: %s", t.Platform, formatOutputTarget(targetRatio, targetRes), why)
+				}
+				if why != "" {
+					logging.Log.Debugf("#%d 上传源图后%s原生比例未恢复 %s（%s）", t.Index, t.Platform, formatOutputTarget(targetRatio, targetRes), why)
 				}
 			}
 		}
@@ -1029,59 +1095,126 @@ func (e *Engine) submitOnce(t *Task, strat strategy.Strategy, sess *cdp.Session)
 	return nil
 }
 
-// applyOutputRatio 在网页端通过点击切换平台原生「比例」控件，绝不向提示词写入尺寸或比例说明。
-// 返回目标原生比例（供上传源图后复核）、是否为用户显式指定的比例，以及显式设置失败时的错误。
-func (e *Engine) applyOutputRatio(t *Task, strat strategy.Strategy, sess *cdp.Session) (string, bool, error) {
-	setter, ok := strat.(interface {
+func formatOutputTarget(ratio, res string) string {
+	switch {
+	case ratio != "" && res != "":
+		return ratio + " · " + res
+	case ratio != "":
+		return ratio
+	case res != "":
+		return res
+	default:
+		return "默认"
+	}
+}
+
+// applyOutputRatio 在网页端通过点击切换平台原生「比例」与分辨率控件，绝不向提示词写入尺寸或比例说明。
+// 返回目标原生比例、目标分辨率（供上传源图后复核）、是否为用户显式指定的规格，以及显式设置失败时的错误。
+func (e *Engine) applyOutputRatio(t *Task, strat strategy.Strategy, sess *cdp.Session) (string, string, bool, error) {
+	sizeSetter, hasSizeSetter := strat.(interface {
+		SetOutputSize(*cdp.Session, string, string) (bool, string)
+	})
+	ratioSetter, hasRatioSetter := strat.(interface {
 		SetOutputRatio(*cdp.Session, string) (bool, string)
 	})
-	if !ok {
-		return "", false, nil
+	if !hasSizeSetter && !hasRatioSetter {
+		return "", "", false, nil
 	}
+	applyTarget := func(ratio, res string) (bool, string) {
+		if hasSizeSetter {
+			return sizeSetter.SetOutputSize(sess, ratio, res)
+		}
+		if ratio == "" {
+			return true, ""
+		}
+		return ratioSetter.SetOutputRatio(sess, ratio)
+	}
+
+	targetRes := e.opts.OutputSize.NativeResolution(t.Platform)
 	if ratio := e.opts.OutputSize.NativeRatio(t.Platform); ratio != "" {
-		if applied, why := setter.SetOutputRatio(sess, ratio); applied {
-			logging.Log.Info("#%d 已设置%s原生比例 %s", t.Index, t.Platform, ratio)
-			return ratio, true, nil
+		if applied, why := applyTarget(ratio, targetRes); applied {
+			logging.Log.Info("#%d 已设置%s原生输出规格 %s", t.Index, t.Platform, formatOutputTarget(ratio, targetRes))
+			return ratio, targetRes, true, nil
 		} else {
 			if why == "" {
 				why = "未生效"
 			}
-			return "", true, fmt.Errorf("设置%s输出比例 %s 失败: %s", t.Platform, ratio, why)
+			return "", "", true, fmt.Errorf("设置%s输出比例 %s 失败: %s", t.Platform, formatOutputTarget(ratio, targetRes), why)
 		}
 	}
+
+	autoVal := strings.TrimSpace(e.opts.OutputSize.AutoValue)
 	if t.Platform == "豆包" {
-		if applied, why := setter.SetOutputRatio(sess, "自动"); applied {
-			logging.Log.Debugf("#%d 豆包原生比例已确认自动", t.Index)
-		} else if why != "" {
-			logging.Log.Debugf("#%d 豆包原生比例重置自动未生效（%s）", t.Index, why)
+		if autoVal == "" {
+			autoVal = "自动"
 		}
-		return "自动", false, nil
+		if applied, why := applyTarget(autoVal, targetRes); applied {
+			logging.Log.Debugf("#%d 豆包原生比例已确认 %s", t.Index, autoVal)
+		} else if why != "" {
+			logging.Log.Debugf("#%d 豆包原生比例重置 %s 未生效（%s）", t.Index, autoVal, why)
+		}
+		return autoVal, targetRes, false, nil
+	}
+	if t.Platform == "即梦" {
+		if autoVal == "" {
+			autoVal = strategy.JimengAutoRatio
+		}
+		if applied, why := applyTarget(autoVal, targetRes); applied {
+			logging.Log.Debugf("#%d 即梦原生输出规格已确认 %s", t.Index, formatOutputTarget(autoVal, targetRes))
+		} else if targetRes != "" {
+			if why == "" {
+				why = "未生效"
+			}
+			return "", "", true, fmt.Errorf("设置即梦输出比例 %s 失败: %s", formatOutputTarget(autoVal, targetRes), why)
+		} else if why != "" {
+			logging.Log.Debugf("#%d 即梦原生比例未生效（%s）", t.Index, why)
+		}
+		return autoVal, targetRes, targetRes != "", nil
+	}
+	if t.Platform == "Gemini" {
+		if autoVal != "" {
+			if applied, why := applyTarget(autoVal, targetRes); applied {
+				logging.Log.Debugf("#%d Gemini 原生比例已确认 %s", t.Index, autoVal)
+			} else if why != "" {
+				logging.Log.Debugf("#%d Gemini 原生比例重置 %s 未生效（%s）", t.Index, autoVal, why)
+			}
+			return autoVal, targetRes, false, nil
+		}
+		return "", targetRes, false, nil
 	}
 	if t.Platform != "千问" && t.Platform != "千问国际" {
-		return "", false, nil
+		return "", targetRes, false, nil
+	}
+	if autoVal != "" {
+		if applied, why := applyTarget(autoVal, targetRes); applied {
+			logging.Log.Debugf("#%d %s原生比例已确认 %s", t.Index, t.Platform, autoVal)
+		} else if why != "" {
+			logging.Log.Debugf("#%d %s原生比例重置 %s 未生效（%s）", t.Index, t.Platform, autoVal, why)
+		}
+		return autoVal, targetRes, false, nil
 	}
 	if len(t.Images) > 0 {
-		if ratio := closestImageNativeRatio(t.Images[0]); ratio != "" {
-			if applied, why := setter.SetOutputRatio(sess, ratio); applied {
+		if ratio := closestImageNativeRatioFor(t.Platform, t.Images[0], e.opts.OutputSize.AllowedRatios); ratio != "" {
+			if applied, why := applyTarget(ratio, targetRes); applied {
 				logging.Log.Info("#%d 已按源图画幅设置%s原生比例 %s", t.Index, t.Platform, ratio)
 			} else if why != "" {
 				logging.Log.Debugf("#%d %s原生比例未设置（%s）", t.Index, t.Platform, why)
 			}
-			return ratio, false, nil
+			return ratio, targetRes, false, nil
 		}
-		return "", false, nil
+		return "", targetRes, false, nil
 	}
 	// 纯文生图避免继承上一单发送前失败遗留在空白页的横屏/方图比例，回正至默认比例（千问 3:4，千问国际 16:9）。
 	defaultRatio := "3:4"
 	if t.Platform == "千问国际" {
 		defaultRatio = "16:9"
 	}
-	if applied, why := setter.SetOutputRatio(sess, defaultRatio); applied {
+	if applied, why := applyTarget(defaultRatio, targetRes); applied {
 		logging.Log.Debugf("#%d %s文生图原生比例已确认 %s", t.Index, t.Platform, defaultRatio)
 	} else if why != "" {
 		logging.Log.Debugf("#%d %s文生图原生比例重置未生效（%s）", t.Index, t.Platform, why)
 	}
-	return defaultRatio, false, nil
+	return defaultRatio, targetRes, false, nil
 }
 
 func adoptSentChat(t *Task, sess *cdp.Session) bool {
@@ -1118,7 +1251,7 @@ func (e *Engine) resultWait() time.Duration {
 
 func (e *Engine) resultWaitFor(t *Task) time.Duration {
 	d := e.resultWait()
-	if t != nil && (t.Platform == "千问" || t.Platform == "千问国际" || t.Platform == "Gemini") && t.Attempts > 1 && d < qianwenRetryWait {
+	if t != nil && (t.Platform == "千问" || t.Platform == "千问国际" || t.Platform == "Gemini" || t.Platform == "即梦") && t.Attempts > 1 && d < qianwenRetryWait {
 		return qianwenRetryWait
 	}
 	return d
@@ -1131,7 +1264,7 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 	var waitErrSeen, saveErrSeen error
 	lastProgress := time.Now()
 	defer func() {
-		if t != nil && sess != nil && ctx.Err() == nil && (savedN > 0 || errors.Is(waitErrSeen, strategy.ErrAccountQuota) || errors.Is(waitErrSeen, strategy.ErrAccountRate)) {
+		if t != nil && sess != nil && ctx.Err() == nil && (savedN > 0 || (t.Platform == "即梦" && t.submitted) || errors.Is(waitErrSeen, strategy.ErrAccountQuota) || errors.Is(waitErrSeen, strategy.ErrAccountRate)) {
 			switch t.Platform {
 			case "千问":
 				e.syncQwenQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
@@ -1139,7 +1272,10 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 				e.syncDoubaoQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
 			case "Gemini":
 				e.syncGeminiQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
+			case "即梦":
+				e.syncJimengQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
 			}
+			e.maybeSyncOutputCapsFromSession(t.Platform, sess)
 		}
 		if waited > 0 || waitErrSeen != nil {
 			e.tracePhase(t, "generate", "等待生成", waited, waitedN, waitErrSeen)
@@ -1210,6 +1346,21 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 			indices := make([]int, len(results))
 			for i, result := range results {
 				indices[i] = result.SourceIndex
+			}
+			// 即梦批量洗图按上传参考图顺序一对一返回结果，张数完全匹配时按顺序落盘；数量不符时进入待核对避免误配。
+			if t.Platform == "即梦" && len(results) == len(t.batch) {
+				allZero := true
+				for _, idx := range indices {
+					if idx != 0 {
+						allZero = false
+						break
+					}
+				}
+				if allZero {
+					for i := range indices {
+						indices[i] = i + 1
+					}
+				}
 			}
 			saveErrSeen = e.saveWashResults(ctx, sess, t, results, indices, waitErr)
 			savedFor += time.Since(saveAt)
@@ -1303,6 +1454,39 @@ func (e *Engine) syncGeminiQuotaFromSession(id int64, sess *cdp.Session) {
 	}
 	if err := e.store.UpdateBrowserQuota(id, quota); err != nil {
 		logging.Log.Debugf("保存 Gemini 账号 %d 状态失败: %v", id, err)
+		return
+	}
+	e.notify()
+}
+
+func (e *Engine) syncJimengQuotaFromSession(id int64, sess *cdp.Session) {
+	if e == nil || e.store == nil || sess == nil || id <= 0 {
+		return
+	}
+	raw, err := sess.ProbeJimengStatus()
+	if err != nil {
+		return
+	}
+	e.persistJimengStatus(id, raw, time.Now())
+}
+
+const outputCapsAutoRefreshTTL = 30 * time.Minute
+
+func (e *Engine) maybeSyncOutputCapsFromSession(platform string, sess *cdp.Session) {
+	if e == nil || e.store == nil || sess == nil || !store.OutputCapsSupportedPlatform(platform) {
+		return
+	}
+	if cached, ok := e.store.GetOutputCaps(platform); ok && cached.SyncedAt > 0 {
+		if time.Since(time.Unix(cached.SyncedAt, 0)) < outputCapsAutoRefreshTTL {
+			return
+		}
+	}
+	caps, err := sess.ProbeOutputCaps(platform)
+	if err != nil {
+		return
+	}
+	if err := e.store.SaveOutputCaps(platform, caps); err != nil {
+		logging.Log.Debugf("保存%s网页输出规格缓存失败: %v", platform, err)
 		return
 	}
 	e.notify()
@@ -2147,15 +2331,20 @@ func (e *Engine) writePreparedResult(ctx context.Context, t *Task, cand *prepare
 	}
 	// 单次解码/单次编码管线：去水印与洗图转 PNG 在已解码像素上串行完成，保持网页原图尺寸不二次变更。
 	needsEncode := false
-	if t.Platform == "豆包" && !usingRaw && !r.WatermarkRemoved && watermarkStaticImage(data, format) {
+	if ((t.Platform == "豆包" && !usingRaw) || t.Platform == "即梦") && !r.WatermarkRemoved && watermarkStaticImage(data, format) {
 		repaired, changed, repairErr := images.RemoveWatermark(ctx, decoded, t.Platform)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", ctxErr
 		}
 		if repairErr == nil && changed {
 			decoded, format, needsEncode = repaired, "png", true
+			if t.Platform == "即梦" {
+				logging.Log.Info("#%d 图片 #%d 已去除即梦水印", t.Index, i+1)
+			}
 		} else if repairErr != nil {
 			logging.Log.Warning("#%d 图片 #%d 去水印失败，保留原图: %s", t.Index, i+1, repairErr)
+		} else if t.Platform == "即梦" {
+			logging.Log.Debugf("#%d 图片 #%d 未检测到即梦水印，保留原图", t.Index, i+1)
 		} else {
 			logging.Log.Warning("#%d 图片 #%d 未匹配到已支持的水印，保留原图", t.Index, i+1)
 		}

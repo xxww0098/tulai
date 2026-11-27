@@ -56,6 +56,7 @@ type WorkbenchInput struct {
 	WantQianwen  bool
 	WantQwenIntl bool
 	WantGemini   bool
+	WantJimeng   bool
 	OnlyPlatform string
 	Accounts     []AccountSnap
 	Now          time.Time
@@ -91,6 +92,8 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 			return in.WantQwenIntl
 		case "Gemini":
 			return in.WantGemini
+		case "即梦":
+			return in.WantJimeng
 		default:
 			return false
 		}
@@ -145,6 +148,9 @@ func platformsFromAccounts(accounts []AccountSnap, now time.Time, want func(stri
 	}
 	if has["Gemini"] {
 		out = append(out, "Gemini")
+	}
+	if has["即梦"] {
+		out = append(out, "即梦")
 	}
 	return out
 }

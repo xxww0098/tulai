@@ -131,7 +131,7 @@ func TestNextInstanceNameAndLoginAdvance(t *testing.T) {
 }
 
 func TestWizardPlatformChoices(t *testing.T) {
-	if !wizardValidPlatform("千问") || !wizardValidPlatform("千问国际") || !wizardValidPlatform("豆包") || !wizardValidPlatform("Gemini") || wizardValidPlatform("") || wizardValidPlatform("ChatGPT") || wizardValidPlatform("Antigravity") {
+	if !wizardValidPlatform("千问") || !wizardValidPlatform("千问国际") || !wizardValidPlatform("豆包") || !wizardValidPlatform("Gemini") || !wizardValidPlatform("即梦") || wizardValidPlatform("") || wizardValidPlatform("ChatGPT") || wizardValidPlatform("Antigravity") {
 		t.Fatal("valid platform names")
 	}
 	if got := nextInstanceName("千问国际", []string{"千问1", "豆包1"}); got != "千问国际1" {
@@ -145,6 +145,12 @@ func TestWizardPlatformChoices(t *testing.T) {
 	}
 	if got := nextInstanceName("Gemini", []string{"Gemini1", "千问1"}); got != "Gemini2" {
 		t.Fatalf("gemini second = %q", got)
+	}
+	if got := nextInstanceName("即梦", []string{"豆包1", "千问1"}); got != "即梦1" {
+		t.Fatalf("jimeng first = %q", got)
+	}
+	if got := nextInstanceName("即梦", []string{"即梦1", "千问1"}); got != "即梦2" {
+		t.Fatalf("jimeng second = %q", got)
 	}
 	if wizardDefaultChoice(nil) != "豆包" {
 		t.Fatal("new config starts on doubao")
@@ -160,6 +166,9 @@ func TestWizardPlatformChoices(t *testing.T) {
 	}
 	if wizardDefaultChoice([]string{"Gemini"}) != "Gemini" {
 		t.Fatal("saved gemini")
+	}
+	if wizardDefaultChoice([]string{"即梦"}) != "即梦" {
+		t.Fatal("saved jimeng")
 	}
 	if wizardDefaultChoice([]string{"未知", "ChatGPT"}) != "豆包" {
 		t.Fatal("unknown names fall back")

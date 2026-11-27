@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xxww0098/realbrowser/fingerprintkernel/profile"
 )
 
 func TestRuntimeEnvIsolatesFingerprintConfiguration(t *testing.T) {
@@ -116,5 +120,78 @@ func TestStripANSIErrorFormatting(t *testing.T) {
 	want := "BrowserContext.new_page: Target page, context or browser has been closed\n"
 	if got != want {
 		t.Fatalf("stripANSI=%q want %q", got, want)
+	}
+}
+
+func TestApplyProfileIdentityUsesFingerprintKernel(t *testing.T) {
+	root := t.TempDir()
+	profileA := filepath.Join(root, "account-a")
+	profileB := filepath.Join(root, "account-b")
+
+	// Pre-saved user preferences must survive random fingerprint generation.
+	if err := profile.WriteProfile(profileA, profile.FingerprintSpec{
+		Lang:         "zh-CN",
+		Timezone:     "Asia/Shanghai",
+		WindowWidth:  1200,
+		WindowHeight: 800,
+		ColorScheme:  profile.ColorSchemeDark,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	optsA := Options{Profile: profileA}
+	if err := applyProfileIdentity(t.Context(), profileA, []string{root}, &optsA); err != nil {
+		t.Fatal(err)
+	}
+	if optsA.Identity == nil || optsA.Identity.Seed == 0 || optsA.Identity.Brand != profile.BrandChrome {
+		t.Fatalf("missing generated identity: %+v", optsA.Identity)
+	}
+	if optsA.Lang != "zh-CN" || optsA.Timezone != "Asia/Shanghai" || optsA.WindowWidth != 1200 || optsA.WindowHeight != 800 || optsA.ColorScheme != profile.ColorSchemeDark {
+		t.Fatalf("saved preferences lost: %+v", optsA)
+	}
+	if _, err := os.Stat(filepath.Join(profileA, legacyIdentityFile)); !os.IsNotExist(err) {
+		t.Fatalf("expected no new legacy identity file, got stat err=%v", err)
+	}
+
+	// Second call on the same profile reuses the exact persisted seed from .browserkernel.json.
+	optsA2 := Options{Profile: profileA, Lang: "en-US"}
+	if err := applyProfileIdentity(t.Context(), profileA, []string{root}, &optsA2); err != nil {
+		t.Fatal(err)
+	}
+	if optsA2.Identity == nil || optsA2.Identity.Seed != optsA.Identity.Seed {
+		t.Fatalf("seed drifted across reload: %d -> %+v", optsA.Identity.Seed, optsA2.Identity)
+	}
+	if optsA2.Lang != "en-US" {
+		t.Fatalf("explicit option Lang overridden: %q", optsA2.Lang)
+	}
+
+	// Sibling profile avoids seed collisions through fingerprintkernel.
+	optsB := Options{Profile: profileB}
+	if err := applyProfileIdentity(t.Context(), profileB, []string{root}, &optsB); err != nil {
+		t.Fatal(err)
+	}
+	if optsB.Identity == nil || optsB.Identity.Seed == 0 || optsB.Identity.Seed == optsA.Identity.Seed {
+		t.Fatalf("sibling profile failed to get distinct seed: a=%+v b=%+v", optsA.Identity, optsB.Identity)
+	}
+
+	// Legacy .tulai-fingerprint.json migrates cleanly into .browserkernel.json.
+	legacyDir := filepath.Join(root, "legacy-account")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON := `{"version":1,"seed":200002,"platform":"macos","platformVersion":"15.3.1","brand":"Chrome","hardwareConcurrency":10,"screen":{"width":1512,"height":982,"availTop":37,"availBottom":70,"dpr":2,"windowWidth":1440,"windowHeight":860}}`
+	if err := os.WriteFile(filepath.Join(legacyDir, legacyIdentityFile), []byte(legacyJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	optsLegacy := Options{Profile: legacyDir}
+	if err := applyProfileIdentity(t.Context(), legacyDir, []string{root}, &optsLegacy); err != nil {
+		t.Fatal(err)
+	}
+	if optsLegacy.Identity == nil || optsLegacy.Identity.Seed != 200002 || optsLegacy.Identity.PlatformVersion != "15.3.1" {
+		t.Fatalf("legacy identity not migrated: %+v", optsLegacy.Identity)
+	}
+	persisted, err := profile.ReadProfile(legacyDir)
+	if err != nil || persisted.Seed != 200002 {
+		t.Fatalf("migrated identity not persisted in .browserkernel.json: %+v err=%v", persisted, err)
 	}
 }

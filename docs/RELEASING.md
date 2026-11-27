@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.42
+# 发布 tulai 0.1.43
 
-当前桌面端版本是 **0.1.42**，标签 **`v0.1.42`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+当前桌面端版本是 **0.1.43**，标签 **`v0.1.43`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+
+## 0.1.43
+
+新增 **即梦**（`jimeng.jianying.com`）服务商支持（独立工作区、`Seedream 4.7` 工具栏自动配置、最多 6 张批量洗图、实时积分同步与发图前余额精算、无水印原图解析及全画幅本地去水印）；新增多平台网页原生输出规格（比例与分辨率）动态探测、本地缓存与工作台一键刷新；新增豆包生图静默降级纯文本（`flow.agent.shell`）识别、「生图受限」自动换号停跑与「浏览器」页手动生图能力实测，并加固豆包限流与 Gemini 刷新时间解析；受管指纹浏览器核心迁移至直连 Go 模块 `realbrowser/fingerprintkernel`（`v0.0.1`），统一 `.browserkernel.json` 指纹持久化并改为内核更新预览确认制；全面加固 Windows / macOS / Linux 应用内自动更新、防竞态状态机与失败回滚。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.42
 
@@ -192,16 +196,14 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.42` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
-| Go 模块 | `v0.1.42` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
+| 桌面端 | `0.1.43` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.43` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
 
 ## 流水线
 
 `.github/workflows/ci.yml`：
 
-- 图来 CI 将 `tulai/` 和 `realbrowser/browserkernel/` 放在同一工作目录。内核单测在 RealBrowser 运行，图来验证项目集成和打包。CI 从 RealBrowser 取一次源码，所有构建任务共用这一份。
-- CI 默认读取图来 `go.mod` 声明的核心版本，在 RealBrowser 检出对应子模块标签（如 `browserkernel/v0.1.0`）。需要测试指定提交时，通过 `REALBROWSER_REF` 指定提交 SHA。依赖源默认是 `xxww0098/realbrowser`，也可以用 `REALBROWSER_REPOSITORY` 指定承载 Go 模块的仓库。私有源可通过 `REALBROWSER_READ_TOKEN` 提供只读权限。
-
+- 指纹核心模块 `github.com/xxww0098/realbrowser/fingerprintkernel` 通过标准 Go Modules（`go.mod` / `go.sum`）与 `actions/setup-go` 直接拉取和缓存，不再单独检出 `realbrowser` 仓库、使用 `go work` 或配置额外令牌/变量；升级指纹核心版本时在本地运行 `go get github.com/xxww0098/realbrowser/fingerprintkernel` 并提交 `go.mod` / `go.sum`。内核单测在 RealBrowser 运行，图来 CI 验证项目集成与打包。
 - pull request 和 `main`：在 Linux 运行 `go test ./... -short -race -timeout 20m`、`go vet ./...`、`go build ./cmd/...`，校验 `go tool mygo generate` 无绑定漂移（`git diff --exit-code frontend/src/mygo.ts`）以及 `bun run --cwd frontend typecheck` / `bun run --cwd frontend test` / `bun run --cwd frontend build`，运行指纹策略测试（`node --test internal/fingerprint/driver/*.test.mjs`）、内置脚本测试与发布脚本测试（`bash scripts/check-release-ci.test.sh` 等）；在 Windows 原生测试浏览器、运行环境、下载与更新器；另跑 Fingerprint 集成测试，并打出 Windows 安装包。浏览器基础测试与策略测试分开并行；`main` 测试 Windows 浏览器，pull request 额外测试 macOS Apple Silicon。产物在 Actions 的 artifacts 里保留 14 天。
 - 标签 `v*` 经由 `scripts/check-release-ci.sh` 校验：必须匹配 `mygo.json` 的版本，且标签指向的提交必须有通过的 `main` CI。标签流水线重新打包并上传 Windows 安装器、便携版和 `SHA256SUMS`。
 
@@ -228,8 +230,8 @@ git push origin vX.Y.Z
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows 安装器 | `tulai.Setup.0.1.42.amd64.exe`、`tulai.Setup.0.1.42.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
-| Windows 便携版 | `tulai-0.1.42-windows-amd64.exe`、`tulai-0.1.42-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
+| Windows 安装器 | `tulai.Setup.0.1.43.amd64.exe`、`tulai.Setup.0.1.43.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.43-windows-amd64.exe`、`tulai-0.1.43-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
 
 `SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。
 

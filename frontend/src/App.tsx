@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 // Brand marks from @lobehub/icons (MIT).
 import doubaoMark from "@/assets/providers/doubao-avatar.png";
 import geminiMark from "@/assets/providers/gemini-color.svg";
+import jimengMark from "@/assets/providers/jimeng-color.svg";
 import qwenMark from "@/assets/providers/qwen-color.svg";
 import qwenIntlMark from "@/assets/providers/qwen-intl-color.svg";
 import { BrowserDrawer } from "@/components/BrowserDrawer";
@@ -75,6 +76,7 @@ const WORKBENCH_PLATFORM_OPTIONS = [
   { value: "千问", label: "千问" },
   { value: "千问国际", label: "千问国际" },
   { value: "Gemini", label: "Gemini" },
+  { value: "即梦", label: "即梦" },
 ];
 
 const PROVIDER_MARKS: Record<string, string> = {
@@ -86,6 +88,8 @@ const PROVIDER_MARKS: Record<string, string> = {
   千问国际: qwenIntlMark,
   gemini: geminiMark,
   Gemini: geminiMark,
+  jimeng: jimengMark,
+  即梦: jimengMark,
 };
 
 const WORKBENCH_NAV: NavItem = {

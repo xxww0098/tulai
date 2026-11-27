@@ -76,10 +76,13 @@ type Task struct {
 	maxBatch           int    // 拆分审核批次或标记为需单独发送时限制单批上限（1 表示单独发）
 	splitModeration    bool   // 由触发内容审核的豆包批次拆出，防止全批审核循环拆单
 	partialRetried     bool   // 豆包部分出图批次已自动补跑过一次缺失源图，防止循环补跑
-	sendSeq            int    // 同一任务拆分、改写或换新对话重发时递增，区分扩展发送幂等键
-	everSent           bool   // 本次账号派发中是否已真正尝试或确认过发送
-	noUse              bool   // 确认还未尝试发送，不占账号每日次数
-	QualityNote        string // 本地质检提示（白边/黑边/疑似未改写回声等，不阻断落盘）
+	sendSeq             int    // 同一任务拆分、改写或换新对话重发时递增，区分扩展发送幂等键
+	everSent            bool   // 本次账号派发中是否已真正尝试或确认过发送
+	noUse               bool   // 确认还未尝试发送，不占账号每日次数
+	jimengCount         int    // 即梦本次经余额分析后实际设置的生成张数（1..6）
+	jimengShrinkCap     int    // 上传前实时余额分析要求缩减到的单批张数上限
+	jimengShrinkBrowser int64  // 触发缩减重派时的原即梦账号 ID
+	QualityNote         string // 本地质检提示（白边/黑边/疑似未改写回声等，不阻断落盘）
 }
 
 // Worked 报告这条任务是否已经实际派发或执行过（排队中及未派发即停止的任务返回 false）。

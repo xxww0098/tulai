@@ -210,6 +210,9 @@ const geminiStatusProbeJS = `(async () => {
 	};
 
 	const parseEpochMs = (raw) => {
+		if (raw && typeof raw === 'object' && raw.seconds !== undefined && raw.seconds !== null) {
+			raw = raw.seconds;
+		}
 		if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
 			return raw > 1e12 ? Math.round(raw) : Math.round(raw * 1000);
 		}
@@ -251,14 +254,14 @@ const geminiStatusProbeJS = `(async () => {
 						if (!pool || typeof pool !== 'object') continue;
 						const pType = String(pool.poolType || '');
 						if (pType === 'GXU_FIVE_HOURLY') {
-							const pct = normPctUsed(pool.percentageUsed);
+							const pct = pool.percentageUsed === undefined ? (pool.gxu ? 0 : null) : normPctUsed(pool.percentageUsed);
 							if (pct !== null) {
 								out.hasFiveHour = true;
 								out.fiveHourPctUsed = pct;
 								out.fiveHourResetAt = parseEpochMs(pool.gxu && pool.gxu.windowRefreshesAt);
 							}
 						} else if (pType === 'GXU_WEEKLY') {
-							const pct = normPctUsed(pool.percentageUsed);
+							const pct = pool.percentageUsed === undefined ? (pool.gxu ? 0 : null) : normPctUsed(pool.percentageUsed);
 							if (pct !== null) {
 								out.hasWeekly = true;
 								out.weeklyPctUsed = pct;
@@ -574,6 +577,11 @@ func NormalizeGeminiStatus(raw GeminiStatus, now time.Time) (store.AccountQuota,
 		}
 	}
 
+	// 已流逝的滚动窗口刷新时间不再当作未来到期时间写入，避免刚同步完仍显示「已到期 · 待同步刷新」。
+	if resetAt > 0 && resetAt <= now.Unix() {
+		resetAt = 0
+	}
+
 	usagePct := -1
 	platformLimited := false
 	if (cycle == GeminiQuotaCycleFiveHour || cycle == GeminiQuotaCycleWeekly) && remain >= 0 {
@@ -663,7 +671,7 @@ func ProbeGeminiStatus(ctx context.Context, endpoint string) (GeminiStatus, erro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 14*time.Second)
 	defer cancel()
 	conn, err := DialSlider(ctx, endpoint)
 	if err != nil {

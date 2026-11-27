@@ -123,7 +123,7 @@ func (a *App) wizardApplyChoice() {
 		return
 	}
 	if a.wizardFirst {
-		a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini = false, false, false, false
+		a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini, a.platJimeng = false, false, false, false, false
 	}
 	switch a.wizardChoice {
 	case "豆包":
@@ -134,6 +134,8 @@ func (a *App) wizardApplyChoice() {
 		a.platQwenIntl = true
 	case "Gemini":
 		a.platGemini = true
+	case "即梦":
+		a.platJimeng = true
 	}
 }
 
@@ -145,6 +147,8 @@ func stageIndex(platform string) int {
 		return 2
 	case "Gemini":
 		return 3
+	case "即梦":
+		return 4
 	default:
 		return 0
 	}
@@ -330,6 +334,7 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			var qwenSt cdp.QwenStatus
 			var doubaoSt cdp.DoubaoStatus
 			var geminiSt cdp.GeminiStatus
+			var jimengSt cdp.JimengStatus
 			if probeErr == nil && wizardLoggedIn(raw) {
 				if a.needsAutoAccountName(account.ID, account) {
 					scraped = a.waitAccountUsername(ws, func() bool {
@@ -354,6 +359,17 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 						geminiSt = st
 					}
 					gCancel()
+				} else if account.Platform == "即梦" && (a.wizardProbe == nil || a.jimengStatusProbe != nil) {
+					jCtx, jCancel := context.WithTimeout(context.Background(), 8*time.Second)
+					if st, jErr := a.probeJimengStatus(jCtx, ws); jErr == nil && st.OK {
+						jimengSt = st
+						if scraped == "" && a.needsAutoAccountName(account.ID, account) {
+							if candidate := cdp.SanitizeAccountUsername(st.Username); candidate != "" {
+								scraped = candidate
+							}
+						}
+					}
+					jCancel()
 				}
 			}
 			action := wizardPollWait
@@ -371,6 +387,9 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 				}
 				if geminiSt.OK {
 					a.applyGeminiStatus(account.ID, geminiSt)
+				}
+				if jimengSt.OK {
+					a.applyJimengStatus(account.ID, jimengSt)
 				}
 				a.setLoginShot(account.ID, raw, "")
 				action = a.noteProbe(gen, raw, probeErr)

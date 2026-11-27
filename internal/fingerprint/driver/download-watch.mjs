@@ -1,1 +1,2 @@
-export * from '../../../../realbrowser/browserkernel/downloader/download-watch.mjs';
+import {kernelFile} from './kernel-source.mjs';
+export const {watchDownload, downloadKernel, downloadArchive} = await import(kernelFile('downloader/download-watch.mjs'));

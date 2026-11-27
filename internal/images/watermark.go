@@ -26,6 +26,7 @@ var watermarkStyles = []watermarkStyle{
 	{"doubao.png", "豆包", 1536, 31, 27, false},
 	{"qwen.png", "千问", 2048, 62, 63, false},
 	{"qwen-label.png", "千问", 2048, 57, 57, true},
+	{"qwen-label.png", "即梦", 2048, 57, 57, true},
 }
 
 var (
@@ -76,16 +77,17 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 	if b.Dx() < 128 || b.Dy() < 128 || int64(b.Dx()) > (32*1024*1024)/int64(b.Dy()) {
 		return nil, false, nil
 	}
-	if platform != "豆包" && platform != "千问" && platform != "千问国际" {
+	if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "即梦" {
 		return nil, false, nil
 	}
 	isQwen := platform == "千问" || platform == "千问国际"
+	isJimeng := platform == "即梦"
 	stylePlatform := platform
 	if isQwen {
 		stylePlatform = "千问"
 	}
-	// 千问暂仅校准方图模板；豆包已开放 4:3、3:4、16:9、9:16 等非方图比例（按短边比例定位并维持 0.85 高门槛防误伤）。
-	if platform != "豆包" && b.Dx() != b.Dy() {
+	// 千问暂仅校准方图模板；豆包与即梦已开放 4:3、3:4、16:9、9:16、3:2、2:3 等全比例。
+	if platform != "豆包" && !isJimeng && b.Dx() != b.Dy() {
 		return nil, false, nil
 	}
 	// 16 位图片保持原样，避免另存 8 位 PNG 时降低原图精度。
@@ -95,8 +97,8 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 	}
 	short := min(b.Dx(), b.Dy())
 	maxEdge, threshold := 2048, 0.85
-	if isQwen {
-		// 千问在不同输出尺寸重新栅格化字形，缩小后比较轮廓可减轻像素相位差。
+	if isQwen || isJimeng {
+		// 千问与即梦在不同输出尺寸重新栅格化「AI生成」字形，缩小后比较轮廓可减轻像素相位差。
 		maxEdge, threshold = 768, 0.60
 	}
 	workScale := math.Min(1, float64(maxEdge)/float64(max(b.Dx(), b.Dy())))
@@ -113,7 +115,15 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 		if err != nil {
 			return nil, false, err
 		}
-		area, score, err := matchWatermarkInCorner(ctx, src, w, h, template, style)
+		var (
+			area  image.Rectangle
+			score float64
+		)
+		if isJimeng {
+			area, score, err = matchJimengTopLeftWatermark(ctx, src, w, h, template, style)
+		} else {
+			area, score, err = matchWatermarkInCorner(ctx, src, w, h, template, style)
+		}
 		if err != nil {
 			return nil, false, err
 		}
@@ -128,6 +138,9 @@ func RemoveWatermark(ctx context.Context, src image.Image, platform string) (ima
 		radius := max(1, int(math.Ceil(float64(short)/float64(style.ref))))
 		if isQwen {
 			radius = max(2, int(math.Ceil(5*float64(short)/float64(style.ref))))
+		} else if isJimeng {
+			// 即梦在不同画幅下水印可能按长边或短边缩放，按实际命中的水印高度比例计算膨胀半径。
+			radius = max(2, int(math.Ceil(5*float64(area.Dy())/float64(template.Bounds().Dy()))))
 		}
 		if err := repairWatermark(ctx, dst, template, area, radius); err != nil {
 			return nil, false, err
@@ -397,6 +410,149 @@ func matchWatermarkWindow(ctx context.Context, hp []float64, roi image.Rectangle
 		}
 	}
 	return area, best, nil
+}
+
+func signedHighPassCorr(tp []float64, tw int, hp []float64, rw, x0, y0, ix0, iy0, ix1, iy1 int) float64 {
+	xy, tt, yy := 0.0, 0.0, 0.0
+	for row := iy0; row < iy1; row++ {
+		tpRow := tp[row*tw:]
+		hpRow := hp[(y0+row)*rw+x0:]
+		for col := ix0; col < ix1; col++ {
+			a, v := tpRow[col], hpRow[col]
+			xy += a * v
+			tt += a * a
+			yy += v * v
+		}
+	}
+	if tt < 1e-6 || yy < 1e-6 {
+		return 0
+	}
+	return xy / math.Sqrt(tt*yy)
+}
+
+// matchJimengTopLeftWatermark 匹配即梦左上角「AI生成」圆角标签水印。
+// 即梦在不同画幅（如 3:4、4:3、16:9、9:16、1:1）下会按长边、几何均值或短边缩放该标识，
+// 因此同时覆盖三组基准尺度，并用「整框 + 内部字形同极性」双重相关拦截空白方框误报。
+func matchJimengTopLeftWatermark(ctx context.Context, src image.Image, w, h int, template image.Image, style watermarkStyle) (image.Rectangle, float64, error) {
+	tplW := float64(template.Bounds().Dx())
+	tplH := float64(template.Bounds().Dy())
+	ref := float64(style.ref)
+	longEdge := float64(max(w, h))
+	shortEdge := float64(min(w, h))
+	baseScales := []float64{shortEdge / ref, math.Sqrt(float64(w*h)) / ref, longEdge / ref}
+	factors := []float64{0.90, 0.95, 1.00, 1.05, 1.10}
+	if w == h {
+		baseScales = []float64{shortEdge / ref}
+		factors = []float64{0.92, 0.96, 1.00, 1.04, 1.08}
+	}
+	seenTW := make(map[int]bool, len(baseScales)*len(factors))
+	widths := make([]int, 0, len(baseScales)*len(factors))
+	maxTW, maxTH := 0, 0
+	for _, bs := range baseScales {
+		for _, f := range factors {
+			tw := max(16, int(math.Round(tplW*bs*f)))
+			if seenTW[tw] || seenTW[tw-1] || seenTW[tw+1] {
+				continue
+			}
+			th := max(8, int(math.Round(float64(tw)*tplH/tplW)))
+			if tw+4 >= w || th+4 >= h {
+				continue
+			}
+			seenTW[tw] = true
+			widths = append(widths, tw)
+			if tw > maxTW {
+				maxTW = tw
+			}
+			if th > maxTH {
+				maxTH = th
+			}
+		}
+	}
+	if len(widths) == 0 {
+		return image.Rectangle{}, 0, nil
+	}
+	maxOff := max(12, int(math.Round(0.048*longEdge)))
+	const pad = 4
+	roi := image.Rect(0, 0, min(w, maxOff+maxTW+pad), min(h, maxOff+maxTH+pad))
+	if roi.Empty() {
+		return image.Rectangle{}, 0, nil
+	}
+	roiGray := extractWorkROIGray(src, w, h, roi)
+	rw, rh := roi.Dx(), roi.Dy()
+	hp := highPassFromGray(roiGray, rw, rh)
+
+	var bestArea image.Rectangle
+	bestRank := 0.0
+	bestOut := 0.0
+	for _, tw := range widths {
+		if err := ctx.Err(); err != nil {
+			return bestArea, bestOut, err
+		}
+		th := max(8, int(math.Round(float64(tw)*tplH/tplW)))
+		if tw+2 >= rw || th+2 >= rh {
+			continue
+		}
+		tp := watermarkHighPass(resize(template, tw, th))
+		total := 0.0
+		for _, v := range tp {
+			total += v * v
+		}
+		if total < 0.001 {
+			continue
+		}
+		limX := min(maxOff, rw-tw-2)
+		limY := min(maxOff, rh-th-2)
+		if limX < 1 || limY < 1 {
+			continue
+		}
+		ix0 := max(1, int(math.Round(float64(tw)*0.12)))
+		ix1 := min(tw-1, int(math.Round(float64(tw)*0.88)))
+		iy0 := max(1, int(math.Round(float64(th)*0.18)))
+		iy1 := min(th-1, int(math.Round(float64(th)*0.82)))
+		// 全像素（1px 步长）遍历左上角窗口，避免细笔画在 2px 粗步长下恰好落入高通负瓣导致漏检。
+		for y0 := 1; y0 <= limY; y0++ {
+			if err := ctx.Err(); err != nil {
+				return bestArea, bestOut, err
+			}
+			for x0 := 1; x0 <= limX; x0++ {
+				xy, yy := 0.0, 0.0
+				for row := 0; row < th; row++ {
+					tpRow := tp[row*tw : (row+1)*tw]
+					hpRow := hp[(y0+row)*rw+x0 : (y0+row)*rw+x0+tw]
+					for col := 0; col < tw; col++ {
+						a, v := tpRow[col], hpRow[col]
+						xy += a * v
+						yy += v * v
+					}
+				}
+				if yy < 1e-6 {
+					continue
+				}
+				fullS := xy / math.Sqrt(total*yy)
+				absFull := math.Abs(fullS)
+				if absFull < 0.50 {
+					continue
+				}
+				innerS := signedHighPassCorr(tp, tw, hp, rw, x0, y0, ix0, iy0, ix1, iy1)
+				if fullS*innerS <= 0 {
+					continue
+				}
+				absInner := math.Abs(innerS)
+				// 同时满足整框与内部字形同极性高相关，避免左上角恰好有空白圆角方框时误判。
+				valid := (absFull >= 0.60 && absInner >= 0.45) || (absFull >= 0.50 && absInner >= 0.60)
+				if !valid {
+					continue
+				}
+				rank := 0.6*absFull + 0.4*absInner
+				if rank > bestRank {
+					bestRank = rank
+					bestOut = math.Max(absFull, absInner)
+					bestArea = image.Rect(x0, y0, x0+tw, y0+th)
+				}
+			}
+		}
+	}
+	return bestArea, bestOut, nil
 }
 
 func repairWatermark(ctx context.Context, dst *image.NRGBA, template image.Image, area image.Rectangle, radius int) error {

@@ -63,6 +63,7 @@ type Prepared struct {
 	Release  Release
 	Asset    Asset
 	Path     string
+	SHA256   string
 	UpToDate bool
 }
 
@@ -243,7 +244,7 @@ func (c *Client) Download(ctx context.Context, rel Release, current string, mode
 	if err := c.downloadVerified(ctx, rel.Tag, asset, dest, want, digestHexOrEmpty(asset.Digest)); err != nil {
 		return Prepared{}, err
 	}
-	return Prepared{Release: rel, Asset: asset, Path: dest}, nil
+	return Prepared{Release: rel, Asset: asset, Path: dest, SHA256: want}, nil
 }
 
 func (c *Client) checksums(ctx context.Context, rel Release) (map[string]string, error) {
@@ -492,6 +493,11 @@ func ParseChecksums(text string) (map[string]string, error) {
 		return nil, errors.New("SHA256SUMS 是空的")
 	}
 	return out, nil
+}
+
+// VerifyFile checks that path's SHA-256 digest matches every non-empty hex digest in wants.
+func VerifyFile(path string, wants ...string) error {
+	return verifyFile(path, wants...)
 }
 
 func verifyFile(path string, wants ...string) error {

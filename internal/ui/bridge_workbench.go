@@ -146,6 +146,7 @@ type WorkbenchStateDTO struct {
 	Qianwen          bool              `json:"qianwen"`
 	QwenIntl         bool              `json:"qwenIntl"`
 	Gemini           bool              `json:"gemini"`
+	Jimeng           bool              `json:"jimeng"`
 	Prompts          string            `json:"prompts"`
 	PromptChoice     string            `json:"promptChoice"`
 	PromptOptions    []string          `json:"promptOptions"`
@@ -154,11 +155,20 @@ type WorkbenchStateDTO struct {
 	UseSuffix        bool             `json:"useSuffix"`
 	WashStyle        string           `json:"washStyle"`
 	WashStyleOptions []string         `json:"washStyleOptions"`
-	OutputPreset     string           `json:"outputPreset"`
-	OutputPresets    []string         `json:"outputPresets"`
-	OutputMode       string           `json:"outputMode"`
-	OutputRatio      string           `json:"outputRatio"`
-	OutputRatios     []string         `json:"outputRatios"`
+	OutputPreset          string            `json:"outputPreset"`
+	OutputPresets         []string          `json:"outputPresets"`
+	OutputMode            string            `json:"outputMode"`
+	OutputRatio           string            `json:"outputRatio"`
+	OutputRatios          []string          `json:"outputRatios"`
+	OutputResolution      string            `json:"outputResolution"`
+	OutputResolutions     []string          `json:"outputResolutions"`
+	OutputCapsSource      string            `json:"outputCapsSource"`
+	OutputCapsSyncedAt    int64             `json:"outputCapsSyncedAt"`
+	OutputCapsSyncedLabel string            `json:"outputCapsSyncedLabel"`
+	OutputCapsModel       string            `json:"outputCapsModel"`
+	OutputCapsSyncing     bool              `json:"outputCapsSyncing"`
+	OutputAutoLabel       string            `json:"outputAutoLabel"`
+	OutputSupportsAuto    bool              `json:"outputSupportsAuto"`
 	Sources          []SourceItemDTO  `json:"sources"`
 	SourcesTotal     int              `json:"sourcesTotal"`
 	WashedCount      int              `json:"washedCount"`
@@ -229,8 +239,10 @@ func emptyWorkbenchState() WorkbenchStateDTO {
 		PromptOptions:    []string{},
 		PromptTemplates:  []PromptOptionDTO{},
 		WashStyleOptions: []string{},
-		OutputPresets:    []string{},
-		OutputRatios:     []string{},
+		OutputPresets:     []string{},
+		OutputRatios:      []string{},
+		OutputResolutions: []string{},
+		OutputCapsSource:  "default",
 		Sources:          []SourceItemDTO{},
 		PlanMissing:      []string{},
 		ActiveRows:       []ResultRowDTO{},
@@ -397,8 +409,26 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 	}
 
 	selectedPlatform := a.selectedPlatform()
+	outputCaps := a.outputCapsFor(selectedPlatform)
 	outputPrefs := a.outputPrefsFor(selectedPlatform)
-	presetLabels := outputPresetLabelsFor(selectedPlatform)
+	presetLabels := outputPresetLabelsForCaps(outputCaps)
+	outputRatios := append([]string{}, outputCaps.Ratios...)
+	if outputRatios == nil {
+		outputRatios = []string{}
+	}
+	outputResolutions := append([]string{}, outputCaps.Resolutions...)
+	if outputResolutions == nil {
+		outputResolutions = []string{}
+	}
+	outputCapsSource := outputCaps.Source
+	if outputCapsSource == "" {
+		outputCapsSource = "default"
+	}
+	outputCapsSyncedLabel := ""
+	if outputCaps.SyncedAt > 0 {
+		outputCapsSyncedLabel = formatSyncedAtLabel(outputCaps.SyncedAt, now)
+	}
+	outputCapsSyncing := a.outputCapsSyncing != nil && a.outputCapsSyncing[selectedPlatform]
 
 	plan := a.workbenchPlan(accounts)
 	canStart := !a.renameUpdateActive() && len(a.browserPending) == 0 && plan.Action == StartGenerate
@@ -561,6 +591,7 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		Qianwen:          a.platQianwen,
 		QwenIntl:         a.platQwenIntl,
 		Gemini:           a.platGemini,
+		Jimeng:           a.platJimeng,
 		Prompts:          a.prompts,
 		PromptChoice:     curChoice,
 		PromptOptions:    optLabels,
@@ -569,11 +600,20 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		UseSuffix:        a.useSuffix,
 		WashStyle:        a.washStyle,
 		WashStyleOptions: washStyleLabels(),
-		OutputPreset:     outputPrefs.preset,
-		OutputPresets:    presetLabels,
-		OutputMode:       outputPrefs.mode,
-		OutputRatio:      outputPrefs.ratio,
-		OutputRatios:     outputRatiosFor(selectedPlatform),
+		OutputPreset:          outputPrefs.preset,
+		OutputPresets:         presetLabels,
+		OutputMode:            outputPrefs.mode,
+		OutputRatio:           outputPrefs.ratio,
+		OutputRatios:          outputRatios,
+		OutputResolution:      outputPrefs.resolution,
+		OutputResolutions:     outputResolutions,
+		OutputCapsSource:      outputCapsSource,
+		OutputCapsSyncedAt:    outputCaps.SyncedAt,
+		OutputCapsSyncedLabel: outputCapsSyncedLabel,
+		OutputCapsModel:       outputCaps.Model,
+		OutputCapsSyncing:     outputCapsSyncing,
+		OutputAutoLabel:       outputCaps.AutoLabel,
+		OutputSupportsAuto:    outputCaps.SupportsAuto,
 		Sources:          srcs,
 		SourcesTotal:     len(a.sources),
 		WashedCount:      washedCount,
@@ -796,7 +836,7 @@ func (s *WorkbenchService) SetPlatformSelected(ctx context.Context, platform str
 	})
 }
 
-// SetOutputSize updates the web-native output aspect ratio preset.
+// SetOutputSize updates the web-native output aspect ratio preset for the active provider.
 // Changes are ignored while tasks are running.
 func (s *WorkbenchService) SetOutputSize(ctx context.Context, preset, mode, ratio string) {
 	if s.app == nil {
@@ -807,10 +847,46 @@ func (s *WorkbenchService) SetOutputSize(ctx context.Context, preset, mode, rati
 		if a.running {
 			return
 		}
-		a.activeOutputPrefs().updateFor(a.selectedPlatform(), preset, mode, ratio)
+		plat := a.selectedPlatform()
+		caps := a.outputCapsFor(plat)
+		a.outputPrefsFor(plat).updateForCaps(caps, preset, mode, ratio)
 		a.saveOutputSize()
 		a.emit("workbench")
 	})
+}
+
+// SetOutputResolution updates the web-native output resolution/clarity option (e.g. Jimeng 1.5K/2K/4K).
+// Changes are ignored while tasks are running or when the active provider does not expose resolutions.
+func (s *WorkbenchService) SetOutputResolution(ctx context.Context, resolution string) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		a := s.app
+		if a.running {
+			return
+		}
+		plat := a.selectedPlatform()
+		caps := a.outputCapsFor(plat)
+		if a.outputPrefsFor(plat).updateResolutionForCaps(caps, resolution) {
+			a.saveOutputSize()
+			a.emit("workbench")
+		}
+	})
+}
+
+// SyncOutputCaps probes the active (or specified) provider's live webpage to refresh supported output ratios and resolutions.
+func (s *WorkbenchService) SyncOutputCaps(ctx context.Context, platform string) error {
+	if s.app == nil {
+		return nil
+	}
+	err, callErr := callValue(s.app, ctx, func() error {
+		return s.app.syncOutputCaps(platform)
+	})
+	if callErr != nil {
+		return callErr
+	}
+	return err
 }
 
 // PickPromptTextFile opens a native file picker to import batch prompts from .txt or .md files into text-to-image mode.

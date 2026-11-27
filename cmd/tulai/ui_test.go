@@ -78,7 +78,7 @@ func TestServicesShellAndAllModulesSnapshot(t *testing.T) {
 	if shell.MediaOrigin != ui.MediaOrigin() {
 		t.Fatalf("shell.MediaOrigin = %q, want %q", shell.MediaOrigin, ui.MediaOrigin())
 	}
-	if len(shell.Platforms) != 4 || shell.Platforms[0].ID != "doubao" || shell.Platforms[1].ID != "qianwen" || shell.Platforms[2].ID != "qwen_intl" || shell.Platforms[3].ID != "gemini" {
+	if len(shell.Platforms) != 5 || shell.Platforms[0].ID != "doubao" || shell.Platforms[1].ID != "qianwen" || shell.Platforms[2].ID != "qwen_intl" || shell.Platforms[3].ID != "gemini" || shell.Platforms[4].ID != "jimeng" {
 		t.Fatalf("unexpected shell platforms: %+v", shell.Platforms)
 	}
 	if shell.Pool.Ready != 1 || shell.Pool.Total != 1 {

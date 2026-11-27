@@ -28,12 +28,23 @@ func washBatchUploadNames(prefix string, paths []string) []string {
 	return names
 }
 
+func washBatchCap(platform string) int {
+	switch platform {
+	case "豆包":
+		return washChatTasks
+	case "即梦":
+		return jimengWashBatchMax
+	default:
+		return 1
+	}
+}
+
 func freshWashItem(item Task) bool {
 	return item.Attempts == 0 && !item.submitted && item.Error == "" && len(item.Images) == 1 && len(item.batch) == 0
 }
 
 func (e *Engine) washBatchLimit(t Task, limit int, now time.Time) int {
-	if !e.opts.Wash || t.Platform != "豆包" || t.maxBatch == 1 {
+	if !e.opts.Wash || washBatchCap(t.Platform) <= 1 || t.maxBatch == 1 {
 		return 1
 	}
 	row, ok := e.browserByID(t.BrowserID)
@@ -41,7 +52,8 @@ func (e *Engine) washBatchLimit(t Task, limit int, now time.Time) int {
 }
 
 func (e *Engine) washBatchLimitRow(t Task, row store.Browser, ok bool, limit int, now time.Time) int {
-	if !e.opts.Wash || t.Platform != "豆包" || t.maxBatch == 1 {
+	platCap := washBatchCap(t.Platform)
+	if !e.opts.Wash || platCap <= 1 || t.maxBatch == 1 {
 		return 1
 	}
 	if t.maxBatch > 1 {
@@ -50,7 +62,15 @@ func (e *Engine) washBatchLimitRow(t Task, row store.Browser, ok bool, limit int
 	if cap := e.capFor(t.Platform); ok && cap > 0 {
 		limit = min(limit, max(1, cap-row.UsedToday(now)))
 	}
-	return min(limit, washChatTasks)
+	// 即梦已同步剩余积分时，按剩余可生成张数收敛单批导入张数（例如余额仅剩 5 分且 1 分/张时最多导入 5 张），避免整批积分不足失败。
+	if t.Platform == "即梦" && ok {
+		if maxByCredits := e.jimengBatchMaxFor(row, ok, now); maxByCredits > 0 {
+			limit = min(limit, maxByCredits)
+		} else {
+			return 1
+		}
+	}
+	return min(limit, platCap)
 }
 
 // bundleWashTasks 只合并尚未发送、提示词相同的豆包洗图。
@@ -104,19 +124,27 @@ func washBatchOf(first Task, batch []Task) Task {
 	return first
 }
 
-// saveVerifiedWashBatch 按已校验的源图关联逐张保存豆包批量结果，允许少于发送张数但禁止无关联猜测。
+func washPlatformLabel(platform string) string {
+	if platform == "" {
+		return "豆包"
+	}
+	return platform
+}
+
+// saveVerifiedWashBatch 按已校验的源图关联逐张保存批量结果，允许少于发送张数但禁止无关联猜测。
 // 返回尚未落盘的结果切片，供上层仅在真正未匹配或保存失败时写入「待核对」。
 func (e *Engine) saveVerifiedWashBatch(ctx context.Context, sess *cdp.Session, t *Task, results []strategy.Result, indices []int) ([]strategy.Result, error) {
+	plat := washPlatformLabel(t.Platform)
 	if len(results) < 1 || len(results) > len(t.batch) {
-		return results, fmt.Errorf("本批发送 %d 张，但取得 %d 张结果，未按源图保存，请检查豆包页面", len(t.batch), len(results))
+		return results, fmt.Errorf("本批发送 %d 张，但取得 %d 张结果，未按源图保存，请检查%s页面", len(t.batch), len(results), plat)
 	}
 	if len(indices) != len(results) {
-		return results, errors.New("豆包未提供完整的源图关联，未按源图保存")
+		return results, fmt.Errorf("%s未提供完整的源图关联，未按源图保存", plat)
 	}
 	seen := make([]bool, len(t.batch))
 	for _, index := range indices {
 		if index < 1 || index > len(t.batch) || seen[index-1] {
-			return results, errors.New("豆包源图关联缺失或重复，未按源图保存")
+			return results, fmt.Errorf("%s源图关联缺失或重复，未按源图保存", plat)
 		}
 		seen[index-1] = true
 	}
@@ -218,7 +246,7 @@ func (e *Engine) saveWashResults(ctx context.Context, sess *cdp.Session, t *Task
 		if want > 1 {
 			unsaved, resultErr = e.saveVerifiedWashBatch(ctx, sess, t, results, indices)
 		} else if len(results) != 1 {
-			resultErr = fmt.Errorf("本批发送 1 张，但取得 %d 张结果，未按源图保存，请检查豆包页面", len(results))
+			resultErr = fmt.Errorf("本批发送 1 张，但取得 %d 张结果，未按源图保存，请检查%s页面", len(results), washPlatformLabel(t.Platform))
 		} else {
 			var saved []string
 			saved, resultErr = e.saveResults(ctx, t, strategy.Factory(t.Platform), sess, results)

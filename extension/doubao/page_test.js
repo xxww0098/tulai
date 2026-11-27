@@ -1046,6 +1046,29 @@ async function testSetOutputRatio() {
   assert.strictEqual(Page.ratioControl(doc), trigger, '「比例4:3」无空格标签也能识别')
   assert.strictEqual(Page.ratioValue(trigger), '4:3')
 
+  // 实时探测网页支持的比例列表（含动态新增的 21:9）且探测完毕自动关闭菜单
+  const dyn = surface()
+  dyn.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button', 'data-value': '3' })).addText('图像生成')
+  const dynTrigger = dyn.box.parentElement.append(new El('button', { 'aria-haspopup': 'menu' }))
+  dynTrigger.addText('比例 16:9')
+  const dynMenu = dyn.doc.body.append(new El('div', { role: 'menu', 'data-state': 'closed' }))
+  dynMenu.rect = { width: 320, height: 220, left: 0, top: 0 }
+  dynTrigger.click = () => {
+    dynMenu.attrs['data-state'] = dynMenu.attrs['data-state'] === 'open' ? 'closed' : 'open'
+  }
+  ;['自动', '21:9', '16:9', '1:1', '9:16'].forEach((label) => {
+    const it = dynMenu.append(new El('button'))
+    it.addText(label)
+    it.rect = { width: 64, height: 48, left: 0, top: 0 }
+  })
+  const probed = await Page.probeOutputCaps(dyn.doc, 2000)
+  assert.strictEqual(probed.ok, true, 'probeOutputCaps 应成功读取豆包网页动态比例')
+  assert.strictEqual(probed.supportsAuto, true)
+  assert.strictEqual(probed.autoLabel, '自动')
+  assert.strictEqual(probed.currentRatio, '16:9')
+  assert.deepStrictEqual(probed.ratios, ['21:9', '16:9', '1:1', '9:16'])
+  assert.strictEqual(dynMenu.attrs['data-state'], 'closed', '探测完成后应自动关闭比例菜单')
+
   // 选中后按钮文本始终不更新导致超时时，必须收起已打开的菜单，避免挡住输入区
   const stuck = surface()
   stuck.box.parentElement.append(new El('div', { 'data-testid': 'skill_input_exit_button', 'data-value': '3' })).addText('图像生成')

@@ -34,6 +34,12 @@ const (
 	PageWashGemini = "gemini:wash"
 	// PageFissionGemini 是 Gemini 裂变图片页的独立会话。
 	PageFissionGemini = "gemini:fission"
+	// PageGenJimeng 是即梦自由生图页的独立会话。
+	PageGenJimeng = "jimeng:gen"
+	// PageWashJimeng 是即梦批量洗图页的独立会话。
+	PageWashJimeng = "jimeng:wash"
+	// PageFissionJimeng 是即梦裂变图片页的独立会话。
+	PageFissionJimeng = "jimeng:fission"
 )
 
 func validSessionPage(page string) bool {
@@ -41,7 +47,8 @@ func validSessionPage(page string) bool {
 	case PageGen, PageWash, PageFission,
 		PageGenQianwen, PageWashQianwen, PageFissionQianwen,
 		PageGenQwenIntl, PageWashQwenIntl, PageFissionQwenIntl,
-		PageGenGemini, PageWashGemini, PageFissionGemini:
+		PageGenGemini, PageWashGemini, PageFissionGemini,
+		PageGenJimeng, PageWashJimeng, PageFissionJimeng:
 		return true
 	default:
 		return false

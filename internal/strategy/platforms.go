@@ -483,7 +483,8 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 	for attempt := 0; attempt < 2; attempt++ {
 		out, err := s.EvaluateAsync(`(async () => {
 		var want = String(` + string(arg) + ` || '').trim();
-		if (!/^\d+:\d+$/.test(want)) return JSON.stringify({ ok: false, error: '比例格式应为 4:3' });
+		var wantAuto = /^(?:自动|自动比例|原比例|智能|智能比例)$/.test(want);
+		if (!wantAuto && !/^\d+:\d+$/.test(want)) return JSON.stringify({ ok: false, error: '比例格式应为 4:3' });
 		function shown(el) {
 			if (!el || !el.isConnected) return false;
 			if (el.closest && el.closest('[aria-hidden="true"]')) return false;
@@ -501,7 +502,7 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 		function ratioOf(el) {
 			if (!el) return '';
 			var t = norm(el.innerText || el.getAttribute('aria-label') || '');
-			var m = /^比例\s*(\d+:\d+)$/.exec(t);
+			var m = /^比例\s*(\d+:\d+|自动比例|自动|原比例|智能比例|智能)$/.exec(t);
 			return m ? m[1] : '';
 		}
 		function findShownControl() {
@@ -523,7 +524,8 @@ func (Qianwen) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				if (m.getAttribute('data-state') === 'closed') return false;
 				if (!visible(m)) return false;
 				var txt = norm(m.innerText);
-				return /\b1:1\b/.test(txt) && /\b3:4\b/.test(txt) && /\b16:9\b/.test(txt);
+				var pairs = txt.match(/\b\d+:\d+\b/g) || [];
+				return pairs.length >= 2;
 			}) || null;
 		}
 		function hasClosingMenu() {
@@ -972,9 +974,11 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			}
 		}
 		out, err := s.EvaluateAsync(`(async () => {
-		var want = String(` + string(arg) + ` || '').trim();
+		var rawWant = String(` + string(arg) + ` || '').trim();
+		var wantAuto = /^(?:auto|自动|自动比例)$/i.test(rawWant);
+		var want = wantAuto ? 'auto' : rawWant;
 		var fastMiss = ` + fmt.Sprintf("%t", attempt == 0) + `;
-		if (!/^\d+:\d+$/.test(want)) return JSON.stringify({ ok: false, error: '比例格式应为 4:3' });
+		if (!wantAuto && !/^\d+:\d+$/.test(want)) return JSON.stringify({ ok: false, error: '比例格式应为 4:3' });
 		function norm(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
 		function shown(el) {
 			if (!el || !el.isConnected) return false;
@@ -1021,7 +1025,8 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				if (m.getAttribute('data-state') === 'closed') return false;
 				if (!visible(m)) return false;
 				var txt = norm(m.innerText || m.textContent);
-				return /\b1:1\b/.test(txt) && /\b16:9\b/.test(txt);
+				var pairs = txt.match(/\b\d+:\d+\b/g) || [];
+				return pairs.length >= 2;
 			}) || null;
 		}
 		function hasClosingMenu() {
@@ -1031,7 +1036,9 @@ func (QwenIntl) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			if (!menu) return null;
 			var items = Array.from(menu.querySelectorAll('[role="menuitem"],[role="option"],.qwen-chat-v2-dropdown-menu-item'));
 			return items.find(function (el) {
-				return visible(el) && norm(el.innerText || el.textContent) === want;
+				if (!visible(el)) return false;
+				var txt = norm(el.innerText || el.textContent);
+				return want === 'auto' ? /^(?:auto|自动|自动比例)$/i.test(txt) : txt === want;
 			}) || null;
 		}
 		async function press(el) {
@@ -1647,22 +1654,12 @@ func (g Gemini) CleanComposer(s *cdp.Session) error {
 	return ensureGeminiImageMode(s)
 }
 
-var geminiNativeRatioSet = map[string]bool{
-	"1:1":  true,
-	"9:16": true,
-	"3:4":  true,
-	"4:3":  true,
-	"16:9": true,
-}
-
-// SetOutputRatio 在 Gemini「制作图片」模式下切换原生「宽高比」下拉菜单（支持 1:1 / 9:16 / 3:4 / 4:3 / 16:9）。
+// SetOutputRatio 在 Gemini「制作图片」模式下切换原生「宽高比」下拉菜单。
+// 不再写死 5 个比例，支持网页当前菜单中实际出现的任意 W:H 比例（或自动/默认项）。
 func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
-	ratio = strings.TrimSpace(ratio)
+	ratio = strings.TrimSpace(strings.ReplaceAll(ratio, "：", ":"))
 	if s == nil || ratio == "" {
 		return false, ""
-	}
-	if !geminiNativeRatioSet[ratio] {
-		return false, fmt.Sprintf("Gemini 原生宽高比不支持 %s（仅支持 1:1、9:16、3:4、4:3、16:9）", ratio)
 	}
 	arg, err := json.Marshal(ratio)
 	if err != nil {
@@ -1677,6 +1674,8 @@ func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 		}
 		out, err := s.EvaluateAsync(`(async () => {
 		var want = String(` + string(arg) + ` || '').trim();
+		var wantAuto = /^(?:自动|默认|默认比例|Auto|Default)$/i.test(want);
+		if (!wantAuto && !/^\d+:\d+$/.test(want)) return JSON.stringify({ ok: false, error: 'Gemini 比例格式应为 4:3' });
 		var fastMiss = ` + fmt.Sprintf("%t", attempt == 0) + `;
 		function norm(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
 		function cleanText(el) {
@@ -1718,11 +1717,15 @@ func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			if (!el) return '';
 			var txt = cleanText(el);
 			var lbl = norm((el.getAttribute && el.getAttribute('aria-label')) || '');
-			var m = /\b(1:1|9:16|3:4|4:3|16:9)\b/.exec(txt) || /\b(1:1|9:16|3:4|4:3|16:9)\b/.exec(lbl);
+			var m = /\b(\d+:\d+)\b/.exec(txt) || /\b(\d+:\d+)\b/.exec(lbl);
 			if (m) return m[1];
 			var ic = iconNameOf(el);
-			if (ic === 'aspect_ratio' || /^(?:宽高比|Aspect ratio)$/i.test(txt) || /(?:宽高比|Aspect ratio)/i.test(lbl)) return 'default';
+			if (ic === 'aspect_ratio' || /^(?:宽高比|Aspect ratio|自动|默认|Auto|Default)$/i.test(txt) || /(?:宽高比|Aspect ratio)/i.test(lbl)) return 'default';
 			return '';
+		}
+		function matchesWant(el) {
+			var cur = ratioOf(el);
+			return wantAuto ? cur === 'default' : cur === want;
 		}
 		function composerScope() {
 			return document.querySelector('input-area-v2,input-container') || document;
@@ -1750,17 +1753,23 @@ func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				if (m.getAttribute('data-state') === 'closed') return false;
 				if (!visible(m)) return false;
 				var txt = norm(m.innerText || m.textContent);
-				return /\b1:1\b/.test(txt) && /\b16:9\b/.test(txt) && /\b9:16\b/.test(txt);
+				var pairs = txt.match(/\b\d+:\d+\b/g) || [];
+				return pairs.length >= 2;
 			}) || null;
 		}
 		function findOption(menu) {
 			if (!menu) return null;
 			var items = Array.from(menu.querySelectorAll('[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="option"],button,.mat-mdc-menu-item'));
+			if (wantAuto) {
+				return items.find(function (el) {
+					return visible(el) && /^(?:自动|默认|默认比例|Auto|Default)$/i.test(cleanText(el));
+				}) || null;
+			}
 			var exact = items.find(function (el) { return visible(el) && cleanText(el) === want; });
 			if (exact) return exact;
 			return items.find(function (el) {
 				if (!visible(el)) return false;
-				var m = /\b(1:1|9:16|3:4|4:3|16:9)\b/.exec(cleanText(el));
+				var m = /\b(\d+:\d+)\b/.exec(cleanText(el));
 				return !!(m && m[1] === want);
 			}) || null;
 		}
@@ -1814,7 +1823,7 @@ func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			await new Promise(function (r) { setTimeout(r, 30); });
 		}
 		if (!ctrl) return JSON.stringify({ ok: false, lostMode: true, error: '未找到 Gemini 宽高比入口' });
-		if (ratioOf(ctrl) === want) {
+		if (matchesWant(ctrl)) {
 			if (findMenu()) await closeMenu(ctrl, false);
 			return JSON.stringify({ ok: true, already: true });
 		}
@@ -1826,7 +1835,7 @@ func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 				await closeMenu(null, false);
 				return JSON.stringify({ ok: false, lostMode: true, error: '未找到 Gemini 宽高比入口' });
 			}
-			if (ctrl && ratioOf(ctrl) === want) {
+			if (ctrl && matchesWant(ctrl)) {
 				await closeMenu(ctrl, true);
 				return JSON.stringify({ ok: true });
 			}
@@ -1868,7 +1877,7 @@ func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
 			var confirmUntil = Math.min(deadline, Date.now() + 1800);
 			while (Date.now() < confirmUntil) {
 				var again = findShownControl();
-				if (again && ratioOf(again) === want) {
+				if (again && matchesWant(again)) {
 					await closeMenu(again, true);
 					return JSON.stringify({ ok: true });
 				}

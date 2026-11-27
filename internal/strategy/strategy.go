@@ -34,6 +34,9 @@ var ErrAccountQuota = errors.New("账号额度已用尽")
 // ErrAccountRate 表示当前登录账号被限流。
 var ErrAccountRate = errors.New("账号请求过于频繁")
 
+// ErrAccountImageDegraded 表示平台服务端把当前账号的生图请求静默降级为纯文本对话（无生图工具）。
+var ErrAccountImageDegraded = errors.New("账号生图能力受限（已降级纯文本）")
+
 // ErrModeration 表示豆包或千问拒绝了这条内容。页面话术在 extension/refuse.js。
 var ErrModeration = errors.New("审核不通过")
 
@@ -86,6 +89,8 @@ func Factory(platform string) Strategy {
 		return &QwenIntl{}
 	case "Gemini":
 		return &Gemini{}
+	case "即梦":
+		return &Jimeng{}
 	}
 	return nil
 }
@@ -378,19 +383,45 @@ func resultSettleFor(images []Result) time.Duration {
 }
 
 type liveShot struct {
-	Busy    bool     `json:"busy"`
-	Done    bool     `json:"done"`
-	Expect  int      `json:"expect"`
-	Bar     bool     `json:"bar"`
-	Replies int      `json:"replies"`
-	Reason  string   `json:"reason"`
-	Here    string   `json:"here"`
-	Fault   string   `json:"fault"`
-	Images  []Result `json:"images"`
+	Busy       bool     `json:"busy"`
+	Done       bool     `json:"done"`
+	Expect     int      `json:"expect"`
+	Bar        bool     `json:"bar"`
+	Replies    int      `json:"replies"`
+	Reason     string   `json:"reason"`
+	Here       string   `json:"here"`
+	Fault      string   `json:"fault"`
+	RoutePSM   string   `json:"routePsm,omitempty"`
+	CannotDraw bool     `json:"cannotDraw,omitempty"`
+	HasCode    bool     `json:"hasCode,omitempty"`
+	TextLen    int      `json:"textLen,omitempty"`
+	Images     []Result `json:"images"`
 }
 
 // ErrPlatformReply 是平台回了一行报错、没有图卡。等到超时也不会出图，换新对话或换号。
 var ErrPlatformReply = errors.New("平台回复异常")
+
+var (
+	doubaoTextOnlyProbeAfter    = 2 * time.Second
+	doubaoTextOnlyProbeInterval = 3 * time.Second
+	doubaoTextOnlyFallbackAfter = 8 * time.Second
+	inspectDoubaoRouteFn        = inspectDoubaoRoute
+)
+
+func formatDoubaoDegradedErr(psm, preview string) error {
+	psm = strings.TrimSpace(psm)
+	detail := strings.TrimSpace(preview)
+	switch {
+	case psm != "" && detail != "":
+		return fmt.Errorf("%w（%s）：%s", ErrAccountImageDegraded, psm, detail)
+	case psm != "":
+		return fmt.Errorf("%w（%s）", ErrAccountImageDegraded, psm)
+	case detail != "":
+		return fmt.Errorf("%w：%s", ErrAccountImageDegraded, detail)
+	default:
+		return ErrAccountImageDegraded
+	}
+}
 
 // isReplyQuotaFault 判断平台回复的报错文案是否明确属于积分/次数耗尽，避免被当成普通回复异常重复重试。
 func isReplyQuotaFault(fault string) bool {
@@ -454,7 +485,8 @@ func waitForResultFor(s *cdp.Session, platform string, timeout time.Duration, wa
 	var key string
 	var held []Result
 	var lastDetect, lastFail string
-	var offSince, faultSince time.Time
+	var offSince, faultSince, degradedSince, textOnlySince, nextRouteProbe time.Time
+	routeCheckedCreation := false
 	reopened := false
 	tick := 0
 	for {
@@ -492,10 +524,31 @@ func waitForResultFor(s *cdp.Session, platform string, timeout time.Duration, wa
 			if snapshot.Fault.Quota {
 				return nil, ErrAccountQuota
 			}
-			if msg := strings.TrimSpace(snapshot.Fault.Moderation); msg != "" {
-				return nil, fmt.Errorf("%w: %s", ErrModeration, msg)
-			}
 			live := snapshot.Live
+			if live.Reason == "degraded-reply" && len(live.Images) == 0 {
+				if degradedSince.IsZero() {
+					degradedSince = time.Now()
+				}
+				if time.Since(degradedSince) >= replyFaultFor {
+					logging.Log.Debugf("%s", detectLine(live, 0))
+					return nil, formatDoubaoDegradedErr(live.RoutePSM, live.Fault)
+				}
+			} else {
+				degradedSince = time.Time{}
+				if msg := strings.TrimSpace(snapshot.Fault.Moderation); msg != "" {
+					if platform == "豆包" && len(live.Images) == 0 && !live.Busy && live.Replies > 0 {
+						if info := inspectDoubaoRouteFn(s, washAttachments); info != nil && info.Degraded {
+							preview := strings.TrimSpace(info.TextPreview)
+							if preview == "" {
+								preview = msg
+							}
+							logging.Log.Warning("豆包服务端将本轮生图静默路由至 %s（非内容审核），提前结束等待", info.AgentPSM)
+							return nil, formatDoubaoDegradedErr(info.AgentPSM, preview)
+						}
+					}
+					return nil, fmt.Errorf("%w: %s", ErrModeration, msg)
+				}
+			}
 			if live.Reason == "off-chat" {
 				if offSince.IsZero() {
 					offSince = time.Now()
@@ -528,6 +581,47 @@ func waitForResultFor(s *cdp.Session, platform string, timeout time.Duration, wa
 				}
 			} else {
 				faultSince = time.Time{}
+			}
+			if platform == "豆包" && live.Reason == "text-only" && len(live.Images) == 0 {
+				if textOnlySince.IsZero() {
+					textOnlySince = time.Now()
+				}
+				if !routeCheckedCreation && time.Since(textOnlySince) >= doubaoTextOnlyProbeAfter {
+					if nextRouteProbe.IsZero() || !time.Now().Before(nextRouteProbe) {
+						nextRouteProbe = time.Now().Add(doubaoTextOnlyProbeInterval)
+						if info := inspectDoubaoRouteFn(s, washAttachments); info != nil {
+							if info.Degraded {
+								preview := strings.TrimSpace(info.TextPreview)
+								if preview == "" {
+									preview = live.Fault
+								}
+								logging.Log.Warning("豆包服务端将本轮生图静默路由至 %s（无生图工具），提前结束等待", info.AgentPSM)
+								return nil, formatDoubaoDegradedErr(info.AgentPSM, preview)
+							}
+							if info.HasCreations || strings.EqualFold(info.AgentPSM, "flow.agent.creation") {
+								routeCheckedCreation = true
+								if len(washAttachments) > 1 && info.HasCreations {
+									if matched := resolveDoubaoWash(s, washAttachments, nil); len(matched) == len(washAttachments) {
+										return matched, nil
+									}
+								}
+							}
+						}
+					}
+					if !routeCheckedCreation && time.Since(textOnlySince) >= doubaoTextOnlyFallbackAfter {
+						logging.Log.Debugf("%s", detectLine(live, 0))
+						if live.CannotDraw {
+							return nil, formatDoubaoDegradedErr("", live.Fault)
+						}
+						if live.HasCode || live.TextLen >= 80 {
+							return nil, fmt.Errorf("%w：豆包仅返回纯文本/代码，未生成图片（%s）", ErrPlatformReply, live.Fault)
+						}
+					}
+				}
+			} else {
+				textOnlySince = time.Time{}
+				nextRouteProbe = time.Time{}
+				routeCheckedCreation = false
 			}
 			if len(live.Images) > 0 {
 				held = live.Images

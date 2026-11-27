@@ -208,7 +208,7 @@ func TestUncertainSendNeverRetriesOnAnotherAccount(t *testing.T) {
 
 func TestUncertainSendPrecedesOtherRecovery(t *testing.T) {
 	for _, platform := range []string{"豆包", "千问"} {
-		for _, cause := range []error{errHealNetwork, errHealCrashed, captcha.ErrVerificationRequired, errHumanGaveUp, strategy.ErrAccountQuota, strategy.ErrAccountRate, strategy.ErrModeration, strategy.ErrPlatformReply} {
+		for _, cause := range []error{errHealNetwork, errHealCrashed, captcha.ErrVerificationRequired, errHumanGaveUp, strategy.ErrAccountQuota, strategy.ErrAccountRate, strategy.ErrAccountImageDegraded, strategy.ErrModeration, strategy.ErrPlatformReply} {
 			t.Run(platform+"/"+cause.Error(), func(t *testing.T) {
 				e := NewEngine(nil, nil, nil, "")
 				e.opts.RetryCount = 3
@@ -228,7 +228,7 @@ func TestUncertainSendPrecedesOtherRecovery(t *testing.T) {
 
 func TestAcceptedTasksNeverRotateOnAccountFault(t *testing.T) {
 	for _, platform := range []string{"豆包", "千问"} {
-		for _, failure := range []error{strategy.ErrAccountQuota, strategy.ErrAccountRate, errors.New("未登录"), captcha.ErrVerificationRequired, errors.New("额度不足")} {
+		for _, failure := range []error{strategy.ErrAccountQuota, strategy.ErrAccountRate, strategy.ErrAccountImageDegraded, errors.New("未登录"), captcha.ErrVerificationRequired, errors.New("额度不足")} {
 			t.Run(platform+"/"+failure.Error(), func(t *testing.T) {
 				st := openRotateStore(t)
 				owner := addNamed(t, st, platform, "原账号")

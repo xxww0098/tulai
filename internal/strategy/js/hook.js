@@ -11,9 +11,391 @@
   var baselineActions = new WeakSet();
   var baselineReplies = new WeakSet();
   var doubaoTurn = null;
+  var doubaoRoute = { psm: '', sawCreation: false, streamDone: false };
+  var jimengTurn = null;
+  var jimengResolvingClean = false;
   var revealEl = null, revealAt = 0;
   var taskNumber = 0, pendingGeneration = 0;
   function generationURL(url) { return /sse|event-stream|chat|completion|stream|message|segment|generation/i.test(url); }
+  function jimengAPIURL(url) { return /\/mweb\/v1\/(?:aigc_draft\/generate|get_history_by_ids)\b/i.test(String(url || '')); }
+  function doubaoCompletionURL(url) { return /(^|\.)doubao\.com$/.test(pageHost()) && /\/chat\/completion\b/i.test(String(url || '')); }
+  function resetDoubaoRoute() {
+    doubaoRoute = { psm: '', sawCreation: false, streamDone: false };
+    window.__tulaiDoubaoRoute = doubaoRoute;
+  }
+  function observeDoubaoStream(url, txt, reqTask) {
+    if (reqTask !== taskNumber || !doubaoCompletionURL(url) || !txt) return;
+    var re = /(?:\\*"agent_psm\\*")\s*:\s*(?:\\*"(flow\.agent\.[a-z0-9_.-]+)\\*")/gi;
+    var m;
+    while ((m = re.exec(txt))) {
+      var psm = String(m[1] || '').toLowerCase();
+      if (psm === 'flow.agent.creation') {
+        doubaoRoute.sawCreation = true;
+        doubaoRoute.psm = psm;
+      } else if (!doubaoRoute.sawCreation && psm) {
+        doubaoRoute.psm = psm;
+      }
+    }
+    if (!doubaoRoute.sawCreation && /(?:\\*"use_creation\\*")\s*:\s*(?:\\*"1\\*")/.test(txt)) {
+      doubaoRoute.sawCreation = true;
+      doubaoRoute.psm = 'flow.agent.creation';
+    }
+    doubaoRoute.streamDone = true;
+  }
+  function resetJimengTurn() {
+    jimengTurn = {
+      task: taskNumber,
+      submitted: false,
+      historyIds: [],
+      historyQueryUrl: '',
+      status: 0,
+      finished: false,
+      failed: false,
+      failCode: '',
+      failMsg: '',
+      quota: false,
+      rateLimit: false,
+      moderation: '',
+      images: []
+    };
+    window.__tulaiJimengTurn = jimengTurn;
+  }
+  function classifyJimengError(jt, msg) {
+    var text = String(msg || '').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    if (/积分不足|积分余额不足|剩余积分不足|额度不足|余额不足|insufficient.*credit|not enough credit/i.test(text)) {
+      jt.quota = true;
+    } else if (/频繁|限流|rate\s*limit|too\s*many/i.test(text)) {
+      jt.rateLimit = true;
+    } else if ((window.TULAIRefuse && window.TULAIRefuse.match(text)) || /审核|违规|敏感|违禁|不符合.*规范|安全策略|内容安全/i.test(text)) {
+      jt.moderation = text;
+    }
+    jt.failMsg = text;
+  }
+  function jimengHasWatermarkHint(url) {
+    return /watermark|aigc_mark|top_left_watermark|cgen_lwm|[?&]wm=|[_-]l?wm(?:[_.:?&-]|$)/i.test(String(url || ''));
+  }
+  function jimengURLScore(url, hintKey) {
+    var u = String(url || '').trim();
+    if (!u || !/^https?:\/\//i.test(u) || junkURL(u)) return -1e15;
+    var score = 0;
+    if (jimengHasWatermarkHint(u)) score -= 500000;
+    if (String(hintKey || '').toLowerCase() === 'origin') score += 200000;
+    if (!/~tplv-/i.test(u)) score += 120000;
+    if (/aigc_resize:0:0\b/i.test(u)) score += 90000;
+    var numKey = parseInt(String(hintKey || ''), 10);
+    if (Number.isFinite(numKey) && numKey > 0) score += Math.min(numKey, 16384);
+    var dimM = u.match(/~tplv-[^/?#]*:(\d+):(\d+)/i);
+    if (dimM) {
+      var dw = parseInt(dimM[1], 10) || 0;
+      var dh = parseInt(dimM[2], 10) || 0;
+      if (dw === 0 && dh === 0) score += 80000;
+      else score += Math.min(Math.max(dw, dh), 16384);
+    }
+    return score;
+  }
+  function collectJimengItemCandidates(item) {
+    var list = [];
+    var seen = {};
+    function add(url, hintKey) {
+      var u = String(url || '').trim();
+      if (!u || !/^https?:\/\//i.test(u) || junkURL(u)) return;
+      var sc = jimengURLScore(u, hintKey);
+      if (seen[u]) {
+        if (sc > seen[u].score) seen[u].score = sc;
+        return;
+      }
+      var entry = { url: u, score: sc, origin: String(hintKey || '').toLowerCase() === 'origin', watermarked: jimengHasWatermarkHint(u) };
+      seen[u] = entry;
+      list.push(entry);
+    }
+    function addMap(m) {
+      if (!m || typeof m !== 'object') return;
+      var keys = Object.keys(m);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        var v = m[k];
+        if (typeof v === 'string') add(v, k);
+        else if (v && typeof v === 'object') add(v.image_url || v.url || v.origin_url, k);
+      }
+    }
+    var imgObj = item && item.image && typeof item.image === 'object' ? item.image : null;
+    if (imgObj) {
+      if (imgObj.origin_image && typeof imgObj.origin_image === 'object') {
+        add(imgObj.origin_image.image_url || imgObj.origin_image.url, 'origin');
+      }
+      if (Array.isArray(imgObj.large_images)) {
+        for (var li = 0; li < imgObj.large_images.length; li++) {
+          var lg = imgObj.large_images[li];
+          if (!lg || typeof lg !== 'object') continue;
+          add(lg.image_url || lg.url, String(Math.max(Number(lg.width) || 0, Number(lg.height) || 0) || ''));
+          addMap(lg.cover_url_map);
+        }
+      }
+      add(imgObj.image_url || imgObj.url, String(Math.max(Number(imgObj.width) || 0, Number(imgObj.height) || 0) || ''));
+      addMap(imgObj.cover_url_map);
+    }
+    var ca = item && item.common_attr && typeof item.common_attr === 'object' ? item.common_attr : null;
+    if (ca) {
+      addMap(ca.cover_url_map);
+      add(ca.cover_url, '');
+    }
+    list.sort(function (a, b) { return b.score - a.score; });
+    return list;
+  }
+  function extractJimengRecordImages(rec) {
+    var out = [];
+    var seen = {};
+    var items = rec && Array.isArray(rec.item_list) ? rec.item_list : [];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (!item || typeof item !== 'object') continue;
+      var imgObj = item.image && typeof item.image === 'object' ? item.image : null;
+      var large = imgObj && Array.isArray(imgObj.large_images) && imgObj.large_images.length ? imgObj.large_images[0] : null;
+      var candidates = collectJimengItemCandidates(item);
+      if (!candidates.length) continue;
+      var best = candidates[0];
+      if (seen[best.url]) continue;
+      seen[best.url] = true;
+      var itemId = String((item.common_attr && (item.common_attr.id || item.common_attr.local_item_id)) || item.id || item.item_id || '').trim();
+      var imageUri = String((large && large.image_uri) || (imgObj && imgObj.image_uri) || (item.common_attr && item.common_attr.cover_uri) || '').trim();
+      var w = Number((large && large.width) || (imgObj && imgObj.width) || 0) || 0;
+      var h = Number((large && large.height) || (imgObj && imgObj.height) || 0) || 0;
+      // 只有当明确存在独立的高优先级原图地址（如 origin / 无水印模板）时才写入 rawUrl，避免把带水印预览地址当成无水印原图。
+      var rawUrl = '';
+      if (candidates.length > 1 && !best.watermarked && (best.origin || candidates[candidates.length - 1].watermarked)) {
+        rawUrl = best.url;
+      }
+      out.push({ url: best.url, rawUrl: rawUrl, itemId: itemId, imageUri: imageUri, src: 'net', w: w, h: h });
+    }
+    return out;
+  }
+  function observeJimengAPI(url, txt, reqTask) {
+    if (!jimengPage() || reqTask !== taskNumber || !jimengTurn || !txt || jimengResolvingClean) return;
+    var body;
+    try { body = JSON.parse(txt); } catch (e) { return; }
+    if (!body || typeof body !== 'object') return;
+    var u = String(url || '');
+    if (/\/mweb\/v1\/aigc_draft\/generate\b/i.test(u)) {
+      var ret = body.ret;
+      if (ret !== undefined && ret !== null && String(ret) !== '0' && String(ret).toLowerCase() !== 'success') {
+        jimengTurn.failed = true;
+        jimengTurn.failCode = String(ret);
+        classifyJimengError(jimengTurn, body.errmsg || body.message || (body.data && body.data.fail_starling_message) || ('即梦请求失败(' + ret + ')'));
+        return;
+      }
+      var d = body.data && typeof body.data === 'object' ? body.data : null;
+      var aigc = (d && d.aigc_data && typeof d.aigc_data === 'object') ? d.aigc_data : d;
+      if (aigc) {
+        var ids = [];
+        var single = aigc.history_record_id || aigc.record_id || aigc.history_id;
+        if (single) ids.push(String(single));
+        var list = aigc.history_record_id_list || aigc.record_id_list;
+        if (Array.isArray(list)) {
+          for (var i = 0; i < list.length; i++) if (list[i]) ids.push(String(list[i]));
+        }
+        for (var j = 0; j < ids.length; j++) {
+          if (jimengTurn.historyIds.indexOf(ids[j]) === -1) jimengTurn.historyIds.push(ids[j]);
+        }
+        jimengTurn.submitted = true;
+      }
+      return;
+    }
+    if (/\/mweb\/v1\/get_history_by_ids\b/i.test(u)) {
+      if (!jimengTurn.historyQueryUrl) jimengTurn.historyQueryUrl = u;
+      if (!jimengTurn.historyIds.length) return;
+      var hd = body.data;
+      if (!hd || typeof hd !== 'object') return;
+      var matched = [];
+      for (var k = 0; k < jimengTurn.historyIds.length; k++) {
+        var hid = jimengTurn.historyIds[k];
+        if (hd[hid] && typeof hd[hid] === 'object') matched.push(hd[hid]);
+      }
+      if (!matched.length && Array.isArray(hd.history_list)) {
+        for (var hi = 0; hi < hd.history_list.length; hi++) {
+          var rec = hd.history_list[hi];
+          var rid = String((rec && (rec.history_record_id || rec.record_id || rec.id)) || '');
+          if (rid && jimengTurn.historyIds.indexOf(rid) !== -1) matched.push(rec);
+        }
+      }
+      if (!matched.length) return;
+      var allImages = [];
+      var allFinished = true;
+      var anyRunning = false;
+      for (var mi = 0; mi < matched.length; mi++) {
+        var r = matched[mi];
+        var st = r.status;
+        var stNum = Number(st);
+        var stStr = String(st || '').toLowerCase();
+        var imgs = extractJimengRecordImages(r);
+        for (var ii = 0; ii < imgs.length; ii++) allImages.push(imgs[ii]);
+        var isFailed = stNum === 30 || stStr === 'failed' || stStr === 'fail';
+        var isRunning = stNum === 20 || stNum === 42 || stNum === 45 || stStr === 'running' || stStr === 'processing' || stStr === 'pending' || stStr === 'queued';
+        var isDone = stNum === 50 || stStr === 'finished' || stStr === 'success' || stStr === 'succeed';
+        if (isFailed && !imgs.length) {
+          jimengTurn.failed = true;
+          jimengTurn.failCode = String(r.fail_code || st || '');
+          classifyJimengError(jimengTurn, r.fail_starling_message || r.fail_msg || r.errmsg || ('即梦生成失败(' + (r.fail_code || st) + ')'));
+        }
+        if (isRunning) {
+          anyRunning = true;
+          allFinished = false;
+        } else if (!isDone) {
+          allFinished = false;
+        }
+        if (Number.isFinite(stNum) && stNum > 0) jimengTurn.status = stNum;
+      }
+      if (allImages.length) jimengTurn.images = allImages;
+      if (allFinished && !anyRunning) jimengTurn.finished = true;
+    }
+  }
+  // 生成完成后主动用只读接口拉取一次无左上角水印/画布原图 URL（不消耗积分与权益），失败静默回退到原地址+本地去水印。
+  window.__tulaiJimengResolveClean = async function () {
+    var jt = jimengTurn;
+    if (!jimengPage() || !jt || !jt.images || !jt.images.length) {
+      return JSON.stringify({ byUrl: {}, byIndex: [] });
+    }
+    var byUrl = {};
+    var byIndex = jt.images.map(function (it) { return it && it.rawUrl ? it.rawUrl : ''; });
+    function recordClean(idx, candidateUrl) {
+      var u = String(candidateUrl || '').trim();
+      if (!u || !/^https?:\/\//i.test(u) || junkURL(u) || jimengHasWatermarkHint(u)) return;
+      var orig = jt.images[idx];
+      if (!orig) return;
+      if (!byIndex[idx] || jimengURLScore(u, 'origin') > jimengURLScore(byIndex[idx], '')) {
+        byIndex[idx] = u;
+      }
+      if (orig.url) {
+        if (!byUrl[orig.url] || jimengURLScore(u, 'origin') > jimengURLScore(byUrl[orig.url], '')) {
+          byUrl[orig.url] = u;
+        }
+      }
+    }
+    function fetchWithTimeout(url, opts, timeoutMs) {
+      var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, timeoutMs) : null;
+      var reqOpts = Object.assign({}, opts || {});
+      if (ctrl) reqOpts.signal = ctrl.signal;
+      return window.fetch(url, reqOpts).finally(function () { if (timer) clearTimeout(timer); });
+    }
+    jimengResolvingClean = true;
+    try {
+      // 1) 通过 /mweb/v1/get_history_by_ids 传入 need_aigc_top_left_watermark=false 获取干净高分辨率原图地址
+      if (jt.historyIds && jt.historyIds.length) {
+        var histUrl = jt.historyQueryUrl || '/mweb/v1/get_history_by_ids?aid=513695';
+        try {
+          var hResp = await fetchWithTimeout(histUrl, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              history_ids: jt.historyIds,
+              image_info: {
+                width: 2048,
+                height: 2048,
+                format: 'png',
+                need_aigc_top_left_watermark: false,
+                image_scene_list: [
+                  { scene: 'normal', width: 2400, height: 2400, uniq_key: '2400', format: 'webp' }
+                ]
+              },
+              origin_image_info: {
+                width: 2048,
+                height: 2048,
+                format: 'png',
+                need_aigc_top_left_watermark: false
+              }
+            })
+          }, 3500);
+          if (hResp && hResp.ok) {
+            var hBody = await hResp.json().catch(function () { return null; });
+            var hd = hBody && hBody.data && typeof hBody.data === 'object' ? hBody.data : null;
+            if (hd) {
+              var cleanItems = [];
+              for (var k = 0; k < jt.historyIds.length; k++) {
+                var rec = hd[jt.historyIds[k]];
+                if (rec && typeof rec === 'object') {
+                  var extracted = extractJimengRecordImages(rec);
+                  for (var ei = 0; ei < extracted.length; ei++) cleanItems.push(extracted[ei]);
+                }
+              }
+              if (!cleanItems.length && Array.isArray(hd.history_list)) {
+                for (var hi = 0; hi < hd.history_list.length; hi++) {
+                  var hrec = hd.history_list[hi];
+                  var hrid = String((hrec && (hrec.history_record_id || hrec.record_id || hrec.id)) || '');
+                  if (hrid && jt.historyIds.indexOf(hrid) !== -1) {
+                    var ext2 = extractJimengRecordImages(hrec);
+                    for (var e2 = 0; e2 < ext2.length; e2++) cleanItems.push(ext2[e2]);
+                  }
+                }
+              }
+              for (var ci = 0; ci < cleanItems.length; ci++) {
+                var cItem = cleanItems[ci];
+                var targetIdx = -1;
+                if (cItem.itemId) {
+                  for (var ti = 0; ti < jt.images.length; ti++) {
+                    if (jt.images[ti] && jt.images[ti].itemId === cItem.itemId) { targetIdx = ti; break; }
+                  }
+                }
+                if (targetIdx === -1 && cItem.imageUri) {
+                  for (var ui = 0; ui < jt.images.length; ui++) {
+                    if (jt.images[ui] && jt.images[ui].imageUri === cItem.imageUri) { targetIdx = ui; break; }
+                  }
+                }
+                if (targetIdx === -1 && ci < jt.images.length) targetIdx = ci;
+                if (targetIdx >= 0) recordClean(targetIdx, cItem.rawUrl || cItem.url);
+              }
+            }
+          }
+        } catch (e) {}
+      }
+      // 2) 通过即梦画布只读接口 /lv/v1/editor/image/batch_get_url 按 image_uri 取无水印 TOS 原图 full_url
+      var uriToIdxs = {};
+      var uris = [];
+      for (var ii = 0; ii < jt.images.length; ii++) {
+        var uri = jt.images[ii] && jt.images[ii].imageUri;
+        if (!uri) continue;
+        if (!uriToIdxs[uri]) {
+          uriToIdxs[uri] = [];
+          uris.push(uri);
+        }
+        uriToIdxs[uri].push(ii);
+      }
+      if (uris.length) {
+        try {
+          var bResp = await fetchWithTimeout('/lv/v1/editor/image/batch_get_url', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'pf': '7',
+              'appvr': '5.8.0'
+            },
+            body: JSON.stringify({
+              uri_info: uris.map(function (u) { return { biz: 'editor', uri: u }; })
+            })
+          }, 3000);
+          if (bResp && bResp.ok) {
+            var bBody = await bResp.json().catch(function () { return null; });
+            var okStatus = bBody && (!bBody.BaseResp || Number(bBody.BaseResp.StatusCode) === 0);
+            if (okStatus && Array.isArray(bBody.data)) {
+              for (var bi = 0; bi < bBody.data.length; bi++) {
+                var row = bBody.data[bi];
+                if (!row || !row.uri || !row.full_url) continue;
+                var idxs = uriToIdxs[row.uri] || [];
+                for (var ri = 0; ri < idxs.length; ri++) {
+                  recordClean(idxs[ri], row.full_url);
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    } finally {
+      jimengResolvingClean = false;
+    }
+    return JSON.stringify({ byUrl: byUrl, byIndex: byIndex });
+  };
   function beginGeneration() {
     if (!taskNumber) return null;
     pendingGeneration++;
@@ -52,10 +434,10 @@
     window.fetch = new Proxy(origFetch, {apply: function (target, receiver, args) {
       var input = args[0];
       var url = (typeof input === 'string') ? input : (input && input.url) || '';
-      var requestTask = taskNumber, relevant = generationURL(url), ticket = relevant ? beginGeneration() : null, p;
+      var requestTask = taskNumber, isJimengAPI = jimengAPIURL(url), relevant = generationURL(url), ticket = relevant ? beginGeneration() : null, p;
       try { p = Reflect.apply(target, receiver, args); } catch (e) { finishGeneration(ticket); throw e; }
-      if (relevant) {
-        // 流式响应：读取文本里出现的图片 URL
+      if (relevant || isJimengAPI) {
+        // 流式响应：读取文本里出现的图片 URL，即梦额外解析 generate / get_history_by_ids JSON
         p.then(function (resp) {
           try {
             var ct = resp.headers.get('content-type') || '';
@@ -63,9 +445,15 @@
               var clone = resp.clone();
               clone.text().then(function (txt) {
                 if (requestTask !== taskNumber) return;
-                var re = /https?:\/\/[^\s"'\\]+?(?:\.(?:png|jpe?g|webp)(?:\?[^\s"'\\]*)?|tosv[^"'\\]*|object_(?:basic|image)[^\s"'\\]*)/gi;
-                var m;
-                while ((m = re.exec(txt))) window.__tulaiAddResult(m[0], 'stream');
+                if (isJimengAPI) {
+                  observeJimengAPI(url, txt, requestTask);
+                }
+                observeDoubaoStream(url, txt, requestTask);
+                if (relevant) {
+                  var re = /https?:\/\/[^\s"'\\]+?(?:\.(?:png|jpe?g|webp)(?:\?[^\s"'\\]*)?|tosv[^"'\\]*|object_(?:basic|image)[^\s"'\\]*)/gi;
+                  var m;
+                  while ((m = re.exec(txt))) window.__tulaiAddResult(m[0], 'stream');
+                }
               }).catch(function () {}).finally(function () { finishGeneration(ticket); });
               return resp;
             }
@@ -112,6 +500,7 @@
           }
         } else if (/json|text/i.test(mime)) {
           var txt = typeof xhr.responseText === 'string' ? xhr.responseText : '';
+          if (jimengAPIURL(url)) observeJimengAPI(url, txt, requestTask);
           var re = /https?:\/\/[^\s"'\\]+?(?:\.(?:png|jpe?g|webp)(?:\?[^\s"'\\]*)?|tosv[^"'\\]*|object_(?:basic|image)[^\s"'\\]*)/gi;
           var m;
           while ((m = re.exec(txt))) window.__tulaiAddResult(m[0], 'xhr');
@@ -332,6 +721,11 @@
     if (!img || !img.closest) return false;
     if (img.closest('nav') || img.closest('header') || img.closest('svg')) return false;
     var host = pageHost();
+    if (jimengPage()) {
+      if (img.closest('[data-testid="dreamina.generator"],[data-content-generator-references="true"],aside,footer,[class*="sidebar"],[class*="navigation"],[class*="info-card-"],[class*="guide-"],[class*="banner"],[class*="reference-"],[data-main-frame-2026-avatar-action],[class*="avatar-"],[class*="prompt-"]')) return false;
+      if (img.closest('button[aria-label*="下载"],button[aria-label*="收藏"],button[aria-label*="分享"],button[aria-label*="删除"]')) return false;
+      return true;
+    }
     if (geminiPage()) {
       if (img.closest('discovery-images-page,.zero-state-container,modular-zero-state,zero-state-block-picker,zero-state-banners,.zero-state-suggestion-card,image-creation-zero-state')) return false;
       if (img.closest('user-query,[data-test-id="user-query"],.user-query-container,user-query-file-carousel,user-query-file-preview')) return false;
@@ -428,6 +822,94 @@
   function geminiPage() {
     var host = pageHost();
     return /(^|\.)gemini\.google\.com$/.test(host);
+  }
+  function jimengPage() {
+    var host = pageHost();
+    return /(^|\.)jimeng\.jianying\.com$/.test(host);
+  }
+  function jimengLiveImages() {
+    var jt = jimengTurn;
+    var expect = Number(window.__tulaiJimengExpectedCount || 0) || 0;
+    var busy = composerStopping();
+    if (!busy) {
+      var submitBtns = document.querySelectorAll('button[data-testid="dreamina.generator.submit"]');
+      for (var si = 0; si < submitBtns.length; si++) {
+        var sb = submitBtns[si];
+        if (qwenIntlElVisible(sb) && (/停止/.test(labelOf(sb)) || sb.getAttribute('aria-busy') === 'true')) {
+          busy = true;
+          break;
+        }
+      }
+    }
+    if (!busy && jt && (jt.status === 20 || jt.status === 42 || jt.status === 45)) {
+      busy = true;
+    }
+    if (!busy && (!jt || !jt.finished)) {
+      var loaders = document.querySelectorAll('[aria-busy="true"],[role="progressbar"],[class*="generating"],[class*="progress-bar"]');
+      for (var li = 0; li < loaders.length; li++) {
+        var ld = loaders[li];
+        if (ld.closest && ld.closest('[data-testid="dreamina.generator"]')) continue;
+        if (qwenIntlElVisible(ld)) { busy = true; break; }
+      }
+    }
+    if (jt && jt.failed && !jt.images.length) {
+      return {
+        busy: false,
+        done: false,
+        expect: expect,
+        bar: false,
+        replies: 1,
+        reason: 'error-reply',
+        fault: jt.failMsg || '即梦生成失败',
+        here: window.__tulaiConversationKey(location.href),
+        images: []
+      };
+    }
+    var images = [];
+    var seen = {};
+    if (jt && jt.images && jt.images.length > 0) {
+      for (var ai = 0; ai < jt.images.length; ai++) {
+        var item = jt.images[ai];
+        if (!item || !item.url || seen[item.url]) continue;
+        seen[item.url] = true;
+        images.push({ url: item.url, rawUrl: item.rawUrl || '', src: item.src || 'net', w: item.w || 0, h: item.h || 0 });
+      }
+    }
+    if (!images.length || !(jt && jt.finished)) {
+      var domImgs = [];
+      var domSeen = {};
+      Array.prototype.forEach.call(document.images || document.querySelectorAll('img'), function (img) {
+        if (!inResult(img) || existingImages.has(img) || isBaselineImage(img)) return;
+        if (!realImg(img)) return;
+        var nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+        var box = img.getBoundingClientRect ? img.getBoundingClientRect() : { width: 0, height: 0 };
+        // 排除历史记录标题行里与提示词并排的小尺寸参考缩略图（通常 < 96px）
+        if ((box.width > 0 && box.height > 0 && (box.width < 100 || box.height < 100)) && !(nw >= 512 && nh >= 512)) return;
+        var src = bestURL(img) || img.currentSrc || img.src || '';
+        if (!src || junkURL(src) || baselineURLs.has(src) || domSeen[src]) return;
+        domSeen[src] = true;
+        domImgs.push({ url: src, rawUrl: '', src: 'dom', w: nw, h: nh });
+      });
+      if (!images.length) images = domImgs;
+    }
+    var apiDone = !!(jt && jt.finished && jt.images && jt.images.length > 0);
+    var done = apiDone ? !busy : (!busy && images.length > 0 && (expect === 0 || images.length >= expect));
+    var reason = 'no-reply';
+    if (busy) reason = 'generating';
+    else if (!images.length) reason = (jt && jt.submitted) ? 'no-new-image' : 'no-reply';
+    else if (!done) reason = 'unfinished';
+    else reason = 'images-ready';
+    return {
+      busy: busy,
+      done: done,
+      expect: expect,
+      bar: apiDone,
+      replies: (jt && jt.submitted) || images.length ? 1 : 0,
+      reason: reason,
+      fault: '',
+      here: window.__tulaiConversationKey(location.href),
+      images: images
+    };
   }
   function geminiNoise(url) {
     var v = String(url || '');
@@ -840,6 +1322,7 @@
   }
   // 豆包服务端偶发返回纯文字报错（「出了点问题，请稍后重试。」），不早停会死等到 3 分钟超时。
   var doubaoFaultPattern = /出了点问题|请求异常|网络连接|网络异常|服务异常|服务繁忙|系统繁忙|出错了|生成失败|图片生成失败|暂时无法生成|请稍后重试|请重试/;
+  var doubaoCannotDrawPattern = /(?:目前|现在|暂时)?(?:没(?:有)?办法|无法|不能)(?:直接)?(?:为您|为你)?(?:生成|绘制|重绘|制作|输出)(?:[、，,或和/]?(?:生成|绘制|重绘|制作|输出)){0,3}(?:图片|图像)/;
   function doubaoFault(root) {
     if (!root || imageSlots(root).length > 0) return '';
     var text = String(root.innerText || root.textContent || '').replace(/\s+/g, ' ').trim();
@@ -847,6 +1330,26 @@
     if (window.TULAIRefuse && window.TULAIRefuse.match(text)) return '';
     if (/额度|次数已用|次数用完|免费次数|已达上限/.test(text)) return '';
     return doubaoFaultPattern.test(text) ? text : '';
+  }
+  function doubaoTextOnlySummary(nodes, ignoreRefusal) {
+    var text = '';
+    var hasCode = false;
+    for (var i = 0; i < nodes.length; i++) {
+      var root = nodes[i];
+      if (!root || imageSlots(root).length > 0) return null;
+      var part = String(root.innerText || root.textContent || '').replace(/\s+/g, ' ').trim();
+      if (part) text = text ? (text + ' ' + part) : part;
+      if (root.querySelector && root.querySelector('pre,code,[data-testid*="code"],[class*="code-block"]')) hasCode = true;
+    }
+    if (!text && !hasCode) return null;
+    if (!ignoreRefusal && text && window.TULAIRefuse && window.TULAIRefuse.match(text)) return null;
+    if (text && /额度|次数已用|次数用完|免费次数|已达上限/.test(text)) return null;
+    return {
+      text: (text || '已生成代码').slice(0, 120),
+      hasCode: hasCode,
+      cannotDraw: doubaoCannotDrawPattern.test(text),
+      length: text.length
+    };
   }
   function gridOf(img) {
     var card = img.closest && img.closest('[id^="card_card_ai_generate_image_"]');
@@ -928,6 +1431,7 @@
   // 没有任何 data-finished 时，文字 data-streaming=false 或重新生成/复制也算。
   // 调用方再看地址和 naturalWidth/naturalHeight：像素已够大就只再确认一拍，否则大约 3 秒。
   window.__tulaiLiveImages = function () {
+    if (jimengPage()) return jimengLiveImages();
     if (geminiPage()) return geminiLiveImages();
     if (qwenIntlPage()) return qwenIntlLiveImages();
     if (qwenPage()) return qwenLiveImages();
@@ -967,13 +1471,35 @@
     });
     // 千问生成卡没有 data-finished。灰块没了、实图还在，这一轮就停了。
     if (qwenPage() && !busy && images.length) finished = true;
+    var doubaoHost = /(^|\.)doubao\.com$/.test(pageHost());
+    var freshReplies = scoped ? replies : replies.filter(function (root) { return !baselineReplies.has(root); });
     var fault = '';
+    var routePsm = '';
+    var textOnly = null;
+    var degraded = false;
     if (!busy && finished && !images.length) {
-      replies.forEach(function (root) { if (!fault) fault = doubaoFault(root); });
+      if (doubaoHost && pendingGeneration === 0 && freshReplies.length > 0 && doubaoRoute && doubaoRoute.psm === 'flow.agent.shell' && !doubaoRoute.sawCreation) {
+        var degradedSummary = doubaoTextOnlySummary(freshReplies, true);
+        if (degradedSummary) {
+          degraded = true;
+          routePsm = doubaoRoute.psm;
+          fault = degradedSummary.text;
+          textOnly = degradedSummary;
+        }
+      }
+      if (!degraded) {
+        replies.forEach(function (root) { if (!fault) fault = doubaoFault(root); });
+        if (doubaoHost && !fault && pendingGeneration === 0 && freshReplies.length > 0) {
+          textOnly = doubaoTextOnlySummary(freshReplies, false);
+          if (textOnly) fault = textOnly.text;
+        }
+      }
     }
     var reason = 'no-reply';
     if (!replies.length && !images.length) reason = 'no-reply';
-    else if (fault) reason = 'error-reply';
+    else if (degraded) reason = 'degraded-reply';
+    else if (fault && !textOnly) reason = 'error-reply';
+    else if (textOnly) reason = 'text-only';
     else if (!images.length) reason = 'no-new-image';
     else if (busy) reason = 'generating';
     else if (!finished) reason = 'unfinished';
@@ -986,13 +1512,21 @@
       replies: replies.length,
       reason: reason,
       fault: fault,
+      routePsm: routePsm,
+      cannotDraw: !!(textOnly && textOnly.cannotDraw),
+      hasCode: !!(textOnly && textOnly.hasCode),
+      textLen: textOnly ? textOnly.length : 0,
       images: images,
     };
   };
-  // /chat/<id>、/c/<id>、/app/<id> 是已经打开的对话。/chat、/chat/、/、/c/new-chat、/app、/images 才是新对话。
+  // /chat/<id>、/c/<id>、/app/<id>、即梦 ?workspace=<id> 是已经打开的对话。
   window.__tulaiConversationKey = function (href) {
-    var path = '';
-    try { path = new URL(String(href || ''), location.href).pathname; } catch (e) { return ''; }
+    var u;
+    try { u = new URL(String(href || ''), location.href); } catch (e) { return ''; }
+    if (/(^|\.)jimeng\.jianying\.com$/i.test(u.hostname)) {
+      return u.searchParams.get('workspace') || '';
+    }
+    var path = u.pathname;
     var parts = path.split('/').filter(Boolean);
     var i = parts.indexOf('chat');
     if (i >= 0 && parts[i + 1]) return parts[i + 1];
@@ -1006,6 +1540,8 @@
     for (var node = el, i = 0; node && i < 8; i++, node = node.parentElement) {
       var cls = String((node.className && node.className.baseVal) || node.className || '');
       if (/(^|\s)invisible(\s|$)/.test(cls)) return true;
+      if (/prompt-editor-sizer/i.test(cls)) return true;
+      if (node.getAttribute && (node.getAttribute('aria-hidden') === 'true' || node.getAttribute('data-generator-preview-ignore') === 'true')) return true;
       try {
         if (typeof getComputedStyle === 'function') {
           var st = getComputedStyle(node);
@@ -1022,9 +1558,10 @@
     if (hiddenComposerAncestor(el)) return false;
     var box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
     if (box.width > 5 && box.height > 5) return true;
-    // 窗口在屏幕外时布局盒可以是 0。Slate 输入条、豆包输入框和 Gemini Quill 输入框仍然算。
+    // 窗口在屏幕外时布局盒可以是 0。Slate 输入条、豆包输入框、即梦提示词输入框和 Gemini Quill 输入框仍然算。
     var mark = el.getAttribute && (el.getAttribute('data-slate-editor') || el.getAttribute('data-testid') || '');
     if (mark === 'true' || mark === 'chat_input_input') return true;
+    if (el.getAttribute && el.getAttribute('aria-label') === '提示词' && el.closest && el.closest('[data-testid="dreamina.generator"]')) return true;
     return !!(el.classList && el.classList.contains('ql-editor') && el.closest && el.closest('rich-textarea'));
   }
   // 占位「向千问提问」写在 contenteditable=false 里。innerText 会把它当成没发出去的草稿。
@@ -1051,6 +1588,12 @@
     return out.replace(/\uFEFF/g, '').trim();
   }
   function composerNode() {
+    if (jimengPage()) {
+      var jNodes = document.querySelectorAll('[data-testid="dreamina.generator"] [role="textbox"][aria-label="提示词"][contenteditable="true"],[data-testid="dreamina.generator"] [contenteditable="true"]');
+      for (var ji = jNodes.length - 1; ji >= 0; ji--) {
+        if (composerBox(jNodes[ji])) return jNodes[ji];
+      }
+    }
     if (geminiPage()) {
       var rich = document.querySelectorAll('rich-textarea .ql-editor[contenteditable="true"],rich-textarea [contenteditable="true"]');
       for (var r = rich.length - 1; r >= 0; r--) {
@@ -1062,6 +1605,9 @@
       if (composerBox(nodes[i])) return nodes[i];
     }
     return null;
+  }
+  function jimengReferenceCount() {
+    return document.querySelectorAll('[data-content-generator-references="true"] [class*="reference-item-"]').length;
   }
   // 能打字的新对话：文档完成、没有上一轮问答、输入框是空的。
   // 千问首页壳会把地址留在 /chat/<id> 上，正文仍是「你好，我是千问」。没有问答卡就能打字。
@@ -1076,12 +1622,16 @@
     var qwen = qwenPage();
     var qwenIntl = qwenIntlPage();
     var gemini = geminiPage();
+    var jimeng = jimengPage();
     var why = [];
     if (!comp) why.push('no-composer');
     // 豆包的长连接让 readyState 一直停在 interactive。输入框已在、对话是空的，就能打字。
     if (!comp && document.readyState !== 'complete') why.push('loading');
     if (chars) why.push('draft');
-    if (gemini) {
+    if (jimeng) {
+      if (jimengReferenceCount() > 0) why.push('files');
+      if (String(location.pathname || '').indexOf('/ai-tool/generate') === -1) why.push('url');
+    } else if (gemini) {
       var gemMsgs = document.querySelectorAll('model-response,[data-test-id="model-response"],user-query,[data-test-id="user-query"]').length;
       var gemFiles = document.querySelectorAll('uploader-file-preview,uploader-file-preview-container img,file-preview-container img').length;
       if (gemMsgs) why.push('replies');
@@ -1108,6 +1658,18 @@
     var id = window.__tulaiConversationKey(location.href);
     var qwen = qwenPage();
     var qwenIntl = qwenIntlPage();
+    if (jimengPage()) {
+      var onGenPage = String(location.pathname || '').indexOf('/ai-tool/generate') !== -1;
+      var jDirty = jimengReferenceCount() > 0 || composerText(composerNode()).length > 0;
+      if (onGenPage && !id && !jDirty && composerNode()) return 'ready';
+      var jUrl = 'https://jimeng.jianying.com/ai-tool/generate/?type=image';
+      if (onGenPage && !id) {
+        try { location.reload(); } catch (e) {}
+        return 'reload';
+      }
+      location.assign(jUrl);
+      return 'url';
+    }
     if (geminiPage()) {
       var gemDirty = document.querySelectorAll('model-response,[data-test-id="model-response"],user-query,[data-test-id="user-query"],uploader-file-preview,uploader-file-preview-container img,file-preview-container img').length > 0 || composerText(composerNode()).length > 0;
       if (!id && !gemDirty && composerNode()) return 'ready';
@@ -1165,7 +1727,9 @@
   window.__tulaiMarkTask = function () {
     doubaoTurn = null;
     window.__tulaiDoubaoTurn = null;
+    resetDoubaoRoute();
     taskNumber++;
+    resetJimengTurn();
     if (window.__tulaiDoubaoRaw) window.__tulaiDoubaoRaw.clear();
     pendingGeneration = 0;
     window.__tulaiMark = Date.now();

@@ -6,7 +6,7 @@ tulai 的服务商网页账号与网页下载专用环境统一使用项目管�
 
 - **支持平台**：Windows x64（`windows/amd64`）、macOS Apple Silicon（`darwin/arm64`）与 Linux x64（`linux/amd64`）。
 - **未提供预编译内核的平台**：上游未发布 macOS Intel（`darwin/amd64`）、Windows ARM64（`windows/arm64`）与 Linux ARM64（`linux/arm64`）预编译包；Windows ARM64 设备需通过 x64 仿真运行 x64 版应用。
-- 首次安装使用 `../realbrowser/browserkernel/pinned.go` 的版本与 SHA-256。打开「设置 → 浏览器与网络」会检查适配当前平台的稳定版，可直接更新。开启「自动更新已安装的浏览器内核」后，桌面端在启动及后续每六小时尝试更新。图来会跳过已知存在 Canvas 崩溃问题的 `150.0.7871.186`。
+- 首次安装使用 Go 模块 `fingerprintkernel` 内置的版本与 SHA-256。打开「设置 → 浏览器与网络」会检查适配当前平台的稳定版，可直接更新。开启「自动更新已安装的浏览器内核」后，桌面端在启动及后续每六小时尝试更新。图来会跳过已知存在 Canvas 崩溃问题的 `150.0.7871.186`。
 - 共享模块校验发行包的 SHA-256，安装到 `kernels/versions/` 新目录，成功后原子切换 `kernels/active.json`。后续启动读取新版本，现有进程继续使用原目录。
 
 ## 安装、镜像与内置运行环境
@@ -17,7 +17,7 @@ tulai 的服务商网页账号与网页下载专用环境统一使用项目管�
 - 首次内核下载自动在多个 GitHub 加速镜像与直连源之间测速选优（支持 HTTP Range 的源采用多路并发分段下载与容错续传），并始终校验固定 SHA-256：镜像仅用于加速、无法篡改。
   - `TULAI_FINGERPRINT_MIRROR`：指定自建镜像前缀（ghproxy 形式：base + `/` + 原 URL），设为 `off` 关闭镜像。
   - `TULAI_FINGERPRINT_ARCHIVE`：测试时指定本机已校验归档路径，跳过联网下载。
-- 多个应用进程同时安装运行环境时使用跨进程锁，等待前一项安装完成并复用结果。CI 按 `../realbrowser/browserkernel/pinned.go`、`install.go`、`fingerprint.go` 与 `package-lock.json` 缓存 `runtime/fingerprint/` 目录。
+- 多个应用进程同时安装运行环境时使用跨进程锁，等待前一项安装完成并复用结果。CI 按 `go.mod`、`internal/fingerprint/install.go`、`internal/fingerprint/fingerprint.go` 与 `internal/fingerprint/driver/package-lock.json` 缓存 `runtime/fingerprint/` 目录。
 
 ## 目录结构、指纹连续性与隔离世界桥
 
@@ -26,9 +26,9 @@ tulai 的服务商网页账号与网页下载专用环境统一使用项目管�
 - 在账号操作区点「指纹设置」可调整语言、时区、窗口宽高和网页外观。设置保存到该账号的 `.browserkernel.json`，下次打开时生效。
 - **下载专用环境**：`BrowserData/DownloadBrowser/`
 - **指纹持久化与冲突检查**：
-  - 每个账号（及 `DownloadBrowser`）在自身资料目录持久化 `.tulai-fingerprint.json`，保存唯一的全 31 位（含奇偶数）`--fingerprint` 种子、宿主平台、真实操作系统版本 `--fingerprint-platform-version`、`Chrome` 品牌、合理的 `hardwareConcurrency` 与动态随机化的桌面屏幕/窗口尺寸及无头窗口位置。
+  - 每个账号（及 `DownloadBrowser`）在首次启动时由共享指纹核心的 `profile.EnsureProfile` 生成并在自身资料目录持久化 `.browserkernel.json`，保存唯一的全 31 位（含奇偶数）`--fingerprint` 种子、宿主平台、真实操作系统版本 `--fingerprint-platform-version`、`Chrome` 品牌、合理的 `hardwareConcurrency` 与动态随机化的桌面屏幕/窗口尺寸及无头窗口位置；同时与「指纹设置」中的语言、时区、窗口宽高和网页外观共用同一配置文件。旧版资料目录若已有 `.tulai-fingerprint.json`，首次打开时自动无缝迁移进 `.browserkernel.json`。
   - 启动参数不带 `--disable-blink-features=AutomationControlled`：内核的 `009-webdriver` 补丁已经去掉了唯一读取该特性的代码（`Navigator::webdriver()`），页面里的 `navigator.webdriver` 恒为 `false`；而这个开关会让每个有头窗口的首个标签页显示「不受支持的命令行标记」横幅，并挤掉该标签页 52px 的视口高度（`outerHeight - innerHeight` 从 121 变成 173）。账号窗口与下载专用环境驱动的正是这个标签页。同时忽略 Playwright 默认的 `--enable-automation`、`--hide-scrollbars` 与 `--force-color-profile=srgb`（sRGB 配置会把广色域屏幕压平，真实窗口不会如此）；无头模式下自动附带 `--screen-info` 与 `--window-position`，避免暴露默认 `800×600` 虚拟屏幕与固定窗口坐标，显示器参数取自同目录下最近一次有头会话的记录（见下文「指纹自洽与反检测」）。
-  - 新账号（及 `DownloadBrowser`）生成身份时通过跨进程生成锁与 `collisionRoots` 双向扫描 `BrowserData/Fingerprint` 与 `DownloadBrowser`，严格避免并发竞态、种子与视口碰撞，并均衡分散内核派生的 GPU 槽位（`seed % gpuMod`）、内存档位（`seed % 3`）、补丁版本（`seed % 4`）、与 GPU 匹配的 CPU 核数/系统版本（含 macOS Apple M4/M2 硬件版本一致性、内存档位与核数联动，以及 Windows 10/11 任务栏高度一致性）及屏幕预设；`.tulai-fingerprint.json` 损坏时直接报错，不静默换号，并向后兼容旧版 `.tulai-fingerprint.json`。
+  - 新账号（及 `DownloadBrowser`）生成身份时由 `profile.EnsureProfile` 通过跨进程文件锁与 `CollisionRoots` 双向扫描 `BrowserData/Fingerprint` 与 `DownloadBrowser`（兼容未迁移的旧版 `.tulai-fingerprint.json`），严格避免并发竞态、种子与视口碰撞，并均衡分散内核派生的 GPU 槽位（`seed % gpuMod`）、内存档位（`seed % 3`）、补丁版本（`seed % 4`）、与 GPU 匹配的 CPU 核数/系统版本（含 macOS Apple M4/M2 硬件版本一致性、内存档位与核数联动，以及 Windows 10/11 任务栏高度一致性）及屏幕预设；`.browserkernel.json` 或旧版 `.tulai-fingerprint.json` 损坏时直接报错，不静默换号。
 - **私有 CDP 隔离世界页面桥与无痕执行**：
   - 上游 `001-disable-runtime.enable.patch` 为避免 `Runtime.enable` 检测而禁用了常规 `Runtime.addBinding` / `Runtime.consoleAPICalled`，导致标准 Playwright `exposeBinding` 在导航后失效。
   - `internal/fingerprint/driver/bridge.mjs` 通过独立隔离世界（`Page.addScriptToEvaluateOnNewDocument` + `Runtime.executionContextCreated` 按需绑定）与 `scopeBootstrap`（文档启动前捕获原生 `EventTarget.prototype.dispatchEvent`、`CustomEvent` 及核心内建原语，免疫原型篡改与 `Object.prototype` 陷阱）转发 `tulaiBridge`；主框架运行句柄由隔离世界触发移交并经私有 CDP `Runtime.callFunctionOn` 执行（不启用 `CommandLineAPI` / `getEventListeners`），子框架与跨域 OOPIF 探测走真实 `Page.createIsolatedWorld` 隔离世界，避免在调用栈暴露 Playwright `UtilityScript` 或触发页面钩子监控的 `dispatchEvent`/`CustomEvent`，在跨源导航与严格 CSP 下稳定工作，同时不在页面主世界 `window`（含 Symbol）或 DOM 暴露 `tulai` 标识。
@@ -75,8 +75,8 @@ tulai 的服务商网页账号与网页下载专用环境统一使用项目管�
 
 ```sh
 npm ci --prefix internal/fingerprint/driver --ignore-scripts --omit=dev --no-audit --no-fund
-node --test ../realbrowser/browserkernel/downloader/*.test.mjs internal/fingerprint/driver/*.test.mjs
-go -C ../realbrowser/browserkernel test -race ./...
+node --test internal/fingerprint/driver/*.test.mjs
+go test -race github.com/xxww0098/realbrowser/fingerprintkernel/...
 go test -short -race ./internal/fingerprint ./internal/browser ./internal/cdp ./internal/captcha ./internal/store ./internal/strategy ./internal/download ./internal/tasks
 ```
 

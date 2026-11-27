@@ -1,6 +1,10 @@
 package strategy
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/xxww0098/tulai/internal/cdp"
+)
 
 func TestOriginalImageURLDropsThumbTemplate(t *testing.T) {
 	thumb := "https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/abc.jpeg~tplv-a9rns2rl98-cthumb-lwm3.png?x-expires=1&x-signature=abc"
@@ -190,5 +194,59 @@ func TestGeminiFactoryAndURLHelpers(t *testing.T) {
 	}
 	if !isReplyQuotaFault("你已达到图片生成上限，请明天再试") {
 		t.Fatal("expected Gemini CN quota reply to be classified as quota fault")
+	}
+}
+
+func TestJimengFactoryAndLimits(t *testing.T) {
+	strat := Factory("即梦")
+	if strat == nil {
+		t.Fatal("Factory(\"即梦\") returned nil")
+	}
+	jm, ok := strat.(*Jimeng)
+	if !ok {
+		t.Fatalf("unexpected strategy type: %T", strat)
+	}
+	if jm.Platform() != "即梦" {
+		t.Fatalf("Platform() = %q, want 即梦", jm.Platform())
+	}
+	if jm.HomeURL() != "https://jimeng.jianying.com/ai-tool/generate/?type=image" {
+		t.Fatalf("HomeURL() = %q", jm.HomeURL())
+	}
+	if jm.desiredCount() != JimengDefaultCount || jm.desiredRatio() != JimengDefaultRatio {
+		t.Fatalf("defaults mismatch: count=%d ratio=%q", jm.desiredCount(), jm.desiredRatio())
+	}
+	jm.SetImageCount(0)
+	if jm.desiredCount() != 1 {
+		t.Fatalf("SetImageCount(0) -> %d, want 1", jm.desiredCount())
+	}
+	jm.SetImageCount(9)
+	if jm.desiredCount() != JimengMaxUploadImages {
+		t.Fatalf("SetImageCount(9) -> %d, want %d", jm.desiredCount(), JimengMaxUploadImages)
+	}
+	jm.SetImageCount(4)
+	if jm.desiredCount() != 4 {
+		t.Fatalf("SetImageCount(4) -> %d, want 4", jm.desiredCount())
+	}
+	tooMany := []string{"1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png"}
+	if err := jm.UploadFiles(nil, tooMany); err == nil {
+		t.Fatal("UploadFiles with 7 files must be rejected (>6 max)")
+	}
+	if _, ok := strat.(interface {
+		FetchRawResultBytes(*cdp.Session, string) ([]byte, error)
+	}); !ok {
+		t.Fatal("Jimeng must implement FetchRawResultBytes")
+	}
+
+	// Signed ~tplv URL keeps its exact signature instead of trying a guaranteed-403 stripped URL first.
+	signed := "https://p26-dreamina-sign.byteimg.com/tos-cn-i-tb4s082cfz/abc.png~tplv-tb4s082cfz-aigc_resize:2400:2400.webp?x-expires=1&x-signature=sig123"
+	gotSigned := jimengFetchCandidates(signed)
+	if len(gotSigned) != 1 || gotSigned[0] != signed {
+		t.Fatalf("jimengFetchCandidates(signed) = %v, want [%s]", gotSigned, signed)
+	}
+	// Unsigned URL with watermark query or ~tplv tries stripped original first then falls back.
+	unsigned := "https://p26-dreamina.byteimg.com/tos-cn-i-tb4s082cfz/abc.png~tplv-tb4s082cfz-resize:720:720.webp?watermark=1"
+	gotUnsigned := jimengFetchCandidates(unsigned)
+	if len(gotUnsigned) < 2 || gotUnsigned[0] != "https://p26-dreamina.byteimg.com/tos-cn-i-tb4s082cfz/abc.png" || gotUnsigned[len(gotUnsigned)-1] != unsigned {
+		t.Fatalf("jimengFetchCandidates(unsigned) = %v", gotUnsigned)
 	}
 }

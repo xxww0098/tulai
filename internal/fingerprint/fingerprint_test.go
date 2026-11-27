@@ -18,7 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	"github.com/xxww0098/realbrowser/fingerprintkernel/engine"
+	fpprofile "github.com/xxww0098/realbrowser/fingerprintkernel/profile"
 )
 
 func TestFingerprintPlatformSupportAndSafety(t *testing.T) {
@@ -66,14 +67,14 @@ func TestFingerprintZipExtractionAndSHA256(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
-	if err := browserkernel.VerifyFileSHA256(t.Context(), goodZip, hex.EncodeToString(sum[:])); err != nil {
+	if err := engine.VerifyFileSHA256(t.Context(), goodZip, hex.EncodeToString(sum[:])); err != nil {
 		t.Fatalf("valid sha256 rejected: %v", err)
 	}
-	if err := browserkernel.VerifyFileSHA256(t.Context(), goodZip, strings.Repeat("0", 64)); err == nil {
+	if err := engine.VerifyFileSHA256(t.Context(), goodZip, strings.Repeat("0", 64)); err == nil {
 		t.Fatal("mismatched sha256 accepted")
 	}
 	dest := filepath.Join(dir, "out")
-	if err := (browserkernel.PinnedBuild{File: "kernel.zip", RelExe: "chrome.exe"}).Unpack(t.Context(), goodZip, dest); err != nil {
+	if err := (engine.PinnedBuild{File: "kernel.zip", RelExe: "chrome.exe"}).Unpack(t.Context(), goodZip, dest); err != nil {
 		t.Fatalf("extract good zip: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dest, "chrome.exe"))
@@ -85,7 +86,7 @@ func TestFingerprintZipExtractionAndSHA256(t *testing.T) {
 	writeTestZip(t, evilZip, map[string]string{
 		"top/../../escaped.txt": "nope",
 	})
-	if err := (browserkernel.PinnedBuild{File: "kernel.zip", RelExe: "chrome.exe"}).Unpack(t.Context(), evilZip, filepath.Join(dir, "evil-out")); err == nil {
+	if err := (engine.PinnedBuild{File: "kernel.zip", RelExe: "chrome.exe"}).Unpack(t.Context(), evilZip, filepath.Join(dir, "evil-out")); err == nil {
 		t.Fatal("zip traversal accepted")
 	}
 }
@@ -159,7 +160,7 @@ func TestFingerprintTarXZExtractionAndSymlinkGuards(t *testing.T) {
 		{Name: "top/lib/link", Typeflag: tar.TypeSymlink, Linkname: "../chrome"},
 	}, map[string]string{"top/chrome": "elf-binary"})
 	dest := filepath.Join(t.TempDir(), "good")
-	if err := (browserkernel.PinnedBuild{File: "kernel.tar.xz", RelExe: "chrome"}).Unpack(t.Context(), good, dest); err != nil {
+	if err := (engine.PinnedBuild{File: "kernel.tar.xz", RelExe: "chrome"}).Unpack(t.Context(), good, dest); err != nil {
 		t.Fatalf("extract good tar.xz: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(dest, "lib", "link")); err != nil || string(got) != "elf-binary" {
@@ -185,7 +186,7 @@ func TestFingerprintTarXZExtractionAndSymlinkGuards(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := writeTarXZ(t, hdrs, map[string]string{"top/../../evil.txt": "x", "top/a": "x", "chrome": "x"})
-			if err := (browserkernel.PinnedBuild{File: "kernel.tar.xz", RelExe: "chrome"}).Unpack(t.Context(), bad, filepath.Join(t.TempDir(), "bad")); err == nil {
+			if err := (engine.PinnedBuild{File: "kernel.tar.xz", RelExe: "chrome"}).Unpack(t.Context(), bad, filepath.Join(t.TempDir(), "bad")); err == nil {
 				t.Fatalf("expected %s archive to be rejected", name)
 			}
 		})
@@ -365,15 +366,14 @@ func TestManagedFingerprintLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		idRaw, err := os.ReadFile(filepath.Join(profile, ".tulai-fingerprint.json"))
+		id, err := fpprofile.ReadProfile(profile)
 		if err != nil {
-			t.Fatalf("missing identity file: %v", err)
+			t.Fatalf("read persisted fingerprint profile: %v", err)
 		}
-		var id struct{ Seed int }
-		if err := json.Unmarshal(idRaw, &id); err != nil || id.Seed <= 0 {
-			t.Fatalf("bad identity json: %s (%v)", idRaw, err)
+		if id.Seed == 0 {
+			t.Fatalf("missing generated seed in .browserkernel.json: %+v", id)
 		}
-		return snap, id.Seed
+		return snap, int(id.Seed)
 	}
 
 	snapA1, seedA1 := runSession(profileA, 9981, "persisted-a")
@@ -429,17 +429,19 @@ func TestManagedFingerprintLifecycle(t *testing.T) {
 		t.Fatalf("two sibling macOS profiles failed to diversify WebGL GPU renderer: a=%q b=%q", snapA1.GLRenderer, snapB.GLRenderer)
 	}
 
-	// Corrupted persisted fingerprint identity must fail closed instead of silently regenerating.
-	corruptProfile := filepath.Join(profileRoot, "account-corrupt")
-	if err := os.MkdirAll(corruptProfile, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(corruptProfile, ".tulai-fingerprint.json"), []byte("{invalid"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if proc, err := Start(t.Context(), dir, Options{Headless: true, Profile: corruptProfile, DirectNetwork: true}, nil); err == nil {
-		proc.Close()
-		t.Fatal("corrupted .tulai-fingerprint.json was silently accepted")
+	// Corrupted persisted fingerprint identity (current or legacy) must fail closed instead of silently regenerating.
+	for _, filename := range []string{".browserkernel.json", ".tulai-fingerprint.json"} {
+		corruptProfile := filepath.Join(profileRoot, "account-corrupt-"+strings.TrimPrefix(filename, "."))
+		if err := os.MkdirAll(corruptProfile, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(corruptProfile, filename), []byte("{invalid"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if proc, err := Start(t.Context(), dir, Options{Headless: true, Profile: corruptProfile, DirectNetwork: true}, nil); err == nil {
+			proc.Close()
+			t.Fatalf("corrupted %s was silently accepted", filename)
+		}
 	}
 }
 

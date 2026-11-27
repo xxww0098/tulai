@@ -928,6 +928,11 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.ConfirmLogin(b4.ID)
+	b5, err := st.AddBrowser("即梦", "j1", filepath.Join(dir, "j1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.ConfirmLogin(b5.ID)
 
 	eng := tasks.NewEngine(st, browser.NewManager(), nil, dir)
 	defer eng.Shutdown()
@@ -936,7 +941,7 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 	defer SetTestApp(nil)
 
 	sh := getShellStateBridge()
-	if sh.Platform != "豆包" || len(sh.Platforms) != 4 {
+	if sh.Platform != "豆包" || len(sh.Platforms) != 5 {
 		t.Fatalf("unexpected shell platform state: %+v", sh)
 	}
 	if sh.Platforms[0].ID != "doubao" || sh.Platforms[0].Ready != 1 || sh.Platforms[0].Total != 1 {
@@ -951,6 +956,9 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 	if sh.Platforms[3].ID != "gemini" || sh.Platforms[3].Name != "Gemini" || sh.Platforms[3].Ready != 1 || sh.Platforms[3].Total != 1 {
 		t.Fatalf("unexpected gemini nav summary: %+v", sh.Platforms[3])
 	}
+	if sh.Platforms[4].ID != "jimeng" || sh.Platforms[4].Name != "即梦" || sh.Platforms[4].Ready != 1 || sh.Platforms[4].Total != 1 {
+		t.Fatalf("unexpected jimeng nav summary: %+v", sh.Platforms[4])
+	}
 	_, ch := a.subscribeEvents()
 	setPlatformSelectedBridge("千问", true)
 	sh2 := getShellStateBridge()
@@ -963,8 +971,8 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 		t.Fatalf("shell Platform after switch = %q, want 千问国际", sh3.Platform)
 	}
 	wb := getWorkbenchStateBridge()
-	if wb.Platform != "千问国际" || !wb.QwenIntl || wb.Qianwen || wb.Doubao || wb.Gemini {
-		t.Fatalf("unexpected workbench state for 千问国际: platform=%q doubao=%v qianwen=%v qwenIntl=%v gemini=%v", wb.Platform, wb.Doubao, wb.Qianwen, wb.QwenIntl, wb.Gemini)
+	if wb.Platform != "千问国际" || !wb.QwenIntl || wb.Qianwen || wb.Doubao || wb.Gemini || wb.Jimeng {
+		t.Fatalf("unexpected workbench state for 千问国际: platform=%q doubao=%v qianwen=%v qwenIntl=%v gemini=%v jimeng=%v", wb.Platform, wb.Doubao, wb.Qianwen, wb.QwenIntl, wb.Gemini, wb.Jimeng)
 	}
 	setPlatformSelectedBridge("Gemini", true)
 	sh4 := getShellStateBridge()
@@ -972,8 +980,17 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 		t.Fatalf("shell Platform after switch = %q, want Gemini", sh4.Platform)
 	}
 	wbGem := getWorkbenchStateBridge()
-	if wbGem.Platform != "Gemini" || !wbGem.Gemini || wbGem.QwenIntl || wbGem.Qianwen || wbGem.Doubao {
-		t.Fatalf("unexpected workbench state for Gemini: platform=%q doubao=%v qianwen=%v qwenIntl=%v gemini=%v", wbGem.Platform, wbGem.Doubao, wbGem.Qianwen, wbGem.QwenIntl, wbGem.Gemini)
+	if wbGem.Platform != "Gemini" || !wbGem.Gemini || wbGem.QwenIntl || wbGem.Qianwen || wbGem.Doubao || wbGem.Jimeng {
+		t.Fatalf("unexpected workbench state for Gemini: platform=%q doubao=%v qianwen=%v qwenIntl=%v gemini=%v jimeng=%v", wbGem.Platform, wbGem.Doubao, wbGem.Qianwen, wbGem.QwenIntl, wbGem.Gemini, wbGem.Jimeng)
+	}
+	setPlatformSelectedBridge("即梦", true)
+	sh5 := getShellStateBridge()
+	if sh5.Platform != "即梦" {
+		t.Fatalf("shell Platform after switch = %q, want 即梦", sh5.Platform)
+	}
+	wbJim := getWorkbenchStateBridge()
+	if wbJim.Platform != "即梦" || !wbJim.Jimeng || wbJim.Gemini || wbJim.QwenIntl || wbJim.Qianwen || wbJim.Doubao {
+		t.Fatalf("unexpected workbench state for 即梦: platform=%q doubao=%v qianwen=%v qwenIntl=%v gemini=%v jimeng=%v", wbJim.Platform, wbJim.Doubao, wbJim.Qianwen, wbJim.QwenIntl, wbJim.Gemini, wbJim.Jimeng)
 	}
 	var topics []string
 	for {

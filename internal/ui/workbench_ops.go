@@ -56,52 +56,75 @@ var washStyles = []washStylePreset{
 	{"复古版画", "使用版画式刻线、有限色彩和轻微复古纸感，呈现二维复古版画。"},
 }
 
-var outputRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
-var geminiOutputRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16"}
+var ratioFriendlySuffix = map[string]string{
+	"1:1":  "正方形",
+	"4:3":  "标准横",
+	"3:4":  "标准竖",
+	"16:9": "宽屏",
+	"9:16": "竖屏",
+	"3:2":  "相机横",
+	"2:3":  "海报竖",
+	"21:9": "超宽屏",
+	"4:5":  "社媒竖",
+	"5:4":  "画框横",
+}
 
 type outputPresetSpec struct {
-	label string
-	ratio string
-}
-
-var outputPresets = []outputPresetSpec{
-	{label: "原比例"},
-	{label: "1:1（正方形）", ratio: "1:1"},
-	{label: "4:3（标准横）", ratio: "4:3"},
-	{label: "3:4（标准竖）", ratio: "3:4"},
-	{label: "16:9（宽屏）", ratio: "16:9"},
-	{label: "9:16（竖屏）", ratio: "9:16"},
-	{label: "3:2（相机横）", ratio: "3:2"},
-	{label: "2:3（海报竖）", ratio: "2:3"},
-}
-
-var geminiOutputPresets = []outputPresetSpec{
-	{label: "原比例"},
-	{label: "1:1（正方形）", ratio: "1:1"},
-	{label: "4:3（标准横）", ratio: "4:3"},
-	{label: "3:4（标准竖）", ratio: "3:4"},
-	{label: "16:9（宽屏）", ratio: "16:9"},
-	{label: "9:16（竖屏）", ratio: "9:16"},
+	label  string
+	ratio  string
+	isAuto bool
 }
 
 type outputSizePrefs struct {
-	mode   string
-	preset string
-	ratio  string
+	mode       string
+	preset     string
+	ratio      string
+	resolution string
+}
+
+func outputRatioLabel(ratio string) string {
+	norm := store.CanonicalRatioToken(ratio)
+	if norm == "" {
+		return strings.TrimSpace(ratio)
+	}
+	if desc, ok := ratioFriendlySuffix[norm]; ok {
+		return norm + "（" + desc + "）"
+	}
+	return norm
+}
+
+func outputPresetsForCaps(caps store.ProviderOutputCaps) []outputPresetSpec {
+	out := make([]outputPresetSpec, 0, len(caps.Ratios)+1)
+	if caps.SupportsAuto {
+		lbl := strings.TrimSpace(caps.AutoLabel)
+		if lbl == "" {
+			lbl = "自动"
+		}
+		out = append(out, outputPresetSpec{label: lbl, ratio: "", isAuto: true})
+	}
+	for _, r := range caps.Ratios {
+		if norm := store.CanonicalRatioToken(r); norm != "" {
+			out = append(out, outputPresetSpec{label: outputRatioLabel(norm), ratio: norm})
+		}
+	}
+	return out
+}
+
+func outputPresetLabelsForCaps(caps store.ProviderOutputCaps) []string {
+	specs := outputPresetsForCaps(caps)
+	labels := make([]string, 0, len(specs))
+	for _, p := range specs {
+		labels = append(labels, p.label)
+	}
+	return labels
 }
 
 func outputRatiosFor(platform string) []string {
-	if platform == "Gemini" {
-		return geminiOutputRatios
-	}
-	return outputRatios
+	return slices.Clone(store.DefaultProviderOutputCaps(platform).Ratios)
 }
 
 func outputPresetsFor(platform string) []outputPresetSpec {
-	if platform == "Gemini" {
-		return geminiOutputPresets
-	}
-	return outputPresets
+	return outputPresetsForCaps(store.DefaultProviderOutputCaps(platform))
 }
 
 func outputPresetLabels() []string {
@@ -109,12 +132,61 @@ func outputPresetLabels() []string {
 }
 
 func outputPresetLabelsFor(platform string) []string {
-	specs := outputPresetsFor(platform)
-	labels := make([]string, 0, len(specs))
-	for _, p := range specs {
-		labels = append(labels, p.label)
+	return outputPresetLabelsForCaps(store.DefaultProviderOutputCaps(platform))
+}
+
+func normalizeRatioInCaps(caps store.ProviderOutputCaps, raw string) string {
+	want := store.CanonicalRatioToken(raw)
+	if want == "" {
+		return ""
 	}
-	return labels
+	for _, r := range caps.Ratios {
+		if store.CanonicalRatioToken(r) == want {
+			return want
+		}
+	}
+	return ""
+}
+
+func normalizeResolutionInCaps(caps store.ProviderOutputCaps, raw string) string {
+	want := store.CanonicalResolutionToken(raw)
+	if want == "" {
+		return ""
+	}
+	for _, r := range caps.Resolutions {
+		if strings.EqualFold(r, want) {
+			return r
+		}
+	}
+	return ""
+}
+
+func defaultResolutionInCaps(caps store.ProviderOutputCaps) string {
+	if len(caps.Resolutions) == 0 {
+		return ""
+	}
+	if def := normalizeResolutionInCaps(caps, caps.DefaultResolution); def != "" {
+		return def
+	}
+	return caps.Resolutions[0]
+}
+
+func isAutoLabelToken(caps store.ProviderOutputCaps, raw string) bool {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return false
+	}
+	if caps.AutoLabel != "" && strings.EqualFold(s, caps.AutoLabel) {
+		return true
+	}
+	if caps.AutoValue != "" && strings.EqualFold(s, caps.AutoValue) {
+		return true
+	}
+	switch strings.ToLower(s) {
+	case "original", "auto", "smart", "default", "原比例", "自动比例", "自动", "智能比例", "智能", "默认比例", "默认":
+		return true
+	}
+	return false
 }
 
 func washStyleLabels() []string {
@@ -150,21 +222,52 @@ func (a *App) saveWashStyle() {
 	a.store.Set("wash_style", a.washStyle)
 }
 
-func (a *App) outputPrefsFor(platform string) *outputSizePrefs {
+func (a *App) outputCapsFor(platform string) store.ProviderOutputCaps {
+	if !store.OutputCapsSupportedPlatform(platform) {
+		platform = "豆包"
+	}
+	if a == nil {
+		return store.DefaultProviderOutputCaps(platform)
+	}
+	if a.outputCaps == nil {
+		a.outputCaps = map[string]store.ProviderOutputCaps{}
+	}
+	cached, hasCached := a.outputCaps[platform]
+	if a.store != nil {
+		if stored, ok := a.store.GetOutputCaps(platform); ok {
+			if !hasCached || stored.SyncedAt > cached.SyncedAt {
+				a.outputCaps[platform] = stored
+				cached = stored
+				hasCached = true
+			}
+		}
+	}
+	if hasCached && len(cached.Ratios) > 0 {
+		return cached
+	}
+	return store.DefaultProviderOutputCaps(platform)
+}
+
+func (a *App) outputPrefsPtr(platform string) *outputSizePrefs {
 	switch platform {
 	case "千问":
-		a.qianwenOutput.ensureInit()
 		return &a.qianwenOutput
 	case "千问国际":
-		a.qwenIntlOutput.ensureInit()
 		return &a.qwenIntlOutput
 	case "Gemini":
-		a.geminiOutput.ensureInitFor("Gemini")
 		return &a.geminiOutput
+	case "即梦":
+		return &a.jimengOutput
 	default:
-		a.doubaoOutput.ensureInit()
 		return &a.doubaoOutput
 	}
+}
+
+func (a *App) outputPrefsFor(platform string) *outputSizePrefs {
+	caps := a.outputCapsFor(platform)
+	p := a.outputPrefsPtr(platform)
+	p.reconcileWithCaps(caps)
+	return p
 }
 
 func (a *App) activeOutputPrefs() *outputSizePrefs {
@@ -179,21 +282,63 @@ func outputStorePrefix(platform string) string {
 		return "qwen_intl_output_"
 	case "Gemini":
 		return "gemini_output_"
+	case "即梦":
+		return "jimeng_output_"
 	default:
 		return "doubao_output_"
 	}
 }
 
 func (p *outputSizePrefs) ensureInit() {
-	p.ensureInitFor("")
+	p.reconcileWithCaps(store.DefaultProviderOutputCaps("豆包"))
 }
 
 func (p *outputSizePrefs) ensureInitFor(platform string) {
-	if p.mode == "" {
-		p.mode = outputOriginal
+	p.reconcileWithCaps(store.DefaultProviderOutputCaps(platform))
+}
+
+func (p *outputSizePrefs) reconcileWithCaps(caps store.ProviderOutputCaps) {
+	if p.mode == outputRatio {
+		if picked := normalizeRatioInCaps(caps, p.ratio); picked != "" {
+			p.ratio = picked
+			p.preset = outputRatioLabel(picked)
+		} else {
+			p.mode = ""
+			p.ratio = ""
+			p.preset = ""
+		}
 	}
-	if p.preset == "" {
-		p.syncPresetFor(platform)
+	if p.mode != outputRatio {
+		if caps.SupportsAuto {
+			p.mode = outputOriginal
+			p.ratio = ""
+			if lbl := strings.TrimSpace(caps.AutoLabel); lbl != "" {
+				p.preset = lbl
+			} else {
+				p.preset = "自动"
+			}
+		} else {
+			fallback := normalizeRatioInCaps(caps, caps.DefaultRatio)
+			if fallback == "" && len(caps.Ratios) > 0 {
+				fallback = store.CanonicalRatioToken(caps.Ratios[0])
+			}
+			if fallback != "" {
+				p.mode = outputRatio
+				p.ratio = fallback
+				p.preset = outputRatioLabel(fallback)
+			} else {
+				p.mode = outputOriginal
+				p.ratio = ""
+				p.preset = outputOriginal
+			}
+		}
+	}
+	if len(caps.Resolutions) == 0 {
+		p.resolution = ""
+	} else if norm := normalizeResolutionInCaps(caps, p.resolution); norm != "" {
+		p.resolution = norm
+	} else {
+		p.resolution = defaultResolutionInCaps(caps)
 	}
 }
 
@@ -202,84 +347,85 @@ func normalizeOutputRatio(raw string) string {
 }
 
 func normalizeOutputRatioFor(platform, raw string) string {
-	norm := strings.TrimSpace(strings.ReplaceAll(raw, "：", ":"))
-	return pickStr(norm, "", outputRatiosFor(platform))
+	return normalizeRatioInCaps(store.DefaultProviderOutputCaps(platform), raw)
 }
 
-func loadPlatformOutputPrefs(s *store.Store, platform string) outputSizePrefs {
+func loadPlatformOutputPrefs(s *store.Store, platform string, caps store.ProviderOutputCaps) outputSizePrefs {
+	var p outputSizePrefs
 	if s == nil {
-		return outputSizePrefs{mode: outputOriginal, preset: outputOriginal}
+		p.reconcileWithCaps(caps)
+		return p
 	}
 	prefix := outputStorePrefix(platform)
 	rawMode := strings.TrimSpace(s.Get(prefix + "size_mode"))
-	ratio := normalizeOutputRatioFor(platform, s.Get(prefix+"ratio"))
+	ratio := normalizeRatioInCaps(caps, s.Get(prefix+"ratio"))
+	res := normalizeResolutionInCaps(caps, s.Get(prefix+"resolution"))
 	// Migrate legacy qianwen_output_ratio when qianwen_output_size_mode has not been stored yet.
 	if platform == "千问" && rawMode == "" && ratio != "" {
 		rawMode = outputRatio
 	}
 	if rawMode == outputRatio && ratio != "" {
-		p := outputSizePrefs{mode: outputRatio, ratio: ratio}
-		p.syncPresetFor(platform)
-		return p
+		p.mode = outputRatio
+		p.ratio = ratio
+	} else if caps.SupportsAuto {
+		p.mode = outputOriginal
 	}
-	return outputSizePrefs{mode: outputOriginal, preset: outputOriginal}
+	p.resolution = res
+	p.reconcileWithCaps(caps)
+	return p
 }
 
-func savePlatformOutputPrefs(s *store.Store, platform string, p outputSizePrefs) {
+func savePlatformOutputPrefs(s *store.Store, platform string, p outputSizePrefs, caps store.ProviderOutputCaps) {
 	if s == nil {
 		return
 	}
 	prefix := outputStorePrefix(platform)
-	p.ensureInitFor(platform)
-	p.syncPresetFor(platform)
+	p.reconcileWithCaps(caps)
 	s.Set(prefix+"size_mode", p.mode)
 	s.Set(prefix+"ratio", p.ratio)
+	s.Set(prefix+"resolution", p.resolution)
 	s.Set(prefix+"width", "")
 	s.Set(prefix+"height", "")
 	s.SetInt(prefix+"crop", 0)
 }
 
 func (a *App) loadOutputSize() {
-	a.doubaoOutput = loadPlatformOutputPrefs(a.store, "豆包")
-	a.qianwenOutput = loadPlatformOutputPrefs(a.store, "千问")
-	a.qwenIntlOutput = loadPlatformOutputPrefs(a.store, "千问国际")
-	a.geminiOutput = loadPlatformOutputPrefs(a.store, "Gemini")
-}
-
-func (a *App) saveOutputSize() {
-	savePlatformOutputPrefs(a.store, "豆包", a.doubaoOutput)
-	savePlatformOutputPrefs(a.store, "千问", a.qianwenOutput)
-	savePlatformOutputPrefs(a.store, "千问国际", a.qwenIntlOutput)
-	savePlatformOutputPrefs(a.store, "Gemini", a.geminiOutput)
-}
-
-func (p *outputSizePrefs) syncPreset() {
-	p.syncPresetFor("")
-}
-
-func (p *outputSizePrefs) syncPresetFor(platform string) {
-	if p.mode == outputRatio {
-		if picked := normalizeOutputRatioFor(platform, p.ratio); picked != "" {
-			p.ratio = picked
-			for _, spec := range outputPresetsFor(platform) {
-				if spec.ratio == picked {
-					p.preset = spec.label
-					return
-				}
+	if a.outputCaps == nil {
+		a.outputCaps = map[string]store.ProviderOutputCaps{}
+	}
+	for _, plat := range []string{"豆包", "千问", "千问国际", "Gemini", "即梦"} {
+		if a.store != nil {
+			if cached, ok := a.store.GetOutputCaps(plat); ok {
+				a.outputCaps[plat] = cached
 			}
 		}
 	}
-	p.mode = outputOriginal
-	p.ratio = ""
-	p.preset = outputOriginal
+	a.doubaoOutput = loadPlatformOutputPrefs(a.store, "豆包", a.outputCapsFor("豆包"))
+	a.qianwenOutput = loadPlatformOutputPrefs(a.store, "千问", a.outputCapsFor("千问"))
+	a.qwenIntlOutput = loadPlatformOutputPrefs(a.store, "千问国际", a.outputCapsFor("千问国际"))
+	a.geminiOutput = loadPlatformOutputPrefs(a.store, "Gemini", a.outputCapsFor("Gemini"))
+	a.jimengOutput = loadPlatformOutputPrefs(a.store, "即梦", a.outputCapsFor("即梦"))
 }
 
-func (p *outputSizePrefs) applyPreset(label string) bool {
-	return p.applyPresetFor("", label)
+func (a *App) saveOutputSize() {
+	savePlatformOutputPrefs(a.store, "豆包", a.doubaoOutput, a.outputCapsFor("豆包"))
+	savePlatformOutputPrefs(a.store, "千问", a.qianwenOutput, a.outputCapsFor("千问"))
+	savePlatformOutputPrefs(a.store, "千问国际", a.qwenIntlOutput, a.outputCapsFor("千问国际"))
+	savePlatformOutputPrefs(a.store, "Gemini", a.geminiOutput, a.outputCapsFor("Gemini"))
+	savePlatformOutputPrefs(a.store, "即梦", a.jimengOutput, a.outputCapsFor("即梦"))
 }
 
-func (p *outputSizePrefs) applyPresetFor(platform, label string) bool {
-	for _, spec := range outputPresetsFor(platform) {
+func (p *outputSizePrefs) syncPreset() {
+	p.reconcileWithCaps(store.DefaultProviderOutputCaps("豆包"))
+}
+
+func (p *outputSizePrefs) syncPresetFor(platform string) {
+	p.reconcileWithCaps(store.DefaultProviderOutputCaps(platform))
+}
+
+func (p *outputSizePrefs) applyPresetForCaps(caps store.ProviderOutputCaps, label string) bool {
+	label = strings.TrimSpace(label)
+	for _, spec := range outputPresetsForCaps(caps) {
 		if spec.label != label {
 			continue
 		}
@@ -287,76 +433,111 @@ func (p *outputSizePrefs) applyPresetFor(platform, label string) bool {
 			p.mode = outputRatio
 			p.ratio = spec.ratio
 			p.preset = spec.label
-		} else {
+		} else if caps.SupportsAuto {
 			p.mode = outputOriginal
 			p.ratio = ""
-			p.preset = outputOriginal
+			p.preset = spec.label
 		}
+		p.reconcileWithCaps(caps)
+		return true
+	}
+	if caps.SupportsAuto && isAutoLabelToken(caps, label) {
+		p.mode = outputOriginal
+		p.ratio = ""
+		p.reconcileWithCaps(caps)
 		return true
 	}
 	return false
 }
 
 func (p *outputSizePrefs) update(preset, mode, ratio string) {
-	p.updateFor("", preset, mode, ratio)
+	p.updateForCaps(store.DefaultProviderOutputCaps("豆包"), preset, mode, ratio)
 }
 
 func (p *outputSizePrefs) updateFor(platform, preset, mode, ratio string) {
-	p.ensureInitFor(platform)
+	p.updateForCaps(store.DefaultProviderOutputCaps(platform), preset, mode, ratio)
+}
+
+func (p *outputSizePrefs) updateForCaps(caps store.ProviderOutputCaps, preset, mode, ratio string) {
+	p.reconcileWithCaps(caps)
 	preset = strings.TrimSpace(preset)
 	if preset != "" {
-		if p.applyPresetFor(platform, preset) {
+		if p.applyPresetForCaps(caps, preset) {
 			return
 		}
-		if picked := normalizeOutputRatioFor(platform, preset); picked != "" {
+		if picked := normalizeRatioInCaps(caps, preset); picked != "" {
 			p.mode = outputRatio
 			p.ratio = picked
-			p.syncPresetFor(platform)
+			p.reconcileWithCaps(caps)
 			return
 		}
 		// Reject unsupported or custom preset labels; keep existing valid selection.
-		p.syncPresetFor(platform)
+		p.reconcileWithCaps(caps)
 		return
 	}
-	switch strings.TrimSpace(mode) {
-	case "original", outputOriginal:
-		p.mode = outputOriginal
-		p.ratio = ""
-		p.preset = outputOriginal
-		return
-	case "ratio", outputRatio, "":
-		trimmed := strings.TrimSpace(ratio)
-		if trimmed == "" {
+	trimmedMode := strings.TrimSpace(mode)
+	switch {
+	case trimmedMode == "original" || trimmedMode == outputOriginal || (trimmedMode != "" && isAutoLabelToken(caps, trimmedMode)):
+		if caps.SupportsAuto {
 			p.mode = outputOriginal
 			p.ratio = ""
-			p.preset = outputOriginal
+			p.reconcileWithCaps(caps)
+		}
+		return
+	case trimmedMode == "ratio" || trimmedMode == outputRatio || trimmedMode == "":
+		trimmed := strings.TrimSpace(ratio)
+		if trimmed == "" {
+			if caps.SupportsAuto {
+				p.mode = outputOriginal
+				p.ratio = ""
+				p.reconcileWithCaps(caps)
+			}
 			return
 		}
-		if picked := normalizeOutputRatioFor(platform, trimmed); picked != "" {
+		if picked := normalizeRatioInCaps(caps, trimmed); picked != "" {
 			p.mode = outputRatio
 			p.ratio = picked
-			p.syncPresetFor(platform)
+			p.reconcileWithCaps(caps)
 			return
 		}
 	}
-	p.syncPresetFor(platform)
+	p.reconcileWithCaps(caps)
 }
 
-func (p outputSizePrefs) taskOutputSize() tasks.OutputSize {
-	return p.taskOutputSizeFor("")
-}
-
-func (p outputSizePrefs) taskOutputSizeFor(platform string) tasks.OutputSize {
-	if p.mode == outputRatio {
-		if picked := normalizeOutputRatioFor(platform, p.ratio); picked != "" {
-			return tasks.OutputSize{Ratio: picked}
-		}
+func (p *outputSizePrefs) updateResolutionForCaps(caps store.ProviderOutputCaps, resolution string) bool {
+	p.reconcileWithCaps(caps)
+	if len(caps.Resolutions) == 0 {
+		return false
 	}
-	return tasks.OutputSize{}
+	picked := normalizeResolutionInCaps(caps, resolution)
+	if picked == "" {
+		return false
+	}
+	p.resolution = picked
+	p.reconcileWithCaps(caps)
+	return true
+}
+
+func (p outputSizePrefs) taskOutputSizeForCaps(caps store.ProviderOutputCaps) tasks.OutputSize {
+	p.reconcileWithCaps(caps)
+	out := tasks.OutputSize{
+		Resolution:         p.resolution,
+		AllowedRatios:      slices.Clone(caps.Ratios),
+		AllowedResolutions: slices.Clone(caps.Resolutions),
+	}
+	if p.mode == outputRatio {
+		if picked := normalizeRatioInCaps(caps, p.ratio); picked != "" {
+			out.Ratio = picked
+		}
+	} else if caps.SupportsAuto {
+		out.AutoValue = caps.AutoValue
+	}
+	return out
 }
 
 func (a *App) outputSizeFor(platform string) tasks.OutputSize {
-	return a.outputPrefsFor(platform).taskOutputSizeFor(platform)
+	caps := a.outputCapsFor(platform)
+	return a.outputPrefsFor(platform).taskOutputSizeForCaps(caps)
 }
 
 // ---- Page switching & session management ----
@@ -369,13 +550,15 @@ func platformSettingKey(platform, base string) string {
 		return base + "_qwen_intl"
 	case "Gemini":
 		return base + "_gemini"
+	case "即梦":
+		return base + "_jimeng"
 	default:
 		return base
 	}
 }
 
 func defaultWashPromptFor(platform string) string {
-	if platform == "豆包" {
+	if platform == "豆包" || platform == "即梦" {
 		return prompts.DoubaoWashPrompt
 	}
 	return DefaultWashPrompt
@@ -812,7 +995,7 @@ func (a *App) onWorkspace(platform string, page int, fn func()) {
 	}
 	a.syncPage()
 	prevPlatform := a.selectedPlatform()
-	prevDoubao, prevQianwen, prevQwenIntl, prevGemini := a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini
+	prevDoubao, prevQianwen, prevQwenIntl, prevGemini, prevJimeng := a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini, a.platJimeng
 	if a.platformSpaces == nil {
 		a.platformSpaces = map[string]platformWorkspace{}
 	}
@@ -825,10 +1008,11 @@ func (a *App) onWorkspace(platform string, page int, fn func()) {
 	a.platQianwen = platform == "千问"
 	a.platQwenIntl = platform == "千问国际"
 	a.platGemini = platform == "Gemini"
+	a.platJimeng = platform == "即梦"
 	a.restorePlatformWorkspace(targetWS, platform)
 	a.onPage(page, fn)
 	a.platformSpaces[platform] = a.capturePlatformWorkspace()
-	a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini = prevDoubao, prevQianwen, prevQwenIntl, prevGemini
+	a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini, a.platJimeng = prevDoubao, prevQianwen, prevQwenIntl, prevGemini, prevJimeng
 	a.restorePlatformWorkspace(a.platformSpaces[prevPlatform], prevPlatform)
 }
 
@@ -900,6 +1084,14 @@ func workspacePageKeyFor(platform string, page int) string {
 			return store.PageWashGemini
 		}
 		return store.PageGenGemini
+	case "即梦":
+		if page == pageFission {
+			return store.PageFissionJimeng
+		}
+		if page == pageWash {
+			return store.PageWashJimeng
+		}
+		return store.PageGenJimeng
 	}
 	return workspacePageKey(page)
 }
@@ -1322,10 +1514,7 @@ func (a *App) rememberStamps(page int, items []store.SessionTask) {
 // ---- Wash & Fission helpers ----
 
 func (a *App) defaultWashPrompt() string {
-	if a.selectedPlatform() == "豆包" {
-		return prompts.DoubaoWashPrompt
-	}
-	return DefaultWashPrompt
+	return defaultWashPromptFor(a.selectedPlatform())
 }
 
 func (a *App) washPrompt() string {
@@ -1467,6 +1656,8 @@ func (a *App) selectedPlatform() string {
 		return "千问国际"
 	case a.platGemini:
 		return "Gemini"
+	case a.platJimeng:
+		return "即梦"
 	default:
 		return "豆包"
 	}
@@ -1474,14 +1665,15 @@ func (a *App) selectedPlatform() string {
 
 func (a *App) setSinglePlatform(platform string) bool {
 	switch platform {
-	case "豆包", "千问", "千问国际", "Gemini":
-		hadPlatform := a.platDoubao || a.platQianwen || a.platQwenIntl || a.platGemini
+	case "豆包", "千问", "千问国际", "Gemini", "即梦":
+		hadPlatform := a.platDoubao || a.platQianwen || a.platQwenIntl || a.platGemini || a.platJimeng
 		prevPlatform := a.selectedPlatform()
 		if !hadPlatform {
 			a.platDoubao = platform == "豆包"
 			a.platQianwen = platform == "千问"
 			a.platQwenIntl = platform == "千问国际"
 			a.platGemini = platform == "Gemini"
+			a.platJimeng = platform == "即梦"
 			a.platformAuto = false
 			return true
 		}
@@ -1498,6 +1690,7 @@ func (a *App) setSinglePlatform(platform string) bool {
 		a.platQianwen = platform == "千问"
 		a.platQwenIntl = platform == "千问国际"
 		a.platGemini = platform == "Gemini"
+		a.platJimeng = platform == "即梦"
 		a.platformAuto = false
 		a.galleryOn = false
 		a.previewOn = false
@@ -1538,6 +1731,8 @@ func (a *App) stageEnabled(platform string) bool {
 		return a.platQwenIntl
 	case "Gemini":
 		return a.platGemini
+	case "即梦":
+		return a.platJimeng
 	}
 	return false
 }
@@ -1560,6 +1755,10 @@ func (a *App) shownDailyCapFor(platform string) int {
 		if a.dailyCapGeminiSet {
 			return clampInt(int(a.dailyCapGemini), 0, 200)
 		}
+	case "即梦":
+		if a.dailyCapJimengSet {
+			return clampInt(int(a.dailyCapJimeng), 0, 200)
+		}
 	}
 	return a.shownDailyCap()
 }
@@ -1570,6 +1769,7 @@ func (a *App) dailyCaps() map[string]int {
 		"千问":     a.shownDailyCapFor("千问"),
 		"千问国际":   a.shownDailyCapFor("千问国际"),
 		"Gemini": a.shownDailyCapFor("Gemini"),
+		"即梦":     a.shownDailyCapFor("即梦"),
 	}
 }
 
@@ -1581,6 +1781,8 @@ func (a *App) concurrencyAutoFor(platform string) bool {
 		return a.concurrencyAutoQwenIntl
 	case "Gemini":
 		return a.concurrencyAutoGemini
+	case "即梦":
+		return a.concurrencyAutoJimeng
 	default:
 		return a.concurrencyAuto
 	}
@@ -1595,6 +1797,8 @@ func (a *App) concurrencyMaxFor(platform string) int {
 		raw = a.concurrencyMaxQwenIntl
 	case "Gemini":
 		raw = a.concurrencyMaxGemini
+	case "即梦":
+		raw = a.concurrencyMaxJimeng
 	}
 	return clampInt(int(raw), tasks.PlatformInFlight, tasks.MaxPlatformInFlight)
 }
@@ -1659,6 +1863,7 @@ func (a *App) workbenchPlan(rows []store.Browser) WorkbenchPlan {
 		WantQianwen:  a.platQianwen,
 		WantQwenIntl: a.platQwenIntl,
 		WantGemini:   a.platGemini,
+		WantJimeng:   a.platJimeng,
 		Accounts:     snaps,
 		Now:          time.Now(),
 	})
@@ -1739,7 +1944,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		}
 	}
 	for _, platform := range platforms {
-		if platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini" {
+		if platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini" || platform == "即梦" {
 			if err := a.outputSizeFor(platform).ValidateFor(platform); err != nil {
 				a.progText = platform + "输出尺寸：" + err.Error()
 				logging.Log.Errorf("%s", a.progText)
@@ -1749,7 +1954,7 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 	}
 	rows := a.configuredBrowsers()
 	for _, platform := range platforms {
-		if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "Gemini" {
+		if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "Gemini" && platform != "即梦" {
 			continue
 		}
 		kinds := browser.AccountEngines(rows, platform, a.browserBackend)

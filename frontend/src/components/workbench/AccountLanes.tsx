@@ -3,15 +3,17 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 // Brand marks from @lobehub/icons (MIT).
 import doubaoMark from "@/assets/providers/doubao-avatar.png";
 import geminiMark from "@/assets/providers/gemini-color.svg";
+import jimengMark from "@/assets/providers/jimeng-color.svg";
 import qwenMark from "@/assets/providers/qwen-color.svg";
 import qwenIntlMark from "@/assets/providers/qwen-intl-color.svg";
 import { AccountListFrame, AccountViewButton } from "@/components/primitives";
 import { Badge, Button, Icon, IconButton, Progress, Switch, Tooltip, TooltipGroup } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { Browser, Settings, Workbench, fireIpc } from "@/lib/ipc";
+import { Browser, Settings, Workbench, fireIpc, formatCallError, isMyGoRuntime } from "@/lib/ipc";
 import {
   buildDoubaoStatusTooltip,
   buildGeminiStatusTooltip,
+  buildJimengStatusTooltip,
   buildQwenStatusTooltip,
   doubaoProgressTone,
   doubaoStatusTone,
@@ -21,6 +23,9 @@ import {
   formatGeminiCompactPillQuota,
   formatGeminiMetaLine,
   formatGeminiQuotaPrimary,
+  formatJimengCompactPillCredits,
+  formatJimengCreditsPrimary,
+  formatJimengMetaLine,
   formatQwenCompactPillCredits,
   formatQwenCreditsPrimary,
   formatQwenMetaLine,
@@ -28,28 +33,50 @@ import {
   geminiQuotaTone,
   isDoubaoAccount,
   isGeminiAccount,
+  isJimengAccount,
   isPaidMemberTier,
   isQwenAccount,
+  jimengCreditTone,
+  jimengProgressTone,
   qwenCreditTone,
   qwenProgressTone,
   summarizeDoubaoPool,
   summarizeGeminiPool,
+  summarizeJimengPool,
   summarizeQwenPool,
 } from "@/lib/qwenStatus";
 import {
   TAB_BROWSER,
   goTab,
+  refreshWorkbench,
+  showToast,
   useAppStore,
   useWorkbench,
   type AccountLaneDTO,
   type WorkbenchStateDTO,
 } from "@/store";
 
+async function triggerAccountStatusSync(
+  label: string,
+  call: () => Promise<void>,
+): Promise<void> {
+  try {
+    await call();
+    if (isMyGoRuntime()) {
+      void refreshWorkbench();
+    }
+  } catch (err) {
+    if (!isMyGoRuntime()) return;
+    showToast(`无法同步${label}状态`, "error", formatCallError(err));
+  }
+}
+
 const PROVIDER_MARKS: Record<string, string> = {
   豆包: doubaoMark,
   千问: qwenMark,
   千问国际: qwenIntlMark,
   Gemini: geminiMark,
+  即梦: jimengMark,
 };
 
 const MIN_CONCURRENCY_MAX = 2;
@@ -159,14 +186,17 @@ const AccountLaneRow = memo(
   const isQwen = isQwenAccount(lane);
   const isDoubao = isDoubaoAccount(lane);
   const isGemini = isGeminiAccount(lane);
-  const isQuotaTracked = isQwen || isGemini;
+  const isJimeng = isJimengAccount(lane);
+  const isQuotaTracked = isQwen || isGemini || isJimeng;
   const creditTone = isQwen
     ? qwenCreditTone(lane)
-    : isGemini
-      ? geminiQuotaTone(lane)
-      : isDoubao
-        ? doubaoStatusTone(lane)
-        : "muted";
+    : isJimeng
+      ? jimengCreditTone(lane)
+      : isGemini
+        ? geminiQuotaTone(lane)
+        : isDoubao
+          ? doubaoStatusTone(lane)
+          : "muted";
   const usageProgress =
     lane.usagePct > 0
       ? Math.min(1, lane.usagePct / 100)
@@ -184,29 +214,40 @@ const AccountLaneRow = memo(
         failedToday: lane.failedToday,
         cooldownAt: lane.cooldownAt,
       })
-    : isGemini
-      ? buildGeminiStatusTooltip(lane, {
+    : isJimeng
+      ? buildJimengStatusTooltip(lane, {
           todayCount: lane.usedToday,
           successToday: lane.successToday,
           failedToday: lane.failedToday,
           cooldownAt: lane.cooldownAt,
         })
-      : isDoubao
-        ? buildDoubaoStatusTooltip(lane, {
+      : isGemini
+        ? buildGeminiStatusTooltip(lane, {
             todayCount: lane.usedToday,
             successToday: lane.successToday,
             failedToday: lane.failedToday,
             cooldownAt: lane.cooldownAt,
           })
-        : "";
-  const quotaMeta = isQwen
-    ? formatQwenMetaLine(lane, lane.usedToday)
-    : isGemini
-      ? formatGeminiMetaLine(lane, lane.usedToday)
-      : isDoubao
-        ? formatDoubaoMetaLine(lane, lane.usedToday)
-        : "";
+        : isDoubao
+          ? buildDoubaoStatusTooltip(lane, {
+              todayCount: lane.usedToday,
+              successToday: lane.successToday,
+              failedToday: lane.failedToday,
+              cooldownAt: lane.cooldownAt,
+            })
+          : "";
   const isSyncingStatus = Boolean(lane.pending && lane.pendingOp === "syncing_status");
+  const quotaMeta = isSyncingStatus
+    ? "正在同步最新状态…"
+    : isQwen
+      ? formatQwenMetaLine(lane, lane.usedToday)
+      : isJimeng
+        ? formatJimengMetaLine(lane, lane.usedToday)
+        : isGemini
+          ? formatGeminiMetaLine(lane, lane.usedToday)
+          : isDoubao
+            ? formatDoubaoMetaLine(lane, lane.usedToday)
+            : "";
 
   return (
     <div
@@ -265,14 +306,18 @@ const AccountLaneRow = memo(
             ) : null}
           </div>
 
-          {/* Today Usage, Qwen/Gemini Credits/Refresh/Concurrency & Active Job */}
+          {/* Today Usage, Qwen/Jimeng/Gemini Credits/Refresh/Concurrency & Active Job */}
           {isQuotaTracked ? (
             <Tooltip content={quotaTooltip} side="top">
               <div className="flex min-w-0 flex-col gap-0.5">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span
                     data-testid={
-                      isQwen ? `lane-qwen-credits-${lane.id}` : `lane-gemini-quota-${lane.id}`
+                      isQwen
+                        ? `lane-qwen-credits-${lane.id}`
+                        : isJimeng
+                          ? `lane-jimeng-credits-${lane.id}`
+                          : `lane-gemini-quota-${lane.id}`
                     }
                     className={cn(
                       "tnum max-w-full truncate text-[11px]",
@@ -285,13 +330,23 @@ const AccountLaneRow = memo(
                             : "text-muted",
                     )}
                   >
-                    {isQwen ? formatQwenCreditsPrimary(lane) : formatGeminiQuotaPrimary(lane)}
+                    {isQwen
+                      ? formatQwenCreditsPrimary(lane)
+                      : isJimeng
+                        ? formatJimengCreditsPrimary(lane)
+                        : formatGeminiQuotaPrimary(lane)}
                   </span>
                   {lane.creditsSynced && (lane.usagePct > 0 || lane.creditsTotal > 0) ? (
                     <div className="w-[56px] shrink-0">
                       <Progress
                         value={usageProgress}
-                        tone={isQwen ? qwenProgressTone(lane) : geminiProgressTone(lane)}
+                        tone={
+                          isQwen
+                            ? qwenProgressTone(lane)
+                            : isJimeng
+                              ? jimengProgressTone(lane)
+                              : geminiProgressTone(lane)
+                        }
                       />
                     </div>
                   ) : null}
@@ -303,7 +358,11 @@ const AccountLaneRow = memo(
                 </div>
                 <span
                   data-testid={
-                    isQwen ? `lane-qwen-meta-${lane.id}` : `lane-gemini-meta-${lane.id}`
+                    isQwen
+                      ? `lane-qwen-meta-${lane.id}`
+                      : isJimeng
+                        ? `lane-jimeng-meta-${lane.id}`
+                        : `lane-gemini-meta-${lane.id}`
                   }
                   className="tnum truncate text-[10.5px] text-subtle"
                 >
@@ -388,7 +447,7 @@ const AccountLaneRow = memo(
                   disabled={Boolean(lane.pending) || running}
                   aria-label={`同步 ${lane.title || `账号 #${lane.id}`} 千问状态`}
                   className={cn(isSyncingStatus && "animate-spin text-accent")}
-                  onClick={() => fireIpc(() => Browser.syncQwenStatus([lane.id]))}
+                  onClick={() => void triggerAccountStatusSync("千问", () => Browser.syncQwenStatus([lane.id]))}
                 />
               </Tooltip>
             ) : isDoubao ? (
@@ -401,7 +460,7 @@ const AccountLaneRow = memo(
                   disabled={Boolean(lane.pending) || running}
                   aria-label={`同步 ${lane.title || `账号 #${lane.id}`} 豆包状态`}
                   className={cn(isSyncingStatus && "animate-spin text-accent")}
-                  onClick={() => fireIpc(() => Browser.syncAccountStatus([lane.id]))}
+                  onClick={() => void triggerAccountStatusSync("豆包", () => Browser.syncAccountStatus([lane.id]))}
                 />
               </Tooltip>
             ) : isGemini ? (
@@ -414,7 +473,20 @@ const AccountLaneRow = memo(
                   disabled={Boolean(lane.pending) || running}
                   aria-label={`同步 ${lane.title || `账号 #${lane.id}`} Gemini 状态`}
                   className={cn(isSyncingStatus && "animate-spin text-accent")}
-                  onClick={() => fireIpc(() => Browser.syncGeminiStatus([lane.id]))}
+                  onClick={() => void triggerAccountStatusSync("Gemini", () => Browser.syncGeminiStatus([lane.id]))}
+                />
+              </Tooltip>
+            ) : isJimeng ? (
+              <Tooltip content="同步该即梦账号的用户名、实时积分与会员状态" side="top">
+                <IconButton
+                  data-testid={`lane-sync-jimeng-${lane.id}`}
+                  icon="refresh-cw"
+                  size={24}
+                  variant="ghost"
+                  disabled={Boolean(lane.pending) || running}
+                  aria-label={`同步 ${lane.title || `账号 #${lane.id}`} 即梦状态`}
+                  className={cn(isSyncingStatus && "animate-spin text-accent")}
+                  onClick={() => void triggerAccountStatusSync("即梦", () => Browser.syncJimengStatus([lane.id]))}
                 />
               </Tooltip>
             ) : null}
@@ -496,21 +568,26 @@ const CollapsedLanePill = memo(
   const isQwen = isQwenAccount(lane);
   const isDoubao = isDoubaoAccount(lane);
   const isGemini = isGeminiAccount(lane);
-  const isQuotaTracked = isQwen || isGemini;
+  const isJimeng = isJimengAccount(lane);
+  const isQuotaTracked = isQwen || isGemini || isJimeng;
   const pillCredits = isQwen
     ? formatQwenCompactPillCredits(lane)
-    : isGemini
-      ? formatGeminiCompactPillQuota(lane)
-      : isDoubao
-        ? formatDoubaoCompactPill(lane)
-        : "";
+    : isJimeng
+      ? formatJimengCompactPillCredits(lane)
+      : isGemini
+        ? formatGeminiCompactPillQuota(lane)
+        : isDoubao
+          ? formatDoubaoCompactPill(lane)
+          : "";
   const creditTone = isQwen
     ? qwenCreditTone(lane)
-    : isGemini
-      ? geminiQuotaTone(lane)
-      : isDoubao
-        ? doubaoStatusTone(lane)
-        : "muted";
+    : isJimeng
+      ? jimengCreditTone(lane)
+      : isGemini
+        ? geminiQuotaTone(lane)
+        : isDoubao
+          ? doubaoStatusTone(lane)
+          : "muted";
   const dotClass = isVerify
     ? "bg-status-warn"
     : lane.disabled
@@ -531,11 +608,13 @@ const CollapsedLanePill = memo(
     ? "点击打开内置浏览器完成验证"
     : isQwen
       ? buildQwenStatusTooltip(lane, { todayCount: lane.usedToday, successToday: lane.successToday })
-      : isGemini
-        ? buildGeminiStatusTooltip(lane, { todayCount: lane.usedToday, successToday: lane.successToday })
-        : isDoubao
-          ? buildDoubaoStatusTooltip(lane, { todayCount: lane.usedToday, successToday: lane.successToday })
-          : "";
+      : isJimeng
+        ? buildJimengStatusTooltip(lane, { todayCount: lane.usedToday, successToday: lane.successToday })
+        : isGemini
+          ? buildGeminiStatusTooltip(lane, { todayCount: lane.usedToday, successToday: lane.successToday })
+          : isDoubao
+            ? buildDoubaoStatusTooltip(lane, { todayCount: lane.usedToday, successToday: lane.successToday })
+            : "";
 
   return (
     <Tooltip content={tooltipText} disabled={!tooltipText} side="top">
@@ -601,7 +680,8 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
   const listScrollRef = useRef<HTMLDivElement | null>(null);
 
   const platform =
-    wb?.platform || (wb?.gemini ? "Gemini" : wb?.qwenIntl ? "千问国际" : wb?.qianwen ? "千问" : "豆包");
+    wb?.platform ||
+    (wb?.jimeng ? "即梦" : wb?.gemini ? "Gemini" : wb?.qwenIntl ? "千问国际" : wb?.qianwen ? "千问" : "豆包");
   const platformMark = PROVIDER_MARKS[platform];
   const platformLanes = (wb?.lanes ?? []).filter((l) => l.platform === platform);
   const enabledCount = platformLanes.filter((l) => !l.disabled).length;
@@ -616,11 +696,19 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
   const isDoubaoPlatform = platform === "豆包";
   const isQwenPlatform = platform === "千问";
   const isGeminiPlatform = platform === "Gemini";
+  const isJimengPlatform = platform === "即梦";
+  const isSyncingPlatformStatus = platformLanes.some(
+    (l) => Boolean(l.pending && l.pendingOp === "syncing_status"),
+  );
   const doubaoSummary = isDoubaoPlatform ? summarizeDoubaoPool(platformLanes) : null;
   const qwenSummary = isQwenPlatform ? summarizeQwenPool(platformLanes) : null;
   const geminiSummary = isGeminiPlatform ? summarizeGeminiPool(platformLanes) : null;
+  const jimengSummary = isJimengPlatform ? summarizeJimengPool(platformLanes) : null;
   const rowBaseHeight =
-    isQwenPlatform || isGeminiPlatform || (isDoubaoPlatform && (doubaoSummary?.syncedAccounts ?? 0) > 0)
+    isQwenPlatform ||
+    isGeminiPlatform ||
+    isJimengPlatform ||
+    (isDoubaoPlatform && (doubaoSummary?.syncedAccounts ?? 0) > 0)
       ? LANE_ROW_QWEN_HEIGHT
       : LANE_ROW_HEIGHT;
   const listHeight = Math.min(Math.max(platformLanes.length, 1) * rowBaseHeight, 196);
@@ -634,7 +722,10 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
       const ln = platformLanes[idx];
       if (!ln) return rowBaseHeight;
       if (ln.usageErr || ln.lastError) return LANE_ROW_ERR_HEIGHT;
-      return isQwenAccount(ln) || isGeminiAccount(ln) || (isDoubaoAccount(ln) && ln.creditsSynced)
+      return isQwenAccount(ln) ||
+        isGeminiAccount(ln) ||
+        isJimengAccount(ln) ||
+        (isDoubaoAccount(ln) && ln.creditsSynced)
         ? LANE_ROW_QWEN_HEIGHT
         : LANE_ROW_HEIGHT;
     },
@@ -660,7 +751,9 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
         ? "concurrencyAutoQwenIntl"
         : platform === "Gemini"
           ? "concurrencyAutoGemini"
-          : "concurrencyAutoDoubao";
+          : platform === "即梦"
+            ? "concurrencyAutoJimeng"
+            : "concurrencyAutoDoubao";
   const concurrencyMaxField =
     platform === "千问"
       ? "concurrencyMaxQianwen"
@@ -668,7 +761,9 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
         ? "concurrencyMaxQwenIntl"
         : platform === "Gemini"
           ? "concurrencyMaxGemini"
-          : "concurrencyMaxDoubao";
+          : platform === "即梦"
+            ? "concurrencyMaxJimeng"
+            : "concurrencyMaxDoubao";
 
   const handleToggleConcurrency = (checked: boolean) => {
     useAppStore.setState((cur) => ({
@@ -752,15 +847,21 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
                           : "border-accent-border bg-accent-soft text-accent",
                   )}
                 >
-                  {doubaoSummary.syncedAccounts === 0
-                    ? "豆包状态待同步"
-                    : doubaoSummary.vipCount > 0
-                      ? `余 ${doubaoSummary.paidRemainSum}${doubaoSummary.paidTotalSum > 0 ? `/${doubaoSummary.paidTotalSum}` : ""} 额度${doubaoSummary.earliestResetLabel ? ` · ${doubaoSummary.earliestResetLabel}` : ""}`
-                      : doubaoSummary.limitedCount > 0
-                        ? `已限额 ${doubaoSummary.limitedCount} 个${doubaoSummary.earliestResetLabel ? ` · ${doubaoSummary.earliestResetLabel}` : ""}`
-                        : doubaoSummary.maxUsagePercent > 0
-                          ? `窗口最高 ${doubaoSummary.maxUsagePercent}%${doubaoSummary.resetCardSum > 0 ? ` · 重置卡 ${doubaoSummary.resetCardSum}` : ""}`
-                          : `额度正常${doubaoSummary.resetCardSum > 0 ? ` · 重置卡 ${doubaoSummary.resetCardSum}` : ""}`}
+                  {isSyncingPlatformStatus
+                    ? doubaoSummary.syncedAccounts === 0
+                      ? "正在同步豆包状态…"
+                      : doubaoSummary.vipCount > 0
+                        ? `余 ${doubaoSummary.paidRemainSum}${doubaoSummary.paidTotalSum > 0 ? `/${doubaoSummary.paidTotalSum}` : ""} 额度 · 同步中…`
+                        : "豆包状态同步中…"
+                    : doubaoSummary.syncedAccounts === 0
+                      ? "豆包状态待同步"
+                      : doubaoSummary.vipCount > 0
+                        ? `余 ${doubaoSummary.paidRemainSum}${doubaoSummary.paidTotalSum > 0 ? `/${doubaoSummary.paidTotalSum}` : ""} 额度${doubaoSummary.earliestResetLabel ? ` · ${doubaoSummary.earliestResetLabel}` : ""}`
+                        : doubaoSummary.limitedCount > 0
+                          ? `已限额 ${doubaoSummary.limitedCount} 个${doubaoSummary.earliestResetLabel ? ` · ${doubaoSummary.earliestResetLabel}` : ""}`
+                          : doubaoSummary.maxUsagePercent > 0
+                            ? `窗口最高 ${doubaoSummary.maxUsagePercent}%${doubaoSummary.resetCardSum > 0 ? ` · 重置卡 ${doubaoSummary.resetCardSum}` : ""}`
+                            : `额度正常${doubaoSummary.resetCardSum > 0 ? ` · 重置卡 ${doubaoSummary.resetCardSum}` : ""}`}
                 </span>
               </Tooltip>
             ) : null}
@@ -784,9 +885,13 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
                         : "border-accent-border bg-accent-soft text-accent",
                   )}
                 >
-                  {qwenSummary.syncedAccounts > 0
-                    ? `余 ${qwenSummary.remainSum}${qwenSummary.totalSum > 0 ? `/${qwenSummary.totalSum}` : ""} 积分${qwenSummary.earliestResetLabel ? ` · ${qwenSummary.earliestResetLabel}` : ""}`
-                    : "千问积分待同步"}
+                  {isSyncingPlatformStatus
+                    ? qwenSummary.syncedAccounts > 0
+                      ? `余 ${qwenSummary.remainSum}${qwenSummary.totalSum > 0 ? `/${qwenSummary.totalSum}` : ""} 积分 · 同步中…`
+                      : "正在同步千问积分…"
+                    : qwenSummary.syncedAccounts > 0
+                      ? `余 ${qwenSummary.remainSum}${qwenSummary.totalSum > 0 ? `/${qwenSummary.totalSum}` : ""} 积分${qwenSummary.earliestResetLabel ? ` · ${qwenSummary.earliestResetLabel}` : ""}`
+                      : "千问积分待同步"}
                 </span>
               </Tooltip>
             ) : null}
@@ -814,13 +919,49 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
                         : "border-accent-border bg-accent-soft text-accent",
                   )}
                 >
-                  {geminiSummary.meteredAccounts > 0
-                    ? `${geminiSummary.meteredAccounts === 1 ? "余" : "均余"} ${geminiSummary.avgRemainPct}%${geminiSummary.earliestResetLabel ? ` · ${geminiSummary.earliestResetLabel}` : ""}`
-                    : geminiSummary.aiCreditsSum > 0
-                      ? `余 ${geminiSummary.aiCreditsSum} AI积分`
-                      : geminiSummary.syncedAccounts > 0
-                        ? `已同步 ${geminiSummary.syncedAccounts} 个`
-                        : "Gemini 额度待同步"}
+                  {isSyncingPlatformStatus
+                    ? geminiSummary.meteredAccounts > 0
+                      ? `${geminiSummary.meteredAccounts === 1 ? "余" : "均余"} ${geminiSummary.avgRemainPct}% · 同步中…`
+                      : geminiSummary.aiCreditsSum > 0
+                        ? `余 ${geminiSummary.aiCreditsSum} AI积分 · 同步中…`
+                        : "正在同步 Gemini 额度…"
+                    : geminiSummary.meteredAccounts > 0
+                      ? `${geminiSummary.meteredAccounts === 1 ? "余" : "均余"} ${geminiSummary.avgRemainPct}%${geminiSummary.earliestResetLabel ? ` · ${geminiSummary.earliestResetLabel}` : ""}`
+                      : geminiSummary.aiCreditsSum > 0
+                        ? `余 ${geminiSummary.aiCreditsSum} AI积分`
+                        : geminiSummary.syncedAccounts > 0
+                          ? `已同步 ${geminiSummary.syncedAccounts} 个`
+                          : "Gemini 额度待同步"}
+                </span>
+              </Tooltip>
+            ) : null}
+            {isJimengPlatform && jimengSummary && jimengSummary.totalAccounts > 0 ? (
+              <Tooltip
+                content={
+                  jimengSummary.syncedAccounts > 0
+                    ? `已同步 ${jimengSummary.syncedAccounts}/${jimengSummary.enabledAccounts || jimengSummary.totalAccounts} 个即梦账号 · 总剩余 ${jimengSummary.remainSum} 积分（约可生图 ${jimengSummary.estImages} 张，${jimengSummary.costPerImage} 积分/张）${jimengSummary.earliestResetLabel ? ` · 最近刷新 ${jimengSummary.earliestResetLabel}` : ""}`
+                    : "即梦积分尚未同步，点击右侧「同步」读取用户名、实时积分与会员状态"
+                }
+                side="bottom"
+              >
+                <span
+                  data-testid="lanes-jimeng-summary"
+                  className={cn(
+                    "tnum inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-medium",
+                    jimengSummary.syncedAccounts === 0
+                      ? "border-hairline bg-sunken text-muted"
+                      : jimengSummary.remainSum === 0
+                        ? "border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] text-status-danger"
+                        : "border-accent-border bg-accent-soft text-accent",
+                  )}
+                >
+                  {isSyncingPlatformStatus
+                    ? jimengSummary.syncedAccounts > 0
+                      ? `余 ${jimengSummary.remainSum}${jimengSummary.totalSum > 0 ? `/${jimengSummary.totalSum}` : ""} 积分 · 同步中…`
+                      : "正在同步即梦积分…"
+                    : jimengSummary.syncedAccounts > 0
+                      ? `余 ${jimengSummary.remainSum}${jimengSummary.totalSum > 0 ? `/${jimengSummary.totalSum}` : ""} 积分${jimengSummary.earliestResetLabel ? ` · ${jimengSummary.earliestResetLabel}` : ""}`
+                      : "即梦积分待同步"}
                 </span>
               </Tooltip>
             ) : null}
@@ -935,18 +1076,23 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
                 content={
                   wb.running
                     ? "任务运行中，完成后会自动刷新豆包状态"
-                    : "同步豆包账号的用户名、订阅方案、剩余额度 / 窗口占用与限额状态"
+                    : isSyncingPlatformStatus
+                      ? "正在同步豆包账号状态…"
+                      : "同步豆包账号的用户名、订阅方案、剩余额度 / 窗口占用与限额状态"
                 }
                 side="bottom"
               >
                 <Button
                   data-testid="lanes-sync-doubao-btn"
-                  text="同步"
+                  text={isSyncingPlatformStatus ? "同步中" : "同步"}
                   size="small"
                   variant="ghost"
-                  disabled={Boolean(wb.running)}
+                  busy={isSyncingPlatformStatus}
+                  disabled={Boolean(wb.running) || isSyncingPlatformStatus}
                   onClick={() =>
-                    fireIpc(() => Browser.syncAccountStatus(platformLanes.map((l) => l.id)))
+                    void triggerAccountStatusSync("豆包", () =>
+                      Browser.syncAccountStatus(platformLanes.map((l) => l.id)),
+                    )
                   }
                 />
               </Tooltip>
@@ -955,18 +1101,23 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
                 content={
                   wb.running
                     ? "任务运行中，完成后会自动刷新千问积分"
-                    : "同步千问账号的用户名、实时积分、刷新时间、会员套餐与并发上限"
+                    : isSyncingPlatformStatus
+                      ? "正在同步千问账号积分与状态…"
+                      : "同步千问账号的用户名、实时积分、刷新时间、会员套餐与并发上限"
                 }
                 side="bottom"
               >
                 <Button
                   data-testid="lanes-sync-qwen-btn"
-                  text="同步"
+                  text={isSyncingPlatformStatus ? "同步中" : "同步"}
                   size="small"
                   variant="ghost"
-                  disabled={Boolean(wb.running)}
+                  busy={isSyncingPlatformStatus}
+                  disabled={Boolean(wb.running) || isSyncingPlatformStatus}
                   onClick={() =>
-                    fireIpc(() => Browser.syncQwenStatus(platformLanes.map((l) => l.id)))
+                    void triggerAccountStatusSync("千问", () =>
+                      Browser.syncQwenStatus(platformLanes.map((l) => l.id)),
+                    )
                   }
                 />
               </Tooltip>
@@ -975,18 +1126,48 @@ export function AccountLanes({ wb: propWb }: { wb?: WorkbenchStateDTO } = {}) {
                 content={
                   wb.running
                     ? "任务运行中，完成后会自动刷新 Gemini 额度"
-                    : "同步 Gemini 账号的用户名、实时剩余额度、刷新时间与订阅套餐"
+                    : isSyncingPlatformStatus
+                      ? "正在同步 Gemini 账号剩余额度与状态…"
+                      : "同步 Gemini 账号的用户名、实时剩余额度、刷新时间与订阅套餐"
                 }
                 side="bottom"
               >
                 <Button
                   data-testid="lanes-sync-gemini-btn"
-                  text="同步"
+                  text={isSyncingPlatformStatus ? "同步中" : "同步"}
                   size="small"
                   variant="ghost"
-                  disabled={Boolean(wb.running)}
+                  busy={isSyncingPlatformStatus}
+                  disabled={Boolean(wb.running) || isSyncingPlatformStatus}
                   onClick={() =>
-                    fireIpc(() => Browser.syncGeminiStatus(platformLanes.map((l) => l.id)))
+                    void triggerAccountStatusSync("Gemini", () =>
+                      Browser.syncGeminiStatus(platformLanes.map((l) => l.id)),
+                    )
+                  }
+                />
+              </Tooltip>
+            ) : isJimengPlatform && platformLanes.length > 0 ? (
+              <Tooltip
+                content={
+                  wb.running
+                    ? "任务运行中，完成后会自动刷新即梦积分"
+                    : isSyncingPlatformStatus
+                      ? "正在同步即梦账号积分与状态…"
+                      : "同步即梦账号的用户名、实时积分与会员套餐"
+                }
+                side="bottom"
+              >
+                <Button
+                  data-testid="lanes-sync-jimeng-btn"
+                  text={isSyncingPlatformStatus ? "同步中" : "同步"}
+                  size="small"
+                  variant="ghost"
+                  busy={isSyncingPlatformStatus}
+                  disabled={Boolean(wb.running) || isSyncingPlatformStatus}
+                  onClick={() =>
+                    void triggerAccountStatusSync("即梦", () =>
+                      Browser.syncJimengStatus(platformLanes.map((l) => l.id)),
+                    )
                   }
                 />
               </Tooltip>

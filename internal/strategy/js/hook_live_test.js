@@ -548,4 +548,102 @@ assert.strictEqual(multiReply.childNodes[2].childNodes[0].getAttribute('loading'
 assert.strictEqual(multiReply.childNodes[3].childNodes[0].getAttribute('loading'), 'eager', '未就绪第 4 格 lazy 图必须被切成 eager')
 assert.deepStrictEqual(scrolledSlots, [2], '应将首个未就绪图格滚入视口促发渲染')
 
+// 豆包服务端静默降级为纯文本（无图格、流已结束）：应识别为 text-only，并标记 cannotDraw / hasCode。
+body.childNodes = []
+context.__tulaiPageHost = 'www.doubao.com'
+location.hostname = 'www.doubao.com'
+location.href = 'https://www.doubao.com/chat/67890'
+const oldTextReply = el('div')
+oldTextReply.setAttribute('data-testid', 'receive_message')
+oldTextReply.setAttribute('data-finished', 'true')
+oldTextReply.innerText = '历史纯文本回复，不能在下一轮刚发送时误判为本轮降级。'
+body.appendChild(oldTextReply)
+context.__tulaiMarkTask()
+const baselineOnlyShot = context.__tulaiLiveImages()
+assert.strictEqual(baselineOnlyShot.reason, 'no-new-image', '发送前的旧纯文本回复不得触发 text-only 早停: ' + JSON.stringify(baselineOnlyShot))
+
+const cannotDrawReply = el('div')
+cannotDrawReply.setAttribute('data-testid', 'receive_message')
+cannotDrawReply.innerText = '很抱歉，我目前没办法直接生成、重绘输出图片哦。你可以把下面这段提示词复制到支持文生图的绘图工具里使用。'
+const cannotDrawText = el('div')
+cannotDrawText.setAttribute('data-testid', 'message_text_content')
+cannotDrawText.setAttribute('data-streaming', 'false')
+cannotDrawText.innerText = cannotDrawReply.innerText
+cannotDrawReply.appendChild(cannotDrawText)
+body.appendChild(cannotDrawReply)
+const textOnlyShot = context.__tulaiLiveImages()
+assert.strictEqual(textOnlyShot.reason, 'text-only', '豆包纯文本无图回复应识别为 text-only: ' + JSON.stringify(textOnlyShot))
+assert.strictEqual(textOnlyShot.cannotDraw, true, '明确声明无法生成图片应标记 cannotDraw')
+
+// 代码块（HTML/SVG）无图回复应标记 hasCode 并触发 text-only
+body.childNodes = []
+context.__tulaiMarkTask()
+const codeReply = el('div')
+codeReply.setAttribute('data-testid', 'receive_message')
+codeReply.setAttribute('data-finished', 'true')
+const pre = el('pre')
+pre.innerText = '<svg viewBox="0 0 100 100"></svg>'
+codeReply.appendChild(pre)
+body.appendChild(codeReply)
+const codeShot = context.__tulaiLiveImages()
+assert.strictEqual(codeShot.reason, 'text-only')
+assert.strictEqual(codeShot.hasCode, true)
+
+// SSE 响应体里直接出现 flow.agent.shell 时，流结束后应直接上报 degraded-reply（即使回复带拒绝措辞）
+;(async () => {
+  body.childNodes = []
+  let sseText = ''
+  context.fetch = null
+  // 重新使用被 hook.js Proxy 包装前的底层行为不可直接改 origFetch，直接验证 __tulaiDoubaoRoute 状态复位与 SSE 解析
+  // 通过在独立上下文里加载 hook.js 验证 fetch SSE 截获 flow.agent.shell 与 flow.agent.creation。
+  const sseCtx = vm.createContext({
+    location: { hostname: 'www.doubao.com', href: 'https://www.doubao.com/chat/99999' },
+    URL,
+    setTimeout,
+    clearTimeout,
+    XMLHttpRequest: class { open() {} send() {} addEventListener() {} },
+    MutationObserver: class { observe() {} },
+    document: {
+      readyState: 'complete',
+      body,
+      images: [],
+      addEventListener() {},
+      querySelectorAll: sel => body.querySelectorAll(sel),
+      querySelector: sel => body.querySelector(sel),
+    },
+    fetch: async () => ({
+      headers: { get: () => 'text/event-stream' },
+      bodyUsed: false,
+      clone() { return { text: async () => sseText } },
+    }),
+  })
+  sseCtx.window = sseCtx
+  sseCtx.globalThis = sseCtx
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'hook.js'), 'utf8'), sseCtx)
+
+  sseCtx.__tulaiMarkTask()
+  sseText = 'event: STREAM_CHUNK\ndata: {"ext":{"bot_state":"{\\"agent_psm\\":\\"flow.agent.shell\\",\\"agent_name\\":\\"豆包\\"}"}}\n'
+  await sseCtx.fetch('https://www.doubao.com/samantha/chat/completion')
+  await new Promise(r => setImmediate(r))
+  body.childNodes = []
+  const shellReply = el('div')
+  shellReply.setAttribute('data-testid', 'receive_message')
+  shellReply.setAttribute('data-finished', 'true')
+  shellReply.innerText = '抱歉，我无法为您生成图片，请使用绘图工具。'
+  body.appendChild(shellReply)
+  const degradedShot = sseCtx.__tulaiLiveImages()
+  assert.strictEqual(degradedShot.reason, 'degraded-reply', 'SSE 确认 flow.agent.shell 后应直接返回 degraded-reply: ' + JSON.stringify(degradedShot))
+  assert.strictEqual(degradedShot.routePsm, 'flow.agent.shell')
+
+  sseCtx.__tulaiMarkTask()
+  sseText = 'event: STREAM_CHUNK\ndata: {"ext":{"bot_state":"{\\"agent_psm\\":\\"flow.agent.creation\\"}","use_creation":"1"}}\n'
+  await sseCtx.fetch('https://www.doubao.com/samantha/chat/completion')
+  await new Promise(r => setImmediate(r))
+  const normalShot = sseCtx.__tulaiLiveImages()
+  assert.notStrictEqual(normalShot.reason, 'degraded-reply', 'flow.agent.creation 不得误判为 degraded-reply')
+})().catch(err => {
+  console.error(err)
+  process.exit(1)
+})
+
 console.log('hook live images ok')

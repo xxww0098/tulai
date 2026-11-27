@@ -28,7 +28,13 @@ func StartDetached(path string, args ...string) error {
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | createNoWindow,
 		HideWindow:    true,
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if cmd.Process != nil {
+		_ = cmd.Process.Release()
+	}
+	return nil
 }
 
 func resolveHelperPath(path string) string {

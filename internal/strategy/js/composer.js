@@ -21,11 +21,14 @@
     return String((el && ((el.className && el.className.baseVal) || el.className)) || '');
   }
   // 豆包会在可见输入框旁边放一份 invisible 的 ProseMirror 克隆，testid 相同；
-  // Gemini 的 Quill 编辑器会附带一个隐藏的 .ql-clipboard contenteditable 元素。
+  // Gemini 的 Quill 编辑器会附带一个隐藏的 .ql-clipboard contenteditable 元素；
+  // 即梦的 Tiptap 编辑器会附带一份 aria-hidden="true" 的 .prompt-editor-sizer-* 克隆。
   function hiddenComposer(el) {
     if (el && el.classList && el.classList.contains('ql-clipboard')) return true;
     for (var node = el, i = 0; node && i < 8; i++, node = node.parentElement) {
       if (/(^|\s)invisible(\s|$)/.test(classNameOf(node))) return true;
+      if (node.getAttribute && (node.getAttribute('aria-hidden') === 'true' || node.getAttribute('data-generator-preview-ignore') === 'true')) return true;
+      if (/prompt-editor-sizer/i.test(classNameOf(node))) return true;
     }
     return false;
   }
@@ -34,9 +37,9 @@
     if (slot.tagName === 'TEXTAREA' || slot.tagName === 'INPUT' || (slot.getAttribute && slot.getAttribute('contenteditable') === 'true')) return slot;
     return slot.querySelector ? slot.querySelector('.ql-editor[contenteditable="true"],textarea,[contenteditable="true"],input[type="text"]') : null;
   }
-  // 最近的可编辑输入区。豆包实页是 [data-testid="chat_input_input"]，Gemini 实页是 rich-textarea .ql-editor。
+  // 最近的可编辑输入区。豆包实页是 [data-testid="chat_input_input"]，Gemini 实页是 rich-textarea .ql-editor，即梦实页是 dreamina.generator 内的提示词 ProseMirror。
   function findComposer() {
-    var slots = document.querySelectorAll('[data-testid="chat_input_input"],rich-textarea .ql-editor[contenteditable="true"],rich-textarea');
+    var slots = document.querySelectorAll('[data-testid="dreamina.generator"] [role="textbox"][aria-label="提示词"][contenteditable="true"],[data-testid="chat_input_input"],rich-textarea .ql-editor[contenteditable="true"],rich-textarea');
     var fallback = null;
     for (var i = slots.length - 1; i >= 0; i--) {
       var editor = editorInside(slots[i]);
@@ -156,6 +159,7 @@
     if (!comp) return document;
     var p = comp;
     for (var d = 0; d < 10 && p; d++) {
+      if (p.getAttribute && p.getAttribute('data-testid') === 'dreamina.generator') return p;
       if (p.hasAttribute && p.hasAttribute('data-chat-input-body')) return p;
       if (p.classList && p.classList.contains('message-input-container')) return p;
       if (p.tagName === 'INPUT-AREA-V2' || p.tagName === 'INPUT-CONTAINER') return p;
@@ -294,7 +298,7 @@
   function fileCount() { return document.querySelectorAll('input[type=file]').length; }
 
   function attachmentScope(comp, uploadEntry) {
-    var surface = comp.closest('.guidance-input-surface') || comp.closest('.message-input-container') || comp.closest('input-area-v2') || comp.closest('input-container');
+    var surface = comp.closest('[data-testid="dreamina.generator"]') || comp.closest('.guidance-input-surface') || comp.closest('.message-input-container') || comp.closest('input-area-v2') || comp.closest('input-container');
     if (surface && (!uploadEntry || surface.contains(uploadEntry))) return surface;
     var scope = findScope(comp), peer = uploadEntry || findSendButton(comp);
     if (peer) {
@@ -353,6 +357,15 @@
     for (var scope = comp.parentElement; scope && scope !== document.body; scope = scope.parentElement) {
       var exact = scope.querySelector('button[data-testid="upload_file_button"]');
       if (visible(exact)) { entry = exact; break; }
+    }
+    // 即梦（jimeng.jianying.com）左侧参考图上传槽位于 [data-content-generator-references="true"]，点击直接触发原生文件选择器。
+    for (scope = comp.parentElement; !entry && scope && scope !== document.body; scope = scope.parentElement) {
+      var jimengRef = scope.querySelector('[data-content-generator-references="true"] [role="button"][aria-label*="上传参考"],[data-content-generator-references="true"] [class*="reference-upload-"][role="button"]');
+      if (visible(jimengRef)) {
+        entry = jimengRef;
+        directFileButton = true;
+        break;
+      }
     }
     // Gemini（gemini.google.com）的「+」按钮位于 simplified-input-menu 内，点击弹出上传与工具菜单。
     for (scope = comp.parentElement; !entry && scope && scope !== document.body; scope = scope.parentElement) {
@@ -420,7 +433,7 @@
     if (!entry) throw new Error('未找到当前输入区上传入口');
     var previewScope = attachmentScope(comp, entry), initialImages = new Map();
     Array.from(document.images).forEach(function (img) { initialImages.set(img, img.currentSrc || img.src); });
-    var doubaoBaseline = new Set(document.querySelectorAll('img,[data-testid="attachment-image-card"],uploader-file-preview'));
+    var doubaoBaseline = new Set(document.querySelectorAll('img,[data-testid="attachment-image-card"],uploader-file-preview,[data-content-generator-references="true"] [class*="reference-item-"]'));
     window.__tulaiUploadState = { scope: previewScope, entry: entry, images: initialImages, doubaoBaseline: doubaoBaseline, files: new Map(Array.from(document.querySelectorAll('input[type=file]')).map(function(input){return [input,input.files]})) };
     log.push('scope=' + (previewScope ? previewScope.tagName + '#' + (previewScope.id || '').slice(0, 40) + '.' + cls(previewScope).slice(0, 60) + '; role=' + (previewScope.getAttribute('role') || '').slice(0, 40) : 'none'));
     log.push('entry=' + entry.tagName + '; testid=' + (entry.getAttribute('data-testid') || '').slice(0, 60) + '; id=' + (entry.id || '').slice(0, 50) + '; aria=' + (entry.getAttribute('aria-label') || '').slice(0, 60) + '; direct=' + directFileButton);
@@ -529,10 +542,20 @@
       var comp = findComposer(), scope = comp && attachmentScope(comp, state && state.entry);
       if (state && state.scope && state.scope.isConnected && state.scope.contains(comp)) scope = state.scope;
       if (!comp || !state || !scope) break;
-      busy = Array.from(scope.querySelectorAll('[aria-busy="true"],[role="progressbar"],.qwpcicon-loading2,.vision-item-loading,mat-progress-spinner,mat-progress-bar,.gem-attachment-content.loading')).some(visible);
+      busy = Array.from(scope.querySelectorAll('[aria-busy="true"],[role="progressbar"],.qwpcicon-loading2,.vision-item-loading,mat-progress-spinner,mat-progress-bar,.gem-attachment-content.loading,[data-content-generator-references="true"] [class*="loading"]')).some(visible);
       var newCards = Array.from(scope.querySelectorAll('[data-testid="attachment-image-card"],uploader-file-preview')).filter(function (card) {
         return visible(card) && (!state.doubaoBaseline || !state.doubaoBaseline.has(card)) && !(card.querySelector && card.querySelector('mat-progress-spinner,mat-progress-bar,.loading'));
       }).length;
+      // 即梦多图参考卡会堆叠展示，优先统计新增且已解码的 reference-item。
+      var jimengItems = Array.from(scope.querySelectorAll('[data-content-generator-references="true"] [class*="reference-item-"]')).filter(function (item) {
+        if (state.doubaoBaseline && state.doubaoBaseline.has(item)) return false;
+        if (item.querySelector && item.querySelector('[aria-busy="true"],[role="progressbar"],[class*="loading"]')) return false;
+        var im = item.querySelector && item.querySelector('img');
+        if (!im) return false;
+        var s = im.currentSrc || im.src;
+        return !!s && !isSvgPlaceholderSrc(s) && im.complete && im.naturalWidth > 0;
+      }).length;
+      if (jimengItems > newCards) newCards = jimengItems;
       count = Array.from(scope.querySelectorAll('img')).filter(function (img) {
         var src = img.currentSrc || img.src;
         return src && !isSvgPlaceholderSrc(src) && visible(img) && img.complete && img.naturalWidth > 0 && (!state.images.has(img) || state.images.get(img) !== src);
@@ -598,18 +621,18 @@
     return !!(el.getAttribute && el.getAttribute('data-testid') === 'chat_input_send_button');
   }
   function sendEnabled(el) {
-    return shown(el) && !isStopButton(el) && !el.disabled && (!el.getAttribute || el.getAttribute('aria-disabled') !== 'true');
+    return shown(el) && !isStopButton(el) && !el.disabled && (!el.getAttribute || (el.getAttribute('aria-disabled') !== 'true' && el.getAttribute('data-generator-submit-available') !== 'false'));
   }
   function findSendButton(comp) {
     // 上传区/“更多”可能只包住编辑器，发送按钮在其外层兄弟中。
-    // 千问箭头是 data-session-switch-target=send-query，千问国际是 button.send-button，Gemini 是 arrow_upward / aria-label="发送"/"Send message"。
+    // 千问箭头是 data-session-switch-target=send-query，千问国际是 button.send-button，Gemini 是 arrow_upward / aria-label="发送"/"Send message"，即梦是 dreamina.generator.submit。
     for (var scope = comp.parentElement; scope; scope = scope.parentElement) {
       var buttons = scope.querySelectorAll('button,[role=button]');
       for (var i = buttons.length - 1; i >= 0; i--) {
         var el = buttons[i];
         if (!shown(el) || isStopButton(el)) continue;
         var hasSendIcon = !!(el.querySelector && el.querySelector('mat-icon[fonticon="arrow_upward"],mat-icon[fonticon="send"],[data-mat-icon-name="arrow_upward"],[data-mat-icon-name="send"]'));
-        if ((el.classList && el.classList.contains('send-button')) || el.getAttribute('data-session-switch-target') === 'send-query' || el.getAttribute('data-testid') === 'chat_input_send_button' || hasSendIcon || /发送|发消息|\bsend\b/i.test(combined(el))) return el;
+        if ((el.classList && el.classList.contains('send-button')) || el.getAttribute('data-session-switch-target') === 'send-query' || el.getAttribute('data-testid') === 'chat_input_send_button' || el.getAttribute('data-testid') === 'dreamina.generator.submit' || hasSendIcon || /发送|发消息|\bsend\b/i.test(combined(el))) return el;
       }
     }
     return null;
@@ -640,7 +663,11 @@
   function conversationKey(href) {
     if (window.__tulaiConversationKey) return window.__tulaiConversationKey(href);
     try {
-      var parts = new URL(String(href || ''), location.href).pathname.split('/').filter(Boolean);
+      var u = new URL(String(href || ''), location.href);
+      if (/(^|\.)jimeng\.jianying\.com$/i.test(u.hostname)) {
+        return u.searchParams.get('workspace') || '';
+      }
+      var parts = u.pathname.split('/').filter(Boolean);
       var i = parts.indexOf('chat');
       if (i >= 0 && parts[i + 1]) return parts[i + 1];
       var c = parts.indexOf('c');
@@ -655,6 +682,12 @@
   function userBubbles() {
     var nodes = document.querySelectorAll('[data-testid="send_message"][data-message-role="user"]');
     if (nodes.length) return nodes;
+    var host = String((window.__tulaiPageHost || location.hostname) || '');
+    if (/(^|\.)jimeng\.jianying\.com$/i.test(host)) {
+      return Array.from(document.querySelectorAll('[class*="prompt-text"],[class*="record-prompt"],[class*="generation-prompt"],[class*="history-item"],[class*="record-item"],[class*="card-header"],[data-testid*="record"]')).filter(function (el) {
+        return !(el.closest && el.closest('[data-testid="dreamina.generator"]'));
+      });
+    }
     return document.querySelectorAll('[data-message-author-role="user"],[data-message-role="user"],.chat-question-card-wrap,.chat-user-message,user-query,[data-test-id="user-query"],.user-query-container');
   }
   function promptMatches(prompt) {
@@ -675,9 +708,16 @@
     var nowID = conversationKey(href);
     var thenID = conversationKey(beforeHref);
     var floor = typeof beforeMatches === 'number' ? beforeMatches : 0;
+    var host = String((window.__tulaiPageHost || location.hostname) || '');
+    if (/(^|\.)jimeng\.jianying\.com$/i.test(host)) {
+      if (window.__tulaiJimengTurn && window.__tulaiJimengTurn.submitted) return true;
+      var stopBtns = document.querySelectorAll('button[data-testid="dreamina.generator.submit"]');
+      for (var si = 0; si < stopBtns.length; si++) {
+        if (visible(stopBtns[si]) && (isStopButton(stopBtns[si]) || stopBtns[si].getAttribute('aria-busy') === 'true')) return true;
+      }
+    }
     if (promptMatches(prompt) > floor) return true;
     if (!(nowID && nowID !== thenID)) return false;
-    var host = String((window.__tulaiPageHost || location.hostname) || '');
     if (!/(^|\.)(qianwen|tongyi)\.com$/i.test(host)) return true;
     return document.querySelectorAll('.chat-question-card-wrap').length === 0;
   };
@@ -698,6 +738,11 @@
   }
 
   function realSendButton(comp) {
+    var jimengBtns = document.querySelectorAll('button[data-testid="dreamina.generator.submit"]');
+    for (var ji = jimengBtns.length - 1; ji >= 0; ji--) {
+      var jb = jimengBtns[ji];
+      if (visible(jb) && !hiddenComposer(jb) && !isStopButton(jb)) return jb;
+    }
     var exact = document.querySelector('button[data-testid="chat_input_send_button"]');
     if (exact && !hiddenComposer(exact) && !isStopButton(exact)) return exact;
     var qwenIntlSend = document.querySelector('.chat-prompt-send-button button.send-button:not(.stop),button.send-button:not(.stop)');
@@ -758,13 +803,13 @@
   function cleanScope(comp) {
     if (!comp) return null;
     if (comp.closest) {
-      var surface = comp.closest('.guidance-input-surface') || comp.closest('[data-testid="chat_input"]') || comp.closest('.message-input-container') || comp.closest('input-area-v2') || comp.closest('input-container');
+      var surface = comp.closest('[data-testid="dreamina.generator"]') || comp.closest('.guidance-input-surface') || comp.closest('[data-testid="chat_input"]') || comp.closest('.message-input-container') || comp.closest('input-area-v2') || comp.closest('input-container');
       if (surface) return surface;
     }
     var scope = findScope(comp);
     if (scope && scope !== document && scope !== document.body && scope !== document.documentElement) {
       for (var p = scope, d = 0; p && p !== document.body && p !== document.documentElement && d < 3; p = p.parentElement, d++) {
-        if (p.querySelector && p.querySelector('[class*="imageBoxWrapper"],[data-testid="attachment-image-card"],.vision-item-container,.message-input-column-file,uploader-file-preview')) {
+        if (p.querySelector && p.querySelector('[class*="imageBoxWrapper"],[data-testid="attachment-image-card"],.vision-item-container,.message-input-column-file,uploader-file-preview,[data-content-generator-references="true"]')) {
           return p;
         }
       }
@@ -773,7 +818,7 @@
     return null;
   }
 
-  var CLEAN_DEL_SEL = '[data-testid="attachment-delete-btn"],[aria-label="delete" i],[class*="imageBoxWrapper"] [data-icon-type="qwpcicon-close2"],[class*="imageBoxWrapper"] [class*="closeIcon"],.message-input-column-file .icon-close,.vision-item-container .icon-close,.file-card-list [class*="close"],[class*="preview"] [class*="delete"],[class*="preview"] [class*="remove"],[class*="image-container"] [class*="close"],uploader-file-preview .cancel-button,uploader-file-preview button[aria-label*="remove" i],uploader-file-preview button[aria-label*="cancel" i],uploader-file-preview button[aria-label*="取消"],uploader-file-preview-container button[data-test-id*="cancel"],uploader-file-preview-container button[data-test-id*="remove"],[aria-label*="删除" i],[aria-label*="移除" i]';
+  var CLEAN_DEL_SEL = '[data-testid="attachment-delete-btn"],[aria-label="delete" i],[class*="imageBoxWrapper"] [data-icon-type="qwpcicon-close2"],[class*="imageBoxWrapper"] [class*="closeIcon"],.message-input-column-file .icon-close,.vision-item-container .icon-close,.file-card-list [class*="close"],[class*="preview"] [class*="delete"],[class*="preview"] [class*="remove"],[class*="image-container"] [class*="close"],uploader-file-preview .cancel-button,uploader-file-preview button[aria-label*="remove" i],uploader-file-preview button[aria-label*="cancel" i],uploader-file-preview button[aria-label*="取消"],uploader-file-preview-container button[data-test-id*="cancel"],uploader-file-preview-container button[data-test-id*="remove"],[data-content-generator-references="true"] [class*="delete"],[data-content-generator-references="true"] [class*="remove"],[data-content-generator-references="true"] [class*="close"],[aria-label*="删除" i],[aria-label*="移除" i]';
 
   // 文本由可信 InsertText 全文替换，只清理输入区附件。
   window.tulaiCleanComposer = async function () {
@@ -831,13 +876,15 @@
 
   // 仅读取额度/限流/审核信号，避免发送前读取整页 document.body.innerText 触发同步回流。
   window.tulaiAccountFault = function () {
-    var rateLimit = accountNotice(document, RATE_LIMIT_RE);
-    var quota = accountNotice(document, QUOTA_RE);
+    var jt = window.__tulaiJimengTurn;
+    var rateLimit = accountNotice(document, RATE_LIMIT_RE) || !!(jt && jt.rateLimit);
+    var quota = accountNotice(document, QUOTA_RE) || !!(jt && jt.quota);
     if (!quota && (replyQuota(freshReplyText()) || replyQuota(doubaoTurnReplyText()))) {
       var body = (document.body && document.body.innerText) || '';
       if (!/生成中|正在生成|绘制中|Drawing|Generating/i.test(body)) quota = true;
     }
-    return { quota: quota, rateLimit: rateLimit, moderation: refusalText() };
+    var moderation = refusalText() || (jt && jt.moderation ? String(jt.moderation) : '');
+    return { quota: quota, rateLimit: rateLimit, moderation: moderation };
   };
 
   // 页面状态探测

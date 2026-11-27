@@ -234,6 +234,40 @@ func (e *Engine) allDoubaoAccountsFullRows(rows []store.Browser, now time.Time, 
 	return true
 }
 
+// doubaoAccountsStoppedReason 判断豆包所有非禁用/非人工接管账号是否均已当日停用（日上限、额度耗尽或生图降级）。
+func (e *Engine) doubaoAccountsStoppedReason(rows []store.Browser, now time.Time, limit int) (logMsg, taskReason string, stop bool) {
+	if len(rows) == 0 {
+		return "", "", false
+	}
+	var sawQuota, sawDegraded bool
+	for _, b := range rows {
+		if b.Disabled || e.AccountManual(b.ID) {
+			return "", "", false
+		}
+		localFull := limit > 0 && b.UsedToday(now) >= limit
+		var kind faultKind
+		if b.Health == store.HealthExhausted && !b.Usable(now) {
+			kind = classifyFault(errors.New(b.LastError))
+		}
+		switch {
+		case localFull || kind == faultQuota:
+			sawQuota = true
+		case kind == faultDegraded:
+			sawDegraded = true
+		default:
+			return "", "", false
+		}
+	}
+	switch {
+	case sawDegraded && sawQuota:
+		return "豆包所有账号均已用完额度或被限制生图，自动停止剩余任务", "账号额度已用完或生图能力受限，已停止", true
+	case sawDegraded:
+		return "豆包所有可用账号均被限制生图（降级纯文本），自动停止剩余任务", "账号生图能力受限，已停止", true
+	default:
+		return "豆包所有账号额度已用完，自动停止剩余任务", "账号额度已用完，已停止", true
+	}
+}
+
 func (t *Task) ranOnOr(fallback int64) int64 {
 	if t != nil && t.ranOn > 0 {
 		return t.ranOn

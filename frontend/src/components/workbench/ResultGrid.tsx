@@ -613,7 +613,8 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
   const mode = wb?.mode || "wash";
   const isWash = mode === "wash";
   const activePlatform =
-    wb?.platform || (wb?.gemini ? "Gemini" : wb?.qwenIntl ? "千问国际" : wb?.qianwen ? "千问" : "豆包");
+    wb?.platform ||
+    (wb?.jimeng ? "即梦" : wb?.gemini ? "Gemini" : wb?.qwenIntl ? "千问国际" : wb?.qianwen ? "千问" : "豆包");
   const scopeKey = `${activePlatform}:${mode}`;
 
   const runOnPage = Boolean(wb?.running && wb.runPage === wb.page);

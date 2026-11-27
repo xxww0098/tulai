@@ -207,7 +207,63 @@ func checkWashAttachments(s *cdp.Session, names []string, wait bool) error {
 }
 
 func (d Doubao) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
-	return waitForResult(s, timeout, d.washNames)
+	return waitForResultFor(s, "豆包", timeout, d.washNames)
+}
+
+type doubaoRouteInfo struct {
+	Degraded     bool   `json:"degraded"`
+	AgentPSM     string `json:"agentPsm"`
+	AgentName    string `json:"agentName"`
+	HasCreations bool   `json:"hasCreations"`
+	HasCodeBlock bool   `json:"hasCodeBlock"`
+	TextPreview  string `json:"textPreview"`
+}
+
+// inspectDoubaoRoute 拉取当前豆包对话的 SSR 页面，检查服务端是否把本轮生图请求静默改道至 flow.agent.shell。
+func inspectDoubaoRoute(s *cdp.Session, names []string) *doubaoRouteInfo {
+	if s == nil {
+		return nil
+	}
+	expected, _ := json.Marshal(names)
+	multi := len(names) > 1
+	out, err := s.EvaluateAsync(fmt.Sprintf(`(async () => {
+		const multi = %t;
+		if (multi && !window.__tulaiCurrentDoubaoTurn?.()) return null;
+		if (!window.TULAIDoubaoSourceMap) { %s }
+		const map = window.TULAIDoubaoSourceMap;
+		if (!map || typeof map.inspectRouteFromConversation !== 'function') return null;
+		const names = %s;
+		const here = () => location.origin + location.pathname.replace(/\/$/, '');
+		const readyURL = raw => {
+			try {
+				const u = new URL(raw);
+				if (!/^\/chat\/[^/]+$/.test(u.pathname) || /^\/chat\/local_/i.test(u.pathname)) return '';
+				return u.origin + u.pathname;
+			} catch (e) { return ''; }
+		};
+		let url = readyURL(here());
+		if (!url) return null;
+		let found = await map.inspectRouteFromConversation(url, names);
+		const current = readyURL(here());
+		if (!found && current && current !== url) {
+			url = current;
+			found = await map.inspectRouteFromConversation(url, names);
+		}
+		if (!found || readyURL(here()) !== url) return null;
+		if (multi && !window.__tulaiCurrentDoubaoTurn?.()) return null;
+		return found;
+	})()`, multi, extbundle.DoubaoSourceMapJS(), expected))
+	if err != nil {
+		return nil
+	}
+	var info doubaoRouteInfo
+	if cdp.ParseJSValue(out, &info) != nil {
+		return nil
+	}
+	if !info.Degraded && info.AgentPSM == "" && !info.HasCreations && !info.HasCodeBlock && info.TextPreview == "" {
+		return nil
+	}
+	return &info
 }
 
 // resolveDoubaoWash uses the same attachment URI checks as the page

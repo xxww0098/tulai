@@ -65,6 +65,20 @@ export interface GeminiPoolSummary {
   earliestResetLabel: string;
 }
 
+export interface JimengPoolSummary {
+  totalAccounts: number;
+  enabledAccounts: number;
+  syncedAccounts: number;
+  remainSum: number;
+  totalSum: number;
+  exhaustedCount: number;
+  vipCount: number;
+  costPerImage: number;
+  estImages: number;
+  earliestResetAt: number;
+  earliestResetLabel: string;
+}
+
 export function isDoubaoAccount(item: Pick<QwenQuotaLike, "platform">): boolean {
   return item.platform === "豆包";
 }
@@ -77,8 +91,12 @@ export function isGeminiAccount(item: Pick<QwenQuotaLike, "platform">): boolean 
   return item.platform === "Gemini";
 }
 
+export function isJimengAccount(item: Pick<QwenQuotaLike, "platform">): boolean {
+  return item.platform === "即梦";
+}
+
 export function isQuotaTrackedAccount(item: Pick<QwenQuotaLike, "platform">): boolean {
-  return isQwenAccount(item) || isGeminiAccount(item) || isDoubaoAccount(item);
+  return isQwenAccount(item) || isGeminiAccount(item) || isDoubaoAccount(item) || isJimengAccount(item);
 }
 
 export function doubaoStatusTone(item: QwenQuotaLike): "danger" | "warn" | "ok" | "muted" {
@@ -630,6 +648,205 @@ export function summarizeQwenPool(items: QwenQuotaLike[]): QwenPoolSummary {
 
   return {
     totalAccounts: qwen.length,
+    enabledAccounts: enabled.length,
+    syncedAccounts,
+    remainSum,
+    totalSum,
+    exhaustedCount,
+    vipCount,
+    costPerImage,
+    estImages: Math.floor(remainSum / Math.max(1, costPerImage)),
+    earliestResetAt,
+    earliestResetLabel,
+  };
+}
+
+export const JIMENG_MAX_BATCH_IMAGES = 6;
+
+export function jimengAffordableImages(item: QwenQuotaLike): number | null {
+  if (!item.creditsSynced) return null;
+  const remain = item.creditsRemain ?? -1;
+  if (remain < 0) return null;
+  const cost = item.creditCost && item.creditCost > 0 ? item.creditCost : 1;
+  return Math.floor(remain / cost);
+}
+
+export function jimengEffectiveBatchLimit(item: QwenQuotaLike): number {
+  const est = jimengAffordableImages(item);
+  if (est === null) return JIMENG_MAX_BATCH_IMAGES;
+  return Math.max(0, Math.min(JIMENG_MAX_BATCH_IMAGES, est));
+}
+
+export function jimengCreditTone(item: QwenQuotaLike): "danger" | "warn" | "ok" | "muted" {
+  if (!item.creditsSynced) return "muted";
+  const remain = item.creditsRemain ?? -1;
+  const est = jimengAffordableImages(item);
+  if (remain === 0 || est === 0) return "danger";
+  if ((item.usagePct ?? 0) >= 80 || (remain > 0 && remain <= 10)) return "warn";
+  return "ok";
+}
+
+export function jimengProgressTone(item: QwenQuotaLike): "danger" | "warn" | "accent" {
+  const tone = jimengCreditTone(item);
+  if (tone === "danger" || (item.usagePct ?? 0) >= 95) return "danger";
+  if (tone === "warn" || (item.usagePct ?? 0) >= 80) return "warn";
+  return "accent";
+}
+
+export function formatJimengCreditsPrimary(item: QwenQuotaLike): string {
+  if (!item.creditsSynced) return "积分未同步";
+  const remain = item.creditsRemain ?? -1;
+  const total = item.creditsTotal ?? 0;
+  const est = jimengAffordableImages(item);
+  if (remain >= 0 && total > 0) {
+    if (remain === 0) return `0 / ${total} 积分 · 已耗尽`;
+    if (est === 0) return `余 ${remain} / ${total} 积分 · 不足1张`;
+    return `余 ${remain} / ${total} 积分`;
+  }
+  if (remain >= 0) {
+    if (remain === 0) return "0 积分 · 已耗尽";
+    if (est === 0) return `余 ${remain} 积分 · 不足1张`;
+    return `余 ${remain} 积分`;
+  }
+  return "积分未同步";
+}
+
+export function formatJimengCompactPillCredits(item: QwenQuotaLike): string {
+  if (!item.creditsSynced) return "";
+  const remain = item.creditsRemain ?? -1;
+  if (remain < 0) return "";
+  return `${remain}分`;
+}
+
+export function formatJimengMetaLine(item: QwenQuotaLike, todayCount?: number): string {
+  const parts: string[] = [];
+  if (item.creditsSynced) {
+    if (item.creditsResetLabel) {
+      parts.push(item.creditsResetLabel);
+    } else if (item.creditsCycleLabel) {
+      parts.push(item.creditsCycleLabel);
+    }
+    const cost = item.creditCost && item.creditCost > 0 ? item.creditCost : 1;
+    parts.push(`${cost}分/张`);
+    const est = jimengAffordableImages(item);
+    if (est !== null && est > 0 && est < JIMENG_MAX_BATCH_IMAGES) {
+      parts.push(`单批≤${est}张`);
+    } else if (est === 0 && (item.creditsRemain ?? 0) > 0) {
+      parts.push("不足1张");
+    }
+    if (typeof todayCount === "number" && todayCount > 0) {
+      parts.push(`今日 ${todayCount} 次`);
+    }
+  } else {
+    parts.push("Seedream 4.7 · 单批≤6张");
+    parts.push("1分/张");
+    if (typeof todayCount === "number" && todayCount > 0) {
+      parts.push(`今日 ${todayCount} 次`);
+    }
+  }
+  return parts.join(" · ");
+}
+
+export function buildJimengStatusTooltip(
+  item: QwenQuotaLike,
+  extra?: {
+    todayCount?: number;
+    successToday?: number;
+    failedToday?: number;
+    cooldownAt?: string;
+  },
+): string {
+  const lines: string[] = [];
+  if (item.creditsSynced) {
+    const cost = item.creditCost && item.creditCost > 0 ? item.creditCost : 1;
+    const remain = item.creditsRemain ?? -1;
+    const total = item.creditsTotal ?? 0;
+    const est = jimengAffordableImages(item);
+    if (remain >= 0 && total > 0) {
+      lines.push(`积分：剩余 ${remain} / ${total}（约可生图 ${est ?? 0} 张，${cost} 积分/张）`);
+    } else if (remain >= 0) {
+      lines.push(`积分：剩余 ${remain}（约可生图 ${est ?? 0} 张，${cost} 积分/张）`);
+    }
+    const cyclePart = item.creditsCycleLabel ? `（${item.creditsCycleLabel}）` : "";
+    if (item.creditsResetLabel) {
+      lines.push(`刷新/到期：${item.creditsResetLabel}${cyclePart}`);
+    } else if (item.creditsCycleLabel) {
+      lines.push(`周期：${item.creditsCycleLabel}`);
+    }
+    if (item.memberLabel) {
+      lines.push(`会员套餐：${item.memberLabel}`);
+    }
+    if (est !== null && est <= 0) {
+      lines.push(`默认模型：Seedream 4.7 · 当前剩余积分不足 1 张（单批上限 ${JIMENG_MAX_BATCH_IMAGES} 张，积分不足时按可生图张数自动缩减）`);
+    } else if (est !== null && est < JIMENG_MAX_BATCH_IMAGES) {
+      lines.push(`默认模型：Seedream 4.7 · 当前单批最多导入 ${est} 张（受剩余积分限制，满额最多 ${JIMENG_MAX_BATCH_IMAGES} 张；比例与分辨率按工作台设置）`);
+    } else {
+      lines.push(`默认模型：Seedream 4.7 · 单批最多导入 ${JIMENG_MAX_BATCH_IMAGES} 张（积分不足时按剩余可生图张数自动缩减；比例与分辨率按工作台设置）`);
+    }
+    if (item.creditsSyncedLabel) {
+      lines.push(`状态同步：${item.creditsSyncedLabel}`);
+    }
+  } else {
+    lines.push("即梦积分尚未同步，点击「同步」或完成一次出图后自动读取");
+    lines.push(`默认模型：图片生成 · Seedream 4.7 · 单批最多导入 ${JIMENG_MAX_BATCH_IMAGES} 张（积分不足时按剩余可生图张数自动缩减；比例与分辨率按工作台设置）`);
+  }
+  if (extra) {
+    if (typeof extra.todayCount === "number") {
+      if (typeof extra.successToday === "number") {
+        lines.push(`今日出图：已派发 ${extra.todayCount} 次 · 成功 ${extra.successToday} 次`);
+      } else {
+        lines.push(`今日派发：${extra.todayCount} 次`);
+      }
+    }
+    if (extra.cooldownAt) {
+      lines.push(`冷却恢复：预计 ${extra.cooldownAt}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export function summarizeJimengPool(items: QwenQuotaLike[]): JimengPoolSummary {
+  const jimeng = items.filter(isJimengAccount);
+  const enabled = jimeng.filter((item) => !item.disabled);
+  const scope = enabled.length > 0 ? enabled : jimeng;
+  let syncedAccounts = 0;
+  let remainSum = 0;
+  let totalSum = 0;
+  let exhaustedCount = 0;
+  let vipCount = 0;
+  let costPerImage = 1;
+  let earliestResetAt = 0;
+  let earliestResetLabel = "";
+
+  for (const item of scope) {
+    if (!item.creditsSynced) continue;
+    syncedAccounts += 1;
+    if (isPaidMemberTier(item.memberTier)) {
+      vipCount += 1;
+    }
+    if (item.creditCost && item.creditCost > 0) {
+      costPerImage = item.creditCost;
+    }
+    const remain = item.creditsRemain ?? -1;
+    const total = item.creditsTotal ?? 0;
+    if (remain >= 0) {
+      remainSum += remain;
+      if (remain === 0 || jimengAffordableImages(item) === 0) exhaustedCount += 1;
+    }
+    if (total > 0) {
+      totalSum += total;
+    }
+    const resetAt = item.creditsResetAt ?? 0;
+    if (resetAt > 0 && (earliestResetAt === 0 || resetAt < earliestResetAt)) {
+      earliestResetAt = resetAt;
+      earliestResetLabel = item.creditsResetLabel || "";
+    } else if (!earliestResetLabel && item.creditsResetLabel) {
+      earliestResetLabel = item.creditsResetLabel;
+    }
+  }
+
+  return {
+    totalAccounts: jimeng.length,
     enabledAccounts: enabled.length,
     syncedAccounts,
     remainSum,

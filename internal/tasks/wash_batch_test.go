@@ -460,6 +460,86 @@ func TestSentWashBatchMarksQuotaWithoutResending(t *testing.T) {
 	}
 }
 
+func TestSentWashBatchMarksDegradedAndReplyFaultWithoutResending(t *testing.T) {
+	t.Run("degraded exhausts account and switches subsequent batches", func(t *testing.T) {
+		st := openRotateStore(t)
+		degraded := addNamed(t, st, "豆包", "降级号")
+		healthy := addNamed(t, st, "豆包", "正常号")
+		st.ConfirmLogin(degraded.ID)
+		st.ConfirmLogin(healthy.ID)
+		e := NewEngine(st, nil, nil, "")
+		defer e.CloseSessions()
+		e.gap = func(time.Duration) time.Duration { return 0 }
+
+		var sources []string
+		for i := 1; i <= 20; i++ {
+			sources = append(sources, fmt.Sprintf("img-%02d.png", i))
+		}
+		hits := map[int64]int{}
+		var mu sync.Mutex
+		err := e.RunObserved(context.Background(), Options{
+			Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources,
+			Wash: true, WaitResult: true, Concurrency: 1, DailyCap: 100,
+		}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+			mu.Lock()
+			hits[task.BrowserID]++
+			mu.Unlock()
+			task.submitted = true
+			if task.BrowserID == degraded.ID {
+				return fmt.Errorf("%w（flow.agent.shell）：很抱歉，我目前没办法直接生成图片", strategy.ErrAccountImageDegraded)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hits[degraded.ID] != 1 {
+			t.Fatalf("降级账号在首次触发后不应继续接后续洗图批次: hits=%v", hits)
+		}
+		if hits[healthy.ID] < 1 {
+			t.Fatalf("健康账号应接管剩余批次: hits=%v", hits)
+		}
+		row := browserByID(t, st, degraded.ID)
+		if row.Health != store.HealthExhausted || row.Usable(time.Now()) || row.PlatformLimited {
+			t.Fatalf("降级账号应标为当日停用且不误标 PlatformLimited: %+v", row)
+		}
+	})
+
+	t.Run("reply fault cools account on submitted wash batch", func(t *testing.T) {
+		st := openRotateStore(t)
+		account := addNamed(t, st, "豆包", "甲")
+		e := NewEngine(st, nil, nil, "")
+		task := Task{BrowserID: account.ID, Platform: "豆包", batch: []Task{{}, {}}, Images: []string{"a", "b"}}
+		calls := 0
+		got := e.execute(context.Background(), task, func(_ context.Context, task *Task) error {
+			calls++
+			task.submitted = true
+			return fmt.Errorf("%w：豆包仅返回纯文本/代码", strategy.ErrPlatformReply)
+		})
+		row := browserByID(t, st, account.ID)
+		if calls != 1 || got.Status != StatusFailed || row.Health != store.HealthCooling || row.Usable(time.Now()) {
+			t.Fatalf("多图洗图遇到回复异常应停止本批并冷却账号: calls=%d task=%+v row=%+v", calls, got, row)
+		}
+	})
+
+	t.Run("single task degraded fails once and exhausts account", func(t *testing.T) {
+		st := openRotateStore(t)
+		account := addNamed(t, st, "豆包", "单图降级号")
+		e := NewEngine(st, nil, nil, "")
+		e.opts.RetryCount = 3
+		calls := 0
+		got := e.execute(context.Background(), Task{BrowserID: account.ID, Platform: "豆包", Images: []string{"a.png"}}, func(_ context.Context, task *Task) error {
+			calls++
+			task.submitted = true
+			return strategy.ErrAccountImageDegraded
+		})
+		row := browserByID(t, st, account.ID)
+		if calls != 1 || got.Status != StatusFailed || row.Health != store.HealthExhausted || row.Usable(time.Now()) {
+			t.Fatalf("单图遇到降级应立即失败一次并停用账号: calls=%d task=%+v row=%+v", calls, got, row)
+		}
+	})
+}
+
 func TestUnmatchedWashResultsArePreservedWithoutSourceNames(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	e.opts = Options{Wash: true, OutputPath: t.TempDir()}
@@ -800,4 +880,148 @@ func TestSoloImagesAndRebuildRetryPreventRebundling(t *testing.T) {
 	if !reflect.DeepEqual(retryBatches, wantRetryBatches) {
 		t.Fatalf("RebuildRetry bundles mismatch: got %v want %v", retryBatches, wantRetryBatches)
 	}
+}
+
+func TestJimengWashDispatchesSixThenTwoAndRespectsCredits(t *testing.T) {
+	t.Run("bundles up to 6 images per batch", func(t *testing.T) {
+		st := openRotateStore(t)
+		account := addNamed(t, st, "即梦", "即梦1")
+		e := NewEngine(st, nil, nil, "")
+		defer e.CloseSessions()
+		sources := numberedWashSources(8)
+		var sizes []int
+		var progress Progress
+		err := e.RunObserved(context.Background(), Options{
+			Platforms: []string{"即梦"}, Prompts: []string{"洗图"}, Images: sources,
+			Wash: true, Concurrency: 1, WaitResult: true, DailyCap: 100,
+		}, func(Task) {}, func(p Progress) { progress = p }, func(_ context.Context, task *Task) error {
+			sizes = append(sizes, len(task.Images))
+			if len(task.batch) > 0 {
+				for i := range task.batch {
+					task.batch[i].Results = []string{task.batch[i].Images[0] + ".out"}
+				}
+			} else {
+				task.Results = []string{task.Images[0] + ".out"}
+			}
+			return nil
+		})
+		if err != nil || !reflect.DeepEqual(sizes, []int{6, 2}) || progress.Done != 8 || progress.Total != 8 {
+			t.Fatalf("jimeng batch sizes=%v progress=%+v err=%v", sizes, progress, err)
+		}
+		if got := browserByID(t, st, account.ID); got.UsedToday(time.Now()) != 8 {
+			t.Fatalf("daily count = %d, want 8", got.UsedToday(time.Now()))
+		}
+	})
+
+	t.Run("caps batch size by remaining synced credits", func(t *testing.T) {
+		st := openRotateStore(t)
+		account := addNamed(t, st, "即梦", "即梦低积分")
+		if err := st.UpdateBrowserQuota(account.ID, store.AccountQuota{
+			CreditsRemain: 5,
+			CreditsTotal:  60,
+			CreditCost:    1,
+			SyncedAt:      time.Now().Unix(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		e := NewEngine(st, nil, nil, "")
+		defer e.CloseSessions()
+		e.opts = Options{Wash: true, WaitResult: true}
+		items := make([]Task, 8)
+		for i := range items {
+			items[i] = Task{Platform: "即梦", BrowserID: account.ID, Prompt: "洗图", Images: []string{fmt.Sprintf("%02d.png", i+1)}}
+		}
+		_, indices := e.bundleWashTasks(items, 0, items[0], 100, time.Now())
+		if len(indices) != 5 {
+			t.Fatalf("expected credit-capped batch size 5 when 5 credits remain, got %d (%v)", len(indices), indices)
+		}
+		if got := e.jimengBatchMaxFor(browserByID(t, st, account.ID), true, time.Now()); got != 5 {
+			t.Fatalf("jimengBatchMaxFor(5 credits, 2K) = %d, want 5", got)
+		}
+
+		// 切到 4K（2分/张）时，剩余 5 积分最多只能导入 2 张。
+		e.opts.OutputSize = OutputSize{Resolution: "4K"}
+		_, indices4k := e.bundleWashTasks(items, 0, items[0], 100, time.Now())
+		if len(indices4k) != 2 {
+			t.Fatalf("expected 4K credit-capped batch size 2 when 5 credits remain, got %d (%v)", len(indices4k), indices4k)
+		}
+	})
+
+	t.Run("shrinks 6-image batch to 5 when live pre-upload sync reveals 5 credits remain", func(t *testing.T) {
+		st := openRotateStore(t)
+		low := addNamed(t, st, "即梦", "即梦余5分")
+		full := addNamed(t, st, "即梦", "即梦满额")
+		if err := st.UpdateBrowserQuota(full.ID, store.AccountQuota{
+			CreditsRemain: 60,
+			CreditsTotal:  60,
+			CreditCost:    1,
+			SyncedAt:      time.Now().Unix(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		e := NewEngine(st, nil, nil, "")
+		defer e.CloseSessions()
+
+		sources := numberedWashSources(8)
+		var dispatched []struct {
+			browserID int64
+			count     int
+		}
+		shrunkOnce := false
+		var progress Progress
+		err := e.RunObserved(context.Background(), Options{
+			Platforms: []string{"即梦"}, Prompts: []string{"洗图"}, Images: sources,
+			Wash: true, Concurrency: 1, WaitResult: true, DailyCap: 100,
+		}, func(Task) {}, func(p Progress) { progress = p }, func(_ context.Context, task *Task) error {
+			// 首次落到未同步的 low 号时模拟上传前实时读取到剩余 5 积分，触发缩减重派。
+			if task.BrowserID == low.ID && !shrunkOnce && len(task.Images) > 5 {
+				shrunkOnce = true
+				if err := st.UpdateBrowserQuota(low.ID, store.AccountQuota{
+					CreditsRemain: 5,
+					CreditsTotal:  60,
+					CreditCost:    1,
+					SyncedAt:      time.Now().Unix(),
+				}); err != nil {
+					return err
+				}
+				return errJimengBatchShrink
+			}
+			dispatched = append(dispatched, struct {
+				browserID int64
+				count     int
+			}{browserID: task.BrowserID, count: len(task.Images)})
+			if task.BrowserID == low.ID {
+				// 消耗完 5 积分后同步为 0，剩余 3 张自动转给 full 号。
+				_ = st.UpdateBrowserQuota(low.ID, store.AccountQuota{
+					CreditsRemain: 0,
+					CreditsTotal:  60,
+					CreditCost:    1,
+					SyncedAt:      time.Now().Unix(),
+				})
+			}
+			if len(task.batch) > 0 {
+				for i := range task.batch {
+					task.batch[i].Results = []string{task.batch[i].Images[0] + ".out"}
+				}
+			} else {
+				task.Results = []string{task.Images[0] + ".out"}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("RunObserved err=%v", err)
+		}
+		if !shrunkOnce {
+			t.Fatal("expected initial 6-image batch to shrink on low-credit account")
+		}
+		if progress.Done != 8 || progress.Total != 8 {
+			t.Fatalf("progress=%+v, want 8/8", progress)
+		}
+		if len(dispatched) != 2 || dispatched[0].browserID != low.ID || dispatched[0].count != 5 || dispatched[1].browserID != full.ID || dispatched[1].count != 3 {
+			t.Fatalf("unexpected dispatched batches: %+v (want [low:5, full:3])", dispatched)
+		}
+		if got := browserByID(t, st, low.ID); got.UsedToday(time.Now()) != 5 {
+			t.Fatalf("low account UsedToday = %d, want 5 (shrink must not count as use)", got.UsedToday(time.Now()))
+		}
+	})
 }

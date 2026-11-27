@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 // Brand marks from @lobehub/icons (MIT).
 import doubaoMark from "@/assets/providers/doubao-avatar.png";
 import geminiMark from "@/assets/providers/gemini-color.svg";
+import jimengMark from "@/assets/providers/jimeng-color.svg";
 import qwenMark from "@/assets/providers/qwen-color.svg";
 import qwenIntlMark from "@/assets/providers/qwen-intl-color.svg";
 import { AccountColumnHeader } from "@/components/browser/AccountColumnHeader";
@@ -47,6 +48,7 @@ import { Browser, formatCallError } from "@/lib/ipc";
 import {
   buildDoubaoStatusTooltip,
   buildGeminiStatusTooltip,
+  buildJimengStatusTooltip,
   buildQwenStatusTooltip,
   doubaoProgressTone,
   doubaoStatusTone,
@@ -54,14 +56,19 @@ import {
   formatDoubaoPrimary,
   formatGeminiMetaLine,
   formatGeminiQuotaPrimary,
+  formatJimengCreditsPrimary,
+  formatJimengMetaLine,
   formatQwenCreditsPrimary,
   formatQwenMetaLine,
   geminiProgressTone,
   geminiQuotaTone,
   isDoubaoAccount,
   isGeminiAccount,
+  isJimengAccount,
   isPaidMemberTier,
   isQwenAccount,
+  jimengCreditTone,
+  jimengProgressTone,
   qwenCreditTone,
   qwenProgressTone,
 } from "@/lib/qwenStatus";
@@ -85,6 +92,7 @@ const PLATFORM_OPTIONS = [
   { value: "千问", label: "千问" },
   { value: "千问国际", label: "千问国际" },
   { value: "Gemini", label: "Gemini" },
+  { value: "即梦", label: "即梦" },
 ];
 
 const PROVIDER_MARKS: Record<string, string> = {
@@ -92,6 +100,7 @@ const PROVIDER_MARKS: Record<string, string> = {
   千问: qwenMark,
   千问国际: qwenIntlMark,
   Gemini: geminiMark,
+  即梦: jimengMark,
 };
 
 function invokeSafe(call: () => Promise<unknown>, after?: () => Promise<unknown>): void {
@@ -354,6 +363,7 @@ function AccountTableRows({
   pageRunning,
   clearingBusy,
   syncingStatusBusy,
+  probingImageBusy,
   onRequestRename,
   onRequestProxy,
   onRequestFingerprint,
@@ -361,7 +371,9 @@ function AccountTableRows({
   onRowAction,
   onSyncQwenRow,
   onSyncDoubaoRow,
+  onProbeDoubaoRow,
   onSyncGeminiRow,
+  onSyncJimengRow,
   onRequestClearHistory,
   onRequestDelete,
 }: {
@@ -370,6 +382,7 @@ function AccountTableRows({
   pageRunning: boolean;
   clearingBusy: boolean;
   syncingStatusBusy: boolean;
+  probingImageBusy: boolean;
   onRequestRename: (row: BrowserRowDTO) => void;
   onRequestProxy: (row: BrowserRowDTO) => void;
   onRequestFingerprint: (row: BrowserRowDTO) => void;
@@ -377,7 +390,9 @@ function AccountTableRows({
   onRowAction: (id: number, action: string) => void;
   onSyncQwenRow: (row: BrowserRowDTO) => void;
   onSyncDoubaoRow: (row: BrowserRowDTO) => void;
+  onProbeDoubaoRow: (row: BrowserRowDTO) => void;
   onSyncGeminiRow: (row: BrowserRowDTO) => void;
+  onSyncJimengRow: (row: BrowserRowDTO) => void;
   onRequestClearHistory: (row: BrowserRowDTO) => void;
   onRequestDelete: (row: BrowserRowDTO) => void;
 }) {
@@ -387,19 +402,22 @@ function AccountTableRows({
   const isQwen = isQwenAccount(row);
   const isDoubao = isDoubaoAccount(row);
   const isGemini = isGeminiAccount(row);
-  const isQuotaTracked = isQwen || isGemini;
+  const isJimeng = isJimengAccount(row);
+  const isQuotaTracked = isQwen || isGemini || isJimeng;
   const creditTone = isQwen
     ? qwenCreditTone(row)
-    : isGemini
-      ? geminiQuotaTone(row)
-      : isDoubao
-        ? doubaoStatusTone(row)
-        : "muted";
+    : isJimeng
+      ? jimengCreditTone(row)
+      : isGemini
+        ? geminiQuotaTone(row)
+        : isDoubao
+          ? doubaoStatusTone(row)
+          : "muted";
   const usageText = row.usageLabel
     ? `${row.todayCount} 次 · ${row.usageLabel}`
     : `${row.todayCount} 次`;
-  const qwenEstImages =
-    isQwen && row.creditsSynced && (row.creditsRemain ?? -1) >= 0
+  const creditEstImages =
+    (isQwen || isJimeng) && row.creditsSynced && (row.creditsRemain ?? -1) >= 0
       ? Math.floor((row.creditsRemain ?? 0) / Math.max(1, row.creditCost || 1))
       : null;
 
@@ -507,14 +525,16 @@ function AccountTableRows({
           </div>
         </td>
 
-        {/* 今日用量 / 千问与 Gemini 实时额度与刷新 */}
+        {/* 今日用量 / 千问、即梦与 Gemini 实时额度与刷新 */}
         <td className="w-[24%] min-w-[208px] px-2.5 py-2.5 align-middle">
           {isQuotaTracked ? (
             <Tooltip
               content={
                 isQwen
                   ? buildQwenStatusTooltip(row, { todayCount: row.todayCount })
-                  : buildGeminiStatusTooltip(row, { todayCount: row.todayCount })
+                  : isJimeng
+                    ? buildJimengStatusTooltip(row, { todayCount: row.todayCount })
+                    : buildGeminiStatusTooltip(row, { todayCount: row.todayCount })
               }
               side="top"
             >
@@ -522,7 +542,11 @@ function AccountTableRows({
                 <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap">
                   <span
                     data-testid={
-                      isQwen ? `browser-qwen-credits-${row.id}` : `browser-gemini-quota-${row.id}`
+                      isQwen
+                        ? `browser-qwen-credits-${row.id}`
+                        : isJimeng
+                          ? `browser-jimeng-credits-${row.id}`
+                          : `browser-gemini-quota-${row.id}`
                     }
                     className={cn(
                       "tnum text-xs",
@@ -535,10 +559,14 @@ function AccountTableRows({
                             : "text-muted",
                     )}
                   >
-                    {isQwen ? formatQwenCreditsPrimary(row) : formatGeminiQuotaPrimary(row)}
+                    {isQwen
+                      ? formatQwenCreditsPrimary(row)
+                      : isJimeng
+                        ? formatJimengCreditsPrimary(row)
+                        : formatGeminiQuotaPrimary(row)}
                   </span>
-                  {qwenEstImages !== null ? (
-                    <span className="tnum text-[11px] text-muted">{`约 ${qwenEstImages} 张`}</span>
+                  {creditEstImages !== null ? (
+                    <span className="tnum text-[11px] text-muted">{`约 ${creditEstImages} 张`}</span>
                   ) : null}
                   {row.creditsSynced && row.memberLabel ? (
                     <span
@@ -561,20 +589,32 @@ function AccountTableRows({
                           ? 1
                           : Math.min(1, Math.max(0, row.usagePct) / 100)
                       }
-                      tone={isQwen ? qwenProgressTone(row) : geminiProgressTone(row)}
-                      aria-label={isQwen ? `积分已用 ${row.usagePct}%` : `额度已用 ${row.usagePct}%`}
+                      tone={
+                        isQwen
+                          ? qwenProgressTone(row)
+                          : isJimeng
+                            ? jimengProgressTone(row)
+                            : geminiProgressTone(row)
+                      }
+                      aria-label={isQwen || isJimeng ? `积分已用 ${row.usagePct}%` : `额度已用 ${row.usagePct}%`}
                     />
                   </div>
                 ) : null}
                 <span
                   data-testid={
-                    isQwen ? `browser-qwen-meta-${row.id}` : `browser-gemini-meta-${row.id}`
+                    isQwen
+                      ? `browser-qwen-meta-${row.id}`
+                      : isJimeng
+                        ? `browser-jimeng-meta-${row.id}`
+                        : `browser-gemini-meta-${row.id}`
                   }
                   className="tnum text-[10.5px] leading-snug text-subtle"
                 >
                   {isQwen
                     ? formatQwenMetaLine(row, row.todayCount)
-                    : formatGeminiMetaLine(row, row.todayCount)}
+                    : isJimeng
+                      ? formatJimengMetaLine(row, row.todayCount)
+                      : formatGeminiMetaLine(row, row.todayCount)}
                   {row.creditsSyncedLabel ? ` · ${row.creditsSyncedLabel}` : ""}
                 </span>
               </div>
@@ -732,31 +772,54 @@ function AccountTableRows({
                   size="xs"
                   variant="ghost"
                   aria-label={`同步 ${row.name || `账号 #${row.id}`} 千问状态`}
-                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy)}
+                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy || probingImageBusy)}
                   className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
                   onClick={() => onSyncQwenRow(row)}
                 />
               </Tooltip>
             ) : isDoubao ? (
-              <Tooltip
-                content={
-                  pageRunning
-                    ? "任务运行中，完成后会自动刷新豆包状态"
-                    : "同步该豆包账号的用户名、订阅方案与实时限额状态"
-                }
-                side="top"
-              >
-                <IconButton
-                  data-testid={`browser-sync-doubao-row-${row.id}`}
-                  icon="refresh-cw"
-                  size="xs"
-                  variant="ghost"
-                  aria-label={`同步 ${row.name || `账号 #${row.id}`} 豆包状态`}
-                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy)}
-                  className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
-                  onClick={() => onSyncDoubaoRow(row)}
-                />
-              </Tooltip>
+              <>
+                <Tooltip
+                  content={
+                    pageRunning
+                      ? "任务运行中，完成后会自动刷新豆包状态"
+                      : "同步该豆包账号的用户名、订阅方案与实时限额状态"
+                  }
+                  side="top"
+                >
+                  <IconButton
+                    data-testid={`browser-sync-doubao-row-${row.id}`}
+                    icon="refresh-cw"
+                    size="xs"
+                    variant="ghost"
+                    aria-label={`同步 ${row.name || `账号 #${row.id}`} 豆包状态`}
+                    disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy || probingImageBusy)}
+                    className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
+                    onClick={() => onSyncDoubaoRow(row)}
+                  />
+                </Tooltip>
+                <Tooltip
+                  content={
+                    pageRunning
+                      ? "任务运行中，暂不可检测生图能力"
+                      : row.pending && row.pendingOp === "probing_image"
+                        ? "正在检测生图能力..."
+                        : "检测生图能力（发 1 条测试文生图并自动清理对话）"
+                  }
+                  side="top"
+                >
+                  <IconButton
+                    data-testid={`browser-probe-doubao-row-${row.id}`}
+                    icon="wand-sparkles"
+                    size="xs"
+                    variant="ghost"
+                    aria-label={`检测 ${row.name || `账号 #${row.id}`} 生图能力`}
+                    disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy || probingImageBusy)}
+                    busy={Boolean(row.pending && row.pendingOp === "probing_image")}
+                    onClick={() => onProbeDoubaoRow(row)}
+                  />
+                </Tooltip>
+              </>
             ) : isGemini ? (
               <Tooltip
                 content={
@@ -772,9 +835,29 @@ function AccountTableRows({
                   size="xs"
                   variant="ghost"
                   aria-label={`同步 ${row.name || `账号 #${row.id}`} Gemini 状态`}
-                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy)}
+                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy || probingImageBusy)}
                   className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
                   onClick={() => onSyncGeminiRow(row)}
+                />
+              </Tooltip>
+            ) : isJimeng ? (
+              <Tooltip
+                content={
+                  pageRunning
+                    ? "任务运行中，完成后会自动刷新即梦积分"
+                    : "同步该即梦账号的用户名、实时积分与会员状态"
+                }
+                side="top"
+              >
+                <IconButton
+                  data-testid={`browser-sync-jimeng-row-${row.id}`}
+                  icon="refresh-cw"
+                  size="xs"
+                  variant="ghost"
+                  aria-label={`同步 ${row.name || `账号 #${row.id}`} 即梦状态`}
+                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy || probingImageBusy)}
+                  className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
+                  onClick={() => onSyncJimengRow(row)}
                 />
               </Tooltip>
             ) : null}
@@ -859,7 +942,7 @@ function AccountTableRows({
                   size="xs"
                   variant="ghost"
                   aria-label="清理对话"
-                  disabled={Boolean(row.pending || pageRunning || clearingBusy)}
+                  disabled={Boolean(row.pending || pageRunning || clearingBusy || probingImageBusy)}
                   onClick={() => onRequestClearHistory(row)}
                 />
               </Tooltip>
@@ -877,7 +960,8 @@ function AccountTableRows({
                   row.pending &&
                     (row.pendingOp === "clearing" ||
                       row.pendingOp === "syncing" ||
-                      row.pendingOp === "syncing_status"),
+                      row.pendingOp === "syncing_status" ||
+                      row.pendingOp === "probing_image"),
                 )}
                 onClick={() => onRequestDelete(row)}
               />
@@ -915,6 +999,8 @@ export function BrowserPage() {
   const [clearKeepRecent, setClearKeepRecent] = useState("0");
   const [clearFastMode, setClearFastMode] = useState(true);
   const [clearSubmitting, setClearSubmitting] = useState(false);
+  const [probeImageTargets, setProbeImageTargets] = useState<BrowserRowDTO[] | null>(null);
+  const [probeImageSubmitting, setProbeImageSubmitting] = useState(false);
   const [filters, setFilters] = useState<AccountFiltersState>(DEFAULT_ACCOUNT_FILTERS);
   const [sortState, setSortState] = useState<AccountSortState>(DEFAULT_ACCOUNT_SORT);
   const [openFilterCol, setOpenFilterCol] = useState<AccountColumnKey | null>(null);
@@ -960,6 +1046,11 @@ export function BrowserPage() {
     setClearHistoryTargets(null);
   }, []);
 
+  const closeProbeImageDialog = useCallback(() => {
+    if (probeImageSubmitting) return;
+    setProbeImageTargets(null);
+  }, [probeImageSubmitting]);
+
   useEscapeHandler("browser-new-dialog", newOpen, closeNewDialog, 40);
   useEscapeHandler("browser-rename-dialog", Boolean(renameTarget), closeRenameDialog, 40);
   useEscapeHandler("browser-proxy-dialog", Boolean(proxyTarget), closeProxyDialog, 40);
@@ -968,6 +1059,12 @@ export function BrowserPage() {
     "browser-clear-history-dialog",
     Boolean(clearHistoryTargets),
     closeClearHistoryDialog,
+    40,
+  );
+  useEscapeHandler(
+    "browser-probe-image-dialog",
+    Boolean(probeImageTargets),
+    closeProbeImageDialog,
     40,
   );
 
@@ -1127,6 +1224,15 @@ export function BrowserPage() {
   const clearingActive = Boolean(st.batchActive && st.batchKind === "clearing");
   const syncingActive = Boolean(st.batchActive && st.batchKind === "syncing");
   const syncingStatusActive = Boolean(st.batchActive && st.batchKind === "syncing_status");
+  const probingImageActive = Boolean(st.batchActive && st.batchKind === "probing_image");
+  const checkedDoubaoRows = useMemo(
+    () => allRows.filter((r) => Boolean(r.checked) && isDoubaoAccount(r)),
+    [allRows],
+  );
+  const visibleDoubaoRows = useMemo(
+    () => rows.filter(isDoubaoAccount),
+    [rows],
+  );
   const getPlatformConcurrencyLabel = useCallback(
     (row: BrowserRowDTO): string | undefined => {
       if (isDoubaoAccount(row)) {
@@ -1144,6 +1250,11 @@ export function BrowserPage() {
           ? `调度上限 ${st.geminiConcurrencyMax}`
           : "串行 1";
       }
+      if (isJimengAccount(row)) {
+        return st.jimengConcurrencyAuto
+          ? `调度上限 ${st.jimengConcurrencyMax}`
+          : "串行 1";
+      }
       return undefined;
     },
     [
@@ -1153,6 +1264,8 @@ export function BrowserPage() {
       st.qianwenConcurrencyMax,
       st.geminiConcurrencyAuto,
       st.geminiConcurrencyMax,
+      st.jimengConcurrencyAuto,
+      st.jimengConcurrencyMax,
     ],
   );
 
@@ -1287,6 +1400,67 @@ export function BrowserPage() {
     invokeSafe(() => Browser.stopSyncGeminiStatus(), refreshBrowser);
   }, []);
 
+  const handleSyncJimengStatus = useCallback(async (targets: BrowserRowDTO[]) => {
+    const jimengTargets = targets.filter(isJimengAccount);
+    if (jimengTargets.length === 0) return;
+    const ids = jimengTargets.map((r) => r.id);
+    try {
+      await Browser.syncJimengStatus(ids);
+      showToast(
+        ids.length === 1
+          ? `正在同步「${jimengTargets[0].name || `账号 #${jimengTargets[0].id}`}」的即梦积分与用户名`
+          : `已开始同步 ${ids.length} 个即梦账号的实时积分、会员状态与用户名`,
+        "info",
+      );
+      void refreshBrowser();
+    } catch (err) {
+      showToast("无法同步即梦状态", "error", formatCallError(err));
+    }
+  }, []);
+
+  const handleStopSyncJimengStatus = useCallback(() => {
+    invokeSafe(() => Browser.stopSyncJimengStatus(), refreshBrowser);
+  }, []);
+
+  const openProbeImageDialog = useCallback(
+    (selection: BrowserRowDTO | BrowserRowDTO[] | null) => {
+      const rawTargets = Array.isArray(selection)
+        ? selection
+        : selection
+          ? [selection]
+          : allRows.filter((r) => Boolean(r.checked));
+      const doubaoTargets = rawTargets.filter(isDoubaoAccount);
+      if (doubaoTargets.length === 0) return;
+      setProbeImageTargets(doubaoTargets);
+    },
+    [allRows],
+  );
+
+  const handleConfirmProbeImage = useCallback(async () => {
+    if (!probeImageTargets || probeImageTargets.length === 0) return;
+    const ids = probeImageTargets.map((r) => r.id);
+    setProbeImageSubmitting(true);
+    try {
+      await Browser.probeDoubaoImageCapability(ids);
+      setProbeImageTargets(null);
+      showToast(
+        ids.length === 1
+          ? `已开始检测「${probeImageTargets[0].name || `账号 #${probeImageTargets[0].id}`}」的生图能力`
+          : `已开始检测 ${ids.length} 个豆包账号的生图能力`,
+        "info",
+      );
+      void refreshBrowser();
+    } catch (err) {
+      showToast("无法开始检测生图能力", "error", formatCallError(err));
+    } finally {
+      setProbeImageSubmitting(false);
+    }
+  }, [probeImageTargets]);
+
+  const handleStopProbeImage = useCallback(() => {
+    invokeSafe(() => Browser.stopProbeDoubaoImageCapability(), refreshBrowser);
+  }, []);
+
   const showTopNotice = !st.ready || Boolean(st.missingHint);
 
   return (
@@ -1410,10 +1584,21 @@ export function BrowserPage() {
                           handleStopSyncAccountStatus();
                         } else if (st.batchText.includes("Gemini")) {
                           handleStopSyncGeminiStatus();
+                        } else if (st.batchText.includes("即梦")) {
+                          handleStopSyncJimengStatus();
                         } else {
                           handleStopSyncQwenStatus();
                         }
                       }}
+                    />
+                  ) : probingImageActive ? (
+                    <Button
+                      data-testid="browser-stop-probe-image-btn"
+                      text="停止检测"
+                      size="small"
+                      icon="square"
+                      variant="danger"
+                      onClick={handleStopProbeImage}
                     />
                   ) : st.checkedCount > 0 ? (
                     <>
@@ -1451,6 +1636,26 @@ export function BrowserPage() {
                               }
                             />
                           </Tooltip>
+                          {checkedDoubaoRows.length > 0 ? (
+                            <Tooltip
+                              content={
+                                st.running
+                                  ? "任务运行中，暂不可检测生图能力"
+                                  : `逐个实测所选 ${checkedDoubaoRows.length} 个豆包账号能否正常出图（识别静默降级纯文本）`
+                              }
+                              side="bottom"
+                            >
+                              <Button
+                                data-testid="browser-batch-probe-image-btn"
+                                text={`检测生图能力 (${checkedDoubaoRows.length})`}
+                                size="small"
+                                icon="wand-sparkles"
+                                variant="outline"
+                                disabled={Boolean(st.running)}
+                                onClick={() => openProbeImageDialog(checkedDoubaoRows)}
+                              />
+                            </Tooltip>
+                          ) : null}
                           <Tooltip
                             content={
                               st.running
@@ -1505,6 +1710,26 @@ export function BrowserPage() {
                           onClick={() => void handleSyncUsernames(rows)}
                         />
                       </Tooltip>
+                      {visibleDoubaoRows.length > 0 ? (
+                        <Tooltip
+                          content={
+                            st.running
+                              ? "任务运行中，暂不可检测生图能力"
+                              : `手动实测当前列表 ${visibleDoubaoRows.length} 个豆包账号能否正常出图（不随日常同步执行）`
+                          }
+                          side="bottom"
+                        >
+                          <Button
+                            data-testid="browser-quick-probe-image-btn"
+                            text="检测生图能力"
+                            size="small"
+                            icon="wand-sparkles"
+                            variant="outline"
+                            disabled={Boolean(st.running)}
+                            onClick={() => openProbeImageDialog(visibleDoubaoRows)}
+                          />
+                        </Tooltip>
+                      ) : null}
                       <Tooltip
                         content={
                           st.running
@@ -1549,7 +1774,7 @@ export function BrowserPage() {
                   <EmptyNotice
                     icon="users"
                     title="账号池暂无账号"
-                    subtitle="点击「新建账号」添加豆包、千问、千问国际或 Gemini 账号"
+                    subtitle="点击「新建账号」添加豆包、千问、千问国际、Gemini 或即梦账号"
                     action={
                       <Button
                         data-testid="browser-empty-new-btn"
@@ -1781,6 +2006,7 @@ export function BrowserPage() {
                               pageRunning={Boolean(st.running)}
                               clearingBusy={clearingActive}
                               syncingStatusBusy={syncingStatusActive}
+                              probingImageBusy={probingImageActive}
                               onRequestRename={openRenameDialog}
                               onRequestProxy={openProxyDialog}
                               onRequestFingerprint={setFingerprintTarget}
@@ -1788,7 +2014,9 @@ export function BrowserPage() {
                               onRowAction={handleRowAction}
                               onSyncQwenRow={(target) => void handleSyncQwenStatus([target])}
                               onSyncDoubaoRow={(target) => void handleSyncDoubaoStatus([target])}
+                              onProbeDoubaoRow={(target) => openProbeImageDialog(target)}
                               onSyncGeminiRow={(target) => void handleSyncGeminiStatus([target])}
+                              onSyncJimengRow={(target) => void handleSyncJimengStatus([target])}
                               onRequestClearHistory={openClearHistoryDialog}
                               onRequestDelete={setDeleteTarget}
                             />
@@ -2023,7 +2251,7 @@ export function BrowserPage() {
           if (!open && !clearSubmitting) closeClearHistoryDialog();
         }}
         title="清理平台聊天历史"
-        description="通过内置浏览器清理豆包、千问、千问国际或 Gemini 网页端的历史对话"
+        description="通过内置浏览器清理豆包、千问、千问国际、Gemini 或即梦网页端的历史对话"
         width={460}
         closeOnBackdrop={!clearSubmitting}
         closeOnEscape={!clearSubmitting}
@@ -2121,6 +2349,66 @@ export function BrowserPage() {
               <Icon name="info" size={13} className="mt-0.5 shrink-0" />
               <span>
                 豆包会自动跳过「项目」分组下的对话；如遇未登录或安全验证将自动暂停，可随时在顶部停止。
+              </span>
+            </div>
+          </div>
+        ) : null}
+      </Dialog>
+
+      {/* 检测豆包生图能力确认弹窗 */}
+      <Dialog
+        open={Boolean(probeImageTargets)}
+        onOpenChange={(open) => {
+          if (!open && !probeImageSubmitting) closeProbeImageDialog();
+        }}
+        title="检测豆包生图能力"
+        description="手动实测豆包服务端是否正常分配生图能力，不会随日常同步自动执行"
+        width={460}
+        closeOnBackdrop={!probeImageSubmitting}
+        closeOnEscape={!probeImageSubmitting}
+        data-testid="browser-probe-image-dialog"
+        footer={
+          <>
+            <Button
+              text="取消"
+              size="small"
+              variant="ghost"
+              disabled={probeImageSubmitting}
+              onClick={closeProbeImageDialog}
+            />
+            <Button
+              data-testid="browser-probe-image-confirm-btn"
+              text={probeImageSubmitting ? "启动中..." : "开始检测"}
+              size="small"
+              icon="wand-sparkles"
+              variant="primary"
+              disabled={probeImageSubmitting}
+              busy={probeImageSubmitting}
+              onClick={() => void handleConfirmProbeImage()}
+            />
+          </>
+        }
+      >
+        {probeImageTargets ? (
+          <div className="flex w-full min-w-0 flex-col gap-3">
+            <div className="flex items-start gap-2.5 rounded-[12px] border border-[var(--status-warn-border)] bg-[var(--status-warn-bg)] p-3 text-xs text-status-warn">
+              <Icon name="alert-triangle" size={16} className="mt-0.5 shrink-0" />
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="font-semibold">
+                  {probeImageTargets.length === 1
+                    ? `即将检测豆包账号「${probeImageTargets[0].name || `账号 #${probeImageTargets[0].id}`}」的生图能力`
+                    : `即将逐个检测 ${probeImageTargets.length} 个豆包账号的生图能力`}
+                </span>
+                <span className="text-[11px] leading-relaxed">
+                  每个账号会发送 1 条极简文生图测试请求（正常账号将消耗 1 次生图额度），检测完成后会自动清理临时测试对话。
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 rounded-[10px] border border-hairline bg-sunken px-3 py-2 text-[11px] leading-relaxed text-muted">
+              <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+              <span>
+                被豆包服务端静默降级为纯文本（不出图）的账号将自动标为「生图受限」并当日停用；发送后掉线的账号将标为「未登录」。可随时在顶部点击「停止检测」中断。
               </span>
             </div>
           </div>

@@ -22,16 +22,26 @@ const loginProbeJS = `(async function () {
     if (r.width < 5 || r.height < 5) return false;
     var s = getComputedStyle(el);
     if (s.visibility === 'hidden' || s.display === 'none') return false;
+    if (parseFloat(s.opacity) === 0) return false;
     if (el.disabled || (el.getAttribute && el.getAttribute('aria-disabled') === 'true')) return false;
     return true;
   }
+  function anyVisible(sel) {
+    var nodes = document.querySelectorAll(sel);
+    for (var i = 0; i < nodes.length; i++) if (visible(nodes[i])) return true;
+    return false;
+  }
   function composer() {
     var nodes = document.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]');
-    for (var i = nodes.length - 1; i >= 0; i--) if (visible(nodes[i])) return true;
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      var el = nodes[i];
+      if (el.closest && el.closest('[aria-hidden="true"],[data-generator-preview-ignore="true"],[class*="prompt-editor-sizer"]')) continue;
+      if (visible(el)) return true;
+    }
     return false;
   }
   function loginDialog() {
-    var keys = ['扫码登录', '手机号登录', '短信登录', '验证码登录', '密码登录', '手机登录', '邮箱登录', 'Log in to Qwen', 'Sign in to Qwen', 'Continue with Google', 'Continue with GitHub', 'Sign in to try tools', '登录即可保存活动记录', 'Sign in to save activity', 'Use your Google Account', '使用您的 Google 账号'];
+    var keys = ['扫码登录', '手机号登录', '短信登录', '验证码登录', '密码登录', '手机登录', '邮箱登录', '登录，开启创作', 'Log in to Qwen', 'Sign in to Qwen', 'Continue with Google', 'Continue with GitHub', 'Sign in to try tools', '登录即可保存活动记录', 'Sign in to save activity', 'Use your Google Account', '使用您的 Google 账号'];
     var nodes = document.querySelectorAll('[role="dialog"],[class*="dialog"],[class*="modal"],[class*="login"],[class*="sign"]');
     for (var i = 0; i < nodes.length; i++) {
       if (!visible(nodes[i])) continue;
@@ -46,12 +56,12 @@ const loginProbeJS = `(async function () {
       var el = nodes[i];
       if (!visible(el)) continue;
       var t = String(el.innerText || '').trim();
-      if (t === '登录' || t === '扫码登录' || t === '立即登录' || t === '登录/注册' || t === '注册' || /^log\s*in$/i.test(t) || /^sign\s*in$/i.test(t) || /^sign\s*up$/i.test(t)) return true;
+      if (t === '登录' || t === '扫码登录' || t === '立即登录' || t === '即刻登录' || t === '登录/注册' || t === '注册' || /^log\s*in$/i.test(t) || /^sign\s*in$/i.test(t) || /^sign\s*up$/i.test(t)) return true;
     }
     return false;
   }
   function toLoginButton() {
-    var nodes = document.querySelectorAll('[data-testid="to_login_button"],.header-right-auth-button,[data-test-id="sidenav-error-action-link"],[data-test-id="sign-out-banner"]');
+    var nodes = document.querySelectorAll('[data-testid="to_login_button"],.header-right-auth-button,[data-test-id="sidenav-error-action-link"],[data-test-id="sign-out-banner"],[class*="login-button-wrapper-"],[class*="login-action-shell-"],[class*="project-login-prompt-"]');
     for (var i = 0; i < nodes.length; i++) if (visible(nodes[i])) return true;
     return false;
   }
@@ -62,15 +72,34 @@ const loginProbeJS = `(async function () {
   }
   // 生成中、进度条、或文档还没画完，都不是「已退出」的证据。
   function generating() {
-    if (document.readyState && document.readyState !== 'complete') return true;
-    if (document.querySelector('[aria-busy="true"],[role="progressbar"],button.stop-button,button.send-button.stop')) return true;
+    if (document.readyState === 'loading') return true;
+    if (anyVisible('button.stop-button,button.send-button.stop,button[data-testid="dreamina.generator.submit"][aria-label*="停止"]')) return true;
+    var isSignedIn = signedIn();
+    var hasLoginWall = loginDialog() || passwordField() || toLoginButton() || (loginButton() && !isSignedIn);
+    if (document.readyState && document.readyState !== 'complete') {
+      if (!isSignedIn || hasLoginWall) return true;
+    }
+    if (anyVisible('[aria-busy="true"],[role="progressbar"]')) {
+      if (!isSignedIn || hasLoginWall) return true;
+    }
     var text = String((document.body && document.body.innerText) || '').slice(0, 2000);
-    return /正在生成|生成中|绘制中|\bGenerating\b/.test(text);
+    if (/正在生成|生成中|绘制中|\bGenerating\b/.test(text)) {
+      if (!isSignedIn || hasLoginWall) return true;
+    }
+    return false;
   }
   function signedIn() {
     var h = String(location.hostname || '').toLowerCase();
+    if (/(^|\.)jimeng\.jianying\.com$/.test(h)) {
+      if (anyVisible('[class*="login-button-wrapper-"],[class*="login-action-shell-"],[class*="project-login-prompt-"]')) return false;
+      var avatar = document.querySelector('[data-main-frame-2026-avatar-action],[class*="avatar-action-"]');
+      if (avatar && visible(avatar)) return true;
+      var credit = document.querySelector('[data-main-frame-2026-credit-display-anchor]');
+      if (credit && visible(credit) && /\d+/.test(String(credit.innerText || ''))) return true;
+      return false;
+    }
     if (/(^|\.)gemini\.google\.com$/.test(h)) {
-      if (document.querySelector('[gem-open-account-menu],a[href*="accounts.google.com/SignOutOptions"],[aria-label*="Google Account"],[aria-label*="Google 账号"],[aria-label*="Google 账户"],[aria-label*="Google 帳戶"],[aria-label*="Google 帳號"],a.gb_B[aria-label]')) return true;
+      if (document.querySelector('[gem-open-account-menu],a[href*="accounts.google.com/SignOutOptions"],[aria-label*="Google Account"],[aria-label*="Google 账号"],[aria-label*="Google 账户"],[aria-label*="Google 帳戶"],[aria-label*="Google 帳號"],a.gb_B[aria-label],a.gb_A[aria-label],[data-ogsr-up] a[aria-label]')) return true;
       var pic = document.querySelector('user-profile-picture img[src]');
       if (pic && visible(pic)) return true;
       try {
@@ -90,10 +119,10 @@ const loginProbeJS = `(async function () {
     return /安全验证|滑动验证|拖动滑块|请按住滑块|请完成下方验证|Please complete .* verification|Slide to verify|Security Verification/i.test(body);
   }
   var href = String(location.href || '');
-  if (href.indexOf('/security/doubao-region-ban') >= 0 || href.indexOf('qianwen-region-ban') >= 0 || href.indexOf('tongyi-region-ban') >= 0 || href.indexOf('qwen-region-ban') >= 0 || href.indexOf('gemini-region-ban') >= 0 || href.indexOf('gemini.google.com/unsupported') >= 0) return {state:'region'};
+  if (href.indexOf('/security/doubao-region-ban') >= 0 || href.indexOf('qianwen-region-ban') >= 0 || href.indexOf('tongyi-region-ban') >= 0 || href.indexOf('qwen-region-ban') >= 0 || href.indexOf('gemini-region-ban') >= 0 || href.indexOf('gemini.google.com/unsupported') >= 0 || href.indexOf('jimeng-region-ban') >= 0) return {state:'region'};
   var host = String(location.hostname || '').toLowerCase();
   if (/(^|\.)accounts\.google\.com$/.test(host)) return {state:'out', evidence:'google_accounts'};
-  if (/qianwen|tongyi|qwen|gemini\.google\.com/i.test(host)) {
+  if (/qianwen|tongyi|qwen|gemini\.google\.com|jimeng\.jianying\.com/i.test(host)) {
     var top = String((document.body && document.body.innerText) || '').slice(0, 800);
     if (/受区域限制|当前地区暂不支持|当前国家\/地区暂不支持|所在地区暂不可用|服务在当前地区不可用|目前尚未在您所在的国家|not available in your (?:region|country)|isn['’]t (?:currently )?(?:supported|available) in your (?:region|country)|region is not supported|service is not available in your/i.test(top)) return {state:'region'};
   }
@@ -118,6 +147,8 @@ const accountUsernameJS = `(async function () {
     '退出登录': 1, '退出登陆': 1, '设置': 1, '个人中心': 1, '我的': 1, '账号': 1, '账户': 1,
     '游客': 1, '未登录': 1, '豆包': 1, '千问': 1, '通义千问': 1, '通义': 1, 'qwen': 1, 'doubao': 1,
     'gemini': 1, 'google': 1, 'google gemini': 1, '登录 gemini': 1, 'sign in to gemini': 1,
+    '即梦': 1, '即梦ai': 1, '即梦 ai': 1, '登录即梦': 1, 'dreamina': 1, '积分超市': 1, '即刻登录': 1, '登录，开启创作': 1,
+    '创作': 1, '探索': 1, '画布': 1, '资产和主体': 1, 'profile': 1,
     'google account': 1, 'google 账号': 1, 'google 账户': 1, 'google 帳戶': 1, 'google 帳號': 1,
     '免费版': 1, '升级': 1, '会员': 1, '开通会员': 1, '新对话': 1, '历史记录': 1, '更多': 1,
     '展开': 1, '收起': 1, '头像': 1, '用户头像': 1, 'avatar': 1,
@@ -368,6 +399,50 @@ const accountUsernameJS = `(async function () {
     } catch (e) {}
     return '';
   }
+  function fromJimengDOM() {
+    var av = document.querySelector('[data-main-frame-2026-avatar-action],[class*="avatar-action-"]');
+    if (!av) return '';
+    var img = av.querySelector && av.querySelector('img');
+    if (img && img.getAttribute) {
+      var alt = clean(img.getAttribute('alt') || img.getAttribute('title'));
+      if (alt) return alt;
+    }
+    var lbl = clean(av.getAttribute && (av.getAttribute('aria-label') || av.getAttribute('title')));
+    if (lbl) return lbl;
+    return extractFromContainer(av);
+  }
+  async function fromJimengAPI() {
+    var fetchOne = async function (url, init) {
+      var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 2500) : null;
+      try {
+        var res = await fetch(url, Object.assign({ credentials: 'include', signal: ctrl ? ctrl.signal : undefined }, init || {}));
+        if (!res || !res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        return null;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    var pickName = function (obj) {
+      if (!obj || typeof obj !== 'object' || obj.is_visitor_account === true) return '';
+      return clean(obj.screen_name || obj.name || obj.nick_name || obj.nickname || obj.user_name || obj.username);
+    };
+    var urls = [
+      ['/passport/account/info/v2/?aid=513695&account_sdk_source=web&sdk_version=2.2.6', { method: 'GET' }],
+      ['/passport/web/account/info/?aid=513695&account_sdk_source=web', { method: 'GET' }],
+      ['/mweb/v1/get_user_info', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }]
+    ];
+    for (var i = 0; i < urls.length; i++) {
+      var body = await fetchOne(urls[i][0], urls[i][1]);
+      if (!body || typeof body !== 'object' || !body.data || typeof body.data !== 'object') continue;
+      var d = body.data;
+      var n = pickName(d) || pickName(d.user) || pickName(d.user_info);
+      if (n) return n;
+    }
+    return '';
+  }
   function fromGenericSidebar() {
     var btns = document.querySelectorAll('aside button[aria-haspopup="menu"],nav button[aria-haspopup="menu"],header button[aria-haspopup="menu"]');
     for (var i = btns.length - 1; i >= 0; i--) {
@@ -383,6 +458,8 @@ const accountUsernameJS = `(async function () {
   var username = '';
   if (/(^|\.)doubao\.com$/.test(host)) {
     username = fromDoubaoDOM() || fromDoubaoRouter() || fromGenericSidebar();
+  } else if (/(^|\.)jimeng\.jianying\.com$/.test(host)) {
+    username = (await fromJimengAPI()) || fromJimengDOM() || fromGenericSidebar();
   } else if (/(^|\.)qwen\.ai$/.test(host)) {
     username = fromQwenIntlDOM() || fromQwenGlobal() || fromGenericSidebar();
   } else if (/(qianwen|tongyi|qwen)/i.test(host)) {
@@ -390,7 +467,7 @@ const accountUsernameJS = `(async function () {
   } else if (/(^|\.)gemini\.google\.com$/.test(host)) {
     username = fromGeminiDOM() || fromGeminiGlobal() || fromGenericSidebar();
   } else {
-    username = fromDoubaoDOM() || fromQwenIntlDOM() || fromQwenDOM() || fromGeminiDOM() || fromDoubaoRouter() || fromQwenGlobal() || fromGeminiGlobal() || fromGenericSidebar();
+    username = fromDoubaoDOM() || fromJimengDOM() || fromQwenIntlDOM() || fromQwenDOM() || fromGeminiDOM() || fromDoubaoRouter() || fromQwenGlobal() || fromGeminiGlobal() || fromGenericSidebar();
   }
   return { username: username || '' };
 })()`
@@ -404,9 +481,10 @@ type accountUsernameResult struct {
 }
 
 var invalidAccountUsernames = map[string]struct{}{
-	"登录": {}, "立即登录": {}, "登录/注册": {}, "扫码登录": {}, "登录千问": {}, "登录豆包": {}, "登录 gemini": {}, "注册": {},
+	"登录": {}, "立即登录": {}, "登录/注册": {}, "扫码登录": {}, "登录千问": {}, "登录豆包": {}, "登录 gemini": {}, "登录即梦": {}, "即刻登录": {}, "登录，开启创作": {}, "注册": {},
 	"退出登录": {}, "退出登陆": {}, "设置": {}, "个人中心": {}, "我的": {}, "账号": {}, "账户": {},
 	"游客": {}, "未登录": {}, "豆包": {}, "千问": {}, "千问国际": {}, "通义千问": {}, "通义": {}, "qwen": {}, "doubao": {},
+	"即梦": {}, "即梦ai": {}, "即梦 ai": {}, "dreamina": {}, "积分超市": {}, "创作": {}, "探索": {}, "画布": {}, "资产和主体": {}, "profile": {},
 	"gemini": {}, "google": {}, "google gemini": {}, "sign in to gemini": {},
 	"google account": {}, "google 账号": {}, "google 账户": {}, "google 帳戶": {}, "google 帳號": {},
 	"免费版": {}, "升级": {}, "会员": {}, "开通会员": {}, "新对话": {}, "历史记录": {}, "更多": {},
@@ -459,7 +537,8 @@ func RegionBlockedURL(raw string) bool {
 		strings.Contains(u, "tongyi-region-ban") ||
 		strings.Contains(u, "qwen-region-ban") ||
 		strings.Contains(u, "gemini-region-ban") ||
-		strings.Contains(u, "gemini.google.com/unsupported")
+		strings.Contains(u, "gemini.google.com/unsupported") ||
+		strings.Contains(u, "jimeng-region-ban")
 }
 
 // 返回 in、out、challenge、region 或 unknown。没有页面时返回 unknown，方便继续等。
@@ -598,7 +677,7 @@ func pickLoginTarget(list []sliderTarget) (string, bool) {
 			continue
 		}
 		url := strings.ToLower(item.URL)
-		if strings.Contains(url, "doubao.com") || strings.Contains(url, "qianwen.com") || strings.Contains(url, "tongyi.com") || strings.Contains(url, "qwen.ai") || strings.Contains(url, "gemini.google.com") {
+		if strings.Contains(url, "doubao.com") || strings.Contains(url, "qianwen.com") || strings.Contains(url, "tongyi.com") || strings.Contains(url, "qwen.ai") || strings.Contains(url, "gemini.google.com") || strings.Contains(url, "jimeng.jianying.com") {
 			return item.ID, true
 		}
 		if auth == "" && strings.Contains(url, "accounts.google.com") {

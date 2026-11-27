@@ -65,6 +65,13 @@ func TestOutputSizeValidationAndNativeRatio(t *testing.T) {
 		{"gemini rejects 2:3", "Gemini", OutputSize{Ratio: "2:3"}, ""},
 		{"gemini rejects 3:2", "Gemini", OutputSize{Ratio: "3:2"}, ""},
 		{"gemini empty", "Gemini", OutputSize{}, ""},
+		{"jimeng native 3:4", "即梦", OutputSize{Ratio: "3:4"}, "3:4"},
+		{"jimeng native 16:9", "即梦", OutputSize{Ratio: "16:9"}, "16:9"},
+		{"jimeng native 2:3", "即梦", OutputSize{Ratio: "2:3"}, "2:3"},
+		{"jimeng native 21:9", "即梦", OutputSize{Ratio: "21:9"}, "21:9"},
+		{"jimeng not native", "即梦", OutputSize{Ratio: "5:4"}, ""},
+		{"jimeng dynamic live ratio", "即梦", OutputSize{Ratio: "5:4", AllowedRatios: []string{"1:1", "5:4", "21:9"}}, "5:4"},
+		{"jimeng empty", "即梦", OutputSize{}, ""},
 		{"other platform", "其他", OutputSize{Ratio: "4:3"}, ""},
 	} {
 		if got := tc.size.NativeRatio(tc.platform); got != tc.want {
@@ -75,10 +82,22 @@ func TestOutputSizeValidationAndNativeRatio(t *testing.T) {
 		t.Fatalf("Gemini 16:9 should be valid: %v", err)
 	}
 	if err := (OutputSize{Ratio: "3:2"}).ValidateFor("Gemini"); err == nil {
-		t.Fatal("Gemini 3:2 should be rejected")
+		t.Fatal("Gemini 3:2 should be rejected under defaults")
+	}
+	if err := (OutputSize{Ratio: "3:2", AllowedRatios: []string{"1:1", "3:2", "16:9"}}).ValidateFor("Gemini"); err != nil {
+		t.Fatalf("Gemini 3:2 should be accepted when live webpage caps include it: %v", err)
 	}
 	if err := (OutputSize{Ratio: "2:3"}).ValidateFor("Gemini"); err == nil {
-		t.Fatal("Gemini 2:3 should be rejected")
+		t.Fatal("Gemini 2:3 should be rejected under defaults")
+	}
+	if err := (OutputSize{Ratio: "21:9", Resolution: "4K"}).ValidateFor("即梦"); err != nil {
+		t.Fatalf("Jimeng 21:9 + 4K should be valid: %v", err)
+	}
+	if err := (OutputSize{Resolution: "8K"}).ValidateFor("即梦"); err == nil {
+		t.Fatal("Jimeng 8K should be rejected")
+	}
+	if err := (OutputSize{Resolution: "4K"}).ValidateFor("豆包"); err == nil {
+		t.Fatal("Doubao should reject resolution when webpage exposes none")
 	}
 
 	if w, h, err := ParseRatioLine("4:3"); w != 4 || h != 3 || err != nil {
@@ -151,7 +170,7 @@ func TestOutputSizeKeepsShuffledWashResultsMatchedWithoutResizing(t *testing.T) 
 
 func TestSaveResultsNeverAltersGeneratedDimensionsAcrossPlatforms(t *testing.T) {
 	data := outputMarkerPNG(t, color.NRGBA{R: 220, A: 255})
-	for _, platform := range []string{"豆包", "千问", "千问国际", "Gemini", "其他"} {
+	for _, platform := range []string{"豆包", "千问", "千问国际", "Gemini", "即梦", "其他"} {
 		t.Run(platform, func(t *testing.T) {
 			e := NewEngine(nil, nil, nil, "")
 			e.opts = Options{OutputPath: t.TempDir(), OutputSize: OutputSize{Ratio: "16:9"}}
@@ -183,6 +202,7 @@ func TestOutputSizeRejectsInvalidSettingsBeforeStarting(t *testing.T) {
 		{"千问国际", "5:4", "千问国际输出尺寸"},
 		{"Gemini", "3:2", "Gemini输出尺寸"},
 		{"Gemini", "2:3", "Gemini输出尺寸"},
+		{"即梦", "5:4", "即梦输出尺寸"},
 	} {
 		runs := 0
 		err := e.RunObserved(context.Background(), Options{
@@ -453,4 +473,29 @@ func TestSubmitOnceAppliesNativeRatioByClickOnlyWithoutPromptSuffix(t *testing.T
 			t.Fatalf("uploadCalls=%d ensureCalls=%d, want 1/2 (before and after upload when targetRatio is empty)", strat.uploadCalls, strat.ensureCalls)
 		}
 	})
+
+	t.Run("jimeng smart ratio and explicit resolution apply via SetOutputSize before and after upload", func(t *testing.T) {
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputSize: OutputSize{AutoValue: "智能", Resolution: "4K"}}
+		strat := &stubSizeStrategy{}
+		task := &Task{Index: 13, Platform: "即梦", Prompt: "洗图", Images: []string{wideSrc}}
+		if err := e.submitOnce(task, strat, nil); err != nil {
+			t.Fatalf("submitOnce failed: %v", err)
+		}
+		if len(strat.calls) != 2 || strat.calls[0] != "智能|4K" || strat.calls[1] != "智能|4K" {
+			t.Fatalf("jimeng SetOutputSize calls = %v, want [智能|4K 智能|4K]", strat.calls)
+		}
+	})
+}
+
+type stubSizeStrategy struct {
+	stubRatioStrategy
+	calls []string
+}
+
+func (s *stubSizeStrategy) Platform() string { return "即梦" }
+
+func (s *stubSizeStrategy) SetOutputSize(_ *cdp.Session, ratio, resolution string) (bool, string) {
+	s.calls = append(s.calls, ratio+"|"+resolution)
+	return true, ""
 }

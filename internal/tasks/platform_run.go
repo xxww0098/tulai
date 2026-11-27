@@ -451,7 +451,7 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 		tasks := groups[name]
 		platform := name
 		g.Go(func() error {
-			if checkLauncher != nil && (platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini") {
+			if checkLauncher != nil && (platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini" || platform == "即梦") {
 				if err := checkLauncher(platform); err != nil {
 					if ctx.Err() != nil {
 						e.stopQueued(tasks, events)
@@ -660,8 +660,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			if t.rotated && t.Status == StatusPending {
 				stage = "retry"
 				switch {
-				case strings.Contains(t.Error, "已换到"), t.pauseNote == "login", t.pauseNote == "rotate", t.ReassignWhy == "失败换号":
-					// 换号那一行已经写过。登录停住用「没有可用账号」，不要再写成额度恢复。
+				case strings.Contains(t.Error, "已换到"), t.pauseNote == "login", t.pauseNote == "rotate", t.pauseNote == "shrink", t.ReassignWhy == "失败换号":
+					// 换号或缩减批次日志已写过。登录停住用「没有可用账号」，不要再写成额度恢复。
 					msg = ""
 				default:
 					msg = "#" + itoa(t.Index) + " 发送未确认，等待空闲账号"
@@ -724,11 +724,11 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		if taskHitExitRisk(t) {
 			e.noteExitRisk(platform, used)
 		}
-		if e.opts.Wash && platform == "豆包" && ctxDone != nil && ctx.Err() == nil && len(t.batch) > 1 &&
+		if e.opts.Wash && (platform == "豆包" || platform == "即梦") && ctxDone != nil && ctx.Err() == nil && len(t.batch) > 1 &&
 			t.Status == StatusFailed && len(t.Results) == 0 && isModeration(errors.New(t.Error)) &&
 			(soloFails < 3 || splitSaves > 0) {
 			subLimit := max(1, len(t.batch)/2)
-			logging.Log.Info("[queue]  #%d-%d 豆包批次触发内容审核，自动拆分为每批最多 %d 张重试", t.batch[0].Index, t.batch[len(t.batch)-1].Index, subLimit)
+			logging.Log.Info("[queue]  #%d-%d %s批次触发内容审核，自动拆分为每批最多 %d 张重试", t.batch[0].Index, t.batch[len(t.batch)-1].Index, platform, subLimit)
 			split := splitModerationBatch(t.batch, subLimit, t.sendSeq+1)
 			pending = append(split, pending...)
 			if e.view != nil {
@@ -739,8 +739,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 			}
 			return
 		}
-		// 豆包多图洗图只返回部分已验证结果时：先将成功项结案，再自动将缺少的源图单独补跑一次。
-		if e.opts.Wash && platform == "豆包" && ctxDone != nil && ctx.Err() == nil && len(t.batch) > 1 &&
+		// 多图洗图只返回部分已验证结果时：先将成功项结案，再自动将缺少的源图单独补跑一次。
+		if e.opts.Wash && (platform == "豆包" || platform == "即梦") && ctxDone != nil && ctx.Err() == nil && len(t.batch) > 1 &&
 			t.Status == StatusFailed && !t.partialRetried && strings.Contains(t.Error, "已按源图关联保存") {
 			members := batchMembers(t)
 			var succeeded, missing []Task
@@ -752,8 +752,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 				}
 			}
 			if len(succeeded) > 0 && len(missing) > 0 {
-				logging.Log.Info("[queue]  #%d-%d 豆包批量洗图已保存 %d/%d 张，自动单独补跑缺少的 %d 张",
-					t.batch[0].Index, t.batch[len(t.batch)-1].Index, len(succeeded), len(members), len(missing))
+				logging.Log.Info("[queue]  #%d-%d %s批量洗图已保存 %d/%d 张，自动单独补跑缺少的 %d 张",
+					t.batch[0].Index, t.batch[len(t.batch)-1].Index, platform, len(succeeded), len(members), len(missing))
 				if e.view != nil {
 					e.view.UpdateBatch(succeeded)
 				}
@@ -787,7 +787,8 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 		}
 		if t.rotated && t.Status == StatusPending {
 			t.rotated = false
-			if t.Attempts > 0 {
+			if t.Attempts > 0 || t.pauseNote == "shrink" {
+				t.pauseNote = ""
 				pending = append([]Task{t}, pending...)
 			} else {
 				pending = append(pending, t)
@@ -841,13 +842,22 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 					exitKeys = buildPlatformExitKeys(allBrowsers, platformRows, platform)
 				}
 			}
-			// 额度用尽通常要等到次日，不能把未派发的豆包任务一直留在运行中。
+			// 额度用尽或生图能力降级通常至少要等到次日，不能把未派发的豆包任务一直留在运行中。
 			// 已派发的批次先收完，避免丢失它们可能返回的结果。
-			if platform == "豆包" && active == 0 && e.allDoubaoAccountsFullRows(platformRows, now, capN) {
-				logging.Log.Warning("豆包所有账号额度已用完，自动停止剩余任务")
-				e.stopQueuedWithReason(pending, events, "账号额度已用完，已停止")
-				pending = nil
-				break
+			if platform == "豆包" && active == 0 {
+				if logMsg, taskReason, stop := e.doubaoAccountsStoppedReason(platformRows, now, capN); stop {
+					logging.Log.Warning("%s", logMsg)
+					e.stopQueuedWithReason(pending, events, taskReason)
+					pending = nil
+					break
+				}
+			} else if platform == "即梦" && active == 0 {
+				if logMsg, taskReason, stop := e.jimengAccountsStoppedReason(platformRows, now, capN); stop {
+					logging.Log.Warning("%s", logMsg)
+					e.stopQueuedWithReason(pending, events, taskReason)
+					pending = nil
+					break
+				}
 			}
 			platLimit, globalLimit := e.concurrencyLimits(platform)
 			usable := ParallelSlots(platformRows, now, capN)
@@ -1060,15 +1070,25 @@ func (e *Engine) drivePlatform(ctx context.Context, platform string, queue []Tas
 						maxImages = min(maxImages, remaining)
 					}
 					row, hasRow := byID[task.BrowserID]
+					bundleMax := maxImages
 					if len(task.batch) > 1 && !task.submitted {
-						if limit := e.washBatchLimitRow(task, row, hasRow, maxImages, now); limit < len(task.batch) {
+						limit := e.washBatchLimitRow(task, row, hasRow, maxImages, now)
+						if task.jimengShrinkCap > 0 && (task.jimengShrinkBrowser == 0 || task.jimengShrinkBrowser == task.BrowserID) {
+							limit = min(limit, task.jimengShrinkCap)
+						}
+						if limit < len(task.batch) {
 							head := washBatchOf(task, task.batch[:limit])
 							tail := washBatchOf(task, task.batch[limit:])
+							head.jimengShrinkCap, head.jimengShrinkBrowser = 0, 0
+							tail.jimengShrinkCap, tail.jimengShrinkBrowser = 0, 0
 							pending = slices.Replace(pending, i, i+1, head, tail)
 							task = head
+							bundleMax = min(bundleMax, limit)
 						}
 					}
-					next, batchIndices := e.bundleWashTasksWithRow(pending, i, task, row, hasRow, maxImages, now)
+					task.jimengShrinkCap, task.jimengShrinkBrowser = 0, 0
+					pending[i] = task
+					next, batchIndices := e.bundleWashTasksWithRow(pending, i, task, row, hasRow, bundleMax, now)
 					if switchAfter > 0 {
 						for id, count := range completedByAccount {
 							if id != next.BrowserID && count >= switchAfter {

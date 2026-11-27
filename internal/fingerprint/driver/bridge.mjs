@@ -7,8 +7,8 @@ import {
   HOST_DISPLAY_EXPRESSION,
   buildFingerprintArgs,
   emulatedMedia,
-  ensureFingerprintIdentity,
   readHostDisplay,
+  resolveFingerprintIdentity,
   validateHostDisplay,
   writeHostDisplay,
 } from './fingerprint-identity.mjs';
@@ -21,7 +21,6 @@ const downloadFingerprint = mode === 'download-fingerprint';
 const send = process.stdout.write.bind(process.stdout);
 process.stdout.write = process.stderr.write.bind(process.stderr);
 const emit = value => send(JSON.stringify(value) + '\n');
-const hostOS = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform];
 const maxBytes = 64 << 20;
 
 // Keep per-document application state out of the website's global object.
@@ -1088,10 +1087,7 @@ async function start(params) {
   };
   requestOptions = {proxy:startProxy, ignoreHTTPSErrors:contextOptions.ignoreHTTPSErrors};
   const { chromium } = await import('playwright-core');
-  const identity = ensureFingerprintIdentity(params.profile, {
-    hostOS,
-    collisionRoots: params.collisionRoots,
-  });
+  const identity = resolveFingerprintIdentity(params.profile, params.identity);
   context = await chromium.launchPersistentContext(params.profile, {
     ...contextOptions,
     executablePath: params.executable,

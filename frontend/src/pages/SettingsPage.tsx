@@ -37,6 +37,7 @@ import {
   type PatternSpec,
 } from "@/lib/dotmatrix/config";
 import { Browser, Core, Settings, isMyGoRuntime } from "@/lib/ipc";
+import type { BrowserRuntimeUpdateDTO } from "@/mygo";
 import { useSyncedDraft } from "@/lib/useSyncedDraft";
 import {
   refreshBrowser,
@@ -107,6 +108,8 @@ const DEFAULT_SETTINGS_STATE: SettingsStateDTO = {
   concurrencyMaxQwenIntl: 2,
   concurrencyAutoGemini: false,
   concurrencyMaxGemini: 2,
+  concurrencyAutoJimeng: false,
+  concurrencyMaxJimeng: 2,
   sendStrategy: "顺序循环",
   retryCount: 0,
   sendWait: 0,
@@ -114,6 +117,7 @@ const DEFAULT_SETTINGS_STATE: SettingsStateDTO = {
   dailyCapQianwen: 0,
   dailyCapQwenIntl: 100,
   dailyCapGemini: 100,
+  dailyCapJimeng: 100,
   waitBefore: 0,
   waitResult: true,
   waitResultSeconds: 60,
@@ -452,15 +456,16 @@ export function SettingsPage() {
   );
 
   const activeTab = Math.max(0, Math.min(3, st.tab ?? 0));
-  const [kernelUpdate, setKernelUpdate] = useState("");
+  const [kernelUpdate, setKernelUpdate] = useState<BrowserRuntimeUpdateDTO | null>(null);
+  const [kernelCheck, setKernelCheck] = useState(0);
   useEffect(() => {
     if (activeTab !== 2 || !browserSt.ready || browserSt.busy || !isMyGoRuntime()) return;
     let active = true;
-    void Browser.checkBrowserRuntimeUpdate().then((version) => {
-      if (active) setKernelUpdate(version);
-    }).catch(() => { if (active) setKernelUpdate(""); });
+    void Browser.previewBrowserRuntimeUpdate().then((release) => {
+      if (active) setKernelUpdate(release.id ? release : null);
+    }).catch(() => { if (active) setKernelUpdate(null); });
     return () => { active = false; };
-  }, [activeTab, browserSt.ready, browserSt.busy]);
+  }, [activeTab, browserSt.ready, browserSt.busy, kernelCheck]);
 
   const installProg = normalizeInstallProgress(browserSt.percent);
   const updateProg = useMemo(() => describeUpdateProgress(upd), [upd]);
@@ -984,6 +989,21 @@ export function SettingsPage() {
                               aria-label="Gemini单日上限"
                             />
                           </div>
+                          <div className="flex flex-col gap-1 rounded-[10px] border border-hairline bg-card p-2">
+                            <span className="text-[11px] font-medium text-muted">即梦</span>
+                            <SyncedSettingInput
+                              field="dailyCapJimeng"
+                              serverValue={String(st.dailyCapJimeng)}
+                              syncKey="dailyCapJimeng"
+                              onCommit={commitSetting}
+                              registerFlush={registerFlush}
+                              numeric
+                              aria-label="即梦单日上限"
+                            />
+                            <span className="tnum text-[10px] text-subtle">
+                              {`单批≤6张 · ${st.concurrencyAutoJimeng ? `并发上限 ${st.concurrencyMaxJimeng}` : "串行 1"}`}
+                            </span>
+                          </div>
                         </div>
                       </FormRow>
                     </InsetPillRow>
@@ -1019,9 +1039,16 @@ export function SettingsPage() {
                         />
                         {browserSt.ready ? (
                           <Button size="small" variant="outline" icon="download"
-                            text={kernelUpdate ? `更新到 ${kernelUpdate}` : "检查并更新内核"}
+                            text={kernelUpdate ? `更新到 ${kernelUpdate.version}` : "检查并更新内核"}
                             disabled={browserSt.busy || browserSt.running}
-                            onClick={() => invokeSafe(() => Browser.updateBrowserRuntime(), refreshBrowser)} />
+                            onClick={async () => {
+                              if (kernelUpdate) {
+                                const ok = await invokeSafe(() => Browser.applyBrowserRuntimeUpdate(kernelUpdate.id), refreshBrowser);
+                                if (!ok) setKernelCheck((n) => n + 1);
+                              } else {
+                                await invokeSafe(() => Browser.updateBrowserRuntime(), refreshBrowser);
+                              }
+                            }} />
                         ) : null}
                         {!browserSt.ready && !browserSt.busy ? (
                           <Button

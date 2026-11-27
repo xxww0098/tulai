@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui";
 import * as ipc from "@/lib/ipc";
 import * as imageLoader from "@/lib/dotmatrix/imageLoader";
 import { dispatchTopEscape } from "@/lib/shortcuts";
+import { buildJimengStatusTooltip, jimengEffectiveBatchLimit } from "@/lib/qwenStatus";
 import { BrowserPage } from "@/pages/BrowserPage";
 import { PromptsPage } from "@/pages/PromptsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -202,6 +203,8 @@ function makeBrowserState(overrides: Partial<BrowserStateDTO> = {}): BrowserStat
     qianwenConcurrencyMax: 2,
     geminiConcurrencyAuto: true,
     geminiConcurrencyMax: 2,
+    jimengConcurrencyAuto: true,
+    jimengConcurrencyMax: 2,
     ...overrides,
   };
 }
@@ -266,6 +269,8 @@ function makeSettingsState(overrides: Partial<SettingsStateDTO> = {}): SettingsS
     concurrencyMaxQwenIntl: 2,
     concurrencyAutoGemini: true,
     concurrencyMaxGemini: 2,
+    concurrencyAutoJimeng: true,
+    concurrencyMaxJimeng: 2,
     sendStrategy: "顺序循环",
     retryCount: 2,
     sendWait: 5,
@@ -273,6 +278,7 @@ function makeSettingsState(overrides: Partial<SettingsStateDTO> = {}): SettingsS
     dailyCapQianwen: 30,
     dailyCapQwenIntl: 100,
     dailyCapGemini: 100,
+    dailyCapJimeng: 100,
     waitBefore: 0,
     waitResult: true,
     waitResultSeconds: 90,
@@ -1303,18 +1309,22 @@ describe("BrowserPage (账号池)", () => {
     const geminiBox = within(screen.getByTestId("browser-filter-platform-Gemini")).getByRole(
       "checkbox",
     );
-    fireEvent.click(doubaoBox); // uncheck 豆包 -> 千问, 千问国际 & Gemini remain checked (still "全部")
+    const jimengBox = within(screen.getByTestId("browser-filter-platform-即梦")).getByRole(
+      "checkbox",
+    );
+    fireEvent.click(doubaoBox); // uncheck 豆包 -> 千问, 千问国际, Gemini & 即梦 remain checked (still "全部")
     const segTabs = screen.getByTestId("browser-platform-filter");
     const allTab = within(segTabs).getByRole("tab", { name: "全部" });
     expect(allTab).toHaveAttribute("aria-selected", "true");
     expect(allTab).toHaveTextContent("全部");
-    for (const plat of ["豆包", "千问", "千问国际", "Gemini"]) {
+    for (const plat of ["豆包", "千问", "千问国际", "Gemini", "即梦"]) {
       const platTab = within(segTabs).getByRole("tab", { name: plat });
       expect(platTab).toHaveTextContent("");
       expect(platTab.querySelector("img")).toBeInTheDocument();
     }
     fireEvent.click(qwenIntlBox); // uncheck 千问国际
-    fireEvent.click(geminiBox); // uncheck Gemini -> only 千问 remains checked
+    fireEvent.click(geminiBox); // uncheck Gemini
+    fireEvent.click(jimengBox); // uncheck 即梦 -> only 千问 remains checked
     expect(within(segTabs).getByRole("tab", { name: "千问" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -1668,9 +1678,107 @@ describe("PromptsPage", () => {
       expect(stopClearSpy).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("opens manual Doubao image capability probe dialog for single/batch/quick triggers and supports stop", async () => {
+    const probeSpy = vi.spyOn(ipc.Browser, "probeDoubaoImageCapability").mockResolvedValue(undefined);
+    const stopProbeSpy = vi.spyOn(ipc.Browser, "stopProbeDoubaoImageCapability").mockResolvedValue(undefined);
+
+    useAppStore.setState({
+      browser: makeBrowserState({
+        checkedCount: 2,
+        rows: [
+          makeBrowserRow({ id: 1, platform: "豆包", name: "豆包1", checked: true }),
+          makeBrowserRow({ id: 2, platform: "千问", name: "千问1", checked: true }),
+          makeBrowserRow({ id: 3, platform: "豆包", name: "豆包2", checked: false }),
+        ],
+      }),
+    });
+
+    const { rerender } = renderPage(<BrowserPage />);
+
+    // 单行豆包按钮打开确认弹窗，Escape 可取消
+    fireEvent.click(screen.getByTestId("browser-probe-doubao-row-3"));
+    expect(screen.getByTestId("browser-probe-image-dialog")).toBeInTheDocument();
+    act(() => {
+      expect(dispatchTopEscape()).toBe(true);
+    });
+    expect(screen.queryByTestId("browser-probe-image-dialog")).not.toBeInTheDocument();
+
+    // 重新点击单行并确认检测
+    fireEvent.click(screen.getByTestId("browser-probe-doubao-row-3"));
+    fireEvent.click(screen.getByTestId("browser-probe-image-confirm-btn"));
+    await waitFor(() => {
+      expect(probeSpy).toHaveBeenCalledWith([3]);
+    });
+
+    // 勾选混合平台账号时，批量按钮只计豆包账号数并仅传豆包 ID
+    const batchBtn = screen.getByTestId("browser-batch-probe-image-btn");
+    expect(batchBtn).toHaveTextContent("检测生图能力 (1)");
+    fireEvent.click(batchBtn);
+    expect(screen.getByTestId("browser-probe-image-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("browser-probe-image-confirm-btn"));
+    await waitFor(() => {
+      expect(probeSpy).toHaveBeenCalledWith([1]);
+    });
+
+    // 未勾选时顶栏展示独立「检测生图能力」，仅提交可见豆包账号
+    useAppStore.setState({
+      browser: makeBrowserState({
+        checkedCount: 0,
+        rows: [
+          makeBrowserRow({ id: 1, platform: "豆包", name: "豆包1", checked: false }),
+          makeBrowserRow({ id: 2, platform: "千问", name: "千问1", checked: false }),
+          makeBrowserRow({ id: 3, platform: "豆包", name: "豆包2", checked: false }),
+        ],
+      }),
+    });
+    rerender(<BrowserPage />);
+    fireEvent.click(screen.getByTestId("browser-quick-probe-image-btn"));
+    expect(screen.getByTestId("browser-probe-image-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("browser-probe-image-confirm-btn"));
+    await waitFor(() => {
+      expect(probeSpy).toHaveBeenCalledWith([1, 3]);
+    });
+
+    // 检测进行中展示「停止检测」按钮
+    useAppStore.setState({
+      browser: makeBrowserState({
+        batchActive: true,
+        batchKind: "probing_image",
+        batchText: "正在检测豆包生图能力：1/2（正常 0 · 受限 1） · 当前：豆包/豆包1",
+      }),
+    });
+    rerender(<BrowserPage />);
+    fireEvent.click(screen.getByTestId("browser-stop-probe-image-btn"));
+    await waitFor(() => {
+      expect(stopProbeSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe("SettingsPage", () => {
+  it("requires a new confirmation when a kernel update preview has expired", async () => {
+    vi.spyOn(ipc, "isMyGoRuntime").mockReturnValue(true);
+    vi.spyOn(ipc.Browser, "previewBrowserRuntimeUpdate")
+      .mockResolvedValueOnce({ id: "first-check", version: "152" })
+      .mockResolvedValue({ id: "second-check", version: "153" });
+    const apply = vi.spyOn(ipc.Browser, "applyBrowserRuntimeUpdate")
+      .mockRejectedValueOnce(new Error("expired"))
+      .mockResolvedValue(undefined);
+    const latest = vi.spyOn(ipc.Browser, "updateBrowserRuntime").mockResolvedValue(undefined);
+    const browser = makeBrowserState();
+    vi.spyOn(ipc.Browser, "getBrowserState").mockResolvedValue(browser);
+    useAppStore.setState({ settings: makeSettingsState({ tab: 2 }), browser });
+    renderPage(<SettingsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "更新到 152" }));
+    const newer = await screen.findByRole("button", { name: "更新到 153" });
+    expect(apply.mock.calls).toEqual([["first-check"]]);
+    fireEvent.click(newer);
+    await waitFor(() => expect(apply.mock.calls).toEqual([["first-check"], ["second-check"]]));
+    expect(latest).not.toHaveBeenCalled();
+  });
+
   it("switches theme via settings-theme-tabs and syncs dark class + Core.setDarkTheme", async () => {
     vi.spyOn(ipc, "isMyGoRuntime").mockReturnValue(true);
     const darkSpy = vi.spyOn(ipc.Core, "setDarkTheme").mockResolvedValue(undefined);
@@ -2172,5 +2280,88 @@ describe("WizardView", () => {
     rerender(<WizardView />);
     expect(screen.getByText("正在下载 Fingerprint 浏览器内核…")).toBeInTheDocument();
     expect(screen.queryByText(/-1%/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Jimeng provider UI in BrowserPage & SettingsPage", () => {
+  it("renders Jimeng credits, metadata, and row sync button in BrowserPage", () => {
+    const syncSpy = vi.spyOn(ipc.Browser, "syncJimengStatus").mockResolvedValue(undefined);
+    useAppStore.setState({
+      browser: makeBrowserState({
+        rows: [
+          makeBrowserRow({
+            id: 77,
+            platform: "即梦",
+            name: "即梦设计师",
+            creditsSynced: true,
+            creditsRemain: 94,
+            creditsTotal: 100,
+            creditCost: 1,
+            memberTier: "free",
+            memberLabel: "免费版",
+            usagePct: 6,
+            creditsSyncedLabel: "刚刚同步",
+          }),
+        ],
+      }),
+    });
+
+    renderPage(<BrowserPage />);
+    expect(screen.getByTestId("browser-jimeng-credits-77")).toHaveTextContent("余 94 / 100 积分");
+    expect(screen.getByTestId("browser-jimeng-meta-77")).toHaveTextContent("1分/张");
+    fireEvent.click(screen.getByTestId("browser-sync-jimeng-row-77"));
+    expect(syncSpy).toHaveBeenCalledWith([77]);
+  });
+
+  it("shows credit-capped single-batch limit when Jimeng has fewer than 6 affordable images", () => {
+    const lowRow = makeBrowserRow({
+      id: 78,
+      platform: "即梦",
+      name: "即梦余5分",
+      creditsSynced: true,
+      creditsRemain: 5,
+      creditsTotal: 60,
+      creditCost: 1,
+      memberTier: "free",
+      memberLabel: "免费版",
+      usagePct: 92,
+      creditsResetLabel: "每日 00:00 刷新",
+    });
+    const insufficientRow = makeBrowserRow({
+      id: 79,
+      platform: "即梦",
+      name: "即梦不足1张",
+      creditsSynced: true,
+      creditsRemain: 1,
+      creditsTotal: 60,
+      creditCost: 2,
+      memberTier: "free",
+      memberLabel: "免费版",
+      usagePct: 100,
+    });
+    useAppStore.setState({
+      browser: makeBrowserState({
+        rows: [lowRow, insufficientRow],
+      }),
+    });
+
+    renderPage(<BrowserPage />);
+    expect(screen.getByTestId("browser-jimeng-meta-78")).toHaveTextContent("1分/张 · 单批≤5张");
+    expect(jimengEffectiveBatchLimit(lowRow)).toBe(5);
+    expect(buildJimengStatusTooltip(lowRow)).toContain("当前单批最多导入 5 张");
+    expect(screen.getByTestId("browser-jimeng-credits-79")).toHaveTextContent("余 1 / 60 积分 · 不足1张");
+    expect(screen.getByTestId("browser-jimeng-meta-79")).toHaveTextContent("2分/张 · 不足1张");
+    expect(jimengEffectiveBatchLimit(insufficientRow)).toBe(0);
+    expect(buildJimengStatusTooltip(insufficientRow)).toContain("当前剩余积分不足 1 张");
+  });
+
+  it("renders dailyCapJimeng setting input on SettingsPage tab 1", () => {
+    useAppStore.setState({
+      settings: makeSettingsState({ tab: 1, dailyCapJimeng: 120 }),
+      browser: makeBrowserState(),
+    });
+    renderPage(<SettingsPage />);
+    const input = screen.getByLabelText("即梦单日上限") as HTMLInputElement;
+    expect(input.value).toBe("120");
   });
 });

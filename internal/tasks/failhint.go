@@ -107,6 +107,8 @@ func ClassifyFailure(status Status, raw string) FailHint {
 		return FailHint{FailModeration, "这条内容没通过审核", "改提示词重试"}
 	}
 	switch classifyFault(errors.New(text)) {
+	case faultDegraded:
+		return FailHint{FailQuota, "当前账号已被平台限制生图（仅出文字），请换账号重试", "换账号重试"}
 	case faultQuota:
 		sentence := "账号额度已用完"
 		if strings.Contains(text, "额度不足") {

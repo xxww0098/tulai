@@ -130,6 +130,9 @@ func TestDetectMode(t *testing.T) {
 		{"windows", `C:\Program Files\tulai\tulai.exe`, ModeWindowsSetup},
 		{"windows", `C:\Users\a\AppData\Local\Temp\go-build\tulai.exe`, ModeWindowsSetup},
 		{"windows", filepath.Join(uninstallDir, "tulai.exe"), ModeWindowsSetup},
+		{"windows", `C:\Users\a\AppData\Local\Programs\tulai\tulai-0.1.41-windows-amd64.exe`, ModeWindowsExe},
+		{"windows", `C:\Program Files\tulai\tulai-0.1.41-windows-amd64.exe`, ModeWindowsExe},
+		{"windows", filepath.Join(uninstallDir, "tulai-0.1.41-windows-amd64.exe"), ModeWindowsExe},
 		{"windows", filepath.Join(portableDir, "tulai.exe"), ModeWindowsExe},
 		{"windows", `D:\Portable\tulai.exe`, ModeWindowsExe},
 		{"linux", "/usr/bin/tulai", ModeLinuxDeb},
@@ -211,8 +214,14 @@ func TestPrepareDownloadsVerifiedAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.UpToDate || got.Asset.Name != "tulai-0.2.0-linux-amd64.tar.gz" {
+	if got.UpToDate || got.Asset.Name != "tulai-0.2.0-linux-amd64.tar.gz" || got.SHA256 != sumHex {
 		t.Fatalf("prepared %+v", got)
+	}
+	if err := VerifyFile(got.Path, got.SHA256); err != nil {
+		t.Fatalf("VerifyFile(%s): %v", got.Path, err)
+	}
+	if err := VerifyFile(got.Path, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("VerifyFile accepted a mismatched digest")
 	}
 	body, err := os.ReadFile(got.Path)
 	if err != nil || !bytes.Equal(body, payload) {
@@ -383,20 +392,75 @@ func TestInstallDebIsManual(t *testing.T) {
 func TestWindowsReplaceScript(t *testing.T) {
 	script := WindowsScript()
 	for _, needle := range []string{
-		"Get-Process", "$staged", "Move-Item -LiteralPath $staged -Destination $Destination",
+		"Get-Process", "$staged", "Move-FileWithRetry $staged $Destination 80",
 		"Start-Target $Destination", "Start-Process -FilePath $Installer", ".previous",
-		// The wait gives up instead of chasing a recycled process id.
+		// Wait on parent process handle first, with bounded polling fallback for PID recycling.
+		"$parentProc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue",
+		"$parentExited = $parentProc.WaitForExit(120000)",
 		"$tries -lt 300",
 		// The silent install goes over the copy the user runs, and the app
 		// is opened again: a silent install skips the finish page.
-		"$installArgs = @('/S', ('/D=' + $dir))",
+		"$installArgs = '/S /D=' + $dir",
 		"if ($Source -eq '') {",
-		"$ok = (-not $proc.HasExited) -or (Test-Path -LiteralPath $stamp)",
+		"$ok = (-not (Test-ProcessExited $proc)) -or [System.IO.File]::Exists($stamp)",
+		// Hardened verification, retry, rename-aside, literal .NET file ops, and PS 5.1 ExitCode handling.
+		"[string]$ExpectedVersion = ''",
+		"function Get-FileSha256",
+		"function Get-ExeVersion",
+		"[System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)",
+		"Start-Sleep -Milliseconds 50",
+		"$info2 = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path)",
+		"function Test-UpdatedTarget",
+		"function Prepare-BackupPath",
+		"function Move-FileWithRetry",
+		"function Copy-FileWithRetry",
+		"function Restore-Backup",
+		"function Test-ProcessExited",
+		"function Get-Win32ErrorCode",
+		"ErrorRecord",
+		"function Invoke-SilentInstaller",
+		"function Confirm-Started",
+		"New-Object System.Diagnostics.ProcessStartInfo",
+		"$psi.UseShellExecute = $false",
+		"[System.Diagnostics.Process]::Start($psi)",
+		"$exited = $p.WaitForExit(300000)",
+		"$p.WaitForExit()",
+		"$p.Kill()",
+		"if ($code -eq -3 -or $code -eq -4) { break }",
+		"for ($j = 0; $j -lt 50; $j++)",
+		"[System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete",
+		"[System.IO.File]::Move($From, $To)",
+		"[System.IO.File]::Copy($From, $To, $true)",
+		"Start-Target([string]$Path, [int]$Retries = 40)",
+		"$null = $p.Handle",
+		"Start-Process -FilePath $Installer -ArgumentList ('/D=' + $dir)",
+		// Start and final-result diagnostic logs.
+		"Write-UpdateLog ('start mode='",
+		"result=ok mode=setup",
+		"result=ok mode=portable",
+		"result=ok mode=relaunch",
+		"result=rollback mode=setup",
+		"result=rollback mode=portable",
+		"result=cancelled mode=setup",
+		"result=fallback_interactive mode=setup",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("script missing %s:\n%s", needle, script)
 		}
 	}
+	// Regression guard: PowerShell 5.1 treats '[' and ']' in Copy-Item / Move-Item
+	// -Destination as wildcards, which breaks installs in folders like "Portable [1]".
+	for _, forbidden := range []string{"Move-Item", "Copy-Item"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("WindowsScript must not use %s (breaks PS 5.1 bracket paths):\n%s", forbidden, script)
+		}
+	}
+	for i := 0; i < len(script); i++ {
+		if script[i] >= 0x80 {
+			t.Fatalf("WindowsScript must stay ASCII; found byte 0x%02x at offset %d", script[i], i)
+		}
+	}
+	assertBalancedPowerShell(t, script)
 	args := WindowsHelperArgs("replace.ps1", 42, `D:\Portable\new.exe`, `D:\Portable\tulai.exe`, "")
 	for _, want := range []string{"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "42", `D:\Portable\tulai.exe`} {
 		if !slices.Contains(args, want) {
@@ -423,6 +487,24 @@ func TestWindowsReplaceScript(t *testing.T) {
 	t.Cleanup(func() { cleanupHelperScript(out.HelperArgs) })
 	if !out.Quit || out.Helper != "powershell.exe" || !slices.Contains(out.HelperArgs, "42") || !slices.Contains(out.HelperArgs, "-NonInteractive") {
 		t.Fatalf("windows outcome: %+v", out)
+	}
+	if !slices.Contains(out.HelperArgs, "-ExpectedVersion") || !slices.Contains(out.HelperArgs, "0.2.0") {
+		t.Fatalf("portable helper args missing -ExpectedVersion 0.2.0: %#v", out.HelperArgs)
+	}
+
+	setupOut, err := Install(Options{
+		Mode:       ModeWindowsSetup,
+		Executable: `C:\Users\a\AppData\Local\Programs\tulai\tulai.exe`,
+		AssetPath:  filepath.Join(t.TempDir(), "tulai.Setup.0.2.0.amd64.exe"),
+		Version:    "0.2.0",
+		PID:        42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cleanupHelperScript(setupOut.HelperArgs) })
+	if !setupOut.Quit || setupOut.Helper != "powershell.exe" || !slices.Contains(setupOut.HelperArgs, "-Installer") || !slices.Contains(setupOut.HelperArgs, "-ExpectedVersion") || !slices.Contains(setupOut.HelperArgs, "0.2.0") {
+		t.Fatalf("setup outcome unexpected: %+v", setupOut)
 	}
 
 	relaunchOut, err := PrepareWindowsRelaunch(`D:\Custom\tulai\tulai.exe`, 42)
@@ -513,6 +595,66 @@ func TestLiveLatestRelease(t *testing.T) {
 		if len(sums[NormalizeAssetName(name)]) != 64 {
 			t.Fatalf("SHA256SUMS missing %s: %v", name, sums)
 		}
+	}
+}
+
+func assertBalancedPowerShell(t *testing.T, script string) {
+	t.Helper()
+	var braces, parens int
+	inSingle, inDouble := false, false
+	for _, rawLine := range strings.Split(strings.ReplaceAll(script, "\r\n", "\n"), "\n") {
+		for i := 0; i < len(rawLine); i++ {
+			ch := rawLine[i]
+			if inSingle {
+				if ch == '\'' {
+					if i+1 < len(rawLine) && rawLine[i+1] == '\'' {
+						i++
+						continue
+					}
+					inSingle = false
+				}
+				continue
+			}
+			if inDouble {
+				if ch == '`' && i+1 < len(rawLine) {
+					i++
+					continue
+				}
+				if ch == '"' {
+					inDouble = false
+				}
+				continue
+			}
+			if ch == '#' {
+				break
+			}
+			switch ch {
+			case '\'':
+				inSingle = true
+			case '"':
+				inDouble = true
+			case '{':
+				braces++
+			case '}':
+				braces--
+				if braces < 0 {
+					t.Fatalf("unmatched '}' on line: %s", rawLine)
+				}
+			case '(':
+				parens++
+			case ')':
+				parens--
+				if parens < 0 {
+					t.Fatalf("unmatched ')' on line: %s", rawLine)
+				}
+			}
+		}
+		if inSingle || inDouble {
+			t.Fatalf("unterminated string on line: %s", rawLine)
+		}
+	}
+	if braces != 0 || parens != 0 {
+		t.Fatalf("unbalanced delimiters in WindowsScript: braces=%d parens=%d", braces, parens)
 	}
 }
 

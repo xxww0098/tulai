@@ -38,6 +38,8 @@ type SettingsStateDTO struct {
 	ConcurrencyMaxQwenIntl  int    `json:"concurrencyMaxQwenIntl"`
 	ConcurrencyAutoGemini   bool   `json:"concurrencyAutoGemini"`
 	ConcurrencyMaxGemini    int    `json:"concurrencyMaxGemini"`
+	ConcurrencyAutoJimeng   bool   `json:"concurrencyAutoJimeng"`
+	ConcurrencyMaxJimeng    int    `json:"concurrencyMaxJimeng"`
 	SendStrategy       string `json:"sendStrategy"`
 	RetryCount         int    `json:"retryCount"`
 	SendWait           int    `json:"sendWait"`
@@ -45,6 +47,7 @@ type SettingsStateDTO struct {
 	DailyCapQianwen    int    `json:"dailyCapQianwen"`
 	DailyCapQwenIntl   int    `json:"dailyCapQwenIntl"`
 	DailyCapGemini     int    `json:"dailyCapGemini"`
+	DailyCapJimeng     int    `json:"dailyCapJimeng"`
 	WaitBefore         int    `json:"waitBefore"`
 	WaitResult         bool   `json:"waitResult"`
 	WaitResultSeconds  int    `json:"waitResultSeconds"`
@@ -106,6 +109,8 @@ func (s *SettingsService) GetSettingsState(ctx context.Context) SettingsStateDTO
 			ConcurrencyMaxQwenIntl:  a.concurrencyMaxFor("千问国际"),
 			ConcurrencyAutoGemini:   a.concurrencyAutoFor("Gemini"),
 			ConcurrencyMaxGemini:    a.concurrencyMaxFor("Gemini"),
+			ConcurrencyAutoJimeng:   a.concurrencyAutoFor("即梦"),
+			ConcurrencyMaxJimeng:    a.concurrencyMaxFor("即梦"),
 			SendStrategy:       a.sendStrategy,
 			RetryCount:         int(a.retryCount),
 			SendWait:           int(a.sendWait),
@@ -113,6 +118,7 @@ func (s *SettingsService) GetSettingsState(ctx context.Context) SettingsStateDTO
 			DailyCapQianwen:    a.shownDailyCapFor("千问"),
 			DailyCapQwenIntl:   a.shownDailyCapFor("千问国际"),
 			DailyCapGemini:     a.shownDailyCapFor("Gemini"),
+			DailyCapJimeng:     a.shownDailyCapFor("即梦"),
 			WaitBefore:         int(a.waitBefore),
 			WaitResult:         a.waitResult,
 			WaitResultSeconds:  int(a.waitResultS),
@@ -213,6 +219,16 @@ func (a *App) setSettingFieldInternal(field, value string) {
 		if a.engine != nil {
 			a.engine.SetConcurrency("Gemini", a.taskConcurrencyFor("Gemini"))
 		}
+	case "concurrencyAutoJimeng":
+		a.concurrencyAutoJimeng = value == "true" || value == "1"
+		if a.engine != nil {
+			a.engine.SetConcurrency("即梦", a.taskConcurrencyFor("即梦"))
+		}
+	case "concurrencyMaxJimeng":
+		a.concurrencyMaxJimeng = float64(clampInt(parseIntDefault(value, tasks.PlatformInFlight), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+		if a.engine != nil {
+			a.engine.SetConcurrency("即梦", a.taskConcurrencyFor("即梦"))
+		}
 	case "sendStrategy":
 		a.sendStrategy = pickStr(value, "顺序循环", []string{"顺序循环", "随机循环"})
 	case "retryCount":
@@ -231,6 +247,9 @@ func (a *App) setSettingFieldInternal(field, value string) {
 	case "dailyCapGemini":
 		a.dailyCapGemini = float64(clampInt(parseIntDefault(value, 0), 0, 200))
 		a.dailyCapGeminiSet = true
+	case "dailyCapJimeng":
+		a.dailyCapJimeng = float64(clampInt(parseIntDefault(value, 0), 0, 200))
+		a.dailyCapJimengSet = true
 	case "waitBefore":
 		a.waitBefore = float64(clampInt(parseIntDefault(value, 0), 0, 60))
 	case "waitResult":
@@ -292,7 +311,8 @@ func (a *App) setSettingFieldInternal(field, value string) {
 		field == "concurrencyAuto" || field == "concurrencyAutoDoubao" || field == "concurrencyMax" || field == "concurrencyMaxDoubao" ||
 		field == "concurrencyAutoQianwen" || field == "concurrencyMaxQianwen" ||
 		field == "concurrencyAutoGemini" || field == "concurrencyMaxGemini" ||
-		field == "dailyCapDoubao" || field == "dailyCapQianwen" || field == "dailyCapQwenIntl" || field == "dailyCapGemini" {
+		field == "concurrencyAutoJimeng" || field == "concurrencyMaxJimeng" ||
+		field == "dailyCapDoubao" || field == "dailyCapQianwen" || field == "dailyCapQwenIntl" || field == "dailyCapGemini" || field == "dailyCapJimeng" {
 		a.emit("settings", "shell", "workbench", "browsers")
 		return
 	}

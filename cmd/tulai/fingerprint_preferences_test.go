@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	"github.com/xxww0098/realbrowser/fingerprintkernel/profile"
 
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/store"
@@ -23,7 +23,7 @@ func TestBrowserServicePersistsAccountFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := browserkernel.WriteProfile(dir, browserkernel.FingerprintSpec{Seed: 42}); err != nil {
+	if err := profile.WriteProfile(dir, profile.FingerprintSpec{Seed: 42}); err != nil {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
@@ -39,7 +39,7 @@ func TestBrowserServicePersistsAccountFingerprint(t *testing.T) {
 	if err := svcs.Browser.SaveAccountFingerprint(ctx, id, bad); err == nil {
 		t.Fatal("saved invalid timezone")
 	}
-	if f, err := browserkernel.ReadProfile(dir); err != nil || f.Seed != 42 || f.Timezone != prefs.Timezone {
+	if f, err := profile.ReadProfile(dir); err != nil || f.Seed != 42 || f.Timezone != prefs.Timezone {
 		t.Fatalf("lost existing profile data: %+v %v", f, err)
 	}
 	if _, err := svcs.Browser.GetAccountFingerprint(ctx, id+1); err == nil {

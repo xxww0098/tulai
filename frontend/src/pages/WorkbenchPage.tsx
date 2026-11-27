@@ -49,12 +49,16 @@ function buildFallbackWorkbench(shell: ShellStateDTO): WorkbenchStateDTO {
     shell.tab === TAB_GEN ? "free" : shell.tab === TAB_FISSION ? "fission" : "wash";
   const page = shell.tab <= TAB_FISSION ? shell.tab : TAB_WASH;
   const platform =
-    shell.platform === "千问" || shell.platform === "千问国际" || shell.platform === "Gemini"
+    shell.platform === "千问" ||
+    shell.platform === "千问国际" ||
+    shell.platform === "Gemini" ||
+    shell.platform === "即梦"
       ? shell.platform
       : "豆包";
   const qianwen = platform === "千问";
   const qwenIntl = platform === "千问国际";
   const gemini = platform === "Gemini";
+  const jimeng = platform === "即梦";
   const startLabel =
     mode === "wash" ? "开始洗图" : mode === "fission" ? "开始裂变" : "开始文生图";
 
@@ -63,11 +67,12 @@ function buildFallbackWorkbench(shell: ShellStateDTO): WorkbenchStateDTO {
     page,
     batchMode: 0,
     platform,
-    platforms: ["豆包", "千问", "千问国际", "Gemini"],
+    platforms: ["豆包", "千问", "千问国际", "Gemini", "即梦"],
     doubao: platform === "豆包",
     qianwen,
     qwenIntl,
     gemini,
+    jimeng,
     prompts: "",
     promptChoice: "",
     promptOptions: [],
@@ -81,6 +86,15 @@ function buildFallbackWorkbench(shell: ShellStateDTO): WorkbenchStateDTO {
     outputMode: "",
     outputRatio: "",
     outputRatios: [],
+    outputResolution: "",
+    outputResolutions: [],
+    outputCapsSource: "default",
+    outputCapsSyncedAt: 0,
+    outputCapsSyncedLabel: "",
+    outputCapsModel: "",
+    outputCapsSyncing: false,
+    outputAutoLabel: "",
+    outputSupportsAuto: false,
     sources: [],
     sourcesTotal: 0,
     washedCount: 0,
@@ -176,7 +190,8 @@ export function WorkbenchPage() {
   );
 
   const platform =
-    wb.platform || (wb.gemini ? "Gemini" : wb.qwenIntl ? "千问国际" : wb.qianwen ? "千问" : "豆包");
+    wb.platform ||
+    (wb.jimeng ? "即梦" : wb.gemini ? "Gemini" : wb.qwenIntl ? "千问国际" : wb.qianwen ? "千问" : "豆包");
   const mode = wb.mode || "wash";
   const isFree = mode === "free";
   const isWash = mode === "wash";
@@ -434,17 +449,23 @@ export function WorkbenchPage() {
   if (!rawWb && loading) return <WorkbenchSkeleton />;
 
   const washStyleList = (wb.washStyleOptions ?? []).map((s) => ({ value: s, label: s }));
-  const isTextOnlyRatio = isFreeText || (isFission && Boolean(wb.skipImages));
-  const originalRatioLabel = isTextOnlyRatio ? "自动比例" : "原比例";
   const presetList = (wb.outputPresets ?? []).map((p) => ({
     value: p,
-    label: p === "原比例" ? originalRatioLabel : p,
+    label: p,
   }));
+  const resolutionList = wb.outputResolutions ?? [];
   const showOutputSize = presetList.length > 0;
+  const isLiveOutputCaps = wb.outputCapsSource === "live";
+  const outputModelSuffix = wb.outputCapsModel ? `（${wb.outputCapsModel}）` : "";
+  const outputCapsTooltip = wb.outputCapsSyncing
+    ? `正在从${platform}网页读取支持的输出尺寸…`
+    : isLiveOutputCaps
+      ? `已从${platform}${outputModelSuffix}网页同步（${wb.outputCapsSyncedLabel || "已同步"}），点击重新读取最新选项`
+      : `当前按${platform}${outputModelSuffix}网页默认选项展示，点击从已登录网页实时同步`;
 
   const outputSizeSection = showOutputSize ? (
     <div className="flex flex-col gap-1.5">
-      <div data-testid="wb-output-preset-wrap" className="flex items-center gap-2">
+      <div data-testid="wb-output-preset-wrap" className="flex items-center gap-1.5">
         <span className="w-[48px] shrink-0 text-[11px] font-medium text-muted">
           输出尺寸
         </span>
@@ -453,15 +474,91 @@ export function WorkbenchPage() {
           aria-label="输出尺寸"
           options={presetList}
           value={wb.outputPreset || ""}
-          placeholder={originalRatioLabel}
+          placeholder={wb.outputAutoLabel || presetList[0]?.label || "选择比例"}
           disabled={Boolean(wb.running)}
           size="small"
-          className="flex-1"
+          className="min-w-0 flex-1"
           onValueChange={(value) =>
             fireIpc(Workbench.setOutputSize(value, "", ""))
           }
         />
+        <Tooltip content={outputCapsTooltip} side="top">
+          <button
+            type="button"
+            data-testid="wb-output-caps-sync-btn"
+            aria-label={`同步${platform}网页输出尺寸`}
+            disabled={Boolean(wb.running || wb.outputCapsSyncing)}
+            onClick={() => fireIpc(Workbench.syncOutputCaps(platform))}
+            className={cn(
+              "relative flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-[8px] border transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+              isLiveOutputCaps
+                ? "border-accent-border bg-accent-soft/60 text-accent hover:bg-accent-soft"
+                : "border-hairline bg-sunken text-muted hover:bg-sunken-hover hover:text-ink",
+            )}
+          >
+            <Icon
+              name="refresh-cw"
+              size={12}
+              className={cn(wb.outputCapsSyncing && "animate-spin")}
+            />
+          </button>
+        </Tooltip>
       </div>
+      {resolutionList.length > 0 ? (
+        <div
+          data-testid="wb-output-resolution-wrap"
+          className="flex items-center gap-1.5"
+        >
+          <span className="w-[48px] shrink-0 text-[11px] font-medium text-muted">
+            分辨率
+          </span>
+          {resolutionList.length <= 4 ? (
+            <div
+              role="radiogroup"
+              aria-label="输出分辨率"
+              className="inline-flex h-[26px] min-w-0 flex-1 items-center gap-0.5 rounded-[8px] border border-hairline bg-sunken p-0.5"
+            >
+              {resolutionList.map((res) => {
+                const active =
+                  (wb.outputResolution || "").toLowerCase() === res.toLowerCase();
+                return (
+                  <button
+                    key={res}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    data-testid={`wb-output-res-${res}`}
+                    disabled={Boolean(wb.running)}
+                    onClick={() => fireIpc(Workbench.setOutputResolution(res))}
+                    className={cn(
+                      "tnum flex h-full flex-1 cursor-pointer items-center justify-center rounded-[6px] px-1.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+                      active
+                        ? "bg-card text-ink shadow-xs"
+                        : "text-muted hover:text-ink",
+                    )}
+                  >
+                    {res}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <Select
+              data-testid="wb-output-resolution-select"
+              aria-label="输出分辨率"
+              options={resolutionList.map((r) => ({ value: r, label: r }))}
+              value={wb.outputResolution || ""}
+              placeholder={resolutionList[0] || "选择分辨率"}
+              disabled={Boolean(wb.running)}
+              size="small"
+              className="min-w-0 flex-1"
+              onValueChange={(value) =>
+                fireIpc(Workbench.setOutputResolution(value))
+              }
+            />
+          )}
+        </div>
+      ) : null}
     </div>
   ) : null;
 

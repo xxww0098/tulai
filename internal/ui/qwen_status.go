@@ -67,6 +67,8 @@ func buildAccountQuotaView(b store.Browser, dailyCap int, now time.Time) account
 		return buildDoubaoQuotaView(b, usedToday, dailyCap, now)
 	case "Gemini":
 		return buildGeminiQuotaView(b, usedToday, dailyCap, now)
+	case "即梦":
+		return buildJimengQuotaView(b, usedToday, dailyCap, now)
 	default:
 		if dailyCap > 0 {
 			view.UsageLabel = fmt.Sprintf("%d/%d", usedToday, dailyCap)
@@ -103,7 +105,8 @@ func buildDoubaoQuotaView(b store.Browser, usedToday, dailyCap int, now time.Tim
 	view.PlatformLimited = b.PlatformLimited
 	view.LimitTips = strings.TrimSpace(b.LimitTips)
 	view.ResetCardCount = max(b.ResetCardCount, 0)
-	view.CreditsResetAt = b.CreditsResetAt
+	effectiveResetAt := effectiveQuotaResetAt(b.CreditsResetAt, b.CreditsSyncedAt)
+	view.CreditsResetAt = effectiveResetAt
 	view.CreditsCycle = b.CreditsCycle
 	view.CreditsCycleLabel = formatCreditsCycleLabel(b.CreditsCycle)
 	view.CreditsSyncedAt = b.CreditsSyncedAt
@@ -113,7 +116,7 @@ func buildDoubaoQuotaView(b store.Browser, usedToday, dailyCap int, now time.Tim
 	if b.MemberTier == "vip" || b.CreditsRemain >= 0 {
 		view.CreditsRemain = b.CreditsRemain
 		view.CreditsTotal = b.CreditsTotal
-		view.CreditsResetLabel = formatCreditsResetLabel(b.CreditsResetAt, b.CreditsCycle, now)
+		view.CreditsResetLabel = formatCreditsResetLabel(effectiveResetAt, b.CreditsCycle, now)
 		if view.CreditsRemain >= 0 && view.CreditsTotal > 0 {
 			usedCredits := max(0, view.CreditsTotal-view.CreditsRemain)
 			view.UsagePct = clampPercent(usedCredits, view.CreditsTotal)
@@ -181,10 +184,11 @@ func buildGeminiQuotaView(b store.Browser, usedToday, dailyCap int, now time.Tim
 	view.CreditsRemain = b.CreditsRemain
 	view.CreditsTotal = b.CreditsTotal
 	view.CreditCost = b.CreditCost
-	view.CreditsResetAt = b.CreditsResetAt
+	effectiveResetAt := effectiveQuotaResetAt(b.CreditsResetAt, b.CreditsSyncedAt)
+	view.CreditsResetAt = effectiveResetAt
 	view.CreditsCycle = b.CreditsCycle
 	view.CreditsCycleLabel = formatCreditsCycleLabel(b.CreditsCycle)
-	view.CreditsResetLabel = formatCreditsResetLabel(b.CreditsResetAt, b.CreditsCycle, now)
+	view.CreditsResetLabel = formatCreditsResetLabel(effectiveResetAt, b.CreditsCycle, now)
 	view.MemberTier = b.MemberTier
 	view.MemberLabel = strings.TrimSpace(b.MemberName)
 	if view.MemberLabel == "" {
@@ -279,10 +283,11 @@ func buildQwenQuotaView(b store.Browser, usedToday, dailyCap int, now time.Time)
 	view.CreditsSynced = true
 	view.CreditsRemain = b.CreditsRemain
 	view.CreditsTotal = b.CreditsTotal
-	view.CreditsResetAt = b.CreditsResetAt
+	effectiveResetAt := effectiveQuotaResetAt(b.CreditsResetAt, b.CreditsSyncedAt)
+	view.CreditsResetAt = effectiveResetAt
 	view.CreditsCycle = b.CreditsCycle
 	view.CreditsCycleLabel = formatCreditsCycleLabel(b.CreditsCycle)
-	view.CreditsResetLabel = formatCreditsResetLabel(b.CreditsResetAt, b.CreditsCycle, now)
+	view.CreditsResetLabel = formatCreditsResetLabel(effectiveResetAt, b.CreditsCycle, now)
 	view.MemberTier = b.MemberTier
 	view.MemberLabel = strings.TrimSpace(b.MemberName)
 	if view.MemberLabel == "" {
@@ -304,6 +309,9 @@ func buildQwenQuotaView(b store.Browser, usedToday, dailyCap int, now time.Time)
 		view.UsagePct = clampPercent(usedCredits, view.CreditsTotal)
 		if view.CreditsRemain == 0 {
 			view.UsageLabel = fmt.Sprintf("0/%d 积分 · 已耗尽", view.CreditsTotal)
+		} else if view.CreditCost > 1 && view.CreditsRemain < view.CreditCost {
+			view.UsageLabel = fmt.Sprintf("余 %d/%d 积分 · 不足1张", view.CreditsRemain, view.CreditsTotal)
+			view.UsagePct = 100
 		} else {
 			view.UsageLabel = fmt.Sprintf("余 %d/%d 积分", view.CreditsRemain, view.CreditsTotal)
 		}
@@ -311,12 +319,86 @@ func buildQwenQuotaView(b store.Browser, usedToday, dailyCap int, now time.Time)
 		if view.CreditsRemain == 0 {
 			view.UsageLabel = "0 积分 · 已耗尽"
 			view.UsagePct = 100
+		} else if view.CreditCost > 1 && view.CreditsRemain < view.CreditCost {
+			view.UsageLabel = fmt.Sprintf("余 %d 积分 · 不足1张", view.CreditsRemain)
+			view.UsagePct = 100
 		} else {
 			view.UsageLabel = fmt.Sprintf("余 %d 积分", view.CreditsRemain)
 		}
 	case dailyCap > 0:
 		view.UsageLabel = fmt.Sprintf("今日 %d/%d", usedToday, dailyCap)
 		view.UsagePct = clampPercent(usedToday, dailyCap)
+	}
+	return view
+}
+
+func buildJimengQuotaView(b store.Browser, usedToday, dailyCap int, now time.Time) accountQuotaView {
+	view := accountQuotaView{
+		CreditsRemain: -1,
+		UsagePercent:  -1,
+		CreditCost:    b.CreditCost,
+	}
+	if view.CreditCost <= 0 {
+		view.CreditCost = cdp.JimengDefaultCreditCost
+	}
+	if !b.QuotaSynced() {
+		if dailyCap > 0 {
+			view.UsageLabel = fmt.Sprintf("今日 %d/%d · 待同步积分", usedToday, dailyCap)
+			view.UsagePct = clampPercent(usedToday, dailyCap)
+		} else {
+			view.UsageLabel = fmt.Sprintf("今日 %d 次 · 待同步积分", usedToday)
+		}
+		return view
+	}
+
+	view.CreditsSynced = true
+	view.CreditsRemain = b.CreditsRemain
+	view.CreditsTotal = b.CreditsTotal
+	effectiveResetAt := effectiveQuotaResetAt(b.CreditsResetAt, b.CreditsSyncedAt)
+	view.CreditsResetAt = effectiveResetAt
+	view.CreditsCycle = b.CreditsCycle
+	view.CreditsCycleLabel = formatCreditsCycleLabel(b.CreditsCycle)
+	view.CreditsResetLabel = formatCreditsResetLabel(effectiveResetAt, b.CreditsCycle, now)
+	view.MemberTier = b.MemberTier
+	view.MemberLabel = strings.TrimSpace(b.MemberName)
+	if view.MemberLabel == "" {
+		if b.MemberTier == "vip" {
+			view.MemberLabel = "即梦会员"
+		} else {
+			view.MemberLabel = "免费版"
+		}
+	}
+	view.WatermarkFree = b.WatermarkFree
+	view.CreditsSyncedAt = b.CreditsSyncedAt
+	view.CreditsSyncedLabel = formatSyncedAtLabel(b.CreditsSyncedAt, now)
+
+	switch {
+	case view.CreditsRemain >= 0 && view.CreditsTotal > 0:
+		usedCredits := max(0, view.CreditsTotal-view.CreditsRemain)
+		view.UsagePct = clampPercent(usedCredits, view.CreditsTotal)
+		if view.CreditsRemain == 0 {
+			view.UsageLabel = fmt.Sprintf("0/%d 积分 · 已耗尽", view.CreditsTotal)
+		} else if view.CreditCost > 1 && view.CreditsRemain < view.CreditCost {
+			view.UsageLabel = fmt.Sprintf("余 %d/%d 积分 · 不足1张", view.CreditsRemain, view.CreditsTotal)
+			view.UsagePct = 100
+		} else {
+			view.UsageLabel = fmt.Sprintf("余 %d/%d 积分", view.CreditsRemain, view.CreditsTotal)
+		}
+	case view.CreditsRemain >= 0:
+		if view.CreditsRemain == 0 {
+			view.UsageLabel = "0 积分 · 已耗尽"
+			view.UsagePct = 100
+		} else if view.CreditCost > 1 && view.CreditsRemain < view.CreditCost {
+			view.UsageLabel = fmt.Sprintf("余 %d 积分 · 不足1张", view.CreditsRemain)
+			view.UsagePct = 100
+		} else {
+			view.UsageLabel = fmt.Sprintf("余 %d 积分", view.CreditsRemain)
+		}
+	case dailyCap > 0:
+		view.UsageLabel = fmt.Sprintf("今日 %d/%d", usedToday, dailyCap)
+		view.UsagePct = clampPercent(usedToday, dailyCap)
+	default:
+		view.UsageLabel = view.MemberLabel
 	}
 	return view
 }
@@ -342,6 +424,15 @@ func formatCreditsCycleLabel(cycle string) string {
 	default:
 		return ""
 	}
+}
+
+// effectiveQuotaResetAt 过滤掉在最近一次同步时就已经过期的历史刷新时间，
+// 避免刚同步完成后界面仍提示「已到期 · 待同步刷新」。
+func effectiveQuotaResetAt(resetAt, syncedAt int64) int64 {
+	if resetAt > 0 && syncedAt >= resetAt {
+		return 0
+	}
+	return resetAt
 }
 
 func formatCreditsResetLabel(resetAt int64, cycle string, now time.Time) string {
@@ -452,6 +543,26 @@ func (a *App) probeGeminiStatus(ctx context.Context, endpoint string) (cdp.Gemin
 	return cdp.ProbeGeminiStatus(ctx, endpoint)
 }
 
+func (a *App) probeJimengStatus(ctx context.Context, endpoint string) (cdp.JimengStatus, error) {
+	a.mu.Lock()
+	fn := a.jimengStatusProbe
+	a.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, endpoint)
+	}
+	return cdp.ProbeJimengStatus(ctx, endpoint)
+}
+
+func (a *App) probeJimengTargetModelCost(ctx context.Context, endpoint string) (int, error) {
+	a.mu.Lock()
+	hasCustomProbe := a.jimengStatusProbe != nil
+	a.mu.Unlock()
+	if hasCustomProbe {
+		return 0, nil
+	}
+	return cdp.ProbeJimengTargetModelCost(ctx, endpoint)
+}
+
 func (a *App) applyQwenStatus(id int64, raw cdp.QwenStatus) (store.AccountQuota, bool) {
 	if a == nil || id <= 0 || a.store == nil {
 		return store.AccountQuota{}, false
@@ -517,15 +628,43 @@ func (a *App) applyGeminiStatus(id int64, raw cdp.GeminiStatus) (store.AccountQu
 	return quota, true
 }
 
-// probeRunningAccountStatuses 异步刷新当前已在运行中的豆包、千问与 Gemini 账号状态（不额外启动已关闭的浏览器）。
+func (a *App) applyJimengStatus(id int64, raw cdp.JimengStatus) (store.AccountQuota, bool) {
+	if a == nil || id <= 0 || a.store == nil {
+		return store.AccountQuota{}, false
+	}
+	quota, ok := cdp.NormalizeJimengStatus(raw, time.Now())
+	if !ok {
+		return store.AccountQuota{}, false
+	}
+	if candidate := cdp.SanitizeAccountUsername(raw.Username); candidate != "" {
+		a.applyAutoAccountName(id, candidate)
+	}
+	if err := a.store.UpdateBrowserQuota(id, quota); err != nil {
+		logging.Log.Warning("保存即梦账号状态失败: %v", err)
+		return store.AccountQuota{}, false
+	}
+	if cur, ok := a.browserByID(id); ok && (!cur.IsLoggedIn || accountNeedsLogin(cur)) {
+		a.confirmLogin(id, true)
+	}
+	a.refreshBrowsers()
+	a.emit("browsers", "workbench", "shell")
+	return quota, true
+}
+
+// probeRunningAccountStatuses 异步刷新当前已在运行中的豆包、千问、Gemini 与即梦账号状态（不额外启动已关闭的浏览器）。
 func (a *App) probeRunningAccountStatuses() {
 	if a == nil || a.store == nil || a.manager == nil || a.running {
 		return
 	}
 	var targets []store.Browser
+	staleCaps := map[string]bool{}
+	now := time.Now()
 	for _, b := range a.browserRows {
-		if (b.Platform == "千问" || b.Platform == "豆包" || b.Platform == "Gemini") && a.manager.IsRunning(b.ID) {
+		if store.OutputCapsSupportedPlatform(b.Platform) && a.manager.IsRunning(b.ID) {
 			targets = append(targets, b)
+			if a.outputCapsStale(b.Platform, now) {
+				staleCaps[b.Platform] = true
+			}
 		}
 	}
 	if len(targets) == 0 {
@@ -536,6 +675,7 @@ func (a *App) probeRunningAccountStatuses() {
 	}
 	go func() {
 		defer a.qwenLiveProbing.Store(false)
+		probedCaps := map[string]bool{}
 		for _, row := range targets {
 			if a.isQuitting() {
 				return
@@ -545,7 +685,7 @@ func (a *App) probeRunningAccountStatuses() {
 				continue
 			}
 			timeout := 6 * time.Second
-			if row.Platform == "Gemini" {
+			if row.Platform == "Gemini" || row.Platform == "即梦" {
 				timeout = 8 * time.Second
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -571,8 +711,19 @@ func (a *App) probeRunningAccountStatuses() {
 					id := row.ID
 					a.postUI(func() { a.applyGeminiStatus(id, st) })
 				}
+			case "即梦":
+				st, err := a.probeJimengStatus(ctx, ep)
+				cancel()
+				if err == nil && st.OK {
+					id := row.ID
+					a.postUI(func() { a.applyJimengStatus(id, st) })
+				}
 			default:
 				cancel()
+			}
+			if staleCaps[row.Platform] && !probedCaps[row.Platform] && !a.isQuitting() {
+				probedCaps[row.Platform] = true
+				a.piggybackOutputCaps(context.Background(), row.Platform, ep)
 			}
 		}
 	}()
@@ -588,8 +739,13 @@ func (a *App) syncGeminiStatus(ids []int64) error {
 	return a.syncAccountStatus(ids, "Gemini")
 }
 
-// syncAccountStatus 批量或单个同步豆包/千问/Gemini 账号的实时额度、套餐与限流状态。
-// platformFilter 为空时支持豆包、千问与 Gemini 全部账号；ids 为空时同步该范围内的全部账号。
+// syncJimengStatus 批量或单个同步即梦账号的实时积分、会员与用户名。
+func (a *App) syncJimengStatus(ids []int64) error {
+	return a.syncAccountStatus(ids, "即梦")
+}
+
+// syncAccountStatus 批量或单个同步豆包/千问/Gemini/即梦账号的实时额度、套餐与限流状态。
+// platformFilter 为空时支持豆包、千问、Gemini 与即梦全部账号；ids 为空时同步该范围内的全部账号。
 func (a *App) syncAccountStatus(ids []int64, platformFilter string) error {
 	if a.running {
 		return errors.New("任务运行中，任务完成后会自动刷新账号状态")
@@ -603,12 +759,15 @@ func (a *App) syncAccountStatus(ids []int64, platformFilter string) error {
 	if a.clearHistoryCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "clearing") {
 		return errors.New("正在清理聊天历史，请等待完成后再同步状态")
 	}
+	if a.probeImageCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "probing_image") {
+		return errors.New("正在检测豆包生图能力，请等待完成后再同步状态")
+	}
 
 	supportsPlatform := func(plat string) bool {
 		if platformFilter != "" {
 			return plat == platformFilter
 		}
-		return plat == "豆包" || plat == "千问" || plat == "Gemini"
+		return plat == "豆包" || plat == "千问" || plat == "Gemini" || plat == "即梦"
 	}
 
 	var requested []store.Browser
@@ -635,7 +794,7 @@ func (a *App) syncAccountStatus(ids []int64, platformFilter string) error {
 		if platformFilter != "" {
 			return fmt.Errorf("当前没有可同步状态的%s账号", platformFilter)
 		}
-		return errors.New("当前没有可同步状态的豆包、千问或 Gemini 账号")
+		return errors.New("当前没有可同步状态的豆包、千问、Gemini 或即梦账号")
 	}
 	var targets []store.Browser
 	for _, row := range requested {
@@ -649,7 +808,8 @@ func (a *App) syncAccountStatus(ids []int64, platformFilter string) error {
 	for _, row := range targets {
 		hasStub := (row.Platform == "千问" && a.syncQwenStatusFn != nil) ||
 			(row.Platform == "豆包" && a.syncDoubaoStatusFn != nil) ||
-			(row.Platform == "Gemini" && a.syncGeminiStatusFn != nil)
+			(row.Platform == "Gemini" && a.syncGeminiStatusFn != nil) ||
+			(row.Platform == "即梦" && a.syncJimengStatusFn != nil)
 		if !hasStub && a.manager == nil {
 			return errors.New("没有受管浏览器管理器，无法同步账号状态")
 		}
@@ -708,6 +868,20 @@ func (a *App) syncAccountStatus(ids []int64, platformFilter string) error {
 		}()
 
 		var totalUpdated atomic.Int64
+		var totalFailed atomic.Int64
+		var firstErrMu sync.Mutex
+		var firstErrMsg string
+		recordFailure := func(err error) {
+			if err == nil || errors.Is(err, context.Canceled) {
+				return
+			}
+			totalFailed.Add(1)
+			firstErrMu.Lock()
+			if firstErrMsg == "" {
+				firstErrMsg = err.Error()
+			}
+			firstErrMu.Unlock()
+		}
 		var wg sync.WaitGroup
 		for _, plat := range order {
 			list := groups[plat]
@@ -819,10 +993,40 @@ func (a *App) syncAccountStatus(ids []int64, platformFilter string) error {
 							}
 							continue
 						}
+					case "即梦":
+						var raw cdp.JimengStatus
+						var scrapedName string
+						raw, scrapedName, err = a.syncOneJimengStatus(runCtx, row)
+						if err == nil && !raw.OK {
+							err = errors.New("未能从即梦页面读取到积分或账号状态")
+						}
+						if err == nil {
+							a.syncUI(func() {
+								if scrapedName != "" {
+									a.applySyncedAccountName(row.ID, scrapedName)
+								}
+								quota, applied = a.applyJimengStatus(row.ID, raw)
+								if applied {
+									batch.updated++
+								}
+								a.finishBrowserOperation(row.ID, nil)
+								a.emit("browsers", "workbench", "shell")
+							})
+							if applied {
+								totalUpdated.Add(1)
+								if quota.CreditsRemain >= 0 {
+									logging.Log.Success("账号[%s] 状态已同步：剩余 %d 积分（%s · %d分/张）", label, quota.CreditsRemain, quota.MemberName, max(quota.CreditCost, 1))
+								} else {
+									logging.Log.Success("账号[%s] 状态已同步：%s", label, quota.MemberName)
+								}
+							}
+							continue
+						}
 					}
 					if errors.Is(err, context.Canceled) {
 						logging.Log.Info("账号[%s] 状态同步已停止", label)
 					} else if err != nil {
+						recordFailure(err)
 						logging.Log.Warning("账号[%s] 同步状态失败：%v", label, err)
 					}
 					a.postUI(func() {
@@ -834,7 +1038,32 @@ func (a *App) syncAccountStatus(ids []int64, platformFilter string) error {
 		}
 		wg.Wait()
 		if runCtx.Err() == nil {
-			logging.Log.Info("%s状态同步结束：共处理 %d 个账号，已更新 %d 个", statusLabel, len(targets), totalUpdated.Load())
+			updated := totalUpdated.Load()
+			failed := totalFailed.Load()
+			logging.Log.Info("%s状态同步结束：共处理 %d 个账号，已更新 %d 个", statusLabel, len(targets), updated)
+			firstErrMu.Lock()
+			errMsg := firstErrMsg
+			firstErrMu.Unlock()
+			a.postUI(func() {
+				switch {
+				case failed > 0 && updated == 0:
+					if failed == 1 && errMsg != "" {
+						a.pushToast("error", fmt.Sprintf("%s状态同步失败：%s", statusLabel, errMsg))
+					} else if errMsg != "" {
+						a.pushToast("error", fmt.Sprintf("%s状态同步失败（%d 个）：%s", statusLabel, failed, errMsg))
+					} else {
+						a.pushToast("error", fmt.Sprintf("%s状态同步失败（%d 个）", statusLabel, failed))
+					}
+				case failed > 0 && updated > 0:
+					a.pushToast("warning", fmt.Sprintf("%s状态同步完成：已更新 %d/%d 个，失败 %d 个", statusLabel, updated, len(targets), failed))
+				case updated > 0:
+					if len(targets) == 1 {
+						a.pushToast("success", fmt.Sprintf("%s状态已同步", statusLabel))
+					} else {
+						a.pushToast("success", fmt.Sprintf("已同步 %d 个%s账号状态", updated, statusLabel))
+					}
+				}
+			})
 		}
 	}()
 	return nil
@@ -851,17 +1080,25 @@ func (a *App) stopSyncGeminiStatus() {
 	a.stopSyncQwenStatus()
 }
 
+func (a *App) stopSyncJimengStatus() {
+	a.stopSyncQwenStatus()
+}
+
 func (a *App) syncOneQwenStatus(ctx context.Context, b store.Browser) (cdp.QwenStatus, string, error) {
 	if a.syncQwenStatusFn != nil {
 		st, err := a.syncQwenStatusFn(ctx, b)
 		return st, "", err
 	}
-	ws, cleanup, err := a.openStatusProbeBrowser(ctx, b)
+	ws, _, cleanup, err := a.openStatusProbeBrowser(ctx, b)
 	if err != nil {
 		return cdp.QwenStatus{}, "", err
 	}
 	defer cleanup()
-	return a.pollQwenStatus(ctx, ws)
+	st, scraped, err := a.pollQwenStatus(ctx, ws)
+	if err == nil && st.OK {
+		a.piggybackOutputCaps(ctx, "千问", ws)
+	}
+	return st, scraped, err
 }
 
 func (a *App) syncOneDoubaoStatus(ctx context.Context, b store.Browser) (cdp.DoubaoStatus, string, error) {
@@ -869,12 +1106,16 @@ func (a *App) syncOneDoubaoStatus(ctx context.Context, b store.Browser) (cdp.Dou
 		st, err := a.syncDoubaoStatusFn(ctx, b)
 		return st, "", err
 	}
-	ws, cleanup, err := a.openStatusProbeBrowser(ctx, b)
+	ws, _, cleanup, err := a.openStatusProbeBrowser(ctx, b)
 	if err != nil {
 		return cdp.DoubaoStatus{}, "", err
 	}
 	defer cleanup()
-	return a.pollDoubaoStatus(ctx, ws)
+	st, scraped, err := a.pollDoubaoStatus(ctx, ws)
+	if err == nil && st.OK {
+		a.piggybackOutputCaps(ctx, "豆包", ws)
+	}
+	return st, scraped, err
 }
 
 func (a *App) syncOneGeminiStatus(ctx context.Context, b store.Browser) (cdp.GeminiStatus, string, error) {
@@ -886,27 +1127,61 @@ func (a *App) syncOneGeminiStatus(ctx context.Context, b store.Browser) (cdp.Gem
 		}
 		return st, name, err
 	}
-	ws, cleanup, err := a.openStatusProbeBrowser(ctx, b)
+	ws, _, cleanup, err := a.openStatusProbeBrowser(ctx, b)
 	if err != nil {
 		return cdp.GeminiStatus{}, "", err
 	}
 	defer cleanup()
-	return a.pollGeminiStatus(ctx, ws)
+	st, scraped, err := a.pollGeminiStatus(ctx, ws)
+	if err == nil && st.OK {
+		a.piggybackOutputCaps(ctx, "Gemini", ws)
+	}
+	return st, scraped, err
 }
 
-func (a *App) openStatusProbeBrowser(ctx context.Context, b store.Browser) (string, func(), error) {
+func (a *App) syncOneJimengStatus(ctx context.Context, b store.Browser) (cdp.JimengStatus, string, error) {
+	if a.syncJimengStatusFn != nil {
+		st, err := a.syncJimengStatusFn(ctx, b)
+		name := cdp.SanitizeAccountUsername(st.Username)
+		return st, name, err
+	}
+	ws, wasRunning, cleanup, err := a.openStatusProbeBrowser(ctx, b)
+	if err != nil {
+		return cdp.JimengStatus{}, "", err
+	}
+	defer cleanup()
+	st, scraped, err := a.pollJimengStatus(ctx, ws)
+	// 若是后台临时拉起的同步浏览器，且网页尚未停留在目标生图模型（Seedream 4.7 · 2K），
+	// 自动切换到目标模型读取网页实际显示的每张积分单价，避免停留在页面默认 Seedream 5.5 导致单价失准。
+	if err == nil && st.OK && !wasRunning && (!st.CostModelMatched || st.CreditCost <= 0) {
+		costCtx, costCancel := context.WithTimeout(ctx, 6*time.Second)
+		if cost, cErr := a.probeJimengTargetModelCost(costCtx, ws); cErr == nil && cost > 0 {
+			st.CreditCost = cost
+			st.Model = cdp.JimengTargetModel
+			st.Resolution = strings.ToUpper(cdp.JimengTargetResolution)
+			st.CostModelMatched = true
+		}
+		costCancel()
+	}
+	if err == nil && st.OK {
+		a.piggybackOutputCaps(ctx, "即梦", ws)
+	}
+	return st, scraped, err
+}
+
+func (a *App) openStatusProbeBrowser(ctx context.Context, b store.Browser) (string, bool, func(), error) {
 	plat := strategy.Factory(b.Platform)
 	if plat == nil {
-		return "", func() {}, fmt.Errorf("不支持的平台：%s", b.Platform)
+		return "", false, func() {}, fmt.Errorf("不支持的平台：%s", b.Platform)
 	}
 	if a.manager == nil {
-		return "", func() {}, errors.New("受管浏览器管理器未初始化")
+		return "", false, func() {}, errors.New("受管浏览器管理器未初始化")
 	}
 	a.pushProxy()
 	wasRunning := a.manager.IsRunning(b.ID)
 	ws, err := a.manager.StartView(ctx, b, a.dataRoot, plat.HomeURL())
 	if err != nil {
-		return "", func() {}, fmt.Errorf("打开内置浏览器失败: %w", err)
+		return "", false, func() {}, fmt.Errorf("打开内置浏览器失败: %w", err)
 	}
 	cleanup := func() {}
 	if !wasRunning {
@@ -922,51 +1197,51 @@ func (a *App) openStatusProbeBrowser(ctx context.Context, b store.Browser) (stri
 	openCancel()
 	if err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("打开%s页面失败: %w", b.Platform, err)
+		return "", false, func() {}, fmt.Errorf("打开%s页面失败: %w", b.Platform, err)
 	}
-	return ws, cleanup, nil
+	return ws, wasRunning, cleanup, nil
 }
 
 func (a *App) pollQwenStatus(ctx context.Context, endpoint string) (cdp.QwenStatus, string, error) {
-	deadline := time.Now().Add(18 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	outCount := 0
 	for {
 		if ctx.Err() != nil {
 			return cdp.QwenStatus{}, "", ctx.Err()
 		}
-		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-		state, err := cdp.ProbeLogin(probeCtx, endpoint)
+		loginCtx, loginCancel := context.WithTimeout(ctx, min(6*time.Second, max(time.Second, time.Until(deadline))))
+		state, err := cdp.ProbeLogin(loginCtx, endpoint)
+		loginCancel()
 		if err == nil {
 			state = cdp.NormalizeLoginState(state)
 			switch state {
 			case "out":
 				outCount++
 				if outCount >= 2 {
-					cancel()
 					return cdp.QwenStatus{}, "", errors.New("账号未登录，请先打开登录")
 				}
 			case cdp.RegionBlocked:
-				cancel()
 				return cdp.QwenStatus{}, "", errors.New("当前地区受限，请检查代理设置")
 			case "challenge":
-				cancel()
 				return cdp.QwenStatus{}, "", errors.New("触发安全验证，请先打开账号处理验证")
 			case "in":
 				outCount = 0
-				st, qErr := a.probeQwenStatus(probeCtx, endpoint)
+				statusCtx, statusCancel := context.WithTimeout(ctx, min(8*time.Second, max(time.Second, time.Until(deadline))))
+				st, qErr := a.probeQwenStatus(statusCtx, endpoint)
 				if qErr == nil && st.OK {
 					scraped := ""
-					if name, nErr := cdp.ProbeAccountUsername(probeCtx, endpoint); nErr == nil {
+					nameCtx, nameCancel := context.WithTimeout(ctx, 4*time.Second)
+					if name, nErr := cdp.ProbeAccountUsername(nameCtx, endpoint); nErr == nil {
 						scraped = cdp.SanitizeAccountUsername(name)
 					}
-					cancel()
+					nameCancel()
+					statusCancel()
 					return st, scraped, nil
 				}
-				cancel()
+				statusCancel()
 				goto waitNext
 			}
 		}
-		cancel()
 	waitNext:
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -983,45 +1258,45 @@ func (a *App) pollQwenStatus(ctx context.Context, endpoint string) (cdp.QwenStat
 }
 
 func (a *App) pollDoubaoStatus(ctx context.Context, endpoint string) (cdp.DoubaoStatus, string, error) {
-	deadline := time.Now().Add(18 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	outCount := 0
 	for {
 		if ctx.Err() != nil {
 			return cdp.DoubaoStatus{}, "", ctx.Err()
 		}
-		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-		state, err := cdp.ProbeLogin(probeCtx, endpoint)
+		loginCtx, loginCancel := context.WithTimeout(ctx, min(6*time.Second, max(time.Second, time.Until(deadline))))
+		state, err := cdp.ProbeLogin(loginCtx, endpoint)
+		loginCancel()
 		if err == nil {
 			state = cdp.NormalizeLoginState(state)
 			switch state {
 			case "out":
 				outCount++
 				if outCount >= 2 {
-					cancel()
 					return cdp.DoubaoStatus{}, "", errors.New("账号未登录，请先打开登录")
 				}
 			case cdp.RegionBlocked:
-				cancel()
 				return cdp.DoubaoStatus{}, "", errors.New("当前地区受限，请检查代理设置")
 			case "challenge":
-				cancel()
 				return cdp.DoubaoStatus{}, "", errors.New("触发安全验证，请先打开账号处理验证")
 			case "in":
 				outCount = 0
-				st, dErr := a.probeDoubaoStatus(probeCtx, endpoint)
+				statusCtx, statusCancel := context.WithTimeout(ctx, min(8*time.Second, max(time.Second, time.Until(deadline))))
+				st, dErr := a.probeDoubaoStatus(statusCtx, endpoint)
 				if dErr == nil && st.OK {
 					scraped := ""
-					if name, nErr := cdp.ProbeAccountUsername(probeCtx, endpoint); nErr == nil {
+					nameCtx, nameCancel := context.WithTimeout(ctx, 4*time.Second)
+					if name, nErr := cdp.ProbeAccountUsername(nameCtx, endpoint); nErr == nil {
 						scraped = cdp.SanitizeAccountUsername(name)
 					}
-					cancel()
+					nameCancel()
+					statusCancel()
 					return st, scraped, nil
 				}
-				cancel()
+				statusCancel()
 				goto waitNext
 			}
 		}
-		cancel()
 	waitNext:
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -1037,57 +1312,104 @@ func (a *App) pollDoubaoStatus(ctx context.Context, endpoint string) (cdp.Doubao
 	}
 }
 
+func geminiStatusHasIdentityOrMeter(st cdp.GeminiStatus) bool {
+	if !st.OK {
+		return false
+	}
+	return st.HasFiveHour || st.HasWeekly || st.HasCredits ||
+		strings.TrimSpace(st.Username) != "" || strings.TrimSpace(st.Email) != ""
+}
+
 func (a *App) pollGeminiStatus(ctx context.Context, endpoint string) (cdp.GeminiStatus, string, error) {
-	deadline := time.Now().Add(20 * time.Second)
+	startedAt := time.Now()
+	deadline := startedAt.Add(30 * time.Second)
 	outCount := 0
+	var lastUnknownProbe time.Time
+	lastState := "unknown"
+	var lastErr error
+
+	tryProbeGemini := func(requireIdentity bool) (cdp.GeminiStatus, string, bool) {
+		rem := time.Until(deadline)
+		if rem <= 0 {
+			return cdp.GeminiStatus{}, "", false
+		}
+		statusCtx, statusCancel := context.WithTimeout(ctx, min(12*time.Second, rem))
+		st, gErr := a.probeGeminiStatus(statusCtx, endpoint)
+		statusCancel()
+		if gErr != nil {
+			lastErr = gErr
+			return cdp.GeminiStatus{}, "", false
+		}
+		if !st.OK {
+			return cdp.GeminiStatus{}, "", false
+		}
+		if requireIdentity && !geminiStatusHasIdentityOrMeter(st) {
+			return cdp.GeminiStatus{}, "", false
+		}
+		scraped := cdp.SanitizeAccountUsername(st.Username)
+		if scraped == "" {
+			nameCtx, nameCancel := context.WithTimeout(ctx, 4*time.Second)
+			if name, nErr := cdp.ProbeAccountUsername(nameCtx, endpoint); nErr == nil {
+				scraped = cdp.SanitizeAccountUsername(name)
+			}
+			nameCancel()
+		}
+		if scraped == "" {
+			scraped = cdp.SanitizeAccountUsername(st.Email)
+		}
+		if scraped != "" {
+			st.Username = scraped
+		}
+		return st, scraped, true
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return cdp.GeminiStatus{}, "", ctx.Err()
 		}
-		probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		state, err := cdp.ProbeLogin(probeCtx, endpoint)
-		if err == nil {
+		loginCtx, loginCancel := context.WithTimeout(ctx, min(6*time.Second, max(time.Second, time.Until(deadline))))
+		state, err := cdp.ProbeLogin(loginCtx, endpoint)
+		loginCancel()
+		if err != nil {
+			lastErr = err
+		} else {
 			state = cdp.NormalizeLoginState(state)
+			lastState = state
 			switch state {
 			case "out":
 				outCount++
 				if outCount >= 2 {
-					cancel()
 					return cdp.GeminiStatus{}, "", errors.New("账号未登录，请先打开登录")
 				}
 			case cdp.RegionBlocked:
-				cancel()
 				return cdp.GeminiStatus{}, "", errors.New("当前地区受限，请检查代理设置")
 			case "challenge":
-				cancel()
 				return cdp.GeminiStatus{}, "", errors.New("触发安全验证，请先打开账号处理验证")
 			case "in":
 				outCount = 0
-				st, gErr := a.probeGeminiStatus(probeCtx, endpoint)
-				if gErr == nil && st.OK {
-					scraped := cdp.SanitizeAccountUsername(st.Username)
-					if scraped == "" {
-						if name, nErr := cdp.ProbeAccountUsername(probeCtx, endpoint); nErr == nil {
-							scraped = cdp.SanitizeAccountUsername(name)
-						}
-					}
-					if scraped == "" {
-						scraped = cdp.SanitizeAccountUsername(st.Email)
-					}
-					if scraped != "" {
-						st.Username = scraped
-					}
-					cancel()
+				if st, scraped, ok := tryProbeGemini(false); ok {
 					return st, scraped, nil
 				}
-				cancel()
 				goto waitNext
+			case "unknown":
+				// 某些页面在已登录但存在常驻加载指示器时 ProbeLogin 可能持续返回 unknown；
+				// 兜底直接探测官方同源接口，且仅在返回额度池或账号身份时采信，避免误判未登录页。
+				if time.Since(startedAt) >= 2*time.Second && time.Since(lastUnknownProbe) >= 2*time.Second {
+					lastUnknownProbe = time.Now()
+					if st, scraped, ok := tryProbeGemini(true); ok {
+						return st, scraped, nil
+					}
+				}
 			}
 		}
-		cancel()
 	waitNext:
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			if lastErr != nil {
+				logging.Log.Warning("Gemini 状态探测超时（最后登录态=%s，最后错误=%v）", lastState, lastErr)
+			} else {
+				logging.Log.Warning("Gemini 状态探测超时（最后登录态=%s）", lastState)
+			}
 			return cdp.GeminiStatus{}, "", errors.New("读取 Gemini 状态超时，请稍后重试")
 		}
 		timer := time.NewTimer(min(400*time.Millisecond, remaining))
@@ -1095,6 +1417,81 @@ func (a *App) pollGeminiStatus(ctx context.Context, endpoint string) (cdp.Gemini
 		case <-ctx.Done():
 			timer.Stop()
 			return cdp.GeminiStatus{}, "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (a *App) pollJimengStatus(ctx context.Context, endpoint string) (cdp.JimengStatus, string, error) {
+	startedAt := time.Now()
+	deadline := startedAt.Add(25 * time.Second)
+	outCount := 0
+	var lastUnknownProbe time.Time
+	for {
+		if ctx.Err() != nil {
+			return cdp.JimengStatus{}, "", ctx.Err()
+		}
+		loginCtx, loginCancel := context.WithTimeout(ctx, min(6*time.Second, max(time.Second, time.Until(deadline))))
+		state, err := cdp.ProbeLogin(loginCtx, endpoint)
+		loginCancel()
+		if err == nil {
+			state = cdp.NormalizeLoginState(state)
+			switch state {
+			case "out":
+				outCount++
+				if outCount >= 2 {
+					return cdp.JimengStatus{}, "", errors.New("账号未登录，请先打开登录")
+				}
+			case cdp.RegionBlocked:
+				return cdp.JimengStatus{}, "", errors.New("当前地区受限，请检查代理设置")
+			case "challenge":
+				return cdp.JimengStatus{}, "", errors.New("触发安全验证，请先打开账号处理验证")
+			case "in":
+				outCount = 0
+				statusCtx, statusCancel := context.WithTimeout(ctx, min(8*time.Second, max(time.Second, time.Until(deadline))))
+				st, jErr := a.probeJimengStatus(statusCtx, endpoint)
+				statusCancel()
+				if jErr == nil && st.OK {
+					scraped := cdp.SanitizeAccountUsername(st.Username)
+					if scraped == "" {
+						nameCtx, nameCancel := context.WithTimeout(ctx, 4*time.Second)
+						if name, nErr := cdp.ProbeAccountUsername(nameCtx, endpoint); nErr == nil {
+							scraped = cdp.SanitizeAccountUsername(name)
+						}
+						nameCancel()
+					}
+					if scraped != "" {
+						st.Username = scraped
+					}
+					return st, scraped, nil
+				}
+				goto waitNext
+			case "unknown":
+				if time.Since(startedAt) >= 2*time.Second && time.Since(lastUnknownProbe) >= 2*time.Second {
+					lastUnknownProbe = time.Now()
+					statusCtx, statusCancel := context.WithTimeout(ctx, min(8*time.Second, max(time.Second, time.Until(deadline))))
+					st, jErr := a.probeJimengStatus(statusCtx, endpoint)
+					statusCancel()
+					if jErr == nil && st.OK && (st.HasCredits || strings.TrimSpace(st.Username) != "") {
+						scraped := cdp.SanitizeAccountUsername(st.Username)
+						if scraped != "" {
+							st.Username = scraped
+						}
+						return st, scraped, nil
+					}
+				}
+			}
+		}
+	waitNext:
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return cdp.JimengStatus{}, "", errors.New("读取即梦状态超时，请稍后重试")
+		}
+		timer := time.NewTimer(min(400*time.Millisecond, remaining))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return cdp.JimengStatus{}, "", ctx.Err()
 		case <-timer.C:
 		}
 	}

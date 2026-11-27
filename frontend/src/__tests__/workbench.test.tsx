@@ -137,17 +137,26 @@ function makeTile(overrides: Partial<ResultTileDTO> = {}): ResultTileDTO {
 function makeWorkbench(overrides: Partial<WorkbenchStateDTO> = {}): WorkbenchStateDTO {
   const inferredPlatform =
     overrides.platform ??
-    (overrides.gemini ? "Gemini" : overrides.qwenIntl ? "千问国际" : overrides.qianwen ? "千问" : "豆包");
+    (overrides.jimeng
+      ? "即梦"
+      : overrides.gemini
+        ? "Gemini"
+        : overrides.qwenIntl
+          ? "千问国际"
+          : overrides.qianwen
+            ? "千问"
+            : "豆包");
   return {
     mode: "wash",
     page: TAB_WASH,
     batchMode: 0,
     platform: inferredPlatform,
-    platforms: ["豆包", "千问", "千问国际", "Gemini"],
+    platforms: ["豆包", "千问", "千问国际", "Gemini", "即梦"],
     doubao: true,
     qianwen: false,
     qwenIntl: false,
     gemini: false,
+    jimeng: false,
     prompts: "提取主画，纯白背景",
     promptChoice: "",
     promptOptions: ["电商白底", "极简棚拍"],
@@ -156,11 +165,20 @@ function makeWorkbench(overrides: Partial<WorkbenchStateDTO> = {}): WorkbenchSta
     useSuffix: false,
     washStyle: "纯白电商底",
     washStyleOptions: ["纯白电商底", "透明提取"],
-    outputPreset: "原比例",
-    outputPresets: ["原比例", "1:1（正方形）", "4:3（标准横）", "3:4（标准竖）", "16:9（宽屏）", "9:16（竖屏）", "3:2（相机横）", "2:3（海报竖）"],
+    outputPreset: "自动",
+    outputPresets: ["自动", "1:1（正方形）", "4:3（标准横）", "3:4（标准竖）", "16:9（宽屏）", "9:16（竖屏）", "3:2（相机横）", "2:3（海报竖）"],
     outputMode: "原比例",
     outputRatio: "",
     outputRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"],
+    outputResolution: "",
+    outputResolutions: [],
+    outputCapsSource: "default",
+    outputCapsSyncedAt: 0,
+    outputCapsSyncedLabel: "",
+    outputCapsModel: "",
+    outputCapsSyncing: false,
+    outputAutoLabel: "自动",
+    outputSupportsAuto: true,
     sources: [],
     sourcesTotal: 0,
     washedCount: 0,
@@ -1121,6 +1139,48 @@ describe("AccountLanes", () => {
     );
     expect(screen.getByTestId("lane-pill-21")).toHaveTextContent("85%");
     expect(screen.getByTestId("lane-pill-22")).toHaveTextContent("0%");
+
+    // 同步中时，头部同步按钮、顶部状态胶囊与行内说明应实时切到同步中状态
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          platform: "Gemini",
+          doubao: false,
+          qianwen: false,
+          gemini: true,
+          laneCollapsed: false,
+          lanes: [
+            makeLane({
+              id: 21,
+              platform: "Gemini",
+              title: "Kodram Dritken",
+              pending: true,
+              pendingOp: "syncing_status",
+              creditsSynced: true,
+              creditsRemain: 99,
+              creditsTotal: 100,
+              creditsResetAt: 1795763604,
+              creditsResetLabel: "已到期 · 待同步刷新",
+              creditsCycle: "5h",
+              creditsCycleLabel: "5小时窗口",
+              memberTier: "ultra",
+              memberLabel: "AI Ultra",
+              usagePct: 1,
+              usageLabel: "余 99%",
+            }),
+          ],
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+    expect(screen.getByTestId("lanes-sync-gemini-btn")).toHaveTextContent("同步中");
+    expect(screen.getByTestId("lanes-sync-gemini-btn")).toBeDisabled();
+    expect(screen.getByTestId("lanes-gemini-summary")).toHaveTextContent("余 99% · 同步中…");
+    expect(screen.getByTestId("lane-gemini-meta-21")).toHaveTextContent("正在同步最新状态…");
   });
 
   it("displays Doubao subscription, window usage, rate-limit status, and sync triggers in lanes and collapsed pills", () => {
@@ -2097,6 +2157,8 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
         qianwenConcurrencyMax: 2,
         geminiConcurrencyAuto: true,
         geminiConcurrencyMax: 2,
+        jimengConcurrencyAuto: true,
+        jimengConcurrencyMax: 2,
       });
 
       const inflight = refreshTopics("shell,workbench");
@@ -2196,8 +2258,10 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
         doubao: true,
         qianwen: false,
         prompts: "多啦A梦\n蜡笔小新\n多啦A梦",
-        outputPreset: "原比例",
-        outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）"],
+        outputPreset: "自动",
+        outputPresets: ["自动", "1:1（正方形）", "16:9（宽屏）"],
+        outputAutoLabel: "自动",
+        outputSupportsAuto: true,
         sources: [makeSource({ index: 0, name: "参考图1.png" })],
         sourcesTotal: 1,
         repeatCount: 2,
@@ -2212,8 +2276,8 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     expect(within(tabs).getByRole("tab", { name: /图生图/ })).toHaveTextContent("1");
     expect(screen.queryByTestId("wb-sources-card")).not.toBeInTheDocument();
 
-    // 文生图 shows 自动比例 instead of 原比例, and ignores 图生图 staged sources in empty state
-    expect(screen.getByTestId("wb-output-preset-select")).toHaveTextContent("自动比例");
+    // 豆包 renders its webpage-native 自动 label directly, and ignores 图生图 staged sources in empty state
+    expect(screen.getByTestId("wb-output-preset-select")).toHaveTextContent("自动");
     expect(screen.getByText("输出尺寸")).toBeInTheDocument();
     expect(screen.getByText("已就绪，共 6 个文生图任务")).toBeInTheDocument();
     expect(screen.getByTestId("wb-prompt-meta-bar")).toHaveTextContent("3 条提示词");
@@ -2254,8 +2318,10 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
           promptUnitCount: 1,
           doubao: false,
           qianwen: true,
-          outputPreset: "原比例",
-          outputPresets: ["原比例", "1:1（正方形）", "16:9（宽屏）"],
+          outputPreset: "3:4（标准竖）",
+          outputPresets: ["3:4（标准竖）", "1:1（正方形）", "16:9（宽屏）"],
+          outputAutoLabel: "",
+          outputSupportsAuto: false,
         }),
       });
     });
@@ -2264,7 +2330,7 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
         <WorkbenchPage />
       </TooltipProvider>,
     );
-    expect(screen.getByTestId("wb-output-preset-select")).toHaveTextContent("自动比例");
+    expect(screen.getByTestId("wb-output-preset-select")).toHaveTextContent("3:4（标准竖）");
     expect(screen.getByText("输出尺寸")).toBeInTheDocument();
     expect(screen.getByTestId("wb-prompt-meta-bar")).toHaveTextContent("整段发送 · 1 条");
     fireEvent.click(screen.getByTestId("wb-detach-template-btn"));
@@ -2488,5 +2554,114 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
 
     fireEvent.click(screen.getByTestId("lanes-concurrency-switch"));
     expect(setSettingSpy).toHaveBeenCalledWith("concurrencyAutoGemini", "false");
+  });
+
+  it("isolates 即梦 lanes, shows credit summary & sync button, and dispatches concurrencyAutoJimeng / concurrencyMaxJimeng", () => {
+    const setSettingSpy = vi.spyOn(Settings, "setSettingField").mockResolvedValue(undefined);
+    const syncSpy = vi.spyOn(Browser, "syncJimengStatus").mockResolvedValue(undefined);
+    renderWorkbench(
+      makeWorkbench({
+        mode: "wash",
+        page: TAB_WASH,
+        platform: "即梦",
+        doubao: false,
+        qianwen: false,
+        qwenIntl: false,
+        gemini: false,
+        jimeng: true,
+        concurrencyAuto: true,
+        concurrencyMax: 3,
+        lanes: [
+          makeLane({ id: 10, platform: "豆包", title: "豆包主号" }),
+          makeLane({
+            id: 40,
+            platform: "即梦",
+            title: "即梦画师",
+            creditsSynced: true,
+            creditsRemain: 94,
+            creditsTotal: 100,
+            creditCost: 1,
+            memberTier: "free",
+            memberLabel: "免费版",
+          }),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("lane-row-40")).toBeInTheDocument();
+    expect(screen.queryByTestId("lane-row-10")).not.toBeInTheDocument();
+    expect(screen.getByTestId("lanes-jimeng-summary")).toHaveTextContent("余 94/100 积分");
+    expect(screen.getByTestId("lane-jimeng-credits-40")).toHaveTextContent("余 94 / 100 积分");
+
+    fireEvent.click(screen.getByTestId("lanes-sync-jimeng-btn"));
+    expect(syncSpy).toHaveBeenCalledWith([40]);
+
+    fireEvent.click(screen.getByTestId("lanes-concurrency-inc"));
+    expect(setSettingSpy).toHaveBeenCalledWith("concurrencyMaxJimeng", "4");
+
+    fireEvent.click(screen.getByTestId("lanes-concurrency-switch"));
+    expect(setSettingSpy).toHaveBeenCalledWith("concurrencyAutoJimeng", "false");
+  });
+
+  it("renders dynamic provider webpage output size, resolution pills, and live sync trigger for 即梦", () => {
+    const setResSpy = vi.spyOn(Workbench, "setOutputResolution").mockResolvedValue(undefined);
+    const syncCapsSpy = vi.spyOn(Workbench, "syncOutputCaps").mockResolvedValue(undefined);
+
+    const { rerender } = renderWorkbench(
+      makeWorkbench({
+        mode: "wash",
+        page: TAB_WASH,
+        platform: "即梦",
+        doubao: false,
+        jimeng: true,
+        outputPreset: "智能比例",
+        outputPresets: ["智能比例", "21:9（超宽屏）", "16:9（宽屏）", "3:4（标准竖）"],
+        outputRatios: ["21:9", "16:9", "3:4"],
+        outputResolution: "2K",
+        outputResolutions: ["1.5K", "2K", "4K"],
+        outputCapsSource: "live",
+        outputCapsSyncedAt: 1795781000,
+        outputCapsSyncedLabel: "刚刚同步",
+        outputCapsModel: "Seedream 4.7",
+        outputAutoLabel: "智能比例",
+        outputSupportsAuto: true,
+      }),
+    );
+
+    expect(screen.getByTestId("wb-output-preset-select")).toHaveTextContent("智能比例");
+    expect(screen.getByTestId("wb-output-resolution-wrap")).toBeInTheDocument();
+    expect(screen.getByTestId("wb-output-res-2K")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("wb-output-res-4K")).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(screen.getByTestId("wb-output-res-4K"));
+    expect(setResSpy).toHaveBeenCalledWith("4K");
+
+    fireEvent.click(screen.getByTestId("wb-output-caps-sync-btn"));
+    expect(syncCapsSpy).toHaveBeenCalledWith("即梦");
+
+    // Providers without webpage resolutions (e.g. 豆包) omit the resolution row
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          mode: "wash",
+          page: TAB_WASH,
+          platform: "豆包",
+          doubao: true,
+          jimeng: false,
+          outputPreset: "自动",
+          outputPresets: ["自动", "1:1（正方形）", "16:9（宽屏）"],
+          outputResolutions: [],
+          outputResolution: "",
+          outputCapsSyncing: true,
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+    expect(screen.queryByTestId("wb-output-resolution-wrap")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wb-output-caps-sync-btn")).toBeDisabled();
   });
 });

@@ -210,16 +210,23 @@ func TestImportPromptTextFileAndQianwenNativeRatio(t *testing.T) {
 		t.Fatalf("Qianwen native output ratio lost across reload: %+v", qReloaded)
 	}
 
-	// Legacy stored custom pixel settings fall back cleanly to 原比例 on reload
+	// Legacy stored custom pixel settings fall back cleanly to each platform's webpage default on reload
+	// (千问 has no webpage auto option -> 3:4; 豆包 has webpage 自动 -> empty Ratio with AutoValue="自动")
 	st.Set("qianwen_output_size_mode", "固定尺寸")
 	st.Set("qianwen_output_width", "1200")
 	st.Set("qianwen_output_height", "900")
+	st.Set("doubao_output_size_mode", "固定尺寸")
+	st.Set("doubao_output_width", "1200")
+	st.Set("doubao_output_height", "900")
 	migrated := NewApp(st, nil, nil, dir)
-	if got := migrated.outputSizeFor("千问"); got.Ratio != "" {
-		t.Fatalf("legacy custom pixel setting should reset to 原比例, got %+v", got)
+	if got := migrated.outputSizeFor("千问"); got.Ratio != "3:4" {
+		t.Fatalf("legacy Qianwen custom pixel setting should reset to webpage default 3:4, got %+v", got)
+	}
+	if got := migrated.outputSizeFor("豆包"); got.Ratio != "" || got.AutoValue != "自动" {
+		t.Fatalf("legacy Doubao custom pixel setting should reset to webpage 自动, got %+v", got)
 	}
 
-	// Switching back to Doubao preserves Doubao's 4:3 setting
+	// Switching back to Doubao preserves Doubao's 4:3 setting in the live session
 	svc.SetPlatformSelected(ctx, "豆包", true)
 	wbD := svc.GetWorkbenchState(ctx)
 	if wbD.OutputPreset != "4:3（标准横）" || wbD.OutputRatio != "4:3" {
@@ -227,7 +234,7 @@ func TestImportPromptTextFileAndQianwenNativeRatio(t *testing.T) {
 	}
 }
 
-func TestUnifiedWashStyleAndOutputSizeParityAndLegacyQianwenMigration(t *testing.T) {
+func TestUnifiedWashStyleAndProviderSpecificOutputPresetsAndLegacyQianwenMigration(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "config.db"))
 	if err != nil {
@@ -247,16 +254,14 @@ func TestUnifiedWashStyleAndOutputSizeParityAndLegacyQianwenMigration(t *testing
 	if wbQ.OutputPreset != "16:9（宽屏）" || wbQ.OutputMode != outputRatio || wbQ.OutputRatio != "16:9" {
 		t.Fatalf("legacy qianwen_output_ratio not migrated: preset=%q mode=%q ratio=%q", wbQ.OutputPreset, wbQ.OutputMode, wbQ.OutputRatio)
 	}
+	if wbQ.OutputSupportsAuto || len(wbQ.OutputPresets) != 7 {
+		t.Fatalf("Qianwen presets must reflect its 7 webpage-native ratios without synthetic auto: supportsAuto=%v presets=%v", wbQ.OutputSupportsAuto, wbQ.OutputPresets)
+	}
 
 	svc.SetPlatformSelected(ctx, "豆包", true)
 	wbD := svc.GetWorkbenchState(ctx)
-	if len(wbQ.OutputPresets) != len(wbD.OutputPresets) {
-		t.Fatalf("outputPresets length mismatch: qianwen=%v doubao=%v", wbQ.OutputPresets, wbD.OutputPresets)
-	}
-	for i := range wbD.OutputPresets {
-		if wbQ.OutputPresets[i] != wbD.OutputPresets[i] {
-			t.Fatalf("outputPresets[%d] mismatch: qianwen=%q doubao=%q", i, wbQ.OutputPresets[i], wbD.OutputPresets[i])
-		}
+	if !wbD.OutputSupportsAuto || wbD.OutputAutoLabel != "自动" || len(wbD.OutputPresets) != 8 || wbD.OutputPresets[0] != "自动" {
+		t.Fatalf("Doubao presets must expose webpage-native 自动 + 7 ratios: supportsAuto=%v autoLabel=%q presets=%v", wbD.OutputSupportsAuto, wbD.OutputAutoLabel, wbD.OutputPresets)
 	}
 	if len(wbQ.WashStyleOptions) != len(wbD.WashStyleOptions) {
 		t.Fatalf("washStyleOptions length mismatch: qianwen=%v doubao=%v", wbQ.WashStyleOptions, wbD.WashStyleOptions)

@@ -101,13 +101,13 @@ func (v *PageView) Frame(ctx context.Context) (PageFrame, error) {
 
 func (v *PageView) LoginState(ctx context.Context) (string, error) {
 	var result loginProbeResult
-	err := v.conn.readOnlyJSON(ctx, v.target, loginProbeJS, &result)
+	err := v.conn.evalJSON(ctx, v.target, loginProbeJS, &result, true, true)
 	return NormalizeLoginState(result.State), err
 }
 
 func (v *PageView) AccountUsername(ctx context.Context) (string, error) {
 	var result accountUsernameResult
-	err := v.conn.readOnlyJSON(ctx, v.target, accountUsernameJS, &result)
+	err := v.conn.evalJSON(ctx, v.target, accountUsernameJS, &result, true, true)
 	return SanitizeAccountUsername(result.Username), err
 }
 
@@ -126,6 +126,12 @@ func (v *PageView) GeminiStatus(ctx context.Context) (GeminiStatus, error) {
 func (v *PageView) DoubaoStatus(ctx context.Context) (DoubaoStatus, error) {
 	var result DoubaoStatus
 	err := v.conn.evalJSON(ctx, v.target, doubaoStatusProbeJS, &result, true, true)
+	return result, err
+}
+
+func (v *PageView) JimengStatus(ctx context.Context) (JimengStatus, error) {
+	var result JimengStatus
+	err := v.conn.evalJSON(ctx, v.target, jimengStatusProbeJS, &result, true, true)
 	return result, err
 }
 

@@ -9,16 +9,16 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	"github.com/xxww0098/realbrowser/fingerprintkernel/engine"
 )
 
-const FingerprintVersion = browserkernel.PinnedVersion
+const FingerprintVersion = engine.PinnedVersion
 
 func FingerprintSupported(goos, goarch string) bool {
 	if _, ok := nodeArtifacts[goos+"/"+goarch]; !ok {
 		return false
 	}
-	_, ok := browserkernel.PinnedRelease(goos, goarch)
+	_, ok := engine.PinnedRelease(goos, goarch)
 	return ok
 }
 
@@ -34,24 +34,22 @@ func InstalledFingerprint(dataDir string) (Runtime, bool) {
 }
 
 func fingerprintAt(dir string) (Runtime, bool) {
-	marker, err := os.ReadFile(filepath.Join(dir, "browser-path"))
-	rel := strings.TrimSpace(string(marker))
-	if err != nil || !filepath.IsLocal(rel) || nodePackageVersion(dir, "playwright-core") != driverVersion {
+	node := nodePath(dir)
+	if info, err := os.Stat(node); err != nil || !info.Mode().IsRegular() || info.Size() == 0 || nodePackageVersion(dir, "playwright-core") != driverVersion {
 		return Runtime{}, false
 	}
-	browsers := filepath.Join(dir, "browsers")
-	exe, ok := browserkernel.ManagedExecutable(browsers, rel)
+	kernels := engine.Store{Dir: filepath.Join(dir, "kernels")}
+	// Existing runtimes installed before the kernel owned first installation.
+	if marker, err := os.ReadFile(filepath.Join(dir, "browser-path")); err == nil {
+		if exe, ok := engine.ManagedExecutable(filepath.Join(dir, "browsers"), strings.TrimSpace(string(marker))); ok {
+			kernels.Base = engine.InstalledRelease{Version: FingerprintVersion, Executable: exe}
+		}
+	}
+	active, ok := kernels.Installed()
 	if !ok {
 		return Runtime{}, false
 	}
-	rt := Runtime{Dir: dir, Node: nodePath(dir), Executable: exe, Version: FingerprintVersion}
-	if info, err := os.Stat(rt.Node); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-		return Runtime{}, false
-	}
-	if update, ok := browserkernel.ActiveRelease(filepath.Join(dir, "kernels")); ok {
-		rt.Executable, rt.Version = update.Executable, update.Version
-	}
-	return rt, true
+	return Runtime{Dir: dir, Node: node, Version: active.Version, Executable: active.Executable}, true
 }
 
 func fingerprintMirrors() ([]string, bool) {
@@ -87,7 +85,7 @@ func EnsureFingerprint(ctx context.Context, dataDir, proxy string, progress func
 		return Runtime{}, errors.New("没有应用数据目录")
 	}
 	platform := runtime.GOOS + "/" + runtime.GOARCH
-	artifact, ok := browserkernel.PinnedRelease(runtime.GOOS, runtime.GOARCH)
+	_, ok := engine.PinnedRelease(runtime.GOOS, runtime.GOARCH)
 	nodeArt, hasNode := nodeArtifacts[platform]
 	if !ok || !hasNode {
 		return Runtime{}, fmt.Errorf("Fingerprint (fingerprint-chromium) 暂不支持 %s（目前支持 Windows x64、macOS Apple Silicon 和 Linux x64）", platform)
@@ -105,11 +103,11 @@ func EnsureFingerprint(ctx context.Context, dataDir, proxy string, progress func
 			progress(Progress{Stage: stage, Text: message})
 		}
 	}
-	lock, err := browserkernel.AcquireInstallLock(ctx, root, func() { note(StageWaiting, "正在等待 Fingerprint 安装完成…") })
+	lock, err := engine.AcquireInstallLock(ctx, root, func() { note(StageWaiting, "正在等待 Fingerprint 安装完成…") })
 	if err != nil {
 		return Runtime{}, err
 	}
-	defer browserkernel.ReleaseInstallLock(lock)
+	defer engine.ReleaseInstallLock(lock)
 	if rt, ok := fingerprintAt(final); ok {
 		return rt, writeDriver(final)
 	}
@@ -122,71 +120,29 @@ func EnsureFingerprint(ctx context.Context, dataDir, proxy string, progress func
 		return Runtime{}, err
 	}
 
-	localArchive := strings.TrimSpace(os.Getenv("TULAI_FINGERPRINT_ARCHIVE"))
-	archivePath := localArchive
-	if archivePath != "" {
+	source := engine.PinnedSource{Archive: strings.TrimSpace(os.Getenv("TULAI_FINGERPRINT_ARCHIVE"))}
+	if source.Archive != "" {
 		note(StageUnpack, "正在校验本地 Fingerprint 安装包…")
-		if err := browserkernel.VerifyFileSHA256(ctx, archivePath, artifact.SHA256); err != nil {
-			return Runtime{}, fmt.Errorf("校验 Fingerprint 安装包: %w", err)
-		}
 	} else {
 		note(StageBrowser, "正在下载 Fingerprint 浏览器内核…")
-		var dlProgress func(Progress)
-		if progress != nil {
-			dlProgress = func(p Progress) {
-				p.Stage = StageBrowser
-				p.Text = "正在下载 Fingerprint 浏览器内核…"
-				if p.Total > 0 && p.Done >= p.Total {
-					p.Stage = StageUnpack
-					p.Text = "正在解压并校验 Fingerprint…"
-				}
-				progress(p)
-			}
-		}
-		asset := artifact.Asset()
 		mirrors, explicit := fingerprintMirrors()
-		var dlErr error
 		for i, extraEnv := range kernelAttempts(mirrors, explicit, proxy) {
-			if i > 0 {
-				text := "正在通过备用线路重试下载 Fingerprint 浏览器内核…"
-				if len(extraEnv) > 0 {
-					text = "正在通过镜像重试下载 Fingerprint 浏览器内核…"
+			source.Downloads = append(source.Downloads, func(ctx context.Context, url, dest string) error {
+				if i > 0 {
+					note(StageBrowser, "正在通过备用线路重试下载 Fingerprint 浏览器内核…")
 				}
-				note(StageBrowser, text)
-			}
-			archivePath, dlErr = asset.SaveDownload(ctx, stage, func(dest string) error {
-				env := append([]string{"TULAI_FINGERPRINT_URL=" + asset.DownloadURL, "TULAI_FINGERPRINT_DEST=" + dest}, extraEnv...)
-				_, err := runInstall(ctx, stage, proxy, env, dlProgress, filepath.Join(stage, "bridge.mjs"), "download-fingerprint")
+				env := append([]string{"TULAI_FINGERPRINT_URL=" + url, "TULAI_FINGERPRINT_DEST=" + dest}, extraEnv...)
+				_, err := runInstall(ctx, stage, proxy, env, progress, filepath.Join(stage, "bridge.mjs"), "download-fingerprint")
+				if err == nil {
+					note(StageUnpack, "正在解压并校验 Fingerprint…")
+				}
 				return err
 			})
-			if dlErr == nil {
-				break
-			}
-			if ctx.Err() != nil {
-				return Runtime{}, ctx.Err()
-			}
-		}
-		if dlErr != nil {
-			return Runtime{}, fmt.Errorf("下载 Fingerprint 内核失败: %w", dlErr)
 		}
 	}
-
-	note(StageUnpack, "正在解压并校验 Fingerprint…")
-	browsersDir := filepath.Join(stage, "browsers")
-	if err := os.MkdirAll(browsersDir, 0o700); err != nil {
-		return Runtime{}, err
-	}
-	if err := artifact.Unpack(ctx, archivePath, browsersDir); err != nil {
-		return Runtime{}, fmt.Errorf("解压 Fingerprint 内核: %w", err)
-	}
-	if localArchive == "" {
-		if err := os.Remove(archivePath); err != nil {
-			return Runtime{}, err
-		}
-	}
-	relExe := filepath.FromSlash(artifact.RelExe)
-	if err := os.WriteFile(filepath.Join(stage, "browser-path"), []byte(relExe), 0o600); err != nil {
-		return Runtime{}, err
+	kernels := engine.Store{Dir: filepath.Join(stage, "kernels"), Pinned: source}
+	if _, err := kernels.Ensure(ctx, nil); err != nil {
+		return Runtime{}, fmt.Errorf("安装 Fingerprint 内核: %w", err)
 	}
 	if _, ok := fingerprintAt(stage); !ok {
 		return Runtime{}, errors.New("Fingerprint 浏览器安装不完整")

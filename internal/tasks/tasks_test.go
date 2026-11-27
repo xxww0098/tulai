@@ -1055,11 +1055,14 @@ func TestSaveResultsWatermarkKeepsOriginalByDefaultAndOnNoMatch(t *testing.T) {
 
 func watermarkResultPNG(t *testing.T, platform string) []byte {
 	t.Helper()
-	file, ref, right, bottom := "doubao.png", 1536, 31, 27
+	file, ref, offX, offY, topLeft := "doubao.png", 1536, 31, 27, false
+	width, height := 768, 768
 	if platform == "千问" {
-		file, ref, right, bottom = "qwen.png", 2048, 62, 63
+		file, ref, offX, offY = "qwen.png", 2048, 62, 63
+	} else if platform == "即梦" {
+		file, ref, offX, offY, topLeft = "qwen-label.png", 2048, 50, 42, true
+		width, height = 768, 1024 // 3:4 非方图，与即梦默认生图比例一致
 	}
-	const side = 768
 	asset := filepath.Join("..", "images", "watermarks", file)
 	data, err := os.ReadFile(asset)
 	if err != nil {
@@ -1069,16 +1072,24 @@ func watermarkResultPNG(t *testing.T, platform string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scale := float64(side) / float64(ref)
-	width := int(math.Round(float64(template.Bounds().Dx()) * scale))
-	template, err = images.Thumb(asset, width)
+	refEdge := min(width, height)
+	if platform == "即梦" {
+		refEdge = max(width, height)
+	}
+	scale := float64(refEdge) / float64(ref)
+	tplW := int(math.Round(float64(template.Bounds().Dx()) * scale))
+	template, err = images.Thumb(asset, tplW)
 	if err != nil {
 		t.Fatal(err)
 	}
-	x0 := side - int(math.Round(float64(right)*scale)) - template.Bounds().Dx()
-	y0 := side - int(math.Round(float64(bottom)*scale)) - template.Bounds().Dy()
+	x0 := width - int(math.Round(float64(offX)*scale)) - template.Bounds().Dx()
+	y0 := height - int(math.Round(float64(offY)*scale)) - template.Bounds().Dy()
+	if topLeft {
+		x0 = int(math.Round(float64(offX) * scale))
+		y0 = int(math.Round(float64(offY) * scale))
+	}
 	background := color.NRGBA{25, 48, 72, 255}
-	img := image.NewNRGBA(image.Rect(0, 0, side, side))
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{background}, image.Point{}, draw.Src)
 	for y := 0; y < template.Bounds().Dy(); y++ {
 		for x := 0; x < template.Bounds().Dx(); x++ {
@@ -1096,7 +1107,7 @@ func watermarkResultPNG(t *testing.T, platform string) []byte {
 }
 
 func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
-	for _, platform := range []string{"豆包", "千问"} {
+	for _, platform := range []string{"豆包", "即梦", "千问"} {
 		data := watermarkResultPNG(t, platform)
 		for _, enabled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/enabled=%t", platform, enabled), func(t *testing.T) {
@@ -1109,14 +1120,14 @@ func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
 				}
 				day := e.opts.ResultDir(time.Now())
 				original := filepath.Join(day, "雪景_01.png")
-				if platform == "豆包" {
+				if platform == "豆包" || platform == "即梦" {
 					file, err := os.ReadFile(original)
 					if err != nil || !bytes.Equal(file, repairedPNG(t, data, platform)) || task.Results[0] != original {
-						t.Fatalf("豆包应直接保存去水印结果: %v", err)
+						t.Fatalf("%s应直接保存去水印结果: %v", platform, err)
 					}
 					files, err := os.ReadDir(day)
 					if err != nil || len(files) != 1 {
-						t.Fatalf("豆包只应保存一张: %v, %v", files, err)
+						t.Fatalf("%s只应保存一张: %v, %v", platform, files, err)
 					}
 					return
 				}
@@ -1145,6 +1156,65 @@ func TestSaveResultsWatermarkMatchedCreatesCopyWithSingleResult(t *testing.T) {
 			})
 		}
 	}
+}
+
+type jimengRawBytesStrategy struct {
+	strategy.Strategy
+	raw      []byte
+	fallback []byte
+	rawCalls int
+}
+
+func (s *jimengRawBytesStrategy) FetchRawResultBytes(_ *cdp.Session, _ string) ([]byte, error) {
+	s.rawCalls++
+	return s.raw, nil
+}
+
+func (s *jimengRawBytesStrategy) FetchResultBytes(_ *cdp.Session, _ string) ([]byte, error) {
+	return s.fallback, nil
+}
+
+func TestSaveResultsJimengRepairsRawURLFallbackAndPreservesCleanWithoutWarning(t *testing.T) {
+	t.Run("rawURL still carrying watermark is repaired in place", func(t *testing.T) {
+		marked := watermarkResultPNG(t, "即梦")
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputPath: t.TempDir()}
+		strat := &jimengRawBytesStrategy{raw: marked, fallback: resultPNG(t, 9)}
+		saved, err := e.saveResults(context.Background(), &Task{Platform: "即梦", Prompt: "画作"}, strat, nil, []strategy.Result{{
+			URL:    "https://p26-dreamina-sign.byteimg.com/preview.webp?x-signature=1",
+			RawURL: "https://p26-dreamina-sign.byteimg.com/clean.png?x-signature=2",
+		}})
+		if err != nil || len(saved) != 1 || strat.rawCalls != 1 {
+			t.Fatalf("saved=%v err=%v rawCalls=%d", saved, err, strat.rawCalls)
+		}
+		got, err := os.ReadFile(saved[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, repairedPNG(t, marked, "即梦")) {
+			t.Fatal("expected Jimeng image downloaded via rawURL with server-enforced watermark to still be repaired")
+		}
+	})
+
+	t.Run("clean Jimeng image keeps original bytes without warning", func(t *testing.T) {
+		clean := resultPNG(t, 47)
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputPath: t.TempDir()}
+		start := len(logging.Log.Entries())
+		saved, err := e.saveResults(context.Background(), &Task{Platform: "即梦", Prompt: "无水印图"}, resultBytesStrategy{}, nil, []strategy.Result{{Data: clean}})
+		if err != nil || len(saved) != 1 {
+			t.Fatalf("saved=%v err=%v", saved, err)
+		}
+		got, err := os.ReadFile(saved[0])
+		if err != nil || !bytes.Equal(got, clean) {
+			t.Fatalf("clean Jimeng image bytes altered: err=%v", err)
+		}
+		for _, entry := range logging.Log.Entries()[start:] {
+			if entry.Level == logging.Warning && strings.Contains(entry.Text, "未匹配") {
+				t.Fatalf("clean Jimeng image should not emit mismatch warning: %s", entry.Text)
+			}
+		}
+	})
 }
 
 func TestSaveResultsWatermarkWriteFailureKeepsOriginalWithoutRetry(t *testing.T) {

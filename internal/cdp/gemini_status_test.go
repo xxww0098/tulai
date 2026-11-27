@@ -120,6 +120,23 @@ func TestNormalizeGeminiStatusWindowsAndCreditsAndPlans(t *testing.T) {
 		}
 	})
 
+	t.Run("past window reset timestamp cleared on fresh sync", func(t *testing.T) {
+		pastReset := now.Add(-1 * time.Hour)
+		q, ok := NormalizeGeminiStatus(GeminiStatus{
+			OK:               true,
+			SubscriptionTier: "TIER2",
+			HasFiveHour:      true,
+			FiveHourPctUsed:  1.0,
+			FiveHourResetAt:  pastReset.UnixMilli(),
+		}, now)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if q.CreditsRemain != 99 || q.CreditsCycle != GeminiQuotaCycleFiveHour || q.CreditsResetAt != 0 {
+			t.Fatalf("expected past resetAt cleared to 0 on fresh sync, got %+v", q)
+		}
+	})
+
 	t.Run("non-ok status ignored", func(t *testing.T) {
 		if _, ok := NormalizeGeminiStatus(GeminiStatus{OK: false}, now); ok {
 			t.Fatal("expected ok=false")

@@ -63,8 +63,9 @@ const HEALTH_SORT_ORDER: Record<string, number> = {
   冷却中: 3,
   需要人工验证: 4,
   未登录: 5,
-  已用尽: 6,
-  已禁用: 7,
+  生图受限: 6,
+  已用尽: 7,
+  已禁用: 8,
 };
 
 const KNOWN_HEALTH_ORDER = [
@@ -74,6 +75,7 @@ const KNOWN_HEALTH_ORDER = [
   "冷却中",
   "需要人工验证",
   "未登录",
+  "生图受限",
   "已用尽",
   "已禁用",
 ];

@@ -47,4 +47,12 @@ func TestBrowserRowsHideExpiredQuotaError(t *testing.T) {
 	if got := getBrowserStateBridge().Rows[0]; got.LastError != "请求过于频繁" || got.Health != "冷却中" {
 		t.Fatalf("active cooldown should stay: %+v", got)
 	}
+
+	// 生图降级为纯文本的账号显示「生图受限」危险态并保留具体原因。
+	const degradedErr = "账号生图能力受限（已降级纯文本）（flow.agent.shell）"
+	st.UpdateBrowserHealth(b.ID, store.HealthExhausted, future, degradedErr)
+	a.refreshBrowsers()
+	if got := getBrowserStateBridge().Rows[0]; got.Health != "生图受限" || got.HealthTone != "danger" || got.LastError != degradedErr {
+		t.Fatalf("degraded account should display 生图受限: %+v", got)
+	}
 }

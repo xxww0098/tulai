@@ -35,12 +35,38 @@ func MarkStarted(executable string) {
 
 // CommitPrevious drops the backup kept for rollback. A missing backup is fine.
 func CommitPrevious(executable string) {
-	for _, path := range startedPaths(executable) {
-		if dir, ok := installDir(path); ok {
+	for _, p := range startedPaths(executable) {
+		if dir, ok := installDir(p); ok {
 			_ = os.RemoveAll(dir + ".previous")
+			_ = os.RemoveAll(dir + ".new")
 		}
-		_ = os.Remove(path + ".previous")
-		_ = os.Remove(path + ".started")
+		_ = os.Remove(p + ".previous")
+		_ = os.Remove(p + ".started")
+		_ = os.Remove(p + ".new")
+		cleanSiblingUpdateLeftovers(p)
+	}
+}
+
+func cleanSiblingUpdateLeftovers(executable string) {
+	dir := filepath.Dir(executable)
+	base := filepath.Base(executable)
+	if dir == "" || base == "" || base == "." {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prevPrefix := base + ".previous."
+	failPrefix := base + ".failed."
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(name, prevPrefix) || strings.HasPrefix(name, failPrefix) {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
 	}
 }
 
@@ -56,6 +82,9 @@ func startedPaths(executable string) []string {
 		out = append(out, path)
 	}
 	add(executable)
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		add(resolved)
+	}
 	add(os.Getenv("APPIMAGE"))
 	return out
 }
@@ -63,10 +92,17 @@ func startedPaths(executable string) []string {
 // ConfirmStart runs `version` and requires a non-empty stdout.
 // The real binary handles that command before any window opens.
 func ConfirmStart(path string) error {
+	return ConfirmStartVersion(path, "")
+}
+
+// ConfirmStartVersion runs `version`, requires non-empty stdout, and when both
+// expectedVersion and the binary output parse as semantic versions, requires
+// them to match so an old binary cannot silently pass verification.
+func ConfirmStartVersion(path, expectedVersion string) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("没有可执行文件")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "version")
 	out, err := cmd.CombinedOutput()
@@ -77,14 +113,27 @@ func ConfirmStart(path string) error {
 		}
 		return fmt.Errorf("新版本没有启动: %w (%s)", err, text)
 	}
-	if strings.TrimSpace(string(out)) == "" {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
 		return errors.New("新版本没有输出版本号")
+	}
+	if want, wErr := ParseVersion(expectedVersion); wErr == nil {
+		firstLine, _, _ := strings.Cut(text, "\n")
+		if got, gErr := ParseVersion(strings.TrimSpace(firstLine)); gErr == nil {
+			if cmp, cErr := Compare(got, want); cErr == nil && cmp != 0 {
+				return fmt.Errorf("新版本不匹配（得到 %s，期望 %s）", got, want)
+			}
+		}
 	}
 	return nil
 }
 
 func confirmAndKeep(path string) error {
-	if err := ConfirmStart(path); err != nil {
+	return confirmAndKeepVersion(path, "")
+}
+
+func confirmAndKeepVersion(path, expectedVersion string) error {
+	if err := ConfirmStartVersion(path, expectedVersion); err != nil {
 		if rb := rollbackInstalled(path); rb != nil {
 			return fmt.Errorf("新版本无法启动，回滚失败: %v（%w）", rb, err)
 		}
@@ -189,11 +238,13 @@ func Open(path string) error {
 	return cmd.Start()
 }
 
-// RestartScript waits for this process to exit, starts the new binary, and
-// puts the backup back if that process dies before it writes the stamp.
+// RestartScript waits for this process to exit, optionally swaps a staged
+// bundle into place, starts the new binary, and puts the backup back if that
+// process dies before it writes the stamp.
 func RestartScript() string {
 	return `#!/bin/sh
 set -eu
+trap '' HUP
 pid="$1"
 target="$2"
 backup="$3"
@@ -201,31 +252,114 @@ stamp="$4"
 rounds="${5:-20}"
 unit="${6:-file}"
 dest="${7:-$target}"
-while kill -0 "$pid" 2>/dev/null; do
-  sleep 0.2
-done
-rm -f "$stamp"
-STAMP="$stamp" "$target" >/dev/null 2>&1 &
-child=$!
-i=0
-while [ "$i" -lt "$rounds" ]; do
-  if [ -f "$stamp" ]; then
+staged="${8:-}"
+launch="${9:-direct}"
+script_dir="$(dirname "$0")"
+cleanup_self() {
+  case "$(basename "$script_dir")" in
+    tulai-restart-*) rm -rf "$script_dir" ;;
+  esac
+}
+open_target() {
+  if [ "$launch" = "open" ] && [ -x "${OPEN_CMD:-/usr/bin/open}" ]; then
+    "${OPEN_CMD:-/usr/bin/open}" -n "$dest" </dev/null >/dev/null 2>&1 || ("$target" </dev/null >/dev/null 2>&1 &)
+  else
+    "$target" </dev/null >/dev/null 2>&1 &
+  fi
+}
+target_running() {
+  real_target=""
+  if target_dir="$(cd "$(dirname "$target")" 2>/dev/null && pwd -P)"; then
+    real_target="$target_dir/$(basename "$target")"
+  fi
+  ps_comm="$(ps -ax -o comm= 2>/dev/null || true)"
+  if printf '%s\n' "$ps_comm" | grep -F -x -- "$target" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -n "$real_target" ] && [ "$real_target" != "$target" ]; then
+    if printf '%s\n' "$ps_comm" | grep -F -x -- "$real_target" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  return 1
+}
+start_direct_and_confirm() {
+  STAMP="$stamp" "$target" </dev/null >/dev/null 2>&1 &
+  child=$!
+  i=0
+  while [ "$i" -lt "$rounds" ]; do
+    if [ -f "$stamp" ]; then
+      rm -rf "$backup"
+      rm -f "$stamp"
+      cleanup_self
+      exit 0
+    fi
+    if ! kill -0 "$child" 2>/dev/null; then
+      break
+    fi
+    i=$((i + 1))
+    sleep 0.2
+  done
+  if [ -f "$stamp" ] || kill -0 "$child" 2>/dev/null; then
     rm -rf "$backup"
     rm -f "$stamp"
+    cleanup_self
     exit 0
   fi
-  if ! kill -0 "$child" 2>/dev/null; then
-    break
-  fi
-  i=$((i + 1))
+}
+wait_i=0
+while kill -0 "$pid" 2>/dev/null && [ "$wait_i" -lt 600 ]; do
+  wait_i=$((wait_i + 1))
   sleep 0.2
 done
-if kill -0 "$child" 2>/dev/null; then
+if [ -n "$staged" ]; then
   rm -rf "$backup"
-  rm -f "$stamp"
-  exit 0
+  if [ -e "$dest" ]; then
+    if ! mv "$dest" "$backup"; then
+      rm -rf "$staged"
+      open_target
+      cleanup_self
+      exit 1
+    fi
+  fi
+  if ! mv "$staged" "$dest"; then
+    if [ -e "$backup" ]; then
+      mv "$backup" "$dest" 2>/dev/null || true
+    fi
+    rm -rf "$staged"
+    open_target
+    cleanup_self
+    exit 1
+  fi
+fi
+rm -f "$stamp"
+if [ "$launch" = "open" ] && [ -x "${OPEN_CMD:-/usr/bin/open}" ]; then
+  if "${OPEN_CMD:-/usr/bin/open}" -n "$dest" </dev/null >/dev/null 2>&1; then
+    i=0
+    while [ "$i" -lt "$rounds" ]; do
+      if [ -f "$stamp" ]; then
+        rm -rf "$backup"
+        rm -f "$stamp"
+        cleanup_self
+        exit 0
+      fi
+      i=$((i + 1))
+      sleep 0.2
+    done
+    if [ -f "$stamp" ] || target_running; then
+      rm -rf "$backup"
+      rm -f "$stamp"
+      cleanup_self
+      exit 0
+    fi
+  else
+    start_direct_and_confirm
+  fi
+else
+  start_direct_and_confirm
 fi
 if [ ! -e "$backup" ]; then
+  cleanup_self
   exit 1
 fi
 if [ "$unit" = "dir" ]; then
@@ -236,7 +370,8 @@ else
   mv "$backup" "$dest"
 fi
 chmod +x "$target" 2>/dev/null || true
-"$target" >/dev/null 2>&1 &
+open_target
+cleanup_self
 exit 1
 `
 }
@@ -267,4 +402,18 @@ func restartArgs(script string, pid int, installed string) []string {
 		pid = os.Getpid()
 	}
 	return []string{script, strconv.Itoa(pid), target, backup, target + ".started", "20", unit, dest}
+}
+
+func restartArgsStaged(script string, pid int, installed, staged, launch string, rounds int) []string {
+	target, backup, dest, unit := restartPlan(installed)
+	if pid == 0 {
+		pid = os.Getpid()
+	}
+	if rounds <= 0 {
+		rounds = 50
+	}
+	if launch == "" {
+		launch = "direct"
+	}
+	return []string{script, strconv.Itoa(pid), target, backup, target + ".started", strconv.Itoa(rounds), unit, dest, staged, launch}
 }

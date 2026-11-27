@@ -146,6 +146,12 @@ export interface BrowserRowDTO {
   creditsSyncedLabel: string;
 }
 
+/** BrowserRuntimeUpdateDTO identifies the exact release offered for confirmation. */
+export interface BrowserRuntimeUpdateDTO {
+  id: string;
+  version: string;
+}
+
 /** BrowserStateDTO represents the full account browser management page snapshot. */
 export interface BrowserStateDTO {
   backend: string;
@@ -180,6 +186,8 @@ export interface BrowserStateDTO {
   qianwenConcurrencyMax: number;
   geminiConcurrencyAuto: boolean;
   geminiConcurrencyMax: number;
+  jimengConcurrencyAuto: boolean;
+  jimengConcurrencyMax: number;
 }
 
 /** DedupFileItemDTO represents one queued input image for deduplication. */
@@ -682,6 +690,8 @@ export interface SettingsStateDTO {
   concurrencyMaxQwenIntl: number;
   concurrencyAutoGemini: boolean;
   concurrencyMaxGemini: number;
+  concurrencyAutoJimeng: boolean;
+  concurrencyMaxJimeng: number;
   sendStrategy: string;
   retryCount: number;
   sendWait: number;
@@ -689,6 +699,7 @@ export interface SettingsStateDTO {
   dailyCapQianwen: number;
   dailyCapQwenIntl: number;
   dailyCapGemini: number;
+  dailyCapJimeng: number;
   waitBefore: number;
   waitResult: boolean;
   waitResultSeconds: number;
@@ -837,6 +848,7 @@ export interface WorkbenchStateDTO {
   qianwen: boolean;
   qwenIntl: boolean;
   gemini: boolean;
+  jimeng: boolean;
   prompts: string;
   promptChoice: string;
   promptOptions: string[];
@@ -850,6 +862,15 @@ export interface WorkbenchStateDTO {
   outputMode: string;
   outputRatio: string;
   outputRatios: string[];
+  outputResolution: string;
+  outputResolutions: string[];
+  outputCapsSource: string;
+  outputCapsSyncedAt: number;
+  outputCapsSyncedLabel: string;
+  outputCapsModel: string;
+  outputCapsSyncing: boolean;
+  outputAutoLabel: string;
+  outputSupportsAuto: boolean;
   sources: SourceItemDTO[];
   sourcesTotal: number;
   washedCount: number;
@@ -1007,7 +1028,12 @@ export const Workbench = {
   /** SetGalleryOpen opens or closes the source gallery modal. */
   setGalleryOpen: bind<[boolean], void>("Workbench.SetGalleryOpen", (open: boolean) => [open]),
   /**
-   * SetOutputSize updates the web-native output aspect ratio preset.
+   * SetOutputResolution updates the web-native output resolution/clarity option (e.g. Jimeng 1.5K/2K/4K).
+   * Changes are ignored while tasks are running or when the active provider does not expose resolutions.
+   */
+  setOutputResolution: bind<[string], void>("Workbench.SetOutputResolution", (resolution: string) => [resolution]),
+  /**
+   * SetOutputSize updates the web-native output aspect ratio preset for the active provider.
    * Changes are ignored while tasks are running.
    */
   setOutputSize: bind<[string, string, string], void>("Workbench.SetOutputSize", (preset: string, mode: string, ratio: string) => [preset, mode, ratio]),
@@ -1025,6 +1051,8 @@ export const Workbench = {
   startTasks: bind<[], void>("Workbench.StartTasks", () => []),
   /** StopTasks stops the currently running workbench batch. */
   stopTasks: bind<[], void>("Workbench.StopTasks", () => []),
+  /** SyncOutputCaps probes the active (or specified) provider's live webpage to refresh supported output ratios and resolutions. */
+  syncOutputCaps: bind<[string], void>("Workbench.SyncOutputCaps", (platform: string) => [platform]),
   /** ToggleGallerySelect selects or deselects one source path inside the gallery modal. */
   toggleGallerySelect: bind<[string, boolean], void>("Workbench.ToggleGallerySelect", (path: string, on: boolean) => [path, on]),
   /** UndoRequeueTasks restores the workspace queue snapshot from before the last RequeueDoneTasks. */
@@ -1036,6 +1064,8 @@ export const Workbench = {
  * and interactive CDP browser drawer IPCs.
  */
 export const Browser = {
+  /** ApplyBrowserRuntimeUpdate installs the release from the matching preview. */
+  applyBrowserRuntimeUpdate: bind<[string], void>("Browser.ApplyBrowserRuntimeUpdate", (id: string) => [id]),
   /** BrowserRowAction executes an action on one account row (launch, stop, drawer, restore, toggleDisabled, delete). */
   browserRowAction: bind<[number, string], void>("Browser.BrowserRowAction", (id: number, action: string) => [id, action]),
   /** CheckBrowserRuntimeUpdate returns a newer compatible version when one is available. */
@@ -1064,6 +1094,13 @@ export const Browser = {
   installBrowserRuntime: bind<[], void>("Browser.InstallBrowserRuntime", () => []),
   /** OpenBrowserDrawer opens the floating interactive CDP preview drawer for an account. */
   openBrowserDrawer: bind<[number], void>("Browser.OpenBrowserDrawer", (id: number) => [id]),
+  /** PreviewBrowserRuntimeUpdate checks for a newer release without downloading it. */
+  previewBrowserRuntimeUpdate: bind<[], BrowserRuntimeUpdateDTO>("Browser.PreviewBrowserRuntimeUpdate", () => []),
+  /**
+   * ProbeDoubaoImageCapability runs an explicit, manual image-generation capability probe
+   * for one or more Doubao accounts (or all Doubao accounts when ids is empty).
+   */
+  probeDoubaoImageCapability: bind<[number[]], void>("Browser.ProbeDoubaoImageCapability", (ids: number[]) => [ids]),
   /**
    * RefreshBrowsers re-checks runtime detection and reloads account browser rows.
    * Any already-running Doubao and Qwen accounts also refresh their live status asynchronously.
@@ -1085,12 +1122,16 @@ export const Browser = {
   setPlatformAccountsDisabled: bind<[string, boolean], void>("Browser.SetPlatformAccountsDisabled", (platform: string, disabled: boolean) => [platform, disabled]),
   /** StopClearBrowserHistory cancels an in-progress batch chat history cleanup. */
   stopClearBrowserHistory: bind<[], void>("Browser.StopClearBrowserHistory", () => []),
+  /** StopProbeDoubaoImageCapability cancels an in-progress Doubao image capability probe. */
+  stopProbeDoubaoImageCapability: bind<[], void>("Browser.StopProbeDoubaoImageCapability", () => []),
   /** StopSyncAccountStatus cancels an in-progress batch account status sync. */
   stopSyncAccountStatus: bind<[], void>("Browser.StopSyncAccountStatus", () => []),
   /** StopSyncAccountUsernames cancels an in-progress batch account username sync. */
   stopSyncAccountUsernames: bind<[], void>("Browser.StopSyncAccountUsernames", () => []),
   /** StopSyncGeminiStatus cancels an in-progress batch Gemini status sync. */
   stopSyncGeminiStatus: bind<[], void>("Browser.StopSyncGeminiStatus", () => []),
+  /** StopSyncJimengStatus cancels an in-progress batch Jimeng status sync. */
+  stopSyncJimengStatus: bind<[], void>("Browser.StopSyncJimengStatus", () => []),
   /** StopSyncQwenStatus cancels an in-progress batch Qwen status sync. */
   stopSyncQwenStatus: bind<[], void>("Browser.StopSyncQwenStatus", () => []),
   /**
@@ -1108,6 +1149,11 @@ export const Browser = {
    * When ids is empty, all Gemini accounts are synced.
    */
   syncGeminiStatus: bind<[number[]], void>("Browser.SyncGeminiStatus", (ids: number[]) => [ids]),
+  /**
+   * SyncJimengStatus fetches real-time Jimeng credits, membership tier, and username.
+   * When ids is empty, all Jimeng accounts are synced.
+   */
+  syncJimengStatus: bind<[number[]], void>("Browser.SyncJimengStatus", (ids: number[]) => [ids]),
   /**
    * SyncQwenStatus fetches real-time Qwen credits, refresh/expiry time, membership tier, and concurrency cap.
    * When ids is empty, all domestic Qwen accounts are synced.

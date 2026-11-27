@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	"github.com/xxww0098/realbrowser/fingerprintkernel/process"
 
 	"github.com/xxww0098/tulai/internal/fingerprint"
 	"github.com/xxww0098/tulai/internal/logging"
@@ -43,7 +43,7 @@ type Manager struct {
 	lifecycle sync.RWMutex
 	mu        sync.Mutex
 	starts    sync.Map
-	instances browserkernel.Registry[int64, accountProcess]
+	instances process.Registry[int64, accountProcess]
 	configDir string
 	store     *store.Store
 	headless  bool

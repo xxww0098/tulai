@@ -20,6 +20,7 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
+	fpprofile "github.com/xxww0098/realbrowser/fingerprintkernel/profile"
 
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
@@ -351,8 +352,8 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 	if err := first.run(ctx, fingerprint.Evaluate(fingerprintScript, &initialFingerprint), fingerprint.Evaluate(`localStorage.setItem('download-test','saved')`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(profile, ".tulai-fingerprint.json")); err != nil {
-		t.Fatalf("专用指纹未保存在资料目录: %v", err)
+	if spec, err := fpprofile.ReadProfile(profile); err != nil || spec.Seed == 0 {
+		t.Fatalf("专用指纹未保存在资料目录: %+v err=%v", spec, err)
 	}
 	page, err := first.Capture(ctx)
 	if err != nil || len(page.Items) != 1 || page.Items[0].URL != server.URL+"/image.png" {

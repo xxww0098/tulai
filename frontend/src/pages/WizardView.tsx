@@ -4,7 +4,7 @@ import { normalizeInstallProgress } from "@/lib/browserRuntime";
 import { cn } from "@/lib/cn";
 import { closeWizardModal, runWizardAction, useWizard } from "@/store";
 
-const PLATFORMS = ["豆包", "千问", "千问国际", "Gemini"];
+const PLATFORMS = ["豆包", "千问", "千问国际", "Gemini", "即梦"];
 
 export function WizardView() {
   const st = useWizard();

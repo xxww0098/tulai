@@ -3,6 +3,7 @@ package update
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -65,7 +66,16 @@ func DetectMode(goos, executable string) Mode {
 		return ModeMacCopy
 	case "windows":
 		slash := strings.ToLower(toSlash(executable))
-		if strings.Contains(slash, "/go-build") || strings.Contains(slash, "/program files") || strings.Contains(slash, "/programs/") || windowsSetupDir(executable) {
+		if strings.Contains(slash, "/go-build") {
+			return ModeWindowsSetup
+		}
+		// Only a copy named tulai.exe can be updated in place by the NSIS installer,
+		// which always writes tulai.exe. A portable download like
+		// tulai-0.1.41-windows-amd64.exe placed inside a Programs folder or next to
+		// Uninstall.exe must use ModeWindowsExe so it replaces itself instead of
+		// installing a separate tulai.exe and relaunching the old executable.
+		if path.Base(slash) == appName+".exe" &&
+			(strings.Contains(slash, "/program files") || strings.Contains(slash, "/programs/") || windowsSetupDir(executable)) {
 			return ModeWindowsSetup
 		}
 		return ModeWindowsExe

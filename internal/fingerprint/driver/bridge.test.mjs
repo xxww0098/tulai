@@ -1,3 +1,4 @@
+import {kernelFile} from './kernel-source.mjs';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -7,9 +8,35 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
+const fixtureIdentity = {
+  version: 1,
+  seed: 200002,
+  platform: 'macos',
+  platformVersion: '15.3.1',
+  brand: 'Chrome',
+  hardwareConcurrency: 10,
+  screen: {
+    width: 1512,
+    height: 982,
+    availTop: 37,
+    availBottom: 70,
+    dpr: 2,
+    windowWidth: 1440,
+    windowHeight: 860,
+    windowX: 36,
+    windowY: 45,
+  },
+};
+
+function withFixtureIdentity(request) {
+  if (request?.method !== 'start' || !request.params || 'identity' in request.params) return request;
+  return { ...request, params: { ...request.params, identity: fixtureIdentity } };
+}
+
 function copyDriverFiles(root) {
-  for (const file of ['bridge.mjs', 'fingerprint-identity.mjs', '../../../../realbrowser/browserkernel/downloader/download-watch.mjs']) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, path.basename(file)));
+  fs.copyFileSync(new URL('./bridge.mjs', import.meta.url), path.join(root, 'bridge.mjs'));
+  for (const asset of ['driver/fingerprint-identity.mjs', 'downloader/download-watch.mjs']) {
+    fs.copyFileSync(kernelFile(asset), path.join(root, path.basename(asset)));
   }
 }
 
@@ -114,7 +141,7 @@ function setupBridgeSandbox(t, { configurePage } = {}) {
     let stderrBuf = '';
     let index = 0;
     const sendNext = () => {
-      if (index < requests.length) child.stdin.write(JSON.stringify(requests[index++]) + '\n');
+      if (index < requests.length) child.stdin.write(JSON.stringify(withFixtureIdentity(requests[index++])) + '\n');
     };
     child.stdout.on('data', chunk => {
       stdoutBuf += chunk.toString();
@@ -313,7 +340,7 @@ test('fingerprint launch uses persisted seed, ignores --enable-automation, and r
   let buf = '';
   let stderr = '';
   const requests = [
-    { id: 1, method: 'start', params: { profile, executable: 'fake-fc', headless: true, directNetwork: true } },
+    { id: 1, method: 'start', params: { profile, executable: 'fake-fc', headless: true, directNetwork: true, identity: fixtureIdentity } },
     { id: 2, target: '1', method: 'Runtime.addBinding', params: { name: 'tulaiBridge' } },
     { id: 3, target: '1', method: 'Runtime.evaluate', params: { expression: '1+1' } },
     { id: 4, method: 'Browser.close', params: {} },
@@ -354,15 +381,15 @@ test('fingerprint launch uses persisted seed, ignores --enable-automation, and r
   // switch puts the unsupported-flag bar on the first tab of a headed window.
   assert.ok(!args.some(a => /^--(enable|disable)-blink-features/.test(a)), `unexpected blink-feature switch in ${args}`);
   assert.ok(args.includes('--disable-spoofing=audio,clientrects'), `missing --disable-spoofing in ${args}`);
-  assert.ok(args.some(a => /^--fingerprint=\d+$/.test(a)), `missing --fingerprint in ${args}`);
-  assert.ok(args.some(a => /^--fingerprint-platform-version=\d+\.\d+\.\d+$/.test(a)), `missing --fingerprint-platform-version in ${args}`);
+  assert.ok(args.includes('--fingerprint=200002'), `missing --fingerprint in ${args}`);
+  assert.ok(args.includes('--fingerprint-platform-version=15.3.1'), `missing --fingerprint-platform-version in ${args}`);
   assert.ok(args.some(a => /^--window-size=\d+,\d+$/.test(a)), `missing --window-size in ${args}`);
   assert.ok(args.some(a => /^--window-position=\d+,\d+$/.test(a)), `missing --window-position in ${args}`);
   assert.ok(args.some(a => /^--screen-info=\{.+\}$/.test(a)), `missing --screen-info in ${args}`);
   assert.ok(args.includes('--fingerprint-brand=Chrome'));
   assert.ok(args.includes('--no-proxy-server'));
   assert.equal(args.some(a => a.startsWith('--webrtc-ip-handling-policy')), false);
-  assert.ok(fs.existsSync(path.join(profile, '.tulai-fingerprint.json')));
+  assert.equal(fs.existsSync(path.join(profile, '.tulai-fingerprint.json')), false, 'bridge must not generate .tulai-fingerprint.json itself');
   assert.equal(trace.initScripts[0], 'delete Element.prototype.fakeShadowRoot;', 'fingerprint-chromium adds this property; pages must not see it');
   assert.ok(trace.initScripts[1]?.includes('__tulai|tulai'), 'missing scopeBootstrap init script');
   const docScript = trace.cdpCalls.find(c => c.method === 'Page.addScriptToEvaluateOnNewDocument' && c.params.worldName);
@@ -401,7 +428,7 @@ function runBridge(root, requests) {
     const responses = [];
     let stdoutBuf = '', stderrBuf = '', index = 0;
     const sendNext = () => {
-      if (index < requests.length) child.stdin.write(JSON.stringify(requests[index++]) + '\n');
+      if (index < requests.length) child.stdin.write(JSON.stringify(withFixtureIdentity(requests[index++])) + '\n');
     };
     child.stdout.on('data', chunk => {
       stdoutBuf += chunk.toString();
@@ -642,7 +669,7 @@ test('main-frame Runtime.evaluate uses direct CDP runner without Playwright fram
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const requests = [
-    { id: 1, method: 'start', params: { profile: path.join(root, 'p1'), executable: 'fake-fc', headless: true } },
+    { id: 1, method: 'start', params: { profile: path.join(root, 'p1'), executable: 'fake-fc', headless: true, identity: fixtureIdentity } },
     { id: 2, target: '1', method: 'Runtime.evaluate', params: { expression: 'first' } },
     { id: 3, target: '1', method: 'Runtime.evaluate', params: { expression: 'second' } },
     { id: 4, target: '1', method: 'Runtime.evaluate', params: { expression: 'stale-trigger' } },
@@ -734,7 +761,7 @@ test('fingerprint launch enforces WebRTC non-proxied UDP blocking only when laun
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const requests = [
-      { id: 1, method: 'start', params },
+      withFixtureIdentity({ id: 1, method: 'start', params }),
       { id: 2, method: 'Browser.close', params: {} },
     ];
     let idx = 0;
@@ -789,6 +816,15 @@ test('fingerprint launch enforces WebRTC non-proxied UDP blocking only when laun
     headless: false,
     proxy: '   ',
   });
+  await assert.rejects(
+    runStart({
+      profile: path.join(root, 'Fingerprint', 'account-missing-identity'),
+      executable: 'fake-fc',
+      headless: true,
+      identity: undefined,
+    }),
+    /缺少指纹内核生成的配置文件/,
+  );
   await assert.rejects(
     runStart({
       profile: path.join(root, 'Fingerprint', 'account-direct-conflict'),
@@ -948,7 +984,7 @@ test('download assistant isolated world relays TEMU_CACHE_* and DOWNLOAD_PAGE vi
     child.stdin.write(JSON.stringify({
       id: 1,
       method: 'start',
-      params: { profile: path.join(root, 'DownloadBrowser'), executable: 'fake-fc', headless: true, addons: [addonDir] },
+      params: { profile: path.join(root, 'DownloadBrowser'), executable: 'fake-fc', headless: true, addons: [addonDir], identity: fixtureIdentity },
     }) + '\n');
   });
 

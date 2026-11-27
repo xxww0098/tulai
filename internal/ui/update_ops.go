@@ -17,6 +17,17 @@ import (
 
 const settingKernelAutoUpdate = "browser_kernel_auto_update"
 
+var (
+	updateRunningExecutable = update.RunningExecutable
+	updateDetectModeFunc    = update.DetectMode
+	updateInstallFunc       = update.Install
+	updateStartDetachedFunc = update.StartDetached
+	updateSyncWinVerFunc    = update.SyncWindowsInstalledVersion
+	updateNewClientFunc     = update.NewClient
+	updateGOOS              = func() string { return runtime.GOOS }
+	updateGOARCH            = func() string { return runtime.GOARCH }
+)
+
 func (a *App) persistUpdatePrefs() {
 	if a == nil || a.store == nil {
 		return
@@ -26,12 +37,15 @@ func (a *App) persistUpdatePrefs() {
 }
 
 func (a *App) checkForUpdates() {
+	if a.updateQuitting {
+		return
+	}
 	if a.updateHidden && a.updateDownloading {
 		a.updateHidden = false
 		a.emit("update")
 		return
 	}
-	if a.updateBusy {
+	if a.updateBusy || a.updateDownloading {
 		return
 	}
 	a.updateChecks++
@@ -69,21 +83,21 @@ func (a *App) startUpdateLoop() {
 }
 
 func (a *App) silentCheck() {
-	auto := false
-	busy := false
+	start := false
 	a.syncUI(func() {
 		if a.store != nil && a.store.GetBool(settingKernelAutoUpdate) {
 			if _, installed := browser.InstalledRuntime(browser.ConfigDir(), a.browserBackend); installed {
-				a.prepareBrowserRuntime(true)
+				a.prepareBrowserRuntime(true, nil)
 			}
 		}
-		auto = a.autoCheck
-		busy = a.updateBusy
+		if a.autoCheck && !a.updateBusy && !a.updateDownloading && !a.updateQuitting {
+			a.updateBusy = true
+			start = true
+		}
 	})
-	if !auto || busy {
+	if !start {
 		return
 	}
-	a.syncUI(func() { a.updateBusy = true })
 	defer a.onUI(func() {
 		a.updateBusy = false
 		a.emit("update", "settings")
@@ -102,7 +116,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		}
 		return
 	}
-	exe, err := update.RunningExecutable()
+	exe, err := updateRunningExecutable()
 	if err != nil {
 		if manual {
 			a.onUI(func() {
@@ -112,7 +126,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		}
 		return
 	}
-	mode := update.DetectMode(runtime.GOOS, exe)
+	mode := updateDetectModeFunc(updateGOOS(), exe)
 	if mode == "" {
 		if manual {
 			a.onUI(func() {
@@ -127,7 +141,7 @@ func (a *App) runUpdateCheck(manual bool) {
 		mirror = a.updateMirror
 		a.updateErr = ""
 	})
-	client := update.NewClient(current)
+	client := updateNewClientFunc(current)
 	client.ProxyURL = browser.CurrentProxyServer()
 	client.ApplyMirrorSetting(mirror)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -146,7 +160,14 @@ func (a *App) runUpdateCheck(manual bool) {
 	newer, nErr := update.Newer(current, ver)
 	if err != nil || nErr != nil || !newer {
 		a.onUI(func() {
+			if a.updateQuitting || a.updateDownloading {
+				return
+			}
 			a.updateNotice = ""
+			a.updatePending = false
+			a.updateDeferred = false
+			a.resetUpdateTransferState()
+			a.clearCachedUpdateAsset()
 			if manual {
 				a.pushToast("info", "当前已是最新版本")
 			}
@@ -162,6 +183,14 @@ func (a *App) runUpdateCheck(manual bool) {
 		return
 	}
 	a.onUI(func() {
+		if a.updateQuitting || a.updateDownloading {
+			return
+		}
+		if a.updateAssetVersion != ver ||
+			(a.updateRel.Tag != "" && a.updateRel.Tag != rel.Tag) ||
+			!cachedAssetMatchesRelease(rel, ver, a.updateAssetMode, updateGOARCH(), a.updateAssetSHA256) {
+			a.clearCachedUpdateAsset()
+		}
 		a.updateRel = rel
 		a.updateNotice = ver
 		a.updateNotes = strings.TrimSpace(rel.Body)
@@ -169,6 +198,43 @@ func (a *App) runUpdateCheck(manual bool) {
 		a.updateErr = ""
 		a.emit("update", "settings")
 	})
+}
+
+func (a *App) clearCachedUpdateAsset() {
+	a.updateAsset = ""
+	a.updateAssetVersion = ""
+	a.updateAssetMode = ""
+	a.updateAssetSHA256 = ""
+}
+
+func cachedAssetMatchesRelease(rel update.Release, ver string, mode update.Mode, arch, cachedSHA string) bool {
+	cachedSHA = strings.TrimSpace(cachedSHA)
+	if cachedSHA == "" || mode == "" || strings.TrimSpace(ver) == "" || len(rel.Assets) == 0 {
+		return true
+	}
+	asset, err := update.Select(rel.Assets, update.KindFor(mode), ver, arch)
+	if err != nil {
+		return false
+	}
+	hexPart, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(asset.Digest)), "sha256:")
+	if !ok || len(hexPart) != 64 {
+		return true
+	}
+	return strings.EqualFold(cachedSHA, hexPart)
+}
+
+func canReuseUpdateAsset(assetPath, assetVer, wantVer string, assetMode, wantMode update.Mode, assetSHA string) bool {
+	if strings.TrimSpace(assetPath) == "" || strings.TrimSpace(wantVer) == "" || strings.TrimSpace(assetSHA) == "" {
+		return false
+	}
+	if assetVer != wantVer || assetMode != wantMode {
+		return false
+	}
+	info, err := os.Stat(assetPath)
+	if err != nil || info.IsDir() || info.Size() <= 0 {
+		return false
+	}
+	return update.VerifyFile(assetPath, assetSHA) == nil
 }
 
 func (a *App) tasksRunning() bool {
@@ -184,18 +250,26 @@ func (a *App) tasksRunning() bool {
 }
 
 func (a *App) applyUpdate() {
-	if a.updateDownloading {
+	if a.updateDownloading || a.updateQuitting {
 		return
 	}
-	go a.downloadAndInstall()
+	a.updateGen++
+	gen := a.updateGen
+	a.updateDownloading = true
+	a.updateCancelled = false
+	go a.downloadAndInstallGen(gen)
 }
 
 func (a *App) maybeInstallPending() {
-	if !a.updatePending || !a.updateDeferred || a.tasksRunning() {
+	if !a.updatePending || !a.updateDeferred || a.updateDownloading || a.updateQuitting || a.tasksRunning() {
 		return
 	}
+	a.updateGen++
+	gen := a.updateGen
 	a.updateDeferred = false
-	go a.downloadAndInstall()
+	a.updateDownloading = true
+	a.updateCancelled = false
+	go a.downloadAndInstallGen(gen)
 }
 
 func (a *App) resetUpdateTransferState() {
@@ -300,7 +374,7 @@ func (a *App) tickUpdateProgress(now time.Time) bool {
 	return false
 }
 
-func (a *App) updateProgressTick(done <-chan struct{}) {
+func (a *App) updateProgressTick(gen uint64, done <-chan struct{}) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -309,6 +383,9 @@ func (a *App) updateProgressTick(done <-chan struct{}) {
 			return
 		case now := <-ticker.C:
 			a.onUI(func() {
+				if a.updateGen != gen {
+					return
+				}
 				if a.tickUpdateProgress(now) {
 					a.emit("update")
 				}
@@ -318,10 +395,14 @@ func (a *App) updateProgressTick(done <-chan struct{}) {
 }
 
 func (a *App) cancelUpdate() {
+	if a.updateQuitting {
+		return
+	}
+	a.updateGen++
+	a.updateCancelled = true
 	if a.updateCancel != nil {
 		cancel := a.updateCancel
 		a.updateCancel = nil
-		a.updateCancelled = true
 		cancel()
 	}
 	a.updateDownloading = false
@@ -334,18 +415,33 @@ func (a *App) cancelUpdate() {
 }
 
 func (a *App) downloadAndInstall() {
-	var running bool
-	var rel update.Release
-	var asset, mirror, ver string
+	var gen uint64
 	a.syncUI(func() {
-		running = a.tasksRunning()
-		rel = a.updateRel
-		asset = a.updateAsset
-		mirror = a.updateMirror
-		ver = a.updateNotice
+		a.updateGen++
+		gen = a.updateGen
 	})
-	if running {
-		a.onUI(func() {
+	a.downloadAndInstallGen(gen)
+}
+
+func (a *App) downloadAndInstallGen(gen uint64) {
+	var abort, deferred bool
+	var rel update.Release
+	var asset, assetVer, assetSHA, mirror, ver string
+	var assetMode update.Mode
+	a.syncUI(func() {
+		if a.updateGen != gen || a.updateQuitting {
+			abort = true
+			return
+		}
+		if a.updateCancelled {
+			abort = true
+			a.updateCancelled = false
+			a.updateDownloading = false
+			a.emit("update", "settings")
+			return
+		}
+		if a.tasksRunning() {
+			deferred = true
 			a.updatePending = true
 			a.updateDeferred = true
 			a.updateDownloading = false
@@ -354,38 +450,73 @@ func (a *App) downloadAndInstall() {
 			a.updateFraction = -1
 			a.updateProgressText = update.DeferMessage
 			a.emit("update", "settings")
-		})
+			return
+		}
+		rel = a.updateRel
+		asset = a.updateAsset
+		assetVer = a.updateAssetVersion
+		assetMode = a.updateAssetMode
+		assetSHA = a.updateAssetSHA256
+		mirror = a.updateMirror
+		ver = a.updateNotice
+	})
+	if abort || deferred {
 		return
 	}
 	current := PackagedVersion()
-	exe, err := update.RunningExecutable()
+	exe, err := updateRunningExecutable()
 	if err != nil {
-		a.failUpdate(err)
+		a.failUpdateFor(gen, err)
 		return
 	}
-	mode := update.DetectMode(runtime.GOOS, exe)
+	arch := updateGOARCH()
+	mode := updateDetectModeFunc(updateGOOS(), exe)
+	wantVer := strings.TrimSpace(ver)
+	if v, vErr := rel.Version(); vErr == nil && v != "" {
+		wantVer = v
+	}
+	if asset != "" && (!canReuseUpdateAsset(asset, assetVer, wantVer, assetMode, mode, assetSHA) ||
+		!cachedAssetMatchesRelease(rel, wantVer, mode, arch, assetSHA)) {
+		asset = ""
+		a.syncUI(func() {
+			if a.updateGen == gen {
+				a.clearCachedUpdateAsset()
+			}
+		})
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	if asset == "" {
 		if rel.Tag == "" {
-			a.failUpdate(errors.New("还没有可安装的版本"))
+			a.failUpdateFor(gen, errors.New("还没有可安装的版本"))
 			return
 		}
-		client := update.NewClient(current)
+		client := updateNewClientFunc(current)
 		client.ProxyURL = browser.CurrentProxyServer()
 		client.ApplyMirrorSetting(mirror)
 		client.OnProgress = func(p update.Progress) {
 			now := time.Now()
 			a.onUI(func() {
-				if a.updateCancelled {
+				if a.updateGen != gen || a.updateCancelled || a.updateQuitting {
 					return
 				}
 				a.applyUpdateProgressAt(now, p)
 				a.emit("update")
 			})
 		}
+		stale := false
 		a.syncUI(func() {
+			if a.updateGen != gen || a.updateQuitting {
+				stale = true
+				return
+			}
+			if a.updateCancelled {
+				stale = true
+				a.updateCancelled = false
+				a.updateDownloading = false
+				return
+			}
 			a.updateDownloading = true
 			a.updateDeferred = false
 			a.updateHidden = false
@@ -398,29 +529,53 @@ func (a *App) downloadAndInstall() {
 			a.updateProgressText = "正在测速选择最快的下载源..."
 			a.emit("update", "settings")
 		})
+		if stale {
+			return
+		}
 		tickDone := make(chan struct{})
-		go a.updateProgressTick(tickDone)
-		prepared, err := client.Download(ctx, rel, current, mode, runtime.GOARCH)
+		go a.updateProgressTick(gen, tickDone)
+		prepared, err := client.Download(ctx, rel, current, mode, arch)
 		close(tickDone)
 		wasCancelled := false
 		a.syncUI(func() {
+			if a.updateGen != gen {
+				stale = true
+				return
+			}
 			a.updateCancel = nil
 			wasCancelled = a.updateCancelled
 			a.updateCancelled = false
 		})
+		if stale {
+			if err != nil && errors.Is(err, context.Canceled) {
+				logging.Log.Info("已取消更新下载")
+			} else {
+				logging.Log.Info("已忽略过期的更新任务")
+			}
+			return
+		}
 		if err != nil {
 			if wasCancelled && errors.Is(err, context.Canceled) {
 				logging.Log.Info("已取消更新下载")
 				return
 			}
 			logging.Log.Errorf("下载更新失败: %v", err)
-			a.failUpdate(err)
+			a.failUpdateFor(gen, err)
+			return
+		}
+		if wasCancelled {
+			logging.Log.Info("已取消更新安装")
 			return
 		}
 		if prepared.UpToDate {
 			a.onUI(func() {
+				if a.updateGen != gen {
+					return
+				}
 				a.updateNotice = ""
+				a.clearCachedUpdateAsset()
 				a.updatePending = false
+				a.updateDeferred = false
 				a.updateDownloading = false
 				a.resetUpdateTransferState()
 				a.emit("update", "settings")
@@ -430,15 +585,42 @@ func (a *App) downloadAndInstall() {
 		asset = prepared.Path
 		if v, err := prepared.Release.Version(); err == nil {
 			ver = v
+			wantVer = v
 		}
 		a.syncUI(func() {
+			if a.updateGen != gen {
+				stale = true
+				return
+			}
 			a.updateAsset = asset
-			running = a.tasksRunning()
+			a.updateAssetVersion = wantVer
+			a.updateAssetMode = mode
+			a.updateAssetSHA256 = prepared.SHA256
 			a.emit("update")
 		})
+		if stale {
+			return
+		}
+	} else if wantVer != "" {
+		ver = wantVer
 	}
-	if running {
-		a.onUI(func() {
+	var abortInstall, deferInstall bool
+	a.syncUI(func() {
+		if a.updateGen != gen || a.updateQuitting {
+			abortInstall = true
+			return
+		}
+		if a.updateCancelled {
+			abortInstall = true
+			a.updateCancelled = false
+			a.updateDownloading = false
+			a.updatePending = false
+			a.resetUpdateTransferState()
+			a.emit("update", "settings")
+			return
+		}
+		if a.tasksRunning() {
+			deferInstall = true
 			a.updatePending = true
 			a.updateDeferred = true
 			a.updateDownloading = false
@@ -447,10 +629,8 @@ func (a *App) downloadAndInstall() {
 			a.updateFraction = -1
 			a.updateProgressText = update.DeferMessage
 			a.emit("update", "settings")
-		})
-		return
-	}
-	a.onUI(func() {
+			return
+		}
 		a.updatePending = true
 		a.updateDownloading = true
 		a.updatePhase = "installing"
@@ -460,8 +640,14 @@ func (a *App) downloadAndInstall() {
 		a.updateProgressText = "正在准备安装 v" + ver + "..."
 		a.emit("update")
 	})
+	if abortInstall || deferInstall {
+		return
+	}
 	if mode == update.ModeWindowsSetup && !a.confirmUpdateQuit("将启动新版本安装程序并关闭当前窗口。") {
-		a.onUI(func() {
+		a.syncUI(func() {
+			if a.updateGen != gen {
+				return
+			}
 			a.updateDownloading = false
 			a.updatePending = false
 			a.resetUpdateTransferState()
@@ -469,7 +655,31 @@ func (a *App) downloadAndInstall() {
 		})
 		return
 	}
-	outcome, err := update.Install(update.Options{
+	commitAbort := false
+	a.syncUI(func() {
+		if a.updateGen != gen || a.updateQuitting {
+			commitAbort = true
+			return
+		}
+		if a.updateCancelled {
+			commitAbort = true
+			a.updateCancelled = false
+			a.updateDownloading = false
+			a.updatePending = false
+			a.resetUpdateTransferState()
+			a.emit("update", "settings")
+			return
+		}
+		// Lock out concurrent installs, cancels, and checks while committing the update.
+		a.updateQuitting = true
+		a.updateDownloading = true
+		a.updatePhase = "installing"
+		a.emit("update")
+	})
+	if commitAbort {
+		return
+	}
+	outcome, err := updateInstallFunc(update.Options{
 		Mode:       mode,
 		Executable: exe,
 		AssetPath:  asset,
@@ -478,38 +688,51 @@ func (a *App) downloadAndInstall() {
 	})
 	if err != nil {
 		logging.Log.Errorf("安装更新失败: %v", err)
-		a.failUpdate(err)
+		a.failUpdateFor(gen, err)
 		return
 	}
 	if outcome.Helper != "" {
-		if err := update.StartDetached(outcome.Helper, outcome.HelperArgs...); err != nil {
+		if err := updateStartDetachedFunc(outcome.Helper, outcome.HelperArgs...); err != nil {
 			logging.Log.Errorf("启动更新程序失败: %v", err)
-			a.failUpdate(err)
+			a.failUpdateFor(gen, err)
 			return
 		}
 	}
 	if outcome.OpenPath != "" {
 		_ = a.openPath(outcome.OpenPath)
 	}
-	if err := update.SyncWindowsInstalledVersion(exe, ver); err != nil {
-		logging.Log.Warning("更新已安装，但同步 Windows 应用列表版本失败: %v", err)
+	if outcome.Helper == "" {
+		if err := updateSyncWinVerFunc(exe, ver); err != nil {
+			logging.Log.Warning("更新已安装，但同步 Windows 应用列表版本失败: %v", err)
+		}
 	}
 	a.syncUI(func() {
 		a.updatePending = false
-		a.updateDownloading = false
+		a.updateDownloading = outcome.Quit
+		a.updateQuitting = outcome.Quit
 		a.updateInstalled = ver
-		a.resetUpdateTransferState()
+		if outcome.Quit {
+			a.updatePhase = "installing"
+			a.updateFraction = 1
+			a.updateSpeed = 0
+			a.updateEta = 0
+			a.updateProgressText = "正在退出并安装 v" + ver + "..."
+		} else {
+			a.resetUpdateTransferState()
+		}
 		a.emit("update", "settings")
 	})
 	if outcome.Quit {
-		if a.host != nil {
-			a.host.Quit()
+		if h := a.desktopHost(); h != nil {
+			h.Quit()
 		}
 		return
 	}
 	if outcome.Relaunch {
-		if a.confirmUpdateRestart(ver) && a.host != nil {
-			a.host.Restart()
+		if a.confirmUpdateRestart(ver) {
+			if h := a.desktopHost(); h != nil {
+				h.Restart()
+			}
 		}
 	}
 }
@@ -522,11 +745,15 @@ func (a *App) confirmUpdateRestart(ver string) bool {
 	return a.confirmAlert("更新已安装", fmt.Sprintf("tulai %s 已就绪，重启应用即可使用新版本。", ver), "立即重启")
 }
 
-func (a *App) failUpdate(err error) {
+func (a *App) failUpdateFor(gen uint64, err error) {
 	a.onUI(func() {
+		if a.updateGen != gen {
+			return
+		}
 		a.updateCancel = nil
 		a.updateCancelled = false
 		a.updateDownloading = false
+		a.updateQuitting = false
 		a.updatePending = false
 		a.updateDeferred = false
 		a.resetUpdateTransferState()
@@ -536,23 +763,37 @@ func (a *App) failUpdate(err error) {
 }
 
 func (a *App) dismissUpdate() {
+	if a.updateQuitting {
+		return
+	}
 	if a.updateDownloading {
 		a.updateHidden = true
 		a.emit("update")
 		return
 	}
+	a.updateGen++
 	a.updateNotice = ""
 	a.updateNotes = ""
 	a.updateDetailsOpen = false
 	a.updateNotesOpen = false
+	a.updatePending = false
+	a.updateDeferred = false
 	a.updateErr = ""
+	a.resetUpdateTransferState()
+	a.clearCachedUpdateAsset()
 	a.emit("update", "settings")
 }
 
 func (a *App) skipUpdate() {
+	if a.updateQuitting {
+		return
+	}
 	ver := strings.TrimSpace(a.updateNotice)
 	if a.store != nil && ver != "" {
 		a.store.Set(update.KeySkipped, ver)
+	}
+	if a.updateDownloading {
+		a.cancelUpdate()
 	}
 	a.dismissUpdate()
 }

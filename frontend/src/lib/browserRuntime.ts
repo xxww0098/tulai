@@ -33,6 +33,8 @@ export const DEFAULT_BROWSER_STATE: BrowserStateDTO = {
   qianwenConcurrencyMax: 2,
   geminiConcurrencyAuto: true,
   geminiConcurrencyMax: 2,
+  jimengConcurrencyAuto: true,
+  jimengConcurrencyMax: 2,
 };
 
 export function formatBytes(n: number): string {

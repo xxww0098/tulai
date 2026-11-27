@@ -120,4 +120,105 @@ assert.deepStrictEqual(
   assert.strictEqual(TULAIDoubaoSourceMap.resolveFromSSE(conflict, names, images), null)
 }
 
+// 服务端静默路由降级检测：区分 flow.agent.shell（纯文本代理）与 flow.agent.creation（生图代理）。
+{
+  const degradedBatch = {
+    loaderData: {
+      page: {
+        messageList: {
+          message_list: [
+            { index: '1', user_type: 1, content_block: [{ content: { attachment_block: { attachments } } }] },
+            {
+              index: '2',
+              user_type: 2,
+              ext: {
+                bot_state: JSON.stringify({ agent_id: '19457456070409730', agent_name: '豆包', agent_psm: 'flow.agent.shell' }),
+                before_content_type: '1',
+              },
+              content_block: [{ content: { text_block: { text: '很抱歉，我目前没办法直接生成图片。' } } }],
+            },
+          ],
+        },
+      },
+    },
+  }
+  const route = TULAIDoubaoSourceMap.inspectRoute(degradedBatch, names)
+  assert.ok(route && route.degraded === true && route.agentPsm === 'flow.agent.shell', '多图洗图被路由至 flow.agent.shell 必须判定为降级')
+  assert.ok(route.textPreview.includes('没办法直接生成图片'))
+
+  const creationBatch = {
+    loaderData: {
+      page: {
+        messageList: {
+          message_list: [
+            { index: '1', user_type: 1, content_block: [{ content: { attachment_block: { attachments } } }] },
+            {
+              index: '2',
+              user_type: 2,
+              ext: {
+                bot_state: { agent_id: '747548995167490123', agent_name: 'Agent-Creation', agent_psm: 'flow.agent.creation' },
+                intention: 'agent_creation',
+                use_creation: '1',
+              },
+              content_block: [{ content: { creation_block: { creations } } }],
+            },
+          ],
+        },
+      },
+    },
+  }
+  const okRoute = TULAIDoubaoSourceMap.inspectRoute(creationBatch, names)
+  assert.ok(okRoute && okRoute.degraded === false && okRoute.agentPsm === 'flow.agent.creation' && okRoute.hasCreations === true)
+
+  // 复用对话中前几轮正常、最新一轮翻转为 flow.agent.shell 时必须准确识别当前轮降级。
+  const reusedFlipped = {
+    loaderData: {
+      page: {
+        messageList: {
+          message_list: [
+            { index: '1', user_type: 1, content_block: [{ content: { attachment_block: { attachments } } }] },
+            {
+              index: '2',
+              user_type: 2,
+              ext: { bot_state: JSON.stringify({ agent_psm: 'flow.agent.creation' }), use_creation: '1' },
+              content_block: [{ content: { creation_block: { creations } } }],
+            },
+            { index: '4', user_type: 1, content_block: [{ content: { attachment_block: { attachments } } }] },
+            {
+              index: '5',
+              user_type: 2,
+              ext: { bot_state: JSON.stringify({ agent_psm: 'flow.agent.shell', agent_name: '豆包' }) },
+              content_block: [{ content: { code_block: { code: '<svg/>' } } }],
+            },
+          ],
+        },
+      },
+    },
+  }
+  const flipped = TULAIDoubaoSourceMap.inspectRoute(reusedFlipped, names)
+  assert.ok(flipped && flipped.degraded === true && flipped.hasCodeBlock === true, '复用对话最新轮翻转降级必须识别')
+
+  // 单图/文生图（无多图 names）同样按最新一轮助手消息判定路由降级。
+  const singleDegraded = {
+    loaderData: {
+      page: {
+        messageList: {
+          message_list: [
+            { index: '1', user_type: 1, content_block: [{ content: { text_block: { text: '画一只橘猫' } } }] },
+            {
+              index: '2',
+              user_type: 2,
+              ext: { bot_state: JSON.stringify({ agent_psm: 'flow.agent.shell', agent_name: '豆包' }) },
+              content_block: [{ content: { text_block: { text: '很抱歉，我目前没办法直接生成图片。' } } }],
+            },
+          ],
+        },
+      },
+    },
+  }
+  const singleRes = TULAIDoubaoSourceMap.inspectRoute(singleDegraded, [])
+  assert.ok(singleRes && singleRes.degraded === true && singleRes.agentPsm === 'flow.agent.shell')
+  assert.strictEqual(TULAIDoubaoSourceMap.inspectRoute(creationBatch, []).degraded, false)
+}
+
 console.log('doubao source mapping ok')

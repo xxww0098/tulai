@@ -162,6 +162,7 @@ func defaultPlatformNavs() []PlatformNavDTO {
 		{ID: "qianwen", Name: "千问"},
 		{ID: "qwen_intl", Name: "千问国际"},
 		{ID: "gemini", Name: "Gemini"},
+		{ID: "jimeng", Name: "即梦"},
 	}
 }
 

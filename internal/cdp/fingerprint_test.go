@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	fpprofile "github.com/xxww0098/realbrowser/fingerprintkernel/profile"
+
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
@@ -1159,19 +1161,9 @@ func TestFingerprintCDPStealthAndEdgeSerialization(t *testing.T) {
 		}
 	}
 
-	idRaw, err := os.ReadFile(filepath.Join(profile, ".tulai-fingerprint.json"))
+	persisted, err := fpprofile.ReadProfile(profile)
 	if err != nil {
 		t.Fatalf("read persisted identity: %v", err)
-	}
-	var persisted struct {
-		PlatformVersion string `json:"platformVersion"`
-		Screen          struct {
-			WindowX int `json:"windowX"`
-			WindowY int `json:"windowY"`
-		} `json:"screen"`
-	}
-	if err := json.Unmarshal(idRaw, &persisted); err != nil {
-		t.Fatalf("parse identity %s: %v", idRaw, err)
 	}
 	if persisted.PlatformVersion == "" || report.PlatformVersion != persisted.PlatformVersion {
 		t.Fatalf("JS platformVersion=%q does not match persisted %q", report.PlatformVersion, persisted.PlatformVersion)
@@ -1182,9 +1174,10 @@ func TestFingerprintCDPStealthAndEdgeSerialization(t *testing.T) {
 	if hdrPV != "" && hdrPV != persisted.PlatformVersion {
 		t.Fatalf("HTTP Sec-CH-UA-Platform-Version=%q does not match persisted %q", hdrPV, persisted.PlatformVersion)
 	}
-	if report.ScreenX != persisted.Screen.WindowX || report.ScreenY != persisted.Screen.WindowY {
-		t.Fatalf("headless screenX/Y=(%d,%d) != persisted windowX/Y=(%d,%d)",
-			report.ScreenX, report.ScreenY, persisted.Screen.WindowX, persisted.Screen.WindowY)
+	if persisted.Screen == nil || persisted.Screen.WindowX == nil || persisted.Screen.WindowY == nil ||
+		report.ScreenX != *persisted.Screen.WindowX || report.ScreenY != *persisted.Screen.WindowY {
+		t.Fatalf("headless screenX/Y=(%d,%d) != persisted screen %+v",
+			report.ScreenX, report.ScreenY, persisted.Screen)
 	}
 	// Verify temporary runner handoff slot was immediately deleted from window.
 	if leftover, err := s.Evaluate(`Object.getOwnPropertyNames(document.defaultView).filter(k => /^_[0-9a-f]{32}$/i.test(k))`); err != nil || leftover != "[]" {

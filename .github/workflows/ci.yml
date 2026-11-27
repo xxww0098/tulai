@@ -13,10 +13,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
-defaults:
-  run:
-    working-directory: tulai
-
 jobs:
   guard:
     runs-on: ubuntu-latest
@@ -26,41 +22,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: tulai
+        if: github.ref_type == 'tag'
       - name: Tag matches the tested main commit
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/check-release-ci.sh
-      - name: Read the kernel version declared by tulai
-        id: kernel-version
-        run: |
-          version=$(awk -v mod='github.com/xxww0098/realbrowser/browserkernel' '$1 == mod { print $2 } $1 == "require" && $2 == mod { print $3 }' go.mod)
-          test -n "$version"
-          echo "tag=browserkernel/$version" >> "$GITHUB_OUTPUT"
-      - name: Check out the RealBrowser kernel source
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ vars.REALBROWSER_REPOSITORY || 'xxww0098/realbrowser' }}
-          ref: ${{ vars.REALBROWSER_REF || steps.kernel-version.outputs.tag }}
-          token: ${{ secrets.REALBROWSER_READ_TOKEN || github.token }}
-          path: realbrowser
-          sparse-checkout: browserkernel
-          persist-credentials: false
-      - name: Verify the selected kernel module
-        run: |
-          if ! grep -qx 'module github.com/xxww0098/realbrowser/browserkernel' ../realbrowser/browserkernel/go.mod; then
-            echo '::error::Select a RealBrowser revision containing browserkernel/go.mod with REALBROWSER_REPOSITORY and REALBROWSER_REF.'
-            exit 1
-          fi
-      - uses: actions/upload-artifact@v7
-        with:
-          name: realbrowser-browserkernel
-          path: realbrowser/browserkernel/
-          if-no-files-found: error
-          retention-days: 14
-          overwrite: true
 
   test:
     if: github.ref_type != 'tag'
@@ -69,18 +36,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: tulai
-      - uses: actions/download-artifact@v7
-        with:
-          name: realbrowser-browserkernel
-          path: realbrowser/browserkernel
       - uses: actions/setup-go@v7
         with:
-          go-version-file: tulai/go.mod
-          cache-dependency-path: |
-            tulai/go.sum
-            realbrowser/browserkernel/go.sum
+          go-version-file: go.mod
           cache: true
       - uses: oven-sh/setup-bun@v2
       - name: Test
@@ -119,18 +77,9 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: tulai
-      - uses: actions/download-artifact@v7
-        with:
-          name: realbrowser-browserkernel
-          path: realbrowser/browserkernel
       - uses: actions/setup-go@v7
         with:
-          go-version-file: tulai/go.mod
-          cache-dependency-path: |
-            tulai/go.sum
-            realbrowser/browserkernel/go.sum
+          go-version-file: go.mod
           cache: true
       - name: Test Windows browser, runtime, downloads, and updater
         run: go test ./internal/browser ./internal/fingerprint ./internal/download ./internal/update ./cmd/tulai -short
@@ -156,18 +105,9 @@ jobs:
             packages: ./internal/strategy
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: tulai
-      - uses: actions/download-artifact@v7
-        with:
-          name: realbrowser-browserkernel
-          path: realbrowser/browserkernel
       - uses: actions/setup-go@v7
         with:
-          go-version-file: tulai/go.mod
-          cache-dependency-path: |
-            tulai/go.sum
-            realbrowser/browserkernel/go.sum
+          go-version-file: go.mod
           cache: true
       # The smoke install downloads Node, playwright-core and the pinned
       # fingerprint-chromium archive into the user config dir; cache it keyed
@@ -178,7 +118,7 @@ jobs:
           path: |
             ~/AppData/Roaming/tulai/runtime/fingerprint
             ~/Library/Application Support/tulai/runtime/fingerprint
-          key: fingerprint-runtime-${{ matrix.os }}-${{ hashFiles('realbrowser/browserkernel/pinned.go', 'tulai/internal/fingerprint/install.go', 'tulai/internal/fingerprint/fingerprint.go', 'tulai/internal/fingerprint/driver/package-lock.json') }}
+          key: fingerprint-runtime-${{ matrix.os }}-${{ hashFiles('go.mod', 'internal/fingerprint/install.go', 'internal/fingerprint/fingerprint.go', 'internal/fingerprint/driver/package-lock.json') }}
           restore-keys: fingerprint-runtime-${{ matrix.os }}-
       - name: Install and smoke-test Fingerprint
         env:
@@ -196,18 +136,9 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: tulai
-      - uses: actions/download-artifact@v7
-        with:
-          name: realbrowser-browserkernel
-          path: realbrowser/browserkernel
       - uses: actions/setup-go@v7
         with:
-          go-version-file: tulai/go.mod
-          cache-dependency-path: |
-            tulai/go.sum
-            realbrowser/browserkernel/go.sum
+          go-version-file: go.mod
           cache: true
       - name: Prepare pinned Node and launcher dependencies
         run: go run ./cmd/tulai-fingerprint-bundle
@@ -218,7 +149,7 @@ jobs:
           name: fingerprint-runtime-windows-amd64
           if-no-files-found: error
           retention-days: 1
-          path: tulai/internal/fingerprint/bundled/windows-amd64.zip
+          path: internal/fingerprint/bundled/windows-amd64.zip
 
   package:
     needs: [guard, fingerprint-bundle]
@@ -227,18 +158,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: tulai
-      - uses: actions/download-artifact@v7
-        with:
-          name: realbrowser-browserkernel
-          path: realbrowser/browserkernel
       - uses: actions/setup-go@v7
         with:
-          go-version-file: tulai/go.mod
-          cache-dependency-path: |
-            tulai/go.sum
-            realbrowser/browserkernel/go.sum
+          go-version-file: go.mod
           cache: true
       - uses: oven-sh/setup-bun@v2
       - name: Install NSIS
@@ -248,7 +170,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: fingerprint-runtime-windows-amd64
-          path: tulai/internal/fingerprint/bundled
+          path: internal/fingerprint/bundled
       - name: Verify Windows runtime bundle before packaging
         env:
           TULAI_REQUIRE_WINDOWS_BUNDLE: "1"
@@ -265,7 +187,7 @@ jobs:
           name: tulai-windows
           if-no-files-found: error
           retention-days: 14
-          path: tulai/dist/*
+          path: dist/*
 
   release:
     if: github.ref_type == 'tag'
@@ -276,12 +198,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: tulai
       - uses: actions/download-artifact@v7
         with:
           pattern: tulai-*
-          path: tulai/artifacts
+          path: artifacts
       - name: Stage release assets
         run: |
           mkdir -p release

@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/url"
 	"path/filepath"
 	"runtime"
-	"strings"
-	"time"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	fpbrowser "github.com/xxww0098/realbrowser/fingerprintkernel/browser"
+	fpdriver "github.com/xxww0098/realbrowser/fingerprintkernel/driver"
+	"github.com/xxww0098/realbrowser/fingerprintkernel/engine"
 
 	"github.com/xxww0098/tulai/internal/appdata"
 	"github.com/xxww0098/tulai/internal/fingerprint"
@@ -84,63 +82,63 @@ func EnsureRuntime(ctx context.Context, dataDir, _ string, progress func(fingerp
 	return Runtime{Kind: KindFingerprint, Path: rt.Executable, Version: rt.Version}, err
 }
 
-// runtimeUpdater uses the same per-application proxy as the installer.
-func runtimeUpdater() (*browserkernel.KernelManager, error) {
+func runtimeUpdater(dataDir string) (*fpbrowser.ManagedBrowser, error) {
+	rt, ok := fingerprint.InstalledFingerprint(dataDir)
+	if !ok {
+		return nil, nil
+	}
 	proxy, err := ResolveCurrentProxy()
 	if err != nil {
 		return nil, err
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if proxy != "" {
-		u, err := url.Parse(proxy)
-		if err != nil {
-			return nil, err
-		}
-		transport.Proxy = http.ProxyURL(u)
+	base := engine.InstalledRelease{Version: rt.Version, Executable: rt.Executable}
+	browser, err := fpdriver.Browser(filepath.Join(rt.Dir, "kernels"), base, proxy)
+	if err != nil {
+		return nil, err
 	}
-	mgr := browserkernel.NewKernelManager("", "")
-	mgr.HTTPClient = &http.Client{Transport: transport, Timeout: 20 * time.Second}
-	// This upstream build crashes on canvas readback in image generation.
-	mgr.AcceptRelease = func(tag string) bool { return strings.TrimPrefix(tag, "v") != "150.0.7871.186" }
-	if runtime.GOOS == "linux" {
-		mgr.ArchiveSuffix = ".tar.xz"
-	}
-	return mgr, nil
+	return &browser, nil
 }
 
 func CheckRuntimeUpdate(ctx context.Context, dataDir string) (string, error) {
-	rt, ok := fingerprint.InstalledFingerprint(dataDir)
-	if !ok {
-		return "", nil
-	}
-	mgr, err := runtimeUpdater()
-	if err != nil {
+	b, err := runtimeUpdater(dataDir)
+	if err != nil || b == nil {
 		return "", err
 	}
-	defer mgr.HTTPClient.CloseIdleConnections()
-	return mgr.CheckUpdate(ctx, rt.Version)
+	defer b.Manager.HTTPClient.CloseIdleConnections()
+	return b.Manager.CheckUpdate(ctx, b.Base.Version)
 }
 
-func UpdateRuntime(ctx context.Context, dataDir, _ string, progress func(fingerprint.Progress)) (Runtime, error) {
-	rt, ok := fingerprint.InstalledFingerprint(dataDir)
-	if !ok {
-		return Runtime{}, fmt.Errorf("请先安装 %s", KindFingerprint)
+func AvailableRuntimeUpdate(ctx context.Context, dataDir string) (*engine.ReleaseInfo, error) {
+	b, err := runtimeUpdater(dataDir)
+	if err != nil || b == nil {
+		return nil, err
 	}
-	mgr, err := runtimeUpdater()
+	defer b.Manager.HTTPClient.CloseIdleConnections()
+	return b.Manager.AvailableUpdate(ctx, b.Base.Version)
+}
+
+func UpdateRuntime(ctx context.Context, dataDir string, selected *engine.ReleaseInfo, progress func(fingerprint.Progress)) (Runtime, error) {
+	browser, err := runtimeUpdater(dataDir)
 	if err != nil {
 		return Runtime{}, err
 	}
-	defer mgr.HTTPClient.CloseIdleConnections()
-	active, _, err := mgr.Update(ctx, filepath.Join(rt.Dir, "kernels"), rt.Version, func(done, total int64) {
+	if browser == nil {
+		return Runtime{}, fmt.Errorf("请先安装 %s", KindFingerprint)
+	}
+	defer browser.Manager.HTTPClient.CloseIdleConnections()
+	report := func(done, total int64) {
 		if progress != nil {
 			progress(fingerprint.Progress{Stage: fingerprint.StageBrowser, Text: "正在更新浏览器内核…", Done: done, Total: total})
 		}
-	})
+	}
+	var active engine.InstalledRelease
+	if selected == nil {
+		active, err = browser.Update(ctx, report)
+	} else {
+		active, err = browser.Install(ctx, selected, report)
+	}
 	if err != nil {
 		return Runtime{}, err
 	}
-	if active.Executable != "" {
-		rt.Executable, rt.Version = active.Executable, active.Version
-	}
-	return Runtime{Kind: KindFingerprint, Path: rt.Executable, Version: rt.Version}, nil
+	return Runtime{Kind: KindFingerprint, Path: active.Executable, Version: active.Version}, nil
 }

@@ -74,7 +74,9 @@ func CurrentConversationID(s *cdp.Session) string {
 	}
 	raw := strings.Trim(evalString(s, `(() => {
 		try {
-			const parts = new URL(location.href).pathname.split('/').filter(Boolean);
+			const u = new URL(location.href);
+			if (/(^|\.)jimeng\.jianying\.com$/i.test(u.hostname)) return u.searchParams.get('workspace') || '';
+			const parts = u.pathname.split('/').filter(Boolean);
 			const i = parts.indexOf('chat');
 			if (i >= 0 && parts[i + 1]) return parts[i + 1];
 			const c = parts.indexOf('c');

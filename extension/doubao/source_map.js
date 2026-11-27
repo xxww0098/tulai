@@ -359,5 +359,153 @@
     return { images, indices }
   }
 
-  globalThis.TULAIDoubaoSourceMap = { match, resolve, recover, parse, fromConversation, resolveFromConversation, recoverFromConversation, resolveFromSSE, recoverFromSSE }
+  function parseBotState(ext) {
+    if (!ext || typeof ext !== 'object') return { agentPsm: '', agentName: '', useCreation: false, intention: '' }
+    let botState = ext.bot_state
+    if (typeof botState === 'string' && botState.trim()) {
+      try { botState = JSON.parse(botState) } catch (e) { botState = null }
+    }
+    const obj = botState && typeof botState === 'object' ? botState : null
+    return {
+      agentPsm: String((obj && obj.agent_psm) || ext.agent_psm || '').trim(),
+      agentName: String((obj && obj.agent_name) || ext.agent_name || '').trim(),
+      useCreation: String(ext.use_creation || '').trim() === '1',
+      intention: String(ext.intention || '').trim(),
+    }
+  }
+
+  function messageSeq(message) {
+    return /^\d{1,32}$/.test(String(message && message.index || '')) ? BigInt(String(message.index)) : null
+  }
+
+  function isUserMessage(message) {
+    if (!message || typeof message !== 'object') return false
+    if (message.user_type === 1 || message.user_type === '1') return true
+    if (message.user_type === 2 || message.user_type === '2') return false
+    const blocks = Array.isArray(message.content_block) ? message.content_block : []
+    return blocks.some(block => Array.isArray(block && block.content && block.content.attachment_block && block.content.attachment_block.attachments) && block.content.attachment_block.attachments.length > 0)
+  }
+
+  function isAssistantMessage(message) {
+    if (!message || typeof message !== 'object') return false
+    if (message.user_type === 2 || message.user_type === '2') return true
+    if (message.user_type === 1 || message.user_type === '1') return false
+    const ext = message.ext && typeof message.ext === 'object' ? message.ext : null
+    if (ext && (ext.bot_state || ext.agent_psm || ext.agent_name || ext.use_creation || ext.intention)) return true
+    const blocks = Array.isArray(message.content_block) ? message.content_block : []
+    return blocks.some(block => {
+      const content = block && block.content
+      return !!(content && (content.creation_block || content.code_block))
+    })
+  }
+
+  function selectTurnAssistants(list, names) {
+    const withSeq = list.map(message => ({ message, seq: messageSeq(message) }))
+    if (Array.isArray(names) && names.length >= 2) {
+      const analysis = analyzeList(list, names)
+      if (!analysis.latest || !analysis.latest.group || analysis.ambiguous || analysis.invalidSequence) return null
+      let nextUserOrder = null
+      for (const item of withSeq) {
+        if (item.seq !== null && item.seq > analysis.latest.order && isUserMessage(item.message)) {
+          if (nextUserOrder === null || item.seq < nextUserOrder) nextUserOrder = item.seq
+        }
+      }
+      return withSeq
+        .filter(item => item.seq !== null && item.seq > analysis.latest.order && (nextUserOrder === null || item.seq < nextUserOrder) && isAssistantMessage(item.message))
+        .map(item => item.message)
+    }
+    let maxUserSeq = null
+    for (const item of withSeq) {
+      if (item.seq !== null && isUserMessage(item.message)) {
+        if (maxUserSeq === null || item.seq > maxUserSeq) maxUserSeq = item.seq
+      }
+    }
+    if (maxUserSeq !== null) {
+      return withSeq
+        .filter(item => item.seq !== null && item.seq > maxUserSeq && isAssistantMessage(item.message))
+        .map(item => item.message)
+    }
+    const assistants = withSeq.filter(item => isAssistantMessage(item.message))
+    if (!assistants.length) return []
+    let maxAsstSeq = null
+    for (const item of assistants) {
+      if (item.seq !== null && (maxAsstSeq === null || item.seq > maxAsstSeq)) maxAsstSeq = item.seq
+    }
+    if (maxAsstSeq !== null) {
+      return assistants.filter(item => item.seq === maxAsstSeq).map(item => item.message)
+    }
+    return [assistants[assistants.length - 1].message]
+  }
+
+  function summarizeTurnRoute(assistants) {
+    if (!Array.isArray(assistants) || !assistants.length) return null
+    let hasCreations = false
+    let hasCodeBlock = false
+    let sawCreationRoute = false
+    let sawShellRoute = false
+    let shellName = ''
+    let seenPsm = ''
+    let seenName = ''
+    const texts = []
+    for (const message of assistants) {
+      const route = parseBotState(message && message.ext)
+      const psmLower = route.agentPsm.toLowerCase()
+      if (route.agentPsm && !seenPsm) seenPsm = route.agentPsm
+      if (route.agentName && !seenName) seenName = route.agentName
+      if (psmLower === 'flow.agent.creation' || route.useCreation || route.intention === 'agent_creation') {
+        sawCreationRoute = true
+      } else if (psmLower === 'flow.agent.shell') {
+        sawShellRoute = true
+        if (route.agentName && !shellName) shellName = route.agentName
+      }
+      for (const block of Array.isArray(message && message.content_block) ? message.content_block : []) {
+        const content = block && block.content || {}
+        const creations = content.creation_block && content.creation_block.creations
+        if (Array.isArray(creations) && creations.length > 0) hasCreations = true
+        if (content.code_block) hasCodeBlock = true
+        const text = content.text_block && typeof content.text_block.text === 'string'
+          ? content.text_block.text.replace(/\s+/g, ' ').trim()
+          : ''
+        if (text) texts.push(text)
+      }
+    }
+    const textPreview = texts.join(' ').slice(0, 120)
+    if (hasCreations || sawCreationRoute) {
+      return { degraded: false, agentPsm: 'flow.agent.creation', agentName: 'Agent-Creation', hasCreations, hasCodeBlock, textPreview }
+    }
+    if (sawShellRoute) {
+      return { degraded: true, agentPsm: 'flow.agent.shell', agentName: shellName || '豆包', hasCreations: false, hasCodeBlock, textPreview }
+    }
+    return { degraded: false, agentPsm: seenPsm, agentName: seenName, hasCreations: false, hasCodeBlock, textPreview }
+  }
+
+  // 检查豆包当前回合是否被服务端静默改道至纯文本代理 flow.agent.shell（剥夺生图 Agent-Creation 路由）。
+  function inspectRoute(state, names) {
+    const lists = collectLists(state)
+    if (!lists || !lists.length) return null
+    const multi = Array.isArray(names) && names.length >= 2
+    const summaries = []
+    for (const list of lists) {
+      const assistants = selectTurnAssistants(list, names)
+      if (assistants === null) continue
+      const summary = summarizeTurnRoute(assistants)
+      if (summary) summaries.push(summary)
+    }
+    if (multi) return summaries.length === 1 ? summaries[0] : null
+    if (!summaries.length) return null
+    if (summaries.length > 1) {
+      const first = summaries[0]
+      if (summaries.some(item => item.degraded !== first.degraded || item.agentPsm !== first.agentPsm)) return null
+    }
+    return summaries[0]
+  }
+
+  async function inspectRouteFromConversation(conversation, names) {
+    const href = validConversationURL(conversation)
+    if (!href) return null
+    const state = await readConversation(href)
+    return state ? inspectRoute(state, names) : null
+  }
+
+  globalThis.TULAIDoubaoSourceMap = { match, resolve, recover, parse, fromConversation, resolveFromConversation, recoverFromConversation, resolveFromSSE, recoverFromSSE, inspectRoute, inspectRouteFromConversation }
 })()

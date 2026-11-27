@@ -94,12 +94,17 @@ func (b Browser) QuotaExpired(now time.Time) bool {
 	return b.CreditsSyncedAt > 0 && b.CreditsResetAt > 0 && !now.Before(time.Unix(b.CreditsResetAt, 0))
 }
 
+// quotaCreditsInsufficient 报告已同步积分余额是否已归零或不足以生成 1 张图。
+func quotaCreditsInsufficient(remain, cost int) bool {
+	return remain == 0 || (remain > 0 && cost > 1 && remain < cost)
+}
+
 // QuotaExhausted 报告已同步且未过刷新时间的平台额度是否已耗尽或被限额。
 func (b Browser) QuotaExhausted(now time.Time) bool {
 	if !b.QuotaSynced() || b.QuotaExpired(now) {
 		return false
 	}
-	return b.CreditsRemain == 0 || b.PlatformLimited
+	return quotaCreditsInsufficient(b.CreditsRemain, b.CreditCost) || b.PlatformLimited
 }
 
 // Quota 返回账号的平台额度快照。未同步时 CreditsRemain 和 UsagePercent 返回 -1。
@@ -183,6 +188,7 @@ var defaults = map[string]string{
 	"daily_cap_qianwen":       "100",
 	"daily_cap_qwen_intl":     "100",
 	"daily_cap_gemini":        "100",
+	"daily_cap_jimeng":        "100",
 	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
 	"dot_matrix_effect":       "grain",
 	"auto_delete_history":     "0",
@@ -708,7 +714,7 @@ func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
 }
 
 func (s *Store) AddManagedBrowser(platform, name, dataDir, engine string) (Browser, error) {
-	if engine != "" && (engine != EngineFingerprint || (platform != "千问" && platform != "千问国际" && platform != "豆包" && platform != "Gemini")) {
+	if engine != "" && (engine != EngineFingerprint || (platform != "千问" && platform != "千问国际" && platform != "豆包" && platform != "Gemini" && platform != "即梦")) {
 		return Browser{}, fmt.Errorf("服务商 %s 不支持浏览器 %s", platform, engine)
 	}
 	s.mu.Lock()
@@ -975,6 +981,9 @@ func quotaHold(health, last string) bool {
 	if loginHold(health, last) {
 		return false
 	}
+	if strings.TrimSpace(last) == "" {
+		return health == HealthExhausted
+	}
 	lower := strings.ToLower(last)
 	if strings.Contains(last, "积分") || strings.Contains(last, "额度") || strings.Contains(last, "上限") ||
 		strings.Contains(last, "限额") || strings.Contains(lower, "quota") || strings.Contains(lower, "limit") {
@@ -1020,8 +1029,9 @@ func (s *Store) UpdateBrowserQuota(id int64, q AccountQuota) error {
 		}
 		return err
 	}
-	shouldRecover := quotaHold(health, last) && ((q.CreditsRemain > 0) || (q.CreditsRemain < 0 && !q.PlatformLimited && usagePct >= 0 && usagePct < 100))
-	quotaActiveExhausted := (q.CreditsRemain == 0 || q.PlatformLimited) && (q.CreditsResetAt <= 0 || q.CreditsResetAt > q.SyncedAt)
+	creditsInsufficient := quotaCreditsInsufficient(q.CreditsRemain, q.CreditCost)
+	shouldRecover := quotaHold(health, last) && ((q.CreditsRemain > 0 && !creditsInsufficient) || (q.CreditsRemain < 0 && !q.PlatformLimited && usagePct >= 0 && usagePct < 100))
+	quotaActiveExhausted := (creditsInsufficient || q.PlatformLimited) && (q.CreditsResetAt <= 0 || q.CreditsResetAt > q.SyncedAt)
 	if shouldRecover {
 		_, err := s.db.Exec(`UPDATE browsers SET
 			credits_remain=?, credits_total=?, credit_cost=?, credits_reset_at=?,

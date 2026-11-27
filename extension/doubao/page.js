@@ -590,8 +590,8 @@ globalThis.TULAIPage = (function () {
       const text = normalize(el.innerText)
       return text === '自动' || text === '自动比例'
     })
-    const pairs = items.some(function (el) { return /^\d+:\d+$/.test(normalize(el.innerText)) })
-    return auto && pairs
+    const pairCount = items.filter(function (el) { return /^\d+:\d+$/.test(normalize(el.innerText)) }).length
+    return (auto && pairCount >= 1) || pairCount >= 3
   }
 
   // 打开中的比例浮层：兼容 Radix DropdownMenu（role=menu/listbox）与 2026-11 新版 2×4 卡片 Popover（role=dialog / popover-content / popper wrapper / 浮动 div）。
@@ -762,6 +762,83 @@ globalThis.TULAIPage = (function () {
     }
     await closeRatioMenu(doc, ratioControl(doc) || control, false)
     return { error: lastError, code: 'E_SELECTOR_MISS' }
+  }
+
+  // 实时读取豆包图像生成工具栏当前网页支持的输出比例（及可选清晰度/分辨率），读取完毕自动关闭浮层。
+  async function probeOutputCaps(doc, timeoutMs) {
+    const deadline = Date.now() + (timeoutMs > 0 ? timeoutMs : 8000)
+    if (!imageModeActive(doc)) {
+      const modeRes = await ensureImageMode(doc, null, Math.max(1500, deadline - Date.now()))
+      if (!modeRes || !modeRes.ok) {
+        return { ok: false, error: (modeRes && modeRes.error) || '未进入豆包图像生成模式' }
+      }
+    }
+    let control = null
+    while (Date.now() < deadline) {
+      control = ratioControlShown(doc)
+      if (control) break
+      await new Promise(function (resolve) { setTimeout(resolve, 30) })
+    }
+    if (!control) return { ok: false, error: '未找到豆包「比例」入口' }
+    const currentRatio = isRatioAuto(control) ? '自动' : ratioValue(control)
+    if (!enabled(control)) {
+      return { ok: false, error: '豆包「比例」入口当前不可展开' }
+    }
+    let menu = ratioMenu(doc)
+    let openedByProbe = false
+    if (!menu) {
+      const openUntil = Math.min(deadline, Date.now() + 2400)
+      let lastOpen = 0
+      while (!menu && Date.now() < openUntil) {
+        const liveCtrl = ratioControl(doc)
+        if (liveCtrl) control = liveCtrl
+        if (lastOpen === 0 || Date.now() - lastOpen >= 900) {
+          if (!await pressMenuControl(control)) break
+          openedByProbe = true
+          lastOpen = Date.now()
+        }
+        await new Promise(function (resolve) { setTimeout(resolve, 30) })
+        menu = ratioMenu(doc)
+      }
+    }
+    if (!menu) {
+      return { ok: false, error: '豆包「比例」菜单未出现' }
+    }
+    await new Promise(function (resolve) { setTimeout(resolve, 30) })
+    const items = ratioMenuItems(menu)
+    let supportsAuto = false
+    let autoValue = ''
+    let autoLabel = ''
+    const ratios = []
+    const seen = {}
+    for (let i = 0; i < items.length; i++) {
+      const text = normalize(items[i].innerText)
+      if (text === '自动' || text === '自动比例') {
+        supportsAuto = true
+        autoValue = '自动'
+        autoLabel = text
+      } else if (/^\d+:\d+$/.test(text) && !seen[text]) {
+        seen[text] = true
+        ratios.push(text)
+      }
+    }
+    if (openedByProbe) {
+      await closeRatioMenu(doc, ratioControl(doc) || control, false)
+    }
+    if (!ratios.length) {
+      return { ok: false, error: '未从豆包「比例」菜单读到可选比例' }
+    }
+    return {
+      ok: true,
+      platform: '豆包',
+      supportsAuto: supportsAuto,
+      autoValue: autoValue,
+      autoLabel: autoLabel,
+      ratios: ratios,
+      currentRatio: currentRatio,
+      defaultRatio: supportsAuto ? '' : (ratios.indexOf('1:1') >= 0 ? '1:1' : ratios[0]),
+      resolutions: [],
+    }
   }
 
   function fileInputs(scope) {
@@ -2335,6 +2412,7 @@ globalThis.TULAIPage = (function () {
     ratioControl,
     ratioValue,
     setOutputRatio,
+    probeOutputCaps,
     unsentBlocksUpload,
     sendButton,
     activate,

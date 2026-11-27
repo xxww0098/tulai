@@ -4,7 +4,7 @@
 
 ## 技术栈与运行环境
 
-- **后端与桌面壳**：Go `1.27.3`（`CGO_ENABLED=0`，见 [go.mod](go.mod)）+ [MyGo](https://mygo.run) `v0.10.0` WebView 框架（`go tool mygo`，配置在 [mygo.json](mygo.json)）+ 纯 Go SQLite（`modernc.org/sqlite`）。
+- **后端与桌面壳**：Go `1.27.4`（`CGO_ENABLED=0`，见 [go.mod](go.mod)）+ [MyGo](https://mygo.run) `v0.10.0` WebView 框架（`go tool mygo`，配置在 [mygo.json](mygo.json)）+ 纯 Go SQLite（`modernc.org/sqlite`）。
 - **前端**：React 19 + Vite 6 + Tailwind CSS v4 + TypeScript 5（strict）+ Zustand + Radix UI + Vitest，包管理与脚本运行使用 `Bun`（见 [frontend/package.json](frontend/package.json)）。
 - **受管浏览器**：项目管理的 `Fingerprint`（基于 `adryfish/fingerprint-chromium` + 内置 Node/Playwright 私有 CDP 管道与隔离世界页面桥，同时承载网页账号与下载专用环境）。
 - **本地数据目录**：Windows 为 `%APPDATA%\tulai\`，macOS 为 `~/Library/Application Support/tulai/`，Linux 普通二进制为当前工作目录。Windows / macOS 的源码开发版与安装版共用应用数据目录，切勿在两个进程中同时打开同一账号资料目录。
@@ -33,14 +33,14 @@ go tool mygo dev
 
 ### 常用验证命令
 
-图来引用相邻 RealBrowser 项目的 `../realbrowser/browserkernel` 独立 Go 模块。内核版本、下载、安装、进程托管和指纹数据格式由 RealBrowser 维护。
+图来通过 `go.mod` 直接依赖 RealBrowser 维护的公开指纹核心模块 `github.com/xxww0098/realbrowser/fingerprintkernel`（升级依赖运行 `go get github.com/xxww0098/realbrowser/fingerprintkernel`），无需额外检出相邻仓库或配置 `go.work`；本地与相邻源码联调时可按需使用临时 `go work`。浏览器版本、下载、安装、进程托管和指纹数据格式由该模块统一管理。
 
 ```bash
 # Go 静态检查、构建与短测试（带竞态检测）
 go vet ./...
 go build ./cmd/...
 go test -short -race ./...
-go -C ../realbrowser/browserkernel test -race ./...
+go test -race github.com/xxww0098/realbrowser/fingerprintkernel/...
 
 # 重新生成 MyGo TypeScript 绑定并校验无漂移
 go tool mygo generate && git diff --exit-code frontend/src/mygo.ts
@@ -60,7 +60,7 @@ python3 -m unittest discover -s scripts -p '*_test.py'
 
 # 受管浏览器驱动与指纹策略单测
 npm ci --prefix internal/fingerprint/driver --ignore-scripts --omit=dev --no-audit --no-fund
-node --test ../realbrowser/browserkernel/downloader/*.test.mjs internal/fingerprint/driver/*.test.mjs
+node --test internal/fingerprint/driver/*.test.mjs
 
 # 内置页面脚本与下载助手测试
 for f in $(find extension -name '*_test.js' | LC_ALL=C sort); do node "$f"; done
@@ -131,4 +131,4 @@ Windows x64 打包使用 [build-windows.cmd](build-windows.cmd)（会先执行 `
 - **任务提交边界安全**：修改任务执行、重试或会话恢复逻辑时遵守 [docs/CORE_FLOW.md](docs/CORE_FLOW.md)，发送状态未确认（`E_SEND_UNCERTAIN` / `需核对`）绝不静默自动重发。
 - **改动 Go 或 IPC**：必须通过 `go vet ./...`、`go test -short -race ./...`；改动 `internal/ui/bridge_*.go` 或 `internal/ui/host.go` 后必须执行 `go tool mygo generate && git diff --exit-code frontend/src/mygo.ts`。
 - **改动前端**：必须通过 `bun run --cwd frontend typecheck` 与 `bun run --cwd frontend test`；涉及样式、资源或打包配置时加跑 `bun run --cwd frontend build`。
-- **改动扩展、驱动或发布脚本**：补跑对应专项测试（`find extension -name '*_test.js'` 全量用例、`node --test ../realbrowser/browserkernel/downloader/*.test.mjs internal/fingerprint/driver/*.test.mjs`、`bash scripts/check-release-ci.test.sh`、`python3 -m unittest discover -s scripts -p '*_test.py'`）。
+- **改动扩展、驱动或发布脚本**：补跑对应专项测试（`find extension -name '*_test.js'` 全量用例、`node --test internal/fingerprint/driver/*.test.mjs`、`bash scripts/check-release-ci.test.sh`、`python3 -m unittest discover -s scripts -p '*_test.py'`）。

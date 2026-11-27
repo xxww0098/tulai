@@ -2,13 +2,16 @@ package ui
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	"github.com/xxww0098/realbrowser/fingerprintkernel/engine"
+	"github.com/xxww0098/realbrowser/fingerprintkernel/profile"
 
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/cdp"
@@ -18,7 +21,19 @@ import (
 // BrowserService exposes account browser management, runtime installation,
 // and interactive CDP browser drawer IPCs.
 type BrowserService struct {
-	app *App
+	app           *App
+	checkedUpdate atomic.Pointer[checkedRuntimeUpdate]
+}
+
+type checkedRuntimeUpdate struct {
+	id      string
+	release *engine.ReleaseInfo
+}
+
+// BrowserRuntimeUpdateDTO identifies the exact release offered for confirmation.
+type BrowserRuntimeUpdateDTO struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
 }
 
 // BrowserRowDTO describes a single managed provider account row.
@@ -97,6 +112,8 @@ type BrowserStateDTO struct {
 	QianwenConcurrencyMax  int                 `json:"qianwenConcurrencyMax"`
 	GeminiConcurrencyAuto  bool                `json:"geminiConcurrencyAuto"`
 	GeminiConcurrencyMax   int                 `json:"geminiConcurrencyMax"`
+	JimengConcurrencyAuto  bool                `json:"jimengConcurrencyAuto"`
+	JimengConcurrencyMax   int                 `json:"jimengConcurrencyMax"`
 }
 
 // SharedExitHintDTO describes a same-platform shared-exit warning in the account pool.
@@ -150,7 +167,7 @@ func (a *App) buildBrowserState() BrowserStateDTO {
 		selectedID = a.browserRows[a.browserSel].ID
 	}
 	for _, b := range a.browserRows {
-		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" && b.Platform != "Gemini" {
+		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" && b.Platform != "Gemini" && b.Platform != "即梦" {
 			continue
 		}
 		if a.manager != nil {
@@ -164,7 +181,7 @@ func (a *App) buildBrowserState() BrowserStateDTO {
 			tone = "success"
 		case "未登录", "冷却中", "需要人工验证":
 			tone = "warning"
-		case "已禁用", "已用尽":
+		case "已禁用", "已用尽", "生图受限":
 			tone = "danger"
 		}
 		lastErr := b.LastError
@@ -260,6 +277,8 @@ func (a *App) buildBrowserState() BrowserStateDTO {
 		QianwenConcurrencyMax:  a.concurrencyMaxFor("千问"),
 		GeminiConcurrencyAuto:  a.concurrencyAutoFor("Gemini"),
 		GeminiConcurrencyMax:   a.concurrencyMaxFor("Gemini"),
+		JimengConcurrencyAuto:  a.concurrencyAutoFor("即梦"),
+		JimengConcurrencyMax:   a.concurrencyMaxFor("即梦"),
 	}
 }
 
@@ -279,7 +298,7 @@ func (a *App) loadDismissedSharedExitHints(s *store.Store) {
 	for platform, msg := range parsed {
 		platform = strings.TrimSpace(platform)
 		msg = strings.TrimSpace(msg)
-		if (platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini") && msg != "" {
+		if (platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini" || platform == "即梦") && msg != "" {
 			a.dismissedSharedExitHints[platform] = msg
 		}
 	}
@@ -307,7 +326,7 @@ func (a *App) dismissSharedExitHints(platforms []string) {
 	changed := false
 	for _, raw := range platforms {
 		platform := strings.TrimSpace(raw)
-		if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "Gemini" {
+		if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "Gemini" && platform != "即梦" {
 			continue
 		}
 		msg := a.platformSharedExitHint(a.browserRows, platform)
@@ -331,7 +350,7 @@ func (a *App) dismissSharedExitHints(platforms []string) {
 
 func (a *App) sharedExitHints(accounts []store.Browser) []SharedExitHintDTO {
 	hints := []SharedExitHintDTO{}
-	for _, platform := range []string{"豆包", "千问", "千问国际", "Gemini"} {
+	for _, platform := range []string{"豆包", "千问", "千问国际", "Gemini", "即梦"} {
 		msg := a.platformSharedExitHint(accounts, platform)
 		if msg == "" {
 			continue
@@ -394,9 +413,36 @@ func (s *BrowserService) CheckBrowserRuntimeUpdate(ctx context.Context) (string,
 	return browser.CheckRuntimeUpdate(ctx, browser.ConfigDir())
 }
 
+// PreviewBrowserRuntimeUpdate checks for a newer release without downloading it.
+func (s *BrowserService) PreviewBrowserRuntimeUpdate(ctx context.Context) (BrowserRuntimeUpdateDTO, error) {
+	rel, err := browser.AvailableRuntimeUpdate(ctx, browser.ConfigDir())
+	if err != nil {
+		return BrowserRuntimeUpdateDTO{}, err
+	}
+	if rel == nil {
+		s.checkedUpdate.Store(nil)
+		return BrowserRuntimeUpdateDTO{}, nil
+	}
+	selected := &checkedRuntimeUpdate{id: rand.Text(), release: rel}
+	s.checkedUpdate.Store(selected)
+	return BrowserRuntimeUpdateDTO{ID: selected.id, Version: rel.TagName}, nil
+}
+
+// ApplyBrowserRuntimeUpdate installs the release from the matching preview.
+func (s *BrowserService) ApplyBrowserRuntimeUpdate(ctx context.Context, id string) error {
+	selected := s.checkedUpdate.Load()
+	if selected == nil || selected.id != id {
+		return fmt.Errorf("内核更新信息已变化，请重新检查")
+	}
+	if s.app == nil {
+		return fmt.Errorf("应用尚未就绪")
+	}
+	return s.app.call(ctx, func() { s.app.prepareBrowserRuntime(true, selected.release) })
+}
+
 func (s *BrowserService) UpdateBrowserRuntime(ctx context.Context) {
 	if s.app != nil {
-		_ = s.app.call(ctx, func() { s.app.prepareBrowserRuntime(true) })
+		_ = s.app.call(ctx, func() { s.app.prepareBrowserRuntime(true, nil) })
 	}
 }
 
@@ -702,6 +748,56 @@ func (s *BrowserService) StopSyncGeminiStatus(ctx context.Context) {
 	})
 }
 
+// SyncJimengStatus fetches real-time Jimeng credits, membership tier, and username.
+// When ids is empty, all Jimeng accounts are synced.
+func (s *BrowserService) SyncJimengStatus(ctx context.Context, ids []int64) error {
+	if s.app == nil {
+		return nil
+	}
+	err, callErr := callValue(s.app, ctx, func() error {
+		return s.app.syncJimengStatus(ids)
+	})
+	if callErr != nil {
+		return callErr
+	}
+	return err
+}
+
+// StopSyncJimengStatus cancels an in-progress batch Jimeng status sync.
+func (s *BrowserService) StopSyncJimengStatus(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.stopSyncJimengStatus()
+	})
+}
+
+// ProbeDoubaoImageCapability runs an explicit, manual image-generation capability probe
+// for one or more Doubao accounts (or all Doubao accounts when ids is empty).
+func (s *BrowserService) ProbeDoubaoImageCapability(ctx context.Context, ids []int64) error {
+	if s.app == nil {
+		return fmt.Errorf("应用尚未就绪")
+	}
+	var err error
+	if callErr := s.app.call(ctx, func() {
+		err = s.app.probeDoubaoImageCapability(ids)
+	}); callErr != nil {
+		return callErr
+	}
+	return err
+}
+
+// StopProbeDoubaoImageCapability cancels an in-progress Doubao image capability probe.
+func (s *BrowserService) StopProbeDoubaoImageCapability(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.stopProbeDoubaoImageCapability()
+	})
+}
+
 // CommitBrowserRename renames an account browser row.
 func (s *BrowserService) CommitBrowserRename(ctx context.Context, id int64, newName string) {
 	if s.app == nil {
@@ -757,11 +853,8 @@ func (s *BrowserService) withAccountProfile(ctx context.Context, id int64, creat
 func (s *BrowserService) GetAccountFingerprint(ctx context.Context, id int64) (BrowserFingerprintDTO, error) {
 	var prefs BrowserFingerprintDTO
 	err := s.withAccountProfile(ctx, id, false, func(dir string) error {
-		f, err := browserkernel.ReadProfile(dir)
-		prefs = BrowserFingerprintDTO{
-			Lang: f.Lang, Timezone: f.Timezone, WindowWidth: f.WindowWidth,
-			WindowHeight: f.WindowHeight, ColorScheme: string(f.ColorScheme),
-		}
+		saved, err := profile.ReadDisplayPreferences(dir)
+		prefs = BrowserFingerprintDTO(saved)
 		return err
 	})
 	return prefs, err
@@ -769,15 +862,7 @@ func (s *BrowserService) GetAccountFingerprint(ctx context.Context, id int64) (B
 
 func (s *BrowserService) SaveAccountFingerprint(ctx context.Context, id int64, prefs BrowserFingerprintDTO) error {
 	return s.withAccountProfile(ctx, id, true, func(dir string) error {
-		f, err := browserkernel.ReadProfile(dir)
-		if err != nil {
-			return err
-		}
-		f.Lang = strings.TrimSpace(prefs.Lang)
-		f.Timezone = strings.TrimSpace(prefs.Timezone)
-		f.WindowWidth, f.WindowHeight = prefs.WindowWidth, prefs.WindowHeight
-		f.ColorScheme = browserkernel.ColorSchemeMode(prefs.ColorScheme)
-		return browserkernel.WriteProfile(dir, f)
+		return profile.DisplayPreferences(prefs).Save(ctx, dir)
 	})
 }
 

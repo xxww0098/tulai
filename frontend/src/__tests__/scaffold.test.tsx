@@ -159,6 +159,7 @@ describe("App shell contracts", () => {
     expect(screen.getByTestId("nav-platform-qianwen")).toBeInTheDocument();
     expect(screen.getByTestId("nav-platform-qwen_intl")).toBeInTheDocument();
     expect(screen.getByTestId("nav-platform-gemini")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-platform-jimeng")).toBeInTheDocument();
   });
 
   it("shows running pill and hides pool pill on utility pages without workbench topbar", () => {

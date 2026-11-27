@@ -267,3 +267,58 @@ func TestDoubaoQuotaStopDoesNotCancelOtherPlatform(t *testing.T) {
 		t.Fatalf("豆包失败=%d、未完成=%d，千问成功=%d", failed, stopped, succeeded)
 	}
 }
+
+func TestDoubaoDegradedStopsRemainingWashInsteadOfWaitingMidnight(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	first := addNamed(t, st, "豆包", "用户153373")
+	second := addNamed(t, st, "豆包", "用户923101")
+	st.ConfirmLogin(first.ID)
+	st.ConfirmLogin(second.ID)
+	e := NewEngine(st, nil, nil, "")
+	defer e.CloseSessions()
+	e.gap = func(time.Duration) time.Duration { return 0 }
+
+	var sources []string
+	for i := 1; i <= 25; i++ {
+		sources = append(sources, fmt.Sprintf("%02d.png", i))
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- e.RunObserved(context.Background(), Options{
+			Platforms: []string{"豆包"}, Prompts: []string{"洗图"}, Images: sources,
+			Wash: true, WaitResult: true, Concurrency: 2, DailyCap: 100,
+		}, func(Task) {}, func(Progress) {}, func(_ context.Context, task *Task) error {
+			task.submitted = true
+			return fmt.Errorf("%w（flow.agent.shell）", strategy.ErrAccountImageDegraded)
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("所有豆包账号均降级纯文本后，剩余任务应自动停止而不是挂起等待次日")
+	}
+	var failed, stopped int
+	for _, task := range e.View().Snapshot() {
+		switch task.Status {
+		case StatusFailed:
+			failed++
+		case StatusSkipped:
+			stopped++
+			if !task.Undispatched || !strings.Contains(task.Error, "生图能力受限") {
+				t.Fatalf("未派发任务应标明生图能力受限停止原因: %+v", task)
+			}
+		default:
+			t.Fatalf("意外任务状态: %+v", task)
+		}
+	}
+	if failed != 20 || stopped != 5 {
+		t.Fatalf("统计不正确: failed=%d stopped=%d", failed, stopped)
+	}
+}

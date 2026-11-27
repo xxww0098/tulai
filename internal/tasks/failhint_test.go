@@ -24,6 +24,7 @@ func TestClassifyFailure(t *testing.T) {
 		{StatusFailed, "登录已失效", FailAuth, "去重登"},
 		{StatusFailed, "千问页面未登录，请在扩展打开的网页登录后再开始任务", FailAuth, "去重登"},
 		{StatusFailed, "账号额度已用尽", FailQuota, "换账号重试"},
+		{StatusFailed, strategy.ErrAccountImageDegraded.Error() + "（flow.agent.shell）", FailQuota, "换账号重试"},
 		{StatusFailed, "平台回复异常：本次生成使用了会员专属功能，开通后立即可用", FailQuota, "换账号重试"},
 		{StatusFailed, "今日已达上限", FailQuota, "换账号重试"},
 		{StatusFailed, "请求过于频繁", FailQuota, "换账号重试"},

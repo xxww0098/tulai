@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xxww0098/realbrowser/browserkernel"
+	fpprofile "github.com/xxww0098/realbrowser/fingerprintkernel/profile"
 )
 
 func TestManagedFingerprintAppliesEditedPreferences(t *testing.T) {
@@ -21,8 +21,8 @@ func TestManagedFingerprintAppliesEditedPreferences(t *testing.T) {
 		t.Fatal("incomplete test runtime")
 	}
 	profile := t.TempDir()
-	settings := browserkernel.FingerprintSpec{Lang: "en-GB", Timezone: "Europe/London", WindowWidth: 640, WindowHeight: 480, ColorScheme: browserkernel.ColorSchemeDark}
-	if err := browserkernel.WriteProfile(profile, settings); err != nil {
+	settings := fpprofile.FingerprintSpec{Lang: "en-GB", Timezone: "Europe/London", WindowWidth: 640, WindowHeight: 480, ColorScheme: fpprofile.ColorSchemeDark}
+	if err := fpprofile.WriteProfile(profile, settings); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("DEBUG", "pw:browser")
