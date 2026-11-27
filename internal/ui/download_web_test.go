@@ -303,21 +303,37 @@ func TestDownloadPageBatchTracksRealTimeBytesAndSpeed(t *testing.T) {
 	raw := imageData.Bytes()
 	payload := append(append([]byte(nil), raw...), bytes.Repeat([]byte{0x00}, 32*1024)...)
 
+	releaseFinal := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFinal) }) }
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/gallery" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			fmt.Fprint(w, `<title>速率测试相册</title><img src="/1.png"><img src="/2.png"><img src="/3.png"><img src="/4.png">`)
 			return
 		}
-		time.Sleep(60 * time.Millisecond)
+		if r.URL.Path == "/4.png" {
+			select {
+			case <-releaseFinal:
+			case <-r.Context().Done():
+				return
+			case <-time.After(4 * time.Second):
+			}
+		} else {
+			time.Sleep(70 * time.Millisecond)
+		}
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(payload)
 	}))
-	defer server.Close()
+	defer func() {
+		release()
+		server.Close()
+	}()
 
 	a, _ := newDownloadApp(t)
 	a.dlDir = t.TempDir()
-	a.downloadConc = 1 // serialize image downloads so duration > 240ms and speed samples fire reliably
+	a.downloadConc = 1 // serialize image downloads so duration > 140ms and speed samples fire reliably
 	a.BindHost(&recordingDownloadHost{})
 	a.StartActor()
 	defer a.StopActor()
@@ -337,11 +353,15 @@ func TestDownloadPageBatchTracksRealTimeBytesAndSpeed(t *testing.T) {
 		if len(state.Tasks) == 1 && state.Tasks[0].Written > 0 && state.Tasks[0].Phase == "下载中" {
 			sawLiveWritten = true
 		}
+		if sawLiveSpeed && sawLiveWritten {
+			release()
+		}
 		if state.CountDone == 1 {
 			break
 		}
 		time.Sleep(15 * time.Millisecond)
 	}
+	release()
 	svc.SetDownloadFilter(ctx, dlFilterDone)
 	state := svc.GetDownloadState(ctx)
 	if len(state.Tasks) != 1 || state.Tasks[0].Phase != "已完成" {

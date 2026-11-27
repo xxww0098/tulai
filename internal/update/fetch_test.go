@@ -28,11 +28,11 @@ func TestMirrorFallbackAndChecksum(t *testing.T) {
 	sumsText := sumHex + "  tulai-0.2.0-linux-amd64.tar.gz\n"
 	sumsSum := sha256.Sum256([]byte(sumsText))
 
-	var mirrorHits int
+	var mirrorHits atomic.Int64
 	var primary *httptest.Server
 	var mirror *httptest.Server
 	mirror = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mirrorHits++
+		mirrorHits.Add(1)
 		if !strings.Contains(r.URL.RequestURI(), "/asset") {
 			http.NotFound(w, r)
 			return
@@ -74,7 +74,7 @@ func TestMirrorFallbackAndChecksum(t *testing.T) {
 	if err != nil || string(body) != string(payload) {
 		t.Fatalf("body %q err %v", body, err)
 	}
-	if mirrorHits == 0 {
+	if mirrorHits.Load() == 0 {
 		t.Fatal("mirror was not used")
 	}
 }
@@ -85,10 +85,10 @@ func TestChecksumMismatchTriesMirror(t *testing.T) {
 	sumHex := hex.EncodeToString(sum[:])
 	sumsText := sumHex + "  tulai-0.2.0-linux-amd64.tar.gz\n"
 	sumsSum := sha256.Sum256([]byte(sumsText))
-	var mirrorHits int
+	var mirrorHits atomic.Int64
 	var primary *httptest.Server
 	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mirrorHits++
+		mirrorHits.Add(1)
 		w.Write(good)
 	}))
 	defer mirror.Close()
@@ -124,7 +124,7 @@ func TestChecksumMismatchTriesMirror(t *testing.T) {
 	if err != nil || string(body) != string(good) {
 		t.Fatalf("body %q err %v", body, err)
 	}
-	if mirrorHits == 0 {
+	if mirrorHits.Load() == 0 {
 		t.Fatal("checksum miss did not fall through to the mirror")
 	}
 }
