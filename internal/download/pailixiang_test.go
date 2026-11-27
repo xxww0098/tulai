@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 func TestPailixiangRouteAndImage(t *testing.T) {
@@ -244,7 +243,7 @@ post('AlbumGetView',{ID:'123'}); const list=(n)=>post('AlbumSearchPhoto',{AlbumI
 	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.run(ctx, fingerprint.Navigate(page.String()), chromedp.Sleep(500*time.Millisecond), chromedp.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
+	if err := s.run(ctx, fingerprint.Navigate(page.String()), fingerprint.Sleep(500*time.Millisecond), fingerprint.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	started.Store(true)
@@ -260,16 +259,16 @@ post('AlbumGetView',{ID:'123'}); const list=(n)=>post('AlbumSearchPhoto',{AlbumI
 		t.Fatalf("cookie leaks=%d pages=%d", leaks.Load(), pages.Load())
 	}
 	var location, cookie string
-	if err := s.run(ctx, chromedp.Location(&location), chromedp.Evaluate(`document.cookie`, &cookie)); err != nil || location != page.String() || !strings.Contains(cookie, "synthetic") {
+	if err := s.run(ctx, fingerprint.Location(&location), fingerprint.Evaluate(`document.cookie`, &cookie)); err != nil || location != page.String() || !strings.Contains(cookie, "synthetic") {
 		t.Fatalf("original tab changed: %q err=%v", location, err)
 	}
-	if err := s.run(ctx, chromedp.Evaluate(`document.querySelectorAll('li.nav_item')[0].classList.remove('active');document.querySelectorAll('li.nav_item')[1].classList.add('active')`, nil)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(`document.querySelectorAll('li.nav_item')[0].classList.remove('active');document.querySelectorAll('li.nav_item')[1].classList.add('active')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	if found, matched, err := s.capturePailixiang(ctx, page, page.String()); !matched || err == nil || len(found.Items) != 0 {
 		t.Fatalf("selected other tab: matched=%v count=%d err=%v", matched, len(found.Items), err)
 	}
-	if err := s.run(ctx, chromedp.Evaluate(`document.querySelectorAll('li.nav_item')[1].classList.remove('active');document.querySelectorAll('li.nav_item')[0].classList.add('active')`, nil)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(`document.querySelectorAll('li.nav_item')[1].classList.remove('active');document.querySelectorAll('li.nav_item')[0].classList.add('active')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	mode.Store(1)
@@ -339,7 +338,7 @@ func TestPailixiangPublicLive(t *testing.T) {
 	}
 	defer s.Close()
 	page, _ := url.Parse(raw)
-	if err := s.run(ctx, chromedp.Sleep(5*time.Second)); err != nil {
+	if err := s.run(ctx, fingerprint.Sleep(5*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if !isPailixiangPage(page) {

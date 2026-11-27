@@ -18,7 +18,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const (
@@ -307,7 +306,7 @@ func TestYouzanRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(youzanTestM)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithURL("https://shop192169.m.youzan.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

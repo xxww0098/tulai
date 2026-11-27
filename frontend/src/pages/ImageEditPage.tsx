@@ -804,9 +804,10 @@ export function ImageEditPage() {
         }
       />
 
-      {/* 批量精修工作区：左侧命令面板 / 右侧上方精修画布或网格批览 + 底部图片左右轮播 */}
-      <div className="flex min-h-0 flex-1 flex-row gap-3 px-3 pb-3">
-        <ImageEditInspector
+      {/* 批量精修工作区：上方左侧命令面板 + 右侧精修画布或网格批览 / 底部全宽图片左右轮播 */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 px-3 pb-3">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-row gap-3">
+          <ImageEditInspector
           st={st}
           liveAdjust={liveAdjust}
           onSetField={(field, value) =>
@@ -860,7 +861,7 @@ export function ImageEditPage() {
 
         <div
           data-testid="edit-workspace-main"
-          className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
         >
           {isGridMode ? (
           <div key="grid" className="animate-tulai-panel-in flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1064,34 +1065,36 @@ export function ImageEditPage() {
           </section>
         )}
 
-          <ImageEditFilmstrip
-            compact={compactFilm}
-            onToggleCompact={() => setFilmstripCompact((v) => !v)}
-            viewMode={isGridMode ? "grid" : "darkroom"}
-            onViewModeChange={(mode) => {
-              clearHoverPreview();
-              setViewMode(files.length === 0 ? "darkroom" : mode);
-            }}
-            files={files}
-            selectedIndex={st.selected}
-            pickedCount={st.pickedCount}
-            failCount={st.failCount}
-            customCropCount={st.customCropCount}
-            running={Boolean(st.running)}
-            onSelectIndex={handleSelectIndex}
-            onTogglePick={handleTogglePick}
-            onRemoveIndex={handleRemoveIndex}
-            onSelectAllPicks={handleSelectAllPicks}
-            onInvertPicks={handleInvertPicks}
-            onPickByStatus={handlePickByStatus}
-            onClearPicks={handleClearPicks}
-            onRemovePicked={handleRemovePicked}
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            statusFilter={statusFilter}
-            onStatusFilterChange={setStatusFilter}
-          />
         </div>
+        </div>
+
+        <ImageEditFilmstrip
+          compact={compactFilm}
+          onToggleCompact={() => setFilmstripCompact((v) => !v)}
+          viewMode={isGridMode ? "grid" : "darkroom"}
+          onViewModeChange={(mode) => {
+            clearHoverPreview();
+            setViewMode(files.length === 0 ? "darkroom" : mode);
+          }}
+          files={files}
+          selectedIndex={st.selected}
+          pickedCount={st.pickedCount}
+          failCount={st.failCount}
+          customCropCount={st.customCropCount}
+          running={Boolean(st.running)}
+          onSelectIndex={handleSelectIndex}
+          onTogglePick={handleTogglePick}
+          onRemoveIndex={handleRemoveIndex}
+          onSelectAllPicks={handleSelectAllPicks}
+          onInvertPicks={handleInvertPicks}
+          onPickByStatus={handlePickByStatus}
+          onClearPicks={handleClearPicks}
+          onRemovePicked={handleRemovePicked}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          statusFilter={statusFilter}
+          onStatusFilterChange={setStatusFilter}
+        />
       </div>
 
       <ImageEditRecipeDialog

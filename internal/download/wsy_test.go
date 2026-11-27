@@ -18,7 +18,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 )
 
@@ -220,7 +219,7 @@ func TestWSYRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(wsyTestPage)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithDomain(".wsy.com").WithURL("https://www.wsy.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

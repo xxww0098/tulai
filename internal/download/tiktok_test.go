@@ -21,7 +21,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
@@ -714,7 +713,7 @@ func TestTikTokProfileRenderedCapture(t *testing.T) {
 		t.Fatalf("unexpected profile requests: %+v", requests)
 	}
 	var current string
-	if err := s.run(ctx, chromedp.Location(&current)); err != nil || current != start.String() {
+	if err := s.run(ctx, fingerprint.Location(&current)); err != nil || current != start.String() {
 		t.Fatalf("original page=%q err=%v", current, err)
 	}
 	waitClosed(4)
@@ -782,7 +781,7 @@ func TestTikTokProfileRenderedCapture(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("page change fixture did not start")
 	}
-	if err := s.run(ctx, chromedp.Evaluate(`history.replaceState({}, '', '/@bob')`, nil)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(`history.replaceState({}, '', '/@bob')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	close(releaseChange)

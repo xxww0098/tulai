@@ -123,7 +123,7 @@ func (a *App) wizardApplyChoice() {
 		return
 	}
 	if a.wizardFirst {
-		a.platDoubao, a.platQianwen, a.platQwenIntl = false, false, false
+		a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini = false, false, false, false
 	}
 	switch a.wizardChoice {
 	case "豆包":
@@ -132,6 +132,8 @@ func (a *App) wizardApplyChoice() {
 		a.platQianwen = true
 	case "千问国际":
 		a.platQwenIntl = true
+	case "Gemini":
+		a.platGemini = true
 	}
 }
 
@@ -141,6 +143,8 @@ func stageIndex(platform string) int {
 		return 1
 	case "千问国际":
 		return 2
+	case "Gemini":
+		return 3
 	default:
 		return 0
 	}
@@ -323,10 +327,34 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 			raw, probeErr := a.probeWizardLogin(ctx, ws)
 			cancel()
 			var scraped string
-			if probeErr == nil && wizardLoggedIn(raw) && a.needsAutoAccountName(account.ID, account) {
-				scraped = a.waitAccountUsername(ws, func() bool {
-					return a.wizardStale(gen, stop)
-				})
+			var qwenSt cdp.QwenStatus
+			var doubaoSt cdp.DoubaoStatus
+			var geminiSt cdp.GeminiStatus
+			if probeErr == nil && wizardLoggedIn(raw) {
+				if a.needsAutoAccountName(account.ID, account) {
+					scraped = a.waitAccountUsername(ws, func() bool {
+						return a.wizardStale(gen, stop)
+					})
+				}
+				if account.Platform == "千问" && (a.wizardProbe == nil || a.qwenStatusProbe != nil) {
+					qCtx, qCancel := context.WithTimeout(context.Background(), 6*time.Second)
+					if st, qErr := a.probeQwenStatus(qCtx, ws); qErr == nil && st.OK {
+						qwenSt = st
+					}
+					qCancel()
+				} else if account.Platform == "豆包" && (a.wizardProbe == nil || a.doubaoStatusProbe != nil) {
+					dCtx, dCancel := context.WithTimeout(context.Background(), 6*time.Second)
+					if st, dErr := a.probeDoubaoStatus(dCtx, ws); dErr == nil && st.OK {
+						doubaoSt = st
+					}
+					dCancel()
+				} else if account.Platform == "Gemini" && (a.wizardProbe == nil || a.geminiStatusProbe != nil) {
+					gCtx, gCancel := context.WithTimeout(context.Background(), 8*time.Second)
+					if st, gErr := a.probeGeminiStatus(gCtx, ws); gErr == nil && st.OK {
+						geminiSt = st
+					}
+					gCancel()
+				}
 			}
 			action := wizardPollWait
 			a.wizardUI(func() {
@@ -334,6 +362,15 @@ func (a *App) wizardLoop(gen int, stop <-chan struct{}) {
 					if renamed := a.applyAutoAccountName(account.ID, scraped); renamed != "" {
 						account.Name = renamed
 					}
+				}
+				if qwenSt.OK {
+					a.applyQwenStatus(account.ID, qwenSt)
+				}
+				if doubaoSt.OK {
+					a.applyDoubaoStatus(account.ID, doubaoSt)
+				}
+				if geminiSt.OK {
+					a.applyGeminiStatus(account.ID, geminiSt)
 				}
 				a.setLoginShot(account.ID, raw, "")
 				action = a.noteProbe(gen, raw, probeErr)

@@ -135,8 +135,9 @@ type LaneFact struct {
 	Offline      bool
 	NextReady    time.Time
 	Gap          time.Duration
-	Job          *LaneJob
-	Awaiting     bool
+	Job            *LaneJob
+	Awaiting       bool
+	QuotaExhausted bool
 }
 
 type laneClock struct {
@@ -234,6 +235,8 @@ func MapLane(f LaneFact, now time.Time) AccountLane {
 	case needsCaptcha(f, now):
 		ln.State = LaneCaptcha
 		ln.Action = "去处理"
+	case f.QuotaExhausted:
+		ln.State = LaneQuota
 	case dayFull(f, now):
 		ln.State = LaneFull
 	case f.Offline:
@@ -305,6 +308,7 @@ func AssembleCaps(rows []store.Browser, live LaneLive, caps CapFor, now time.Tim
 			ID: b.ID, Platform: b.Platform, Name: b.Name, Disabled: b.Disabled,
 			LoggedIn: b.IsLoggedIn, Health: b.Health, CoolUntil: b.CoolUntil, LastError: b.LastError,
 			UsedToday: b.UsedToday(now), SuccessToday: success, FailedToday: failed, Cap: caps.For(b.Platform), Offline: live.Offline[b.ID],
+			QuotaExhausted: b.QuotaExhausted(now),
 		}
 		if !fact.Offline && !b.Usable(now) && (strings.Contains(b.LastError, "未连接") || strings.Contains(b.LastError, "离线")) {
 			fact.Offline = true
@@ -469,7 +473,7 @@ func filterLaneRows(all []store.Browser) []store.Browser {
 	}
 	out := make([]store.Browser, 0, len(all))
 	for _, b := range all {
-		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" {
+		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" && b.Platform != "Gemini" {
 			continue
 		}
 		out = append(out, b)

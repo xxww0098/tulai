@@ -18,8 +18,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/chromedp/chromedp"
 )
 
 func TestQzoneURLCredentials(t *testing.T) {
@@ -725,7 +723,7 @@ func TestQzoneRenderedPersonalAlbum(t *testing.T) {
 		t.Fatalf("HTTP status err=%v status=%+v", err, status)
 	}
 	before := requests.Load()
-	if err := session.run(ctx, chromedp.Evaluate(`document.cookie="uin=o0000007777; Path=/; Secure"`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.cookie="uin=o0000007777; Path=/; Secure"`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	_, err = session.qzonePersonalGet(ctx, page, page.String(), "/proxy/domain/route.store.qq.com/GetRoute", url.Values{"UIN": {"123"}}, qzonePersonalIdentity{uin: "9988", gtk: gtk})

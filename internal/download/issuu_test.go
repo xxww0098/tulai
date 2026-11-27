@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 
 	"github.com/xxww0098/tulai/internal/fingerprint"
@@ -206,7 +205,7 @@ func TestIssuuRenderedCapture(t *testing.T) {
 	for {
 		var readerReady bool
 		const readerLoaded = `document.querySelector('iframe')?.contentDocument?.readyState === 'complete' && !!document.querySelector('iframe')?.contentDocument?.querySelector('section.page')`
-		if err := session.run(readerCtx, chromedp.Evaluate(readerLoaded, &readerReady)); err != nil {
+		if err := session.run(readerCtx, fingerprint.Evaluate(readerLoaded, &readerReady)); err != nil {
 			t.Fatalf("waiting for Issuu fixture reader: %v", err)
 		}
 		if readerReady {
@@ -252,7 +251,7 @@ func TestIssuuPublicLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if err := session.run(ctx, chromedp.Sleep(8*time.Second)); err != nil {
+	if err := session.run(ctx, fingerprint.Sleep(8*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

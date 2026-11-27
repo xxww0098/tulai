@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
@@ -264,7 +263,7 @@ func TestXiaomiYoupinPublicFingerprintCapture(t *testing.T) {
 	}
 	var title string
 	for i := 0; i < 30; i++ {
-		if err := session.run(ctx, chromedp.Evaluate(`document.title`, &title)); err != nil {
+		if err := session.run(ctx, fingerprint.Evaluate(`document.title`, &title)); err != nil {
 			t.Fatal(err)
 		}
 		if title != "" && title != "小米有品" {

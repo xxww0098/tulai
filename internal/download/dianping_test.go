@@ -20,7 +20,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 )
 
@@ -299,7 +298,7 @@ func TestDianpingRenderedCapture(t *testing.T) {
 	}
 	start, _ := url.Parse(dianpingTestPage)
 	session.start = start
-	if err := session.run(ctx, fingerprint.Navigate(dianpingTestPage), chromedp.Evaluate(`document.cookie="synthetic_dianping=authorized; Path=/; Secure"`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(dianpingTestPage), fingerprint.Evaluate(`document.cookie="synthetic_dianping=authorized; Path=/; Secure"`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

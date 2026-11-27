@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const (
@@ -303,7 +302,7 @@ func TestWeishangRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(weishangTestPage)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithURL(weishangTestBase).WithPath("/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

@@ -13,7 +13,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 var xiaohongshuID = regexp.MustCompile(`(?i)^[0-9a-f]{24}$`)
@@ -134,7 +133,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 	}
 	checkCurrent := func() error {
 		var currentRaw string
-		if err := s.run(ctx, chromedp.Location(&currentRaw)); err != nil {
+		if err := s.run(ctx, fingerprint.Location(&currentRaw)); err != nil {
 			return err
 		}
 		current, err := crawlURL(nil, currentRaw)
@@ -187,7 +186,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 			}
 		}
 		go func() {
-			var action chromedp.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if allowed {
 				action = fetch.ContinueRequest(paused.RequestID)
 			}
@@ -212,7 +211,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 		return result, true, errors.New("小红书主页未加载，可能需要登录或安全验证")
 	}
 	var currentRaw string
-	if err := run(ctx, chromedp.Location(&currentRaw)); err != nil {
+	if err := run(ctx, fingerprint.Location(&currentRaw)); err != nil {
 		return result, true, err
 	}
 	current, err := crawlURL(nil, currentRaw)
@@ -226,7 +225,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 	for step := 0; step <= maxXiaohongshuProfileScrolls; step++ {
 		var snapshot xiaohongshuProfileSnapshot
 		for attempt := 0; attempt < 6; attempt++ {
-			if err := run(ctx, chromedp.Evaluate(fmt.Sprintf(xiaohongshuProfileScript, currentRaw), &snapshot)); err != nil {
+			if err := run(ctx, fingerprint.Evaluate(fmt.Sprintf(xiaohongshuProfileScript, currentRaw), &snapshot)); err != nil {
 				return result, true, err
 			}
 			if snapshot.Status != "loading" {
@@ -271,7 +270,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 		if step == maxXiaohongshuProfileScrolls || len(urls) >= maxXiaohongshuProfileNotes {
 			break
 		}
-		if err := run(ctx, chromedp.Evaluate(`window.scrollBy({top:window.innerHeight,behavior:"instant"})`, nil)); err != nil {
+		if err := run(ctx, fingerprint.Evaluate(`window.scrollBy({top:window.innerHeight,behavior:"instant"})`, nil)); err != nil {
 			return result, true, err
 		}
 		if err := Wait(ctx, 500*time.Millisecond); err != nil {
@@ -305,7 +304,7 @@ func (s *RenderedSession) captureXiaohongshuProfile(ctx context.Context, page *u
 			issues = append(issues, errors.New("部分小红书笔记无法打开，可能需要登录或安全验证"))
 			continue
 		}
-		if err := run(ctx, chromedp.Location(&currentRaw)); err != nil {
+		if err := run(ctx, fingerprint.Location(&currentRaw)); err != nil {
 			return result, true, err
 		}
 		current, err := crawlURL(nil, currentRaw)
@@ -414,7 +413,7 @@ func (s *RenderedSession) captureXiaohongshuNote(ctx context.Context, page *url.
 func xiaohongshuReadNote(ctx context.Context, run func(context.Context, ...fingerprint.Action) error, observedURL, id string) (xiaohongshuSnapshot, error) {
 	var snapshot xiaohongshuSnapshot
 	for attempt := 0; attempt < 6; attempt++ {
-		if err := run(ctx, chromedp.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, observedURL, id), &snapshot)); err != nil {
+		if err := run(ctx, fingerprint.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, observedURL, id), &snapshot)); err != nil {
 			return snapshot, err
 		}
 		if snapshot.Status != "loading" {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 var (
@@ -260,7 +260,7 @@ func ymatouCapture(ctx context.Context, session *RenderedSession, page *url.URL)
 	var state ymatouState
 	for attempt := 0; attempt < 16; attempt++ {
 		state = ymatouState{}
-		if err := session.run(ctx, chromedp.Evaluate(ymatouStateScript, &state)); err != nil {
+		if err := session.run(ctx, fingerprint.Evaluate(ymatouStateScript, &state)); err != nil {
 			return result, fmt.Errorf("读取洋码头商品页面: %w", err)
 		}
 		current, err := crawlURL(nil, state.Location)

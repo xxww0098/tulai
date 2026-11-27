@@ -152,10 +152,9 @@ func (e *Engine) Retry(ctx context.Context, opts Options, failed []Task, onTask 
 func (e *Engine) retry(ctx context.Context, opts Options, failed []Task, onTask func(Task), onProgress func(Progress), attempt func(context.Context, *Task) error) error {
 	for _, task := range failed {
 		if supportsOutputSize(task.Platform) {
-			if err := opts.OutputSize.Validate(); err != nil {
+			if err := opts.OutputSize.ValidateFor(task.Platform); err != nil {
 				return fmt.Errorf("%s输出尺寸: %w", task.Platform, err)
 			}
-			break
 		}
 	}
 	e.mu.Lock()
@@ -207,10 +206,9 @@ func (e *Engine) run(ctx context.Context, opts Options, onTask func(Task), onPro
 	}
 	for _, platform := range opts.Platforms {
 		if supportsOutputSize(platform) {
-			if err := opts.OutputSize.Validate(); err != nil {
+			if err := opts.OutputSize.ValidateFor(platform); err != nil {
 				return fmt.Errorf("%s输出尺寸: %w", platform, err)
 			}
-			break
 		}
 	}
 	e.mu.Lock()
@@ -1120,7 +1118,7 @@ func (e *Engine) resultWait() time.Duration {
 
 func (e *Engine) resultWaitFor(t *Task) time.Duration {
 	d := e.resultWait()
-	if t != nil && (t.Platform == "千问" || t.Platform == "千问国际") && t.Attempts > 1 && d < qianwenRetryWait {
+	if t != nil && (t.Platform == "千问" || t.Platform == "千问国际" || t.Platform == "Gemini") && t.Attempts > 1 && d < qianwenRetryWait {
 		return qianwenRetryWait
 	}
 	return d
@@ -1133,6 +1131,16 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 	var waitErrSeen, saveErrSeen error
 	lastProgress := time.Now()
 	defer func() {
+		if t != nil && sess != nil && ctx.Err() == nil && (savedN > 0 || errors.Is(waitErrSeen, strategy.ErrAccountQuota) || errors.Is(waitErrSeen, strategy.ErrAccountRate)) {
+			switch t.Platform {
+			case "千问":
+				e.syncQwenQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
+			case "豆包":
+				e.syncDoubaoQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
+			case "Gemini":
+				e.syncGeminiQuotaFromSession(t.ranOnOr(t.BrowserID), sess)
+			}
+		}
 		if waited > 0 || waitErrSeen != nil {
 			e.tracePhase(t, "generate", "等待生成", waited, waitedN, waitErrSeen)
 		}
@@ -1241,6 +1249,63 @@ func (e *Engine) waitAndSave(ctx context.Context, t *Task, strat strategy.Strate
 	}
 	waitErrSeen = fmt.Errorf("出图超时，没有可保存的图片")
 	return waitErrSeen
+}
+
+func (e *Engine) syncQwenQuotaFromSession(id int64, sess *cdp.Session) {
+	if e == nil || e.store == nil || sess == nil || id <= 0 {
+		return
+	}
+	raw, err := sess.ProbeQwenStatus()
+	if err != nil {
+		return
+	}
+	quota, ok := cdp.NormalizeQwenStatus(raw, time.Now())
+	if !ok {
+		return
+	}
+	if err := e.store.UpdateBrowserQuota(id, quota); err != nil {
+		logging.Log.Debugf("保存千问账号 %d 状态失败: %v", id, err)
+		return
+	}
+	e.notify()
+}
+
+func (e *Engine) syncDoubaoQuotaFromSession(id int64, sess *cdp.Session) {
+	if e == nil || e.store == nil || sess == nil || id <= 0 {
+		return
+	}
+	raw, err := sess.ProbeDoubaoStatus()
+	if err != nil {
+		return
+	}
+	quota, ok := cdp.NormalizeDoubaoStatus(raw, time.Now())
+	if !ok {
+		return
+	}
+	if err := e.store.UpdateBrowserQuota(id, quota); err != nil {
+		logging.Log.Debugf("保存豆包账号 %d 状态失败: %v", id, err)
+		return
+	}
+	e.notify()
+}
+
+func (e *Engine) syncGeminiQuotaFromSession(id int64, sess *cdp.Session) {
+	if e == nil || e.store == nil || sess == nil || id <= 0 {
+		return
+	}
+	raw, err := sess.ProbeGeminiStatus()
+	if err != nil {
+		return
+	}
+	quota, ok := cdp.NormalizeGeminiStatus(raw, time.Now())
+	if !ok {
+		return
+	}
+	if err := e.store.UpdateBrowserQuota(id, quota); err != nil {
+		logging.Log.Debugf("保存 Gemini 账号 %d 状态失败: %v", id, err)
+		return
+	}
+	e.notify()
 }
 
 // browsersOfPlatforms 返回每个平台可用的受管浏览器。

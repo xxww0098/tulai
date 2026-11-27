@@ -4,12 +4,10 @@ go 1.27.3
 
 require (
 	github.com/chromedp/cdproto v0.0.0-20250403032234-65de8f5d025b
-	github.com/chromedp/chromedp v0.13.6
 	github.com/egoist/mygo v0.10.0
 	github.com/gen2brain/avif v0.6.0
 	github.com/gen2brain/webp v0.6.4
-	github.com/go-json-experiment/json v0.0.0-20250211171154-1ae217ad3535
-	github.com/gobwas/ws v1.4.0
+	github.com/xxww0098/realbrowser/browserkernel v0.1.0
 	golang.org/x/image v0.48.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.25.0
@@ -24,8 +22,7 @@ require (
 	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/ebitengine/purego v0.11.3 // indirect
-	github.com/gobwas/httphead v0.1.0 // indirect
-	github.com/gobwas/pool v0.2.1 // indirect
+	github.com/go-json-experiment/json v0.0.0-20250211171154-1ae217ad3535 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -41,3 +38,5 @@ require (
 )
 
 tool github.com/egoist/mygo/cmd/mygo
+
+replace github.com/xxww0098/realbrowser/browserkernel => ../realbrowser/browserkernel

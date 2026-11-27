@@ -23,6 +23,7 @@ type stubDesktopHost struct {
 	trashErr       error
 	trashFn        func(string) error
 	topicCh        chan string
+	openedURLs     []string
 }
 
 func (s *stubDesktopHost) PickFiles(context.Context, string, bool, []FileFilter) ([]string, error) {
@@ -35,6 +36,12 @@ func (s *stubDesktopHost) SaveFile(context.Context, string, string, []byte) (boo
 	return false, "", nil
 }
 func (s *stubDesktopHost) OpenPath(string) error   { return nil }
+func (s *stubDesktopHost) OpenExternal(rawURL string) error {
+	s.mu.Lock()
+	s.openedURLs = append(s.openedURLs, rawURL)
+	s.mu.Unlock()
+	return nil
+}
 func (s *stubDesktopHost) RevealPath(string) error { return nil }
 func (s *stubDesktopHost) TrashPath(path string) error {
 	s.mu.Lock()

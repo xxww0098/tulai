@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const onexTestPhoto = "https://1x.com/photo/123"
@@ -243,7 +242,7 @@ func TestOnexGalleryPublicLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if err := session.run(ctx, chromedp.Sleep(8*time.Second)); err != nil {
+	if err := session.run(ctx, fingerprint.Sleep(8*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)

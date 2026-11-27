@@ -11,4 +11,5 @@ var appIconPNG []byte
 
 func init() {
 	ui.SetAppIcon(appIconPNG)
+	ui.SetProductVersion(ProductVersion)
 }

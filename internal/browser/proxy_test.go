@@ -267,6 +267,16 @@ func TestSamePlatformSharedExit(t *testing.T) {
 			want: []string{"qi2"},
 		},
 		{
+			name:   "gemini accounts sharing same exit flagged and isolated from other platforms",
+			target: store.Browser{ID: 1, Platform: "Gemini", Name: "g1"},
+			browsers: []store.Browser{
+				{ID: 1, Platform: "Gemini", Name: "g1"},
+				{ID: 2, Platform: "Gemini", Name: "g2"},
+				{ID: 3, Platform: "千问国际", Name: "qi1"},
+			},
+			want: []string{"g2"},
+		},
+		{
 			name:   "invalid proxy does not match direct exit",
 			target: store.Browser{ID: 1, Platform: "豆包", Name: "db1"},
 			browsers: []store.Browser{

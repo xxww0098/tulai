@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Brand marks from @lobehub/icons (MIT).
 import doubaoMark from "@/assets/providers/doubao-avatar.png";
+import geminiMark from "@/assets/providers/gemini-color.svg";
 import qwenMark from "@/assets/providers/qwen-color.svg";
 import qwenIntlMark from "@/assets/providers/qwen-intl-color.svg";
 import { AccountColumnHeader } from "@/components/browser/AccountColumnHeader";
@@ -39,9 +40,31 @@ import {
   Tooltip,
   TooltipGroup,
 } from "@/components/ui";
+import { FingerprintDialog } from "@/components/browser/FingerprintDialog";
 import { DEFAULT_BROWSER_STATE } from "@/lib/browserRuntime";
 import { cn } from "@/lib/cn";
 import { Browser, formatCallError } from "@/lib/ipc";
+import {
+  buildDoubaoStatusTooltip,
+  buildGeminiStatusTooltip,
+  buildQwenStatusTooltip,
+  doubaoProgressTone,
+  doubaoStatusTone,
+  formatDoubaoMetaLine,
+  formatDoubaoPrimary,
+  formatGeminiMetaLine,
+  formatGeminiQuotaPrimary,
+  formatQwenCreditsPrimary,
+  formatQwenMetaLine,
+  geminiProgressTone,
+  geminiQuotaTone,
+  isDoubaoAccount,
+  isGeminiAccount,
+  isPaidMemberTier,
+  isQwenAccount,
+  qwenCreditTone,
+  qwenProgressTone,
+} from "@/lib/qwenStatus";
 import { useEscapeHandler } from "@/lib/shortcuts";
 import { useSyncedDraft } from "@/lib/useSyncedDraft";
 import {
@@ -61,12 +84,14 @@ const PLATFORM_OPTIONS = [
   { value: "豆包", label: "豆包" },
   { value: "千问", label: "千问" },
   { value: "千问国际", label: "千问国际" },
+  { value: "Gemini", label: "Gemini" },
 ];
 
 const PROVIDER_MARKS: Record<string, string> = {
   豆包: doubaoMark,
   千问: qwenMark,
   千问国际: qwenIntlMark,
+  Gemini: geminiMark,
 };
 
 function invokeSafe(call: () => Promise<unknown>, after?: () => Promise<unknown>): void {
@@ -86,6 +111,7 @@ function formatPendingOp(op: string): string {
   if (op === "stopping") return "关闭中";
   if (op === "clearing") return "清理中";
   if (op === "syncing") return "同步中";
+  if (op === "syncing_status") return "同步状态中";
   return op;
 }
 
@@ -203,133 +229,179 @@ function RenameAccountDialog({
   );
 }
 
-function InlineProxyEditor({
-  accountId,
-  draftValue,
+function ProxyAccountDialog({
+  target,
+  openSeq,
   errorText,
   saving,
-  onDraftChange,
+  onClose,
   onSave,
-  onCancel,
 }: {
-  accountId: number;
-  draftValue: string;
+  target: BrowserRowDTO | null;
+  openSeq: number;
   errorText?: string;
   saving: boolean;
-  onDraftChange: (id: number, value: string) => void;
+  onClose: () => void;
   onSave: (id: number, value: string) => void;
-  onCancel: (id: number) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const draft = useSyncedDraft(
-    draftValue,
-    `proxy-${accountId}`,
-    (next) => onDraftChange(accountId, next),
+    target?.proxy ?? "",
+    target ? `${target.id}:${openSeq}` : "closed",
+    () => {},
     { debounceMs: 0 },
   );
 
   useEffect(() => {
+    if (!target) return;
     inputRef.current?.focus();
-  }, []);
+    inputRef.current?.select();
+  }, [target, openSeq]);
 
   const submit = () => {
+    if (!target || saving) return;
     draft.flush();
-    onSave(accountId, draft.value);
+    onSave(target.id, draft.value);
   };
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-[10px] border border-hairline bg-card px-2.5 py-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          ref={inputRef}
-          data-testid={`browser-proxy-input-${accountId}`}
-          size="small"
-          value={draft.value}
-          disabled={saving}
-          placeholder="专属代理（留空跟随全局设置），如 http://127.0.0.1:7890"
-          onChange={(e) => draft.onChange(e.target.value)}
-          onCompositionStart={draft.onCompositionStart}
-          onCompositionEnd={(e) => draft.onCompositionEnd(e.currentTarget.value)}
-          onBlur={draft.onBlur}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              e.stopPropagation();
-              onCancel(accountId);
-            }
-          }}
-          className="min-w-[200px] flex-1 font-mono-console"
-        />
-        <Button
-          text="保存代理"
-          size="small"
-          variant="primary"
-          busy={saving}
-          onClick={submit}
-        />
-        <Button
-          text="取消"
-          size="small"
-          variant="ghost"
-          disabled={saving}
-          onClick={() => onCancel(accountId)}
-        />
-      </div>
-      {errorText ? (
-        <span
-          data-testid={`browser-proxy-err-${accountId}`}
-          className="select-text text-[11px] text-status-danger"
-        >
-          {errorText}
-        </span>
+    <Dialog
+      open={Boolean(target)}
+      onOpenChange={(open) => {
+        if (!open && !saving) onClose();
+      }}
+      title="配置独立代理"
+      description={
+        target
+          ? `为 ${target.platform} 账号「${target.name || `账号 #${target.id}`}」配置专属代理（留空跟随全局设置）`
+          : undefined
+      }
+      width={460}
+      closeOnBackdrop={!saving}
+      closeOnEscape={!saving}
+      data-testid="browser-proxy-dialog"
+      footer={
+        <>
+          <Button text="取消" size="small" variant="ghost" disabled={saving} onClick={onClose} />
+          <Button
+            data-testid="browser-proxy-save-btn"
+            text="保存代理"
+            size="small"
+            variant="primary"
+            busy={saving}
+            onClick={submit}
+          />
+        </>
+      }
+    >
+      {target ? (
+        <div className="flex w-full min-w-0 flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="browser-proxy-input" className="text-xs font-medium text-ink">
+              代理地址
+            </label>
+            {draft.value.trim() ? (
+              <Button
+                text="清空（跟随全局）"
+                size="xs"
+                variant="ghost"
+                disabled={saving}
+                onClick={() => {
+                  draft.onChange("");
+                  inputRef.current?.focus();
+                }}
+              />
+            ) : null}
+          </div>
+          <Input
+            id="browser-proxy-input"
+            ref={inputRef}
+            data-testid={`browser-proxy-input-${target.id}`}
+            autoFocus
+            value={draft.value}
+            disabled={saving}
+            placeholder="专属代理（留空跟随全局设置），如 http://127.0.0.1:7890"
+            aria-label="编辑独立代理"
+            onChange={(e) => draft.onChange(e.target.value)}
+            onCompositionStart={draft.onCompositionStart}
+            onCompositionEnd={(e) => draft.onCompositionEnd(e.currentTarget.value)}
+            onBlur={draft.onBlur}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            className="font-mono-console"
+          />
+          {errorText ? (
+            <span
+              data-testid={`browser-proxy-err-${target.id}`}
+              className="select-text text-[11px] text-status-danger"
+            >
+              {errorText}
+            </span>
+          ) : null}
+        </div>
       ) : null}
-    </div>
+    </Dialog>
   );
 }
 
 function AccountTableRows({
   row,
+  platformConcurrencyLabel,
   pageRunning,
   clearingBusy,
-  draftProxy,
-  proxyError,
-  proxySaving,
+  syncingStatusBusy,
   onRequestRename,
-  onToggleProxy,
-  onDraftProxyChange,
-  onSaveProxy,
-  onCancelProxy,
+  onRequestProxy,
+  onRequestFingerprint,
   onToggleCheck,
   onRowAction,
+  onSyncQwenRow,
+  onSyncDoubaoRow,
+  onSyncGeminiRow,
   onRequestClearHistory,
   onRequestDelete,
 }: {
   row: BrowserRowDTO;
+  platformConcurrencyLabel?: string;
   pageRunning: boolean;
   clearingBusy: boolean;
-  draftProxy: string | undefined;
-  proxyError: string | undefined;
-  proxySaving: boolean;
+  syncingStatusBusy: boolean;
   onRequestRename: (row: BrowserRowDTO) => void;
-  onToggleProxy: (id: number, currentProxy: string) => void;
-  onDraftProxyChange: (id: number, value: string) => void;
-  onSaveProxy: (id: number, value: string) => void;
-  onCancelProxy: (id: number) => void;
+  onRequestProxy: (row: BrowserRowDTO) => void;
+  onRequestFingerprint: (row: BrowserRowDTO) => void;
   onToggleCheck: (id: number, checked: boolean) => void;
   onRowAction: (id: number, action: string) => void;
+  onSyncQwenRow: (row: BrowserRowDTO) => void;
+  onSyncDoubaoRow: (row: BrowserRowDTO) => void;
+  onSyncGeminiRow: (row: BrowserRowDTO) => void;
   onRequestClearHistory: (row: BrowserRowDTO) => void;
   onRequestDelete: (row: BrowserRowDTO) => void;
 }) {
   const showErrorRow = Boolean(row.lastError);
-  const showProxyRow = draftProxy !== undefined;
-  const hasSubRows = showErrorRow || showProxyRow;
+  const hasSubRows = showErrorRow;
   const platMark = PROVIDER_MARKS[row.platform];
+  const isQwen = isQwenAccount(row);
+  const isDoubao = isDoubaoAccount(row);
+  const isGemini = isGeminiAccount(row);
+  const isQuotaTracked = isQwen || isGemini;
+  const creditTone = isQwen
+    ? qwenCreditTone(row)
+    : isGemini
+      ? geminiQuotaTone(row)
+      : isDoubao
+        ? doubaoStatusTone(row)
+        : "muted";
   const usageText = row.usageLabel
     ? `${row.todayCount} 次 · ${row.usageLabel}`
     : `${row.todayCount} 次`;
+  const qwenEstImages =
+    isQwen && row.creditsSynced && (row.creditsRemain ?? -1) >= 0
+      ? Math.floor((row.creditsRemain ?? 0) / Math.max(1, row.creditCost || 1))
+      : null;
 
   return (
     <Fragment>
@@ -352,7 +424,7 @@ function AccountTableRows({
         </td>
 
         {/* 启用/禁用 */}
-        <td className="w-[78px] px-2.5 py-2.5 align-middle">
+        <td className="w-[72px] px-2.5 py-2.5 align-middle">
           <div className="flex items-center">
             <Switch
               data-testid={`browser-toggle-${row.id}`}
@@ -365,7 +437,7 @@ function AccountTableRows({
         </td>
 
         {/* 账号（点击弹窗重命名） */}
-        <td className="min-w-[180px] px-2.5 py-2.5 align-middle">
+        <td className="w-[21%] min-w-[156px] px-2.5 py-2.5 align-middle">
           <div className="flex min-w-0 items-center gap-2">
             <Tooltip content="点击重命名" side="top">
               <button
@@ -395,23 +467,33 @@ function AccountTableRows({
         </td>
 
         {/* 平台 */}
-        <td className="w-[98px] px-2.5 py-2.5 align-middle whitespace-nowrap">
-          <div className="inline-flex items-center gap-1.5">
-            {platMark ? (
-              <img
-                src={platMark}
-                alt=""
-                aria-hidden="true"
-                className="size-3.5 shrink-0 object-contain"
-                draggable={false}
-              />
+        <td className="w-[12%] min-w-[96px] px-2.5 py-2.5 align-middle whitespace-nowrap">
+          <div className="flex flex-col gap-0.5">
+            <div className="inline-flex items-center gap-1.5">
+              {platMark ? (
+                <img
+                  src={platMark}
+                  alt=""
+                  aria-hidden="true"
+                  className="size-3.5 shrink-0 object-contain"
+                  draggable={false}
+                />
+              ) : null}
+              <span className="text-xs font-medium text-ink">{row.platform || "未知"}</span>
+            </div>
+            {platformConcurrencyLabel ? (
+              <span
+                data-testid={`browser-platform-concurrency-${row.id}`}
+                className="tnum text-[10.5px] leading-snug text-subtle"
+              >
+                {platformConcurrencyLabel}
+              </span>
             ) : null}
-            <span className="text-xs font-medium text-ink">{row.platform || "未知"}</span>
           </div>
         </td>
 
         {/* 状态 */}
-        <td className="w-[112px] px-2.5 py-2.5 align-middle whitespace-nowrap">
+        <td className="w-[12%] min-w-[104px] px-2.5 py-2.5 align-middle whitespace-nowrap">
           <div className="inline-flex items-center gap-1.5">
             <StatusBadge
               text={row.health || "未知"}
@@ -425,24 +507,172 @@ function AccountTableRows({
           </div>
         </td>
 
-        {/* 今日用量 */}
-        <td className="w-[122px] px-2.5 py-2.5 align-middle whitespace-nowrap">
-          <div className="flex flex-col gap-1">
-            <span className="tnum text-xs text-ink">{usageText}</span>
-            {row.usagePct > 0 ? (
-              <div className="w-[72px]">
-                <Progress
-                  value={Math.min(1, row.usagePct / 100)}
-                  tone={row.usagePct >= 95 ? "danger" : row.usagePct >= 80 ? "warn" : "accent"}
-                  aria-label={`今日用量 ${row.usagePct}%`}
-                />
+        {/* 今日用量 / 千问与 Gemini 实时额度与刷新 */}
+        <td className="w-[24%] min-w-[208px] px-2.5 py-2.5 align-middle">
+          {isQuotaTracked ? (
+            <Tooltip
+              content={
+                isQwen
+                  ? buildQwenStatusTooltip(row, { todayCount: row.todayCount })
+                  : buildGeminiStatusTooltip(row, { todayCount: row.todayCount })
+              }
+              side="top"
+            >
+              <div className="flex flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap">
+                  <span
+                    data-testid={
+                      isQwen ? `browser-qwen-credits-${row.id}` : `browser-gemini-quota-${row.id}`
+                    }
+                    className={cn(
+                      "tnum text-xs",
+                      creditTone === "danger"
+                        ? "font-semibold text-status-danger"
+                        : creditTone === "warn"
+                          ? "font-semibold text-status-warn"
+                          : creditTone === "ok"
+                            ? "font-medium text-ink"
+                            : "text-muted",
+                    )}
+                  >
+                    {isQwen ? formatQwenCreditsPrimary(row) : formatGeminiQuotaPrimary(row)}
+                  </span>
+                  {qwenEstImages !== null ? (
+                    <span className="tnum text-[11px] text-muted">{`约 ${qwenEstImages} 张`}</span>
+                  ) : null}
+                  {row.creditsSynced && row.memberLabel ? (
+                    <span
+                      className={cn(
+                        "rounded-full border px-1.5 py-px text-[10px] font-medium leading-tight",
+                        isPaidMemberTier(row.memberTier)
+                          ? "border-accent-border bg-accent-soft text-accent"
+                          : "border-hairline bg-sunken text-muted",
+                      )}
+                    >
+                      {row.memberLabel}
+                    </span>
+                  ) : null}
+                </div>
+                {row.creditsSynced && (row.usagePct > 0 || row.creditsTotal > 0) ? (
+                  <div className="w-[88px]">
+                    <Progress
+                      value={
+                        row.creditsRemain === 0
+                          ? 1
+                          : Math.min(1, Math.max(0, row.usagePct) / 100)
+                      }
+                      tone={isQwen ? qwenProgressTone(row) : geminiProgressTone(row)}
+                      aria-label={isQwen ? `积分已用 ${row.usagePct}%` : `额度已用 ${row.usagePct}%`}
+                    />
+                  </div>
+                ) : null}
+                <span
+                  data-testid={
+                    isQwen ? `browser-qwen-meta-${row.id}` : `browser-gemini-meta-${row.id}`
+                  }
+                  className="tnum text-[10.5px] leading-snug text-subtle"
+                >
+                  {isQwen
+                    ? formatQwenMetaLine(row, row.todayCount)
+                    : formatGeminiMetaLine(row, row.todayCount)}
+                  {row.creditsSyncedLabel ? ` · ${row.creditsSyncedLabel}` : ""}
+                </span>
               </div>
-            ) : null}
-          </div>
+            </Tooltip>
+          ) : isDoubao ? (
+            <Tooltip content={buildDoubaoStatusTooltip(row, { todayCount: row.todayCount })} side="top">
+              {row.creditsSynced ? (
+                <div className="flex flex-col gap-1">
+                  <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap">
+                    <span
+                      data-testid={`browser-doubao-status-${row.id}`}
+                      className={cn(
+                        "tnum text-xs",
+                        creditTone === "danger"
+                          ? "font-semibold text-status-danger"
+                          : creditTone === "warn"
+                            ? "font-semibold text-status-warn"
+                            : creditTone === "ok"
+                              ? "font-medium text-ink"
+                              : "text-muted",
+                      )}
+                    >
+                      {formatDoubaoPrimary(row)}
+                    </span>
+                    {row.memberLabel ? (
+                      <span
+                        className={cn(
+                          "rounded-full border px-1.5 py-px text-[10px] font-medium leading-tight",
+                          isPaidMemberTier(row.memberTier)
+                            ? "border-accent-border bg-accent-soft text-accent"
+                            : "border-hairline bg-sunken text-muted",
+                        )}
+                      >
+                        {row.memberLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                  {row.platformLimited || row.usagePct > 0 || row.creditsTotal > 0 ? (
+                    <div className="w-[88px]">
+                      <Progress
+                        value={
+                          row.platformLimited || row.creditsRemain === 0
+                            ? 1
+                            : Math.min(1, Math.max(0, row.usagePct) / 100)
+                        }
+                        tone={doubaoProgressTone(row)}
+                        aria-label={`豆包额度已用 ${row.usagePct}%`}
+                      />
+                    </div>
+                  ) : null}
+                  <span
+                    data-testid={`browser-doubao-meta-${row.id}`}
+                    className="tnum text-[10.5px] leading-snug text-subtle"
+                  >
+                    {formatDoubaoMetaLine(row, row.todayCount)}
+                    {(row.resetCardCount ?? 0) === 0 ? " · 重置卡 0 张" : ""}
+                    {row.creditsSyncedLabel ? ` · ${row.creditsSyncedLabel}` : ""}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1 whitespace-nowrap">
+                  <span className="tnum text-xs text-ink">{usageText}</span>
+                  {row.usagePct > 0 ? (
+                    <div className="w-[72px]">
+                      <Progress
+                        value={Math.min(1, row.usagePct / 100)}
+                        tone={row.usagePct >= 95 ? "danger" : row.usagePct >= 80 ? "warn" : "accent"}
+                        aria-label={`今日用量 ${row.usagePct}%`}
+                      />
+                    </div>
+                  ) : null}
+                  <span
+                    data-testid={`browser-doubao-meta-${row.id}`}
+                    className="tnum text-[10.5px] leading-snug text-subtle"
+                  >
+                    免费动态限额 · 待同步
+                  </span>
+                </div>
+              )}
+            </Tooltip>
+          ) : (
+            <div className="flex flex-col gap-1 whitespace-nowrap">
+              <span className="tnum text-xs text-ink">{usageText}</span>
+              {row.usagePct > 0 ? (
+                <div className="w-[72px]">
+                  <Progress
+                    value={Math.min(1, row.usagePct / 100)}
+                    tone={row.usagePct >= 95 ? "danger" : row.usagePct >= 80 ? "warn" : "accent"}
+                    aria-label={`今日用量 ${row.usagePct}%`}
+                  />
+                </div>
+              ) : null}
+            </div>
+          )}
         </td>
 
         {/* 独立代理 */}
-        <td className="max-w-[200px] px-2.5 py-2.5 align-middle">
+        <td className="w-[16%] min-w-[120px] max-w-[200px] px-2.5 py-2.5 align-middle">
           <Tooltip
             content={
               row.proxy
@@ -459,17 +689,13 @@ function AccountTableRows({
                   ? `独立代理 ${row.proxy}，点击修改`
                   : `配置 ${row.name || row.platform} 独立代理`
               }
-              onClick={() => onToggleProxy(row.id, row.proxy || "")}
-              className={cn(
-                "group/proxy inline-flex max-w-full cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-left transition-colors",
-                showProxyRow ? "bg-accent-soft text-accent" : "hover:bg-sunken-hover",
-              )}
+              onClick={() => onRequestProxy(row)}
+              className="group/proxy inline-flex max-w-full cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-left transition-colors hover:bg-sunken-hover"
             >
             <span
               className={cn(
                 "truncate text-[11px]",
                 row.proxy ? "font-mono-console text-ink" : "text-subtle",
-                showProxyRow && "text-accent",
               )}
             >
               {row.proxy || "跟随全局"}
@@ -485,53 +711,137 @@ function AccountTableRows({
 
         {/* 操作 */}
         <td className="w-[1%] py-2.5 pl-2.5 pr-4 text-right align-middle whitespace-nowrap">
-          <div className="inline-flex items-center justify-end gap-1">
+          <TooltipGroup className="inline-flex items-center justify-end gap-1">
+            <Tooltip content="指纹设置" side="top">
+              <IconButton icon="sliders-horizontal" size="xs" variant="ghost"
+                aria-label={`编辑 ${row.name || row.platform} 指纹设置`}
+                onClick={() => onRequestFingerprint(row)} />
+            </Tooltip>
+            {isQwen ? (
+              <Tooltip
+                content={
+                  pageRunning
+                    ? "任务运行中，完成后会自动刷新千问积分"
+                    : "同步该千问账号的用户名、实时积分、刷新时间与会员并发上限"
+                }
+                side="top"
+              >
+                <IconButton
+                  data-testid={`browser-sync-qwen-row-${row.id}`}
+                  icon="refresh-cw"
+                  size="xs"
+                  variant="ghost"
+                  aria-label={`同步 ${row.name || `账号 #${row.id}`} 千问状态`}
+                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy)}
+                  className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
+                  onClick={() => onSyncQwenRow(row)}
+                />
+              </Tooltip>
+            ) : isDoubao ? (
+              <Tooltip
+                content={
+                  pageRunning
+                    ? "任务运行中，完成后会自动刷新豆包状态"
+                    : "同步该豆包账号的用户名、订阅方案与实时限额状态"
+                }
+                side="top"
+              >
+                <IconButton
+                  data-testid={`browser-sync-doubao-row-${row.id}`}
+                  icon="refresh-cw"
+                  size="xs"
+                  variant="ghost"
+                  aria-label={`同步 ${row.name || `账号 #${row.id}`} 豆包状态`}
+                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy)}
+                  className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
+                  onClick={() => onSyncDoubaoRow(row)}
+                />
+              </Tooltip>
+            ) : isGemini ? (
+              <Tooltip
+                content={
+                  pageRunning
+                    ? "任务运行中，完成后会自动刷新 Gemini 额度"
+                    : "同步该 Gemini 账号的实时剩余额度、刷新时间、套餐与用户名"
+                }
+                side="top"
+              >
+                <IconButton
+                  data-testid={`browser-sync-gemini-row-${row.id}`}
+                  icon="refresh-cw"
+                  size="xs"
+                  variant="ghost"
+                  aria-label={`同步 ${row.name || `账号 #${row.id}`} Gemini 状态`}
+                  disabled={Boolean(row.pending || pageRunning || clearingBusy || syncingStatusBusy)}
+                  className={cn(row.pending && row.pendingOp === "syncing_status" && "animate-spin text-accent")}
+                  onClick={() => onSyncGeminiRow(row)}
+                />
+              </Tooltip>
+            ) : null}
             <AccountViewButton accountId={row.id} name={row.name} iconOnly size="xs" />
             {row.pending && row.pendingOp === "starting" ? (
-              <Button
-                text="打开中"
-                size="xs"
-                variant={row.isLoggedIn ? "outline" : "primary"}
-                disabled
-                busy
-              />
+              <Tooltip content="打开中..." side="top">
+                <IconButton
+                  icon="play"
+                  size="xs"
+                  variant={row.isLoggedIn ? "outline" : "primary"}
+                  aria-label="打开中"
+                  disabled
+                  busy
+                />
+              </Tooltip>
             ) : row.isRunning ? (
-              <Button
-                text={row.pending && row.pendingOp === "stopping" ? "关闭中" : "关闭"}
-                size="xs"
-                variant="outline"
-                disabled={Boolean(row.pending)}
-                busy={Boolean(row.pending && row.pendingOp === "stopping")}
-                onClick={() => onRowAction(row.id, "stop")}
-              />
+              <Tooltip
+                content={row.pending && row.pendingOp === "stopping" ? "关闭中..." : "关闭窗口"}
+                side="top"
+              >
+                <IconButton
+                  icon="square"
+                  size="xs"
+                  variant="outline"
+                  aria-label={row.pending && row.pendingOp === "stopping" ? "关闭中" : "关闭"}
+                  disabled={Boolean(row.pending)}
+                  busy={Boolean(row.pending && row.pendingOp === "stopping")}
+                  onClick={() => onRowAction(row.id, "stop")}
+                />
+              </Tooltip>
             ) : (
-              <Button
-                text={row.isLoggedIn ? "打开" : "打开登录"}
-                size="xs"
-                variant={row.isLoggedIn ? "outline" : "primary"}
-                disabled={Boolean(row.pending)}
-                onClick={() => onRowAction(row.id, "launch")}
-              />
+              <Tooltip content={row.isLoggedIn ? "打开窗口" : "打开登录"} side="top">
+                <IconButton
+                  icon="play"
+                  size="xs"
+                  variant={row.isLoggedIn ? "outline" : "primary"}
+                  aria-label={row.isLoggedIn ? "打开" : "打开登录"}
+                  disabled={Boolean(row.pending)}
+                  onClick={() => onRowAction(row.id, "launch")}
+                />
+              </Tooltip>
             )}
 
             {row.lastError ? (
-              <Button
-                text="清除冷却"
-                size="xs"
-                variant="outline"
-                onClick={() => onRowAction(row.id, "restore")}
-              />
+              <Tooltip content="清除冷却" side="top">
+                <IconButton
+                  icon="rotate-ccw"
+                  size="xs"
+                  variant="outline"
+                  aria-label="清除冷却"
+                  onClick={() => onRowAction(row.id, "restore")}
+                />
+              </Tooltip>
             ) : null}
 
             {row.pending && row.pendingOp === "clearing" ? (
-              <Button
-                data-testid={`browser-clear-history-btn-${row.id}`}
-                text="清理中"
-                size="xs"
-                variant="outline"
-                disabled
-                busy
-              />
+              <Tooltip content="正在清理对话..." side="top">
+                <IconButton
+                  data-testid={`browser-clear-history-btn-${row.id}`}
+                  icon="eraser"
+                  size="xs"
+                  variant="outline"
+                  aria-label="清理中"
+                  disabled
+                  busy
+                />
+              </Tooltip>
             ) : (
               <Tooltip
                 content={
@@ -543,57 +853,47 @@ function AccountTableRows({
                 }
                 side="top"
               >
-                <Button
+                <IconButton
                   data-testid={`browser-clear-history-btn-${row.id}`}
-                  text="清理对话"
+                  icon="eraser"
                   size="xs"
                   variant="ghost"
+                  aria-label="清理对话"
                   disabled={Boolean(row.pending || pageRunning || clearingBusy)}
                   onClick={() => onRequestClearHistory(row)}
                 />
               </Tooltip>
             )}
 
-            <Button
-              data-testid={`browser-delete-btn-${row.id}`}
-              text="删除"
-              size="xs"
-              variant="ghost"
-              className="hover:text-status-danger"
-              disabled={Boolean(
-                row.pending && (row.pendingOp === "clearing" || row.pendingOp === "syncing"),
-              )}
-              onClick={() => onRequestDelete(row)}
-            />
-          </div>
+            <Tooltip content={`删除账号「${row.name || `账号 #${row.id}`}」`} side="top">
+              <IconButton
+                data-testid={`browser-delete-btn-${row.id}`}
+                icon="trash-2"
+                size="xs"
+                variant="ghost"
+                aria-label="删除"
+                className="hover:text-status-danger"
+                disabled={Boolean(
+                  row.pending &&
+                    (row.pendingOp === "clearing" ||
+                      row.pendingOp === "syncing" ||
+                      row.pendingOp === "syncing_status"),
+                )}
+                onClick={() => onRequestDelete(row)}
+              />
+            </Tooltip>
+          </TooltipGroup>
         </td>
       </tr>
 
       {showErrorRow ? (
-        <tr className={cn(!showProxyRow && "border-b border-divider")}>
+        <tr className="border-b border-divider">
           <td colSpan={2} />
           <td colSpan={6} className="px-2.5 pb-2 pt-0">
             <div className="inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--status-warn-border)] bg-[var(--status-warn-bg)] px-2 py-1 text-[11px] text-status-warn select-text">
               <Icon name="alert-triangle" size={11} className="shrink-0" />
               <span>{row.lastError}</span>
             </div>
-          </td>
-        </tr>
-      ) : null}
-
-      {showProxyRow ? (
-        <tr className="border-b border-divider bg-sunken/35">
-          <td colSpan={2} />
-          <td colSpan={6} className="py-2 pl-2.5 pr-4">
-            <InlineProxyEditor
-              accountId={row.id}
-              draftValue={draftProxy}
-              errorText={proxyError}
-              saving={proxySaving}
-              onDraftChange={onDraftProxyChange}
-              onSave={onSaveProxy}
-              onCancel={onCancelProxy}
-            />
           </td>
         </tr>
       ) : null}
@@ -632,10 +932,11 @@ export function BrowserPage() {
     }));
   }, []);
 
-  // Map-backed proxy drafts survive filter-tab unmount/remount cycles
-  const [proxyDrafts, setProxyDrafts] = useState<Map<number, string>>(() => new Map());
-  const [proxyErrors, setProxyErrors] = useState<Map<number, string>>(() => new Map());
-  const [proxySavingId, setProxySavingId] = useState<number | null>(null);
+  const [fingerprintTarget, setFingerprintTarget] = useState<BrowserRowDTO | null>(null);
+  const [proxyTarget, setProxyTarget] = useState<BrowserRowDTO | null>(null);
+  const [proxyOpenSeq, setProxyOpenSeq] = useState(0);
+  const [proxyError, setProxyError] = useState("");
+  const [proxySaving, setProxySaving] = useState(false);
 
   const closeNewDialog = useCallback(() => {
     setNewOpen(false);
@@ -644,6 +945,12 @@ export function BrowserPage() {
   const closeRenameDialog = useCallback(() => {
     setRenameTarget(null);
   }, []);
+
+  const closeProxyDialog = useCallback(() => {
+    if (proxySaving) return;
+    setProxyTarget(null);
+    setProxyError("");
+  }, [proxySaving]);
 
   const closeDeleteDialog = useCallback(() => {
     setDeleteTarget(null);
@@ -655,6 +962,7 @@ export function BrowserPage() {
 
   useEscapeHandler("browser-new-dialog", newOpen, closeNewDialog, 40);
   useEscapeHandler("browser-rename-dialog", Boolean(renameTarget), closeRenameDialog, 40);
+  useEscapeHandler("browser-proxy-dialog", Boolean(proxyTarget), closeProxyDialog, 40);
   useEscapeHandler("browser-delete-dialog", Boolean(deleteTarget), closeDeleteDialog, 40);
   useEscapeHandler(
     "browser-clear-history-dialog",
@@ -673,22 +981,10 @@ export function BrowserPage() {
     setRenameTarget(row);
   }, []);
 
-  const setProxyDraft = useCallback((id: number, value?: string) => {
-    setProxyDrafts((prev) => {
-      const next = new Map(prev);
-      if (value === undefined) next.delete(id);
-      else next.set(id, value);
-      return next;
-    });
-  }, []);
-
-  const setProxyError = useCallback((id: number, msg?: string) => {
-    setProxyErrors((prev) => {
-      const next = new Map(prev);
-      if (!msg) next.delete(id);
-      else next.set(id, msg);
-      return next;
-    });
+  const openProxyDialog = useCallback((row: BrowserRowDTO) => {
+    setProxyError("");
+    setProxyOpenSeq((n) => n + 1);
+    setProxyTarget(row);
   }, []);
 
   const allRows = st.rows ?? [];
@@ -747,11 +1043,6 @@ export function BrowserPage() {
     setSortState(DEFAULT_ACCOUNT_SORT);
   }, []);
 
-
-  const handleRefresh = useCallback(() => {
-    invokeSafe(() => Browser.refreshBrowsers(), refreshBrowser);
-  }, []);
-
   const handleOpenBrowserSettings = useCallback(() => {
     void goTab(TAB_SETTINGS);
     void updateSettingField("tab", "2");
@@ -793,46 +1084,22 @@ export function BrowserPage() {
     [],
   );
 
-  const handleToggleProxy = useCallback(
-    (id: number, currentProxy: string) => {
-      setProxyError(id, undefined);
-      setProxyDrafts((prev) => {
-        const next = new Map(prev);
-        if (next.has(id)) next.delete(id);
-        else next.set(id, currentProxy);
-        return next;
-      });
-    },
-    [setProxyError],
-  );
-
-  const handleSaveProxy = useCallback(
-    async (id: number, value: string) => {
-      setProxySavingId(id);
-      setProxyError(id, undefined);
-      try {
-        await Browser.saveAccountProxy(id, value);
-        setProxyDraft(id, undefined);
-        showToast(value.trim() ? "账号专属代理已保存" : "已清除专属代理（跟随全局）", "success");
-        void refreshBrowser();
-      } catch (err) {
-        const msg = formatCallError(err);
-        setProxyError(id, msg);
-        showToast("保存代理失败", "error", msg);
-      } finally {
-        setProxySavingId((cur) => (cur === id ? null : cur));
-      }
-    },
-    [setProxyDraft, setProxyError],
-  );
-
-  const handleCancelProxy = useCallback(
-    (id: number) => {
-      setProxyDraft(id, undefined);
-      setProxyError(id, undefined);
-    },
-    [setProxyDraft, setProxyError],
-  );
+  const handleSaveProxy = useCallback(async (id: number, value: string) => {
+    setProxySaving(true);
+    setProxyError("");
+    try {
+      await Browser.saveAccountProxy(id, value);
+      setProxyTarget(null);
+      showToast(value.trim() ? "账号专属代理已保存" : "已清除专属代理（跟随全局）", "success");
+      void refreshBrowser();
+    } catch (err) {
+      const msg = formatCallError(err);
+      setProxyError(msg);
+      showToast("保存代理失败", "error", msg);
+    } finally {
+      setProxySaving(false);
+    }
+  }, []);
 
   const handleToggleCheck = useCallback((id: number, checked: boolean) => {
     invokeSafe(() => Browser.toggleBrowserCheck(id, checked), refreshBrowser);
@@ -847,13 +1114,47 @@ export function BrowserPage() {
     const id = deleteTarget.id;
     setDeleteTarget(null);
     setRenameTarget((cur) => (cur?.id === id ? null : cur));
-    setProxyDraft(id, undefined);
-    setProxyError(id, undefined);
+    setProxyTarget((cur) => {
+      if (cur?.id === id) {
+        setProxyError("");
+        return null;
+      }
+      return cur;
+    });
     invokeSafe(() => Browser.browserRowAction(id, "delete"), refreshBrowser);
-  }, [deleteTarget, setProxyDraft, setProxyError]);
+  }, [deleteTarget]);
 
   const clearingActive = Boolean(st.batchActive && st.batchKind === "clearing");
   const syncingActive = Boolean(st.batchActive && st.batchKind === "syncing");
+  const syncingStatusActive = Boolean(st.batchActive && st.batchKind === "syncing_status");
+  const getPlatformConcurrencyLabel = useCallback(
+    (row: BrowserRowDTO): string | undefined => {
+      if (isDoubaoAccount(row)) {
+        return st.doubaoConcurrencyAuto
+          ? `调度上限 ${st.doubaoConcurrencyMax}`
+          : "串行 1";
+      }
+      if (isQwenAccount(row)) {
+        return st.qianwenConcurrencyAuto
+          ? `调度上限 ${st.qianwenConcurrencyMax}`
+          : "串行 1";
+      }
+      if (isGeminiAccount(row)) {
+        return st.geminiConcurrencyAuto
+          ? `调度上限 ${st.geminiConcurrencyMax}`
+          : "串行 1";
+      }
+      return undefined;
+    },
+    [
+      st.doubaoConcurrencyAuto,
+      st.doubaoConcurrencyMax,
+      st.qianwenConcurrencyAuto,
+      st.qianwenConcurrencyMax,
+      st.geminiConcurrencyAuto,
+      st.geminiConcurrencyMax,
+    ],
+  );
 
   const openClearHistoryDialog = useCallback(
     (selection: BrowserRowDTO | BrowserRowDTO[] | null) => {
@@ -906,13 +1207,13 @@ export function BrowserPage() {
       await Browser.syncAccountUsernames(ids);
       showToast(
         ids.length === 1
-          ? `正在抓取「${targets[0].name || `账号 #${targets[0].id}`}」的用户名`
-          : `已开始批量同步 ${ids.length} 个账号的用户名`,
+          ? `正在同步「${targets[0].name || `账号 #${targets[0].id}`}」的用户名与实时额度`
+          : `已开始批量同步 ${ids.length} 个账号的用户名与实时额度`,
         "info",
       );
       void refreshBrowser();
     } catch (err) {
-      showToast("无法同步账号用户名", "error", formatCallError(err));
+      showToast("无法同步账号", "error", formatCallError(err));
     }
   }, []);
 
@@ -920,12 +1221,79 @@ export function BrowserPage() {
     invokeSafe(() => Browser.stopSyncAccountUsernames(), refreshBrowser);
   }, []);
 
+  const handleSyncQwenStatus = useCallback(async (targets: BrowserRowDTO[]) => {
+    const qwenTargets = targets.filter(isQwenAccount);
+    if (qwenTargets.length === 0) return;
+    const ids = qwenTargets.map((r) => r.id);
+    try {
+      await Browser.syncQwenStatus(ids);
+      showToast(
+        ids.length === 1
+          ? `正在同步「${qwenTargets[0].name || `账号 #${qwenTargets[0].id}`}」的千问积分与刷新状态`
+          : `已开始同步 ${ids.length} 个千问账号的积分、刷新时间与并发上限`,
+        "info",
+      );
+      void refreshBrowser();
+    } catch (err) {
+      showToast("无法同步千问状态", "error", formatCallError(err));
+    }
+  }, []);
+
+  const handleStopSyncQwenStatus = useCallback(() => {
+    invokeSafe(() => Browser.stopSyncQwenStatus(), refreshBrowser);
+  }, []);
+
+  const handleSyncDoubaoStatus = useCallback(async (targets: BrowserRowDTO[]) => {
+    const doubaoTargets = targets.filter(isDoubaoAccount);
+    if (doubaoTargets.length === 0) return;
+    const ids = doubaoTargets.map((r) => r.id);
+    try {
+      await Browser.syncAccountStatus(ids);
+      showToast(
+        ids.length === 1
+          ? `正在同步「${doubaoTargets[0].name || `账号 #${doubaoTargets[0].id}`}」的豆包订阅与限额状态`
+          : `已开始同步 ${ids.length} 个豆包账号的订阅方案与实时限额状态`,
+        "info",
+      );
+      void refreshBrowser();
+    } catch (err) {
+      showToast("无法同步豆包状态", "error", formatCallError(err));
+    }
+  }, []);
+
+  const handleStopSyncAccountStatus = useCallback(() => {
+    invokeSafe(() => Browser.stopSyncAccountStatus(), refreshBrowser);
+  }, []);
+
+  const handleSyncGeminiStatus = useCallback(async (targets: BrowserRowDTO[]) => {
+    const geminiTargets = targets.filter(isGeminiAccount);
+    if (geminiTargets.length === 0) return;
+    const ids = geminiTargets.map((r) => r.id);
+    try {
+      await Browser.syncGeminiStatus(ids);
+      showToast(
+        ids.length === 1
+          ? `正在同步「${geminiTargets[0].name || `账号 #${geminiTargets[0].id}`}」的 Gemini 剩余额度与账号状态`
+          : `已开始同步 ${ids.length} 个 Gemini 账号的剩余额度、刷新时间与套餐`,
+        "info",
+      );
+      void refreshBrowser();
+    } catch (err) {
+      showToast("无法同步 Gemini 状态", "error", formatCallError(err));
+    }
+  }, []);
+
+  const handleStopSyncGeminiStatus = useCallback(() => {
+    invokeSafe(() => Browser.stopSyncGeminiStatus(), refreshBrowser);
+  }, []);
+
+  const showTopNotice = !st.ready || Boolean(st.missingHint);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-paper">
-      {/* 悬浮顶部提示与快捷操作条 */}
-      <PageToolbar
-        left={
-          !st.ready || st.missingHint ? (
+      {showTopNotice ? (
+        <PageToolbar
+          left={
             <div className="flex flex-wrap items-center gap-2">
               {!st.ready ? (
                 <div
@@ -955,28 +1323,22 @@ export function BrowserPage() {
                 </div>
               ) : null}
             </div>
-          ) : null
-        }
-        right={
-          <Button
-            text="刷新状态"
-            size="small"
-            icon="refresh-cw"
-            variant="outline"
-            onClick={handleRefresh}
-          />
-        }
-      />
+          }
+        />
+      ) : null}
 
       {/* Bento 主画布：统一账号池表格卡 */}
       {loading && !browserSlice ? (
         <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
+          {!showTopNotice ? <div className="app-drag-region h-2.5 shrink-0" /> : null}
           <div className="min-h-0 flex-1 animate-pulse rounded-[16px] border border-hairline bg-card" />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
+          {!showTopNotice ? <div className="app-drag-region h-2.5 shrink-0" /> : null}
           <FlushPane className="min-h-0 flex-1">
             <PaneHeader
+              dragRegion={!showTopNotice}
               icon="users"
               title="账号池"
               subtitle={
@@ -990,7 +1352,31 @@ export function BrowserPage() {
                     data-testid="browser-platform-filter"
                     variant="segmented"
                     size="small"
-                    options={[{ value: "全部", label: "全部" }, ...PLATFORM_OPTIONS]}
+                    options={[
+                      { value: "全部", label: "全部" },
+                      ...PLATFORM_OPTIONS.map((opt) => ({
+                        value: opt.value,
+                        label: opt.label,
+                        iconOnly: true,
+                        tooltip: opt.label,
+                        iconNode: (
+                          <span
+                            className={cn(
+                              "inline-flex size-[18px] shrink-0 items-center justify-center rounded-[5px] transition-colors",
+                              filterPlat === opt.value && "bg-white/95",
+                            )}
+                          >
+                            <img
+                              src={PROVIDER_MARKS[opt.value]}
+                              alt=""
+                              aria-hidden="true"
+                              className="size-3.5 object-contain"
+                              draggable={false}
+                            />
+                          </span>
+                        ),
+                      })),
+                    ]}
                     value={filterPlat}
                     onValueChange={setFilterPlat}
                   />
@@ -1012,6 +1398,23 @@ export function BrowserPage() {
                       variant="danger"
                       onClick={handleStopSyncUsernames}
                     />
+                  ) : syncingStatusActive ? (
+                    <Button
+                      data-testid="browser-stop-sync-qwen-btn"
+                      text="停止同步"
+                      size="small"
+                      icon="square"
+                      variant="danger"
+                      onClick={() => {
+                        if (st.batchText.includes("豆包")) {
+                          handleStopSyncAccountStatus();
+                        } else if (st.batchText.includes("Gemini")) {
+                          handleStopSyncGeminiStatus();
+                        } else {
+                          handleStopSyncQwenStatus();
+                        }
+                      }}
+                    />
                   ) : st.checkedCount > 0 ? (
                     <>
                       {st.checkedCount > checkedVisibleCount ? (
@@ -1030,13 +1433,13 @@ export function BrowserPage() {
                             content={
                               st.running
                                 ? "任务运行中，暂不可同步"
-                                : "自动抓取所选账号的平台用户名并更新名称"
+                                : "自动同步所选账号的用户名与实时额度"
                             }
                             side="bottom"
                           >
                             <Button
                               data-testid="browser-batch-sync-names-btn"
-                              text={`同步用户名 (${st.checkedCount})`}
+                              text={`同步 (${st.checkedCount})`}
                               size="small"
                               icon="refresh-cw"
                               variant="outline"
@@ -1088,13 +1491,13 @@ export function BrowserPage() {
                         content={
                           st.running
                             ? "任务运行中，暂不可同步"
-                            : `自动抓取当前列表全部 ${rows.length} 个账号的平台用户名并更新名称`
+                            : `自动同步当前列表全部 ${rows.length} 个账号的用户名与实时额度`
                         }
                         side="bottom"
                       >
                         <Button
                           data-testid="browser-quick-sync-names-btn"
-                          text="同步用户名"
+                          text="同步"
                           size="small"
                           icon="refresh-cw"
                           variant="outline"
@@ -1146,7 +1549,7 @@ export function BrowserPage() {
                   <EmptyNotice
                     icon="users"
                     title="账号池暂无账号"
-                    subtitle="点击「新建账号」添加豆包、千问或千问国际账号"
+                    subtitle="点击「新建账号」添加豆包、千问、千问国际或 Gemini 账号"
                     action={
                       <Button
                         data-testid="browser-empty-new-btn"
@@ -1162,6 +1565,7 @@ export function BrowserPage() {
                 </div>
               ) : (
                 <>
+
                   {hasFilters ? (
                     <div
                       data-testid="browser-active-filters-bar"
@@ -1229,7 +1633,7 @@ export function BrowserPage() {
                           <AccountColumnHeader
                             colKey="enabled"
                             label="启用"
-                            className="w-[78px] px-2.5 py-2 align-middle whitespace-nowrap"
+                            className="w-[72px] px-2.5 py-2 align-middle whitespace-nowrap"
                             sortState={sortState}
                             filters={filters}
                             allRows={allRows}
@@ -1245,7 +1649,7 @@ export function BrowserPage() {
                           <AccountColumnHeader
                             colKey="account"
                             label="账号"
-                            className="min-w-[180px] px-2.5 py-2 align-middle whitespace-nowrap"
+                            className="w-[21%] min-w-[156px] px-2.5 py-2 align-middle whitespace-nowrap"
                             sortState={sortState}
                             filters={filters}
                             allRows={allRows}
@@ -1261,7 +1665,7 @@ export function BrowserPage() {
                           <AccountColumnHeader
                             colKey="platform"
                             label="平台"
-                            className="w-[98px] px-2.5 py-2 align-middle whitespace-nowrap"
+                            className="w-[12%] min-w-[96px] px-2.5 py-2 align-middle whitespace-nowrap"
                             sortState={sortState}
                             filters={filters}
                             allRows={allRows}
@@ -1277,7 +1681,7 @@ export function BrowserPage() {
                           <AccountColumnHeader
                             colKey="health"
                             label="状态"
-                            className="w-[112px] px-2.5 py-2 align-middle whitespace-nowrap"
+                            className="w-[12%] min-w-[104px] px-2.5 py-2 align-middle whitespace-nowrap"
                             sortState={sortState}
                             filters={filters}
                             allRows={allRows}
@@ -1293,7 +1697,7 @@ export function BrowserPage() {
                           <AccountColumnHeader
                             colKey="usage"
                             label="今日用量"
-                            className="w-[122px] px-2.5 py-2 align-middle whitespace-nowrap"
+                            className="w-[24%] min-w-[208px] px-2.5 py-2 align-middle whitespace-nowrap"
                             sortState={sortState}
                             filters={filters}
                             allRows={allRows}
@@ -1309,7 +1713,7 @@ export function BrowserPage() {
                           <AccountColumnHeader
                             colKey="proxy"
                             label="独立代理"
-                            className="min-w-[132px] max-w-[200px] px-2.5 py-2 align-middle whitespace-nowrap"
+                            className="w-[16%] min-w-[120px] max-w-[200px] px-2.5 py-2 align-middle whitespace-nowrap"
                             sortState={sortState}
                             filters={filters}
                             allRows={allRows}
@@ -1373,18 +1777,18 @@ export function BrowserPage() {
                             <AccountTableRows
                               key={row.id}
                               row={row}
+                              platformConcurrencyLabel={getPlatformConcurrencyLabel(row)}
                               pageRunning={Boolean(st.running)}
                               clearingBusy={clearingActive}
-                              draftProxy={proxyDrafts.get(row.id)}
-                              proxyError={proxyErrors.get(row.id)}
-                              proxySaving={proxySavingId === row.id}
+                              syncingStatusBusy={syncingStatusActive}
                               onRequestRename={openRenameDialog}
-                              onToggleProxy={handleToggleProxy}
-                              onDraftProxyChange={(id, val) => setProxyDraft(id, val)}
-                              onSaveProxy={(id, val) => void handleSaveProxy(id, val)}
-                              onCancelProxy={handleCancelProxy}
+                              onRequestProxy={openProxyDialog}
+                              onRequestFingerprint={setFingerprintTarget}
                               onToggleCheck={handleToggleCheck}
                               onRowAction={handleRowAction}
+                              onSyncQwenRow={(target) => void handleSyncQwenStatus([target])}
+                              onSyncDoubaoRow={(target) => void handleSyncDoubaoStatus([target])}
+                              onSyncGeminiRow={(target) => void handleSyncGeminiStatus([target])}
                               onRequestClearHistory={openClearHistoryDialog}
                               onRequestDelete={setDeleteTarget}
                             />
@@ -1547,6 +1951,19 @@ export function BrowserPage() {
         }}
       />
 
+      {fingerprintTarget && <FingerprintDialog key={fingerprintTarget.id} id={fingerprintTarget.id}
+        name={fingerprintTarget.name || fingerprintTarget.platform} onClose={() => setFingerprintTarget(null)} />}
+
+      {/* 配置独立代理弹窗 */}
+      <ProxyAccountDialog
+        target={proxyTarget}
+        openSeq={proxyOpenSeq}
+        errorText={proxyError}
+        saving={proxySaving}
+        onClose={closeProxyDialog}
+        onSave={(id, val) => void handleSaveProxy(id, val)}
+      />
+
       {/* 删除账号警告确认弹窗 */}
       <Dialog
         open={Boolean(deleteTarget)}
@@ -1606,7 +2023,7 @@ export function BrowserPage() {
           if (!open && !clearSubmitting) closeClearHistoryDialog();
         }}
         title="清理平台聊天历史"
-        description="通过内置浏览器清理豆包、千问或千问国际网页端的历史对话"
+        description="通过内置浏览器清理豆包、千问、千问国际或 Gemini 网页端的历史对话"
         width={460}
         closeOnBackdrop={!clearSubmitting}
         closeOnEscape={!clearSubmitting}

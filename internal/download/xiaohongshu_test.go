@@ -19,7 +19,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 func TestXiaohongshuNoteID(t *testing.T) {
@@ -184,7 +183,7 @@ func TestXiaohongshuRenderedState(t *testing.T) {
 	}
 	defer session.Close()
 	var got xiaohongshuSnapshot
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, location, id), &got)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, location, id), &got)); err != nil {
 		t.Fatal(err)
 	}
 	if got.Status != "ok" || got.Title != "示例" || got.Total != 2 || len(got.Images) != 2 || len(got.Images[0].Primary) == 0 || len(got.Images[1].Primary) == 0 || got.Images[0].Primary[0] != "https://sns-webpic-qc.xhscdn.com/one" || got.Images[1].Primary[0] != "https://sns-webpic-qc.xhscdn.com/two" {
@@ -202,13 +201,13 @@ func TestXiaohongshuRenderedState(t *testing.T) {
 	if len(variants) != 4 {
 		t.Fatalf("preview or unrelated variant included: %+v", got.Images[0])
 	}
-	if err := session.run(ctx, chromedp.Evaluate(`window.__INITIAL_STATE__.note.noteDetailMap=new Map([["676a35670000000013002578",{note:{image_list:[{info_list:[{image_scene:"WB_DFT",url:"https://sns-webpic-qc.xhscdn.com/snake"},{image_scene:"WB_PRV",url:"https://sns-webpic-qc.xhscdn.com/preview"}]}]}}]])`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`window.__INITIAL_STATE__.note.noteDetailMap=new Map([["676a35670000000013002578",{note:{image_list:[{info_list:[{image_scene:"WB_DFT",url:"https://sns-webpic-qc.xhscdn.com/snake"},{image_scene:"WB_PRV",url:"https://sns-webpic-qc.xhscdn.com/preview"}]}]}}]])`, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, location, id), &got)); err != nil || got.Status != "ok" || len(got.Images) != 1 || len(got.Images[0].Primary) != 1 || got.Images[0].Primary[0] != "https://sns-webpic-qc.xhscdn.com/snake" {
+	if err := session.run(ctx, fingerprint.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, location, id), &got)); err != nil || got.Status != "ok" || len(got.Images) != 1 || len(got.Images[0].Primary) != 1 || got.Images[0].Primary[0] != "https://sns-webpic-qc.xhscdn.com/snake" {
 		t.Fatalf("snake-case snapshot = %+v, %v", got, err)
 	}
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, location+"?other", id), &got)); err != nil || got.Status != "changed" {
+	if err := session.run(ctx, fingerprint.Evaluate(fmt.Sprintf(xiaohongshuNoteScript, location+"?other", id), &got)); err != nil || got.Status != "changed" {
 		t.Fatalf("navigation guard = %+v, %v", got, err)
 	}
 }
@@ -375,11 +374,11 @@ document.getElementById('userPostedFeeds').insertAdjacentHTML('beforeend', '<sec
 	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, fingerprint.Navigate(page.String()), chromedp.Evaluate(`window.scrollTo(0, 100)`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String()), fingerprint.Evaluate(`window.scrollTo(0, 100)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	var originalY float64
-	if err := session.run(ctx, chromedp.Evaluate(`window.scrollY`, &originalY)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`window.scrollY`, &originalY)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -397,7 +396,7 @@ document.getElementById('userPostedFeeds').insertAdjacentHTML('beforeend', '<sec
 	}
 	var current string
 	var finalY float64
-	if err := session.run(ctx, chromedp.Location(&current), chromedp.Evaluate(`window.scrollY`, &finalY)); err != nil {
+	if err := session.run(ctx, fingerprint.Location(&current), fingerprint.Evaluate(`window.scrollY`, &finalY)); err != nil {
 		t.Fatal(err)
 	}
 	if current != page.String() || finalY != originalY {

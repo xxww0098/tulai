@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -301,7 +301,7 @@ func issuuRenderedCollect(ctx context.Context, session *RenderedSession, page *u
 		}
 		return out;
 	})()`
-	if err := session.run(ctx, chromedp.Evaluate(script, &frames)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(script, &frames)); err != nil {
 		return Discovery{IsPage: true, Title: state.Title}, err
 	}
 	ref := issuuDocumentRef(page)

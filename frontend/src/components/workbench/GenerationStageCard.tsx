@@ -32,20 +32,16 @@ export function areResultTilesEqual(a: ResultTileDTO, b: ResultTileDTO): boolean
 export const GenerationStageCard = memo(
   function GenerationStageCard({
     tile,
-    animPaused = false,
     queued = false,
   }: {
     tile: ResultTileDTO;
-    animPaused?: boolean;
     queued?: boolean;
   }) {
     const isAlert = tile.status === "需要人工验证";
     const isError = tile.status === "失败" || tile.status === "需核对";
-    const isPaused = Boolean(animPaused && !isAlert && !isError);
 
     const phase = tile.phase?.trim();
     const statusText = isAlert ? "需要人工验证"
-      : isPaused ? "点阵已暂停"
       : queued ? "排队中"
       : phase === "downloading" ? "已出图，正在保存…"
       : phase === "uploading" ? "正在上传原图…"
@@ -58,7 +54,7 @@ export const GenerationStageCard = memo(
         className="relative h-full w-full"
       >
         <DotMatrixImageBox
-          status={isError ? "error" : isPaused || isAlert ? "paused" : "loading"}
+          status={isError ? "error" : isAlert ? "paused" : "loading"}
           statusText={statusText}
           showStatusLine="overlay"
           statusLineSize="sm"
@@ -72,6 +68,5 @@ export const GenerationStageCard = memo(
   },
   (prev, next) =>
     prev.queued === next.queued &&
-    prev.animPaused === next.animPaused &&
     areResultTilesEqual(prev.tile, next.tile),
 );

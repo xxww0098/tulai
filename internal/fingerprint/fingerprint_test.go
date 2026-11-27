@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xxww0098/realbrowser/browserkernel"
 )
 
 func TestFingerprintPlatformSupportAndSafety(t *testing.T) {
@@ -64,14 +66,14 @@ func TestFingerprintZipExtractionAndSHA256(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(raw)
-	if err := verifyFileSHA256(goodZip, hex.EncodeToString(sum[:])); err != nil {
+	if err := browserkernel.VerifyFileSHA256(t.Context(), goodZip, hex.EncodeToString(sum[:])); err != nil {
 		t.Fatalf("valid sha256 rejected: %v", err)
 	}
-	if err := verifyFileSHA256(goodZip, strings.Repeat("0", 64)); err == nil {
+	if err := browserkernel.VerifyFileSHA256(t.Context(), goodZip, strings.Repeat("0", 64)); err == nil {
 		t.Fatal("mismatched sha256 accepted")
 	}
 	dest := filepath.Join(dir, "out")
-	if err := extractFingerprintZip(t.Context(), goodZip, dest); err != nil {
+	if err := (browserkernel.PinnedBuild{File: "kernel.zip", RelExe: "chrome.exe"}).Unpack(t.Context(), goodZip, dest); err != nil {
 		t.Fatalf("extract good zip: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dest, "chrome.exe"))
@@ -83,7 +85,7 @@ func TestFingerprintZipExtractionAndSHA256(t *testing.T) {
 	writeTestZip(t, evilZip, map[string]string{
 		"top/../../escaped.txt": "nope",
 	})
-	if err := extractFingerprintZip(t.Context(), evilZip, filepath.Join(dir, "evil-out")); err == nil {
+	if err := (browserkernel.PinnedBuild{File: "kernel.zip", RelExe: "chrome.exe"}).Unpack(t.Context(), evilZip, filepath.Join(dir, "evil-out")); err == nil {
 		t.Fatal("zip traversal accepted")
 	}
 }
@@ -157,7 +159,7 @@ func TestFingerprintTarXZExtractionAndSymlinkGuards(t *testing.T) {
 		{Name: "top/lib/link", Typeflag: tar.TypeSymlink, Linkname: "../chrome"},
 	}, map[string]string{"top/chrome": "elf-binary"})
 	dest := filepath.Join(t.TempDir(), "good")
-	if err := extractFingerprintTarXZ(t.Context(), good, dest); err != nil {
+	if err := (browserkernel.PinnedBuild{File: "kernel.tar.xz", RelExe: "chrome"}).Unpack(t.Context(), good, dest); err != nil {
 		t.Fatalf("extract good tar.xz: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(dest, "lib", "link")); err != nil || string(got) != "elf-binary" {
@@ -183,7 +185,7 @@ func TestFingerprintTarXZExtractionAndSymlinkGuards(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := writeTarXZ(t, hdrs, map[string]string{"top/../../evil.txt": "x", "top/a": "x", "chrome": "x"})
-			if err := extractFingerprintTarXZ(t.Context(), bad, filepath.Join(t.TempDir(), "bad")); err == nil {
+			if err := (browserkernel.PinnedBuild{File: "kernel.tar.xz", RelExe: "chrome"}).Unpack(t.Context(), bad, filepath.Join(t.TempDir(), "bad")); err == nil {
 				t.Fatalf("expected %s archive to be rejected", name)
 			}
 		})

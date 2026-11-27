@@ -8,7 +8,6 @@ import {
   type FocusEvent,
   type HTMLAttributes,
   type KeyboardEvent,
-  type MouseEvent,
   type PointerEvent,
   type ReactNode,
 } from "react";

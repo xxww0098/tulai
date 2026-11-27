@@ -142,6 +142,25 @@ function makeBrowserRow(overrides: Partial<BrowserRowDTO> = {}): BrowserRowDTO {
     todayCount: 3,
     usageLabel: "3/50",
     usagePct: 6,
+    creditsSynced: false,
+    creditsRemain: -1,
+    creditsTotal: 0,
+    creditCost: 0,
+    creditsResetAt: 0,
+    creditsResetLabel: "",
+    creditsCycle: "",
+    creditsCycleLabel: "",
+    memberTier: "",
+    memberLabel: "",
+    concurrencyLimit: 0,
+    concurrencyLabel: "",
+    watermarkFree: false,
+    usagePercent: -1,
+    platformLimited: false,
+    limitTips: "",
+    resetCardCount: 0,
+    creditsSyncedAt: 0,
+    creditsSyncedLabel: "",
     ...overrides,
   };
 }
@@ -177,6 +196,12 @@ function makeBrowserState(overrides: Partial<BrowserStateDTO> = {}): BrowserStat
     dlBrowserBusy: false,
     dlBrowserOpen: false,
     dlBrowserUrl: "",
+    doubaoConcurrencyAuto: true,
+    doubaoConcurrencyMax: 2,
+    qianwenConcurrencyAuto: true,
+    qianwenConcurrencyMax: 2,
+    geminiConcurrencyAuto: true,
+    geminiConcurrencyMax: 2,
     ...overrides,
   };
 }
@@ -235,12 +260,19 @@ function makeSettingsState(overrides: Partial<SettingsStateDTO> = {}): SettingsS
     autoDeleteHistory: false,
     concurrencyAuto: true,
     concurrencyMax: 3,
+    concurrencyAutoQianwen: true,
+    concurrencyMaxQianwen: 2,
+    concurrencyAutoQwenIntl: true,
+    concurrencyMaxQwenIntl: 2,
+    concurrencyAutoGemini: true,
+    concurrencyMaxGemini: 2,
     sendStrategy: "顺序循环",
     retryCount: 2,
     sendWait: 5,
     dailyCapDoubao: 50,
     dailyCapQianwen: 30,
     dailyCapQwenIntl: 100,
+    dailyCapGemini: 100,
     waitBefore: 0,
     waitResult: true,
     waitResultSeconds: 90,
@@ -257,6 +289,7 @@ function makeSettingsState(overrides: Partial<SettingsStateDTO> = {}): SettingsS
     customKey: "",
     customModel: "",
     ikunocrKey: "",
+    kernelAutoUpdate: false,
     autoCheck: true,
     updateMirror: "",
     version: "0.1.38",
@@ -476,6 +509,25 @@ describe("BrowserPage (账号池)", () => {
     expect(screen.queryByTestId("browser-rename-dialog")).not.toBeInTheDocument();
   });
 
+  it("edits the selected account fingerprint and keeps the dialog open on validation failure", async () => {
+    const saved = { lang: "en-US", timezone: "UTC", windowWidth: 0, windowHeight: 0, colorScheme: "" };
+    vi.spyOn(ipc.Browser, "getAccountFingerprint").mockResolvedValue(saved);
+    const save = vi.spyOn(ipc.Browser, "saveAccountFingerprint")
+      .mockRejectedValueOnce(new Error("时区无效")).mockResolvedValueOnce(undefined);
+    useAppStore.setState({ browser: makeBrowserState({ rows: [makeBrowserRow({ id: 7, name: "测试号" })] }) });
+    renderPage(<BrowserPage />);
+    fireEvent.click(screen.getByRole("button", { name: "编辑 测试号 指纹设置" }));
+    const timezone = await screen.findByLabelText("时区");
+    expect(timezone).toHaveValue("UTC");
+    fireEvent.change(timezone, { target: { value: "invalid" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("时区无效");
+    fireEvent.change(timezone, { target: { value: "Asia/Shanghai" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(save).toHaveBeenLastCalledWith(7, { ...saved, timezone: "Asia/Shanghai" });
+  });
+
   it("shows error feedback when saveAccountProxy fails and closes on success", async () => {
     const proxySpy = vi
       .spyOn(ipc.Browser, "saveAccountProxy")
@@ -491,6 +543,14 @@ describe("BrowserPage (账号池)", () => {
     const proxyBtn = screen.getByTestId("browser-proxy-btn-7");
     expect(proxyBtn).toHaveTextContent("跟随全局");
     fireEvent.click(proxyBtn);
+    expect(screen.getByTestId("browser-proxy-dialog")).toBeInTheDocument();
+    act(() => {
+      expect(dispatchTopEscape()).toBe(true);
+    });
+    expect(screen.queryByTestId("browser-proxy-dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(proxyBtn);
+    expect(screen.getByTestId("browser-proxy-dialog")).toBeInTheDocument();
     const proxyInput = screen.getByTestId("browser-proxy-input-7") as HTMLInputElement;
 
     fireEvent.change(proxyInput, { target: { value: "bad-proxy" } });
@@ -501,14 +561,16 @@ describe("BrowserPage (账号池)", () => {
         "代理格式无效，请填 http://主机:端口",
       );
     });
+    expect(screen.getByTestId("browser-proxy-dialog")).toBeInTheDocument();
     expect(screen.getByTestId("browser-proxy-input-7")).toBeInTheDocument();
 
     fireEvent.change(proxyInput, { target: { value: "http://127.0.0.1:7890" } });
     fireEvent.click(screen.getByRole("button", { name: "保存代理" }));
 
     await waitFor(() => {
-      expect(screen.queryByTestId("browser-proxy-input-7")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("browser-proxy-dialog")).not.toBeInTheDocument();
     });
+    expect(screen.queryByTestId("browser-proxy-input-7")).not.toBeInTheDocument();
     expect(proxySpy).toHaveBeenNthCalledWith(2, 7, "http://127.0.0.1:7890");
   });
 
@@ -572,6 +634,279 @@ describe("BrowserPage (账号池)", () => {
     expect(createSpy).toHaveBeenCalledWith("豆包", "");
   });
 
+  it("renders Qwen pool status strip, per-row credits/refresh/concurrency telemetry, and sync/stop actions", async () => {
+    const syncQwenSpy = vi.spyOn(ipc.Browser, "syncQwenStatus").mockResolvedValue(undefined);
+    const stopQwenSpy = vi.spyOn(ipc.Browser, "stopSyncQwenStatus").mockResolvedValue(undefined);
+
+    useAppStore.setState({
+      browser: makeBrowserState({
+        qianwenConcurrencyAuto: true,
+        qianwenConcurrencyMax: 3,
+        rows: [
+          makeBrowserRow({ id: 1, platform: "豆包", name: "豆包主号" }),
+          makeBrowserRow({
+            id: 2,
+            platform: "千问",
+            name: "千问1号",
+            todayCount: 4,
+            usagePct: 23,
+            usageLabel: "余 31/40 积分",
+            creditsSynced: true,
+            creditsRemain: 31,
+            creditsTotal: 40,
+            creditCost: 1,
+            creditsResetAt: 1795795199,
+            creditsResetLabel: "今日 23:59 刷新",
+            creditsCycle: "daily",
+            creditsCycleLabel: "每日刷新",
+            memberTier: "free",
+            memberLabel: "免费套餐",
+            concurrencyLimit: 6,
+            concurrencyLabel: "单号≤6(建议2)",
+            creditsSyncedLabel: "12:15 同步",
+          }),
+          makeBrowserRow({
+            id: 3,
+            platform: "千问",
+            name: "千问2号",
+            todayCount: 6,
+            usagePct: 100,
+            usageLabel: "0/40 积分 · 已耗尽",
+            creditsSynced: true,
+            creditsRemain: 0,
+            creditsTotal: 40,
+            creditCost: 1,
+            creditsResetAt: 1796241060,
+            creditsResetLabel: "12-03 03:51 到期",
+            creditsCycle: "7d",
+            creditsCycleLabel: "7日周期",
+            memberTier: "free",
+            memberLabel: "免费套餐",
+            concurrencyLimit: 6,
+            concurrencyLabel: "单号≤6(建议2)",
+            creditsSyncedLabel: "12:10 同步",
+          }),
+        ],
+      }),
+    });
+
+    const { rerender } = renderPage(<BrowserPage />);
+
+    expect(screen.queryByTestId("qwen-pool-overview")).not.toBeInTheDocument();
+    expect(screen.getByTestId("browser-platform-concurrency-2")).toHaveTextContent("调度上限 3");
+    expect(screen.getByTestId("browser-qwen-credits-2")).toHaveTextContent("余 31 / 40 积分");
+    expect(screen.getByTestId("browser-row-2")).toHaveTextContent("约 31 张");
+    expect(screen.getByTestId("browser-qwen-meta-2")).toHaveTextContent(
+      "今日 23:59 刷新 · 1分/张 · 单号≤6(建议2) · 今日 4 次 · 12:15 同步",
+    );
+    expect(screen.getByTestId("browser-qwen-credits-3")).toHaveTextContent("0 / 40 积分 · 已耗尽");
+    expect(screen.getByTestId("browser-qwen-meta-3")).toHaveTextContent("12-03 03:51 到期");
+
+    fireEvent.click(screen.getByTestId("browser-sync-qwen-row-2"));
+    expect(syncQwenSpy).toHaveBeenCalledWith([2]);
+
+    act(() => {
+      useAppStore.setState({
+        browser: makeBrowserState({
+          batchActive: true,
+          batchKind: "syncing_status",
+          batchText: "正在同步千问状态：1/2",
+          rows: [
+            makeBrowserRow({
+              id: 2,
+              platform: "千问",
+              name: "千问一号",
+              pending: true,
+              pendingOp: "syncing_status",
+            }),
+          ],
+        }),
+      });
+    });
+    rerender(<BrowserPage />);
+    expect(screen.getByText("同步状态中")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("browser-stop-sync-qwen-btn"));
+    expect(stopQwenSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders Doubao per-row subscription/window/limit/concurrency telemetry and sync/stop actions inside table", async () => {
+    const syncAccountSpy = vi.spyOn(ipc.Browser, "syncAccountStatus").mockResolvedValue(undefined);
+    const stopAccountSpy = vi.spyOn(ipc.Browser, "stopSyncAccountStatus").mockResolvedValue(undefined);
+
+    useAppStore.setState({
+      browser: makeBrowserState({
+        doubaoConcurrencyAuto: true,
+        doubaoConcurrencyMax: 4,
+        rows: [
+          makeBrowserRow({
+            id: 21,
+            platform: "豆包",
+            name: "豆包1号",
+            todayCount: 5,
+            usagePct: 24,
+            usageLabel: "窗口已用 24%",
+            creditsSynced: true,
+            creditsRemain: -1,
+            creditsTotal: 0,
+            memberTier: "free",
+            memberLabel: "免费体验",
+            usagePercent: 24,
+            platformLimited: false,
+            resetCardCount: 0,
+            creditsSyncedLabel: "13:15 同步",
+          }),
+          makeBrowserRow({
+            id: 22,
+            platform: "豆包",
+            name: "豆包2号",
+            todayCount: 10,
+            usagePct: 6,
+            usageLabel: "余 8420/9000 额度",
+            creditsSynced: true,
+            creditsRemain: 8420,
+            creditsTotal: 9000,
+            creditsResetAt: 1798387140,
+            creditsResetLabel: "12-27 23:59 到期",
+            creditsCycle: "monthly",
+            creditsCycleLabel: "会员月度",
+            memberTier: "vip",
+            memberLabel: "标准订阅",
+            usagePercent: 6,
+            platformLimited: false,
+            resetCardCount: 1,
+            creditsSyncedLabel: "13:10 同步",
+          }),
+        ],
+      }),
+    });
+
+    const { rerender } = renderPage(<BrowserPage />);
+
+    expect(screen.queryByTestId("doubao-pool-overview")).not.toBeInTheDocument();
+    expect(screen.getByTestId("browser-platform-concurrency-21")).toHaveTextContent("调度上限 4");
+    expect(screen.getByTestId("browser-doubao-status-21")).toHaveTextContent("窗口已用 24%");
+    expect(screen.getByTestId("browser-doubao-meta-21")).toHaveTextContent(
+      "今日 5 次 · 重置卡 0 张 · 13:15 同步",
+    );
+    expect(screen.getByTestId("browser-doubao-status-22")).toHaveTextContent("余 8420 / 9000 额度");
+    expect(screen.getByTestId("browser-doubao-meta-22")).toHaveTextContent(
+      "12-27 23:59 到期 · 窗口 6% · 重置卡 1 张 · 今日 10 次 · 13:10 同步",
+    );
+
+    fireEvent.click(screen.getByTestId("browser-sync-doubao-row-21"));
+    expect(syncAccountSpy).toHaveBeenCalledWith([21]);
+
+    act(() => {
+      useAppStore.setState({
+        browser: makeBrowserState({
+          batchActive: true,
+          batchKind: "syncing_status",
+          batchText: "正在同步豆包状态：1/2",
+          rows: [
+            makeBrowserRow({
+              id: 21,
+              platform: "豆包",
+              name: "猪大派",
+              pending: true,
+              pendingOp: "syncing_status",
+            }),
+          ],
+        }),
+      });
+    });
+    rerender(<BrowserPage />);
+    expect(screen.getByText("同步状态中")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("browser-stop-sync-qwen-btn"));
+    expect(stopAccountSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders Gemini per-row remaining quota/reset/plan/concurrency telemetry and sync/stop actions inside table", async () => {
+    const syncGeminiSpy = vi.spyOn(ipc.Browser, "syncGeminiStatus").mockResolvedValue(undefined);
+    const stopGeminiSpy = vi.spyOn(ipc.Browser, "stopSyncGeminiStatus").mockResolvedValue(undefined);
+
+    useAppStore.setState({
+      browser: makeBrowserState({
+        geminiConcurrencyAuto: true,
+        geminiConcurrencyMax: 4,
+        rows: [
+          makeBrowserRow({
+            id: 10,
+            platform: "Gemini",
+            name: "Alice Wang",
+            todayCount: 3,
+            usagePct: 15,
+            usageLabel: "余 85%",
+            creditsSynced: true,
+            creditsRemain: 85,
+            creditsTotal: 100,
+            creditsResetAt: 1795771800,
+            creditsResetLabel: "今日 17:30 刷新",
+            creditsCycle: "5h",
+            creditsCycleLabel: "5小时窗口",
+            memberTier: "pro",
+            memberLabel: "AI Pro",
+            creditsSyncedLabel: "12:15 同步",
+          }),
+          makeBrowserRow({
+            id: 11,
+            platform: "Gemini",
+            name: "bob@gmail.com",
+            todayCount: 8,
+            usagePct: 100,
+            usageLabel: "剩余 0% · 已耗尽",
+            creditsSynced: true,
+            creditsRemain: 0,
+            creditsTotal: 100,
+            creditsResetAt: 1796241060,
+            creditsResetLabel: "12-03 03:51 刷新",
+            creditsCycle: "weekly",
+            creditsCycleLabel: "每周上限",
+            memberTier: "free",
+            memberLabel: "免费版",
+            creditsSyncedLabel: "12:10 同步",
+          }),
+        ],
+      }),
+    });
+
+    const { rerender } = renderPage(<BrowserPage />);
+
+    expect(screen.queryByTestId("gemini-pool-overview")).not.toBeInTheDocument();
+    expect(screen.getByTestId("browser-platform-concurrency-10")).toHaveTextContent("调度上限 4");
+    expect(screen.getByTestId("browser-gemini-quota-10")).toHaveTextContent("余 85%");
+    expect(screen.getByTestId("browser-gemini-meta-10")).toHaveTextContent(
+      "5小时窗口 · 今日 17:30 刷新 · 今日 3 次 · 12:15 同步",
+    );
+    expect(screen.getByTestId("browser-gemini-quota-11")).toHaveTextContent("剩余 0% · 已耗尽");
+    expect(screen.getByTestId("browser-gemini-meta-11")).toHaveTextContent("每周上限 · 12-03 03:51 刷新");
+
+    fireEvent.click(screen.getByTestId("browser-sync-gemini-row-10"));
+    expect(syncGeminiSpy).toHaveBeenCalledWith([10]);
+
+    act(() => {
+      useAppStore.setState({
+        browser: makeBrowserState({
+          batchActive: true,
+          batchKind: "syncing_status",
+          batchText: "正在同步 Gemini 状态：1/2",
+          rows: [
+            makeBrowserRow({
+              id: 10,
+              platform: "Gemini",
+              name: "Alice Wang",
+              pending: true,
+              pendingOp: "syncing_status",
+            }),
+          ],
+        }),
+      });
+    });
+    rerender(<BrowserPage />);
+    expect(screen.getByText("同步状态中")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("browser-stop-sync-qwen-btn"));
+    expect(stopGeminiSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("supports quick, batch, stop, and rename-dialog account username sync", async () => {
     const syncSpy = vi.spyOn(ipc.Browser, "syncAccountUsernames").mockResolvedValue(undefined);
     const stopSpy = vi.spyOn(ipc.Browser, "stopSyncAccountUsernames").mockResolvedValue(undefined);
@@ -588,6 +923,7 @@ describe("BrowserPage (账号池)", () => {
     const { rerender } = renderPage(<BrowserPage />);
 
     // Quick sync button syncs all currently visible rows
+    expect(screen.getByTestId("browser-quick-sync-names-btn")).toHaveTextContent("同步");
     fireEvent.click(screen.getByTestId("browser-quick-sync-names-btn"));
     expect(syncSpy).toHaveBeenCalledWith([1, 2]);
 
@@ -611,6 +947,7 @@ describe("BrowserPage (账号池)", () => {
       });
     });
     rerender(<BrowserPage />);
+    expect(screen.getByTestId("browser-batch-sync-names-btn")).toHaveTextContent("同步 (1)");
     fireEvent.click(screen.getByTestId("browser-batch-sync-names-btn"));
     expect(syncSpy).toHaveBeenCalledWith([2]);
 
@@ -753,16 +1090,25 @@ describe("BrowserPage (账号池)", () => {
 
     renderPage(<BrowserPage />);
 
-    fireEvent.click(within(screen.getByTestId("browser-row-1")).getByRole("button", { name: "打开" }));
+    const openBtn = within(screen.getByTestId("browser-row-1")).getByRole("button", { name: "打开" });
+    expect(openBtn).toHaveTextContent("");
+    fireEvent.click(openBtn);
     expect(actionSpy).toHaveBeenCalledWith(1, "launch");
 
-    fireEvent.click(
-      within(screen.getByTestId("browser-row-2")).getByRole("button", { name: "打开登录" }),
-    );
+    const loginBtn = within(screen.getByTestId("browser-row-2")).getByRole("button", {
+      name: "打开登录",
+    });
+    expect(loginBtn).toHaveTextContent("");
+    fireEvent.click(loginBtn);
     expect(actionSpy).toHaveBeenCalledWith(2, "launch");
 
-    fireEvent.click(within(screen.getByTestId("browser-row-3")).getByRole("button", { name: "关闭" }));
+    const closeBtn = within(screen.getByTestId("browser-row-3")).getByRole("button", { name: "关闭" });
+    expect(closeBtn).toHaveTextContent("");
+    fireEvent.click(closeBtn);
     expect(actionSpy).toHaveBeenCalledWith(3, "stop");
+
+    expect(screen.getByTestId("browser-clear-history-btn-1")).toHaveTextContent("");
+    expect(screen.getByTestId("browser-delete-btn-1")).toHaveTextContent("");
   });
 
   it("supports column sorting across 启用/账号/平台/状态/今日用量/独立代理", () => {
@@ -954,13 +1300,21 @@ describe("BrowserPage (账号池)", () => {
     const qwenIntlBox = within(screen.getByTestId("browser-filter-platform-千问国际")).getByRole(
       "checkbox",
     );
-    fireEvent.click(doubaoBox); // uncheck 豆包 -> 千问 & 千问国际 remain checked (still "全部")
-    const segTabs = screen.getByTestId("browser-platform-filter");
-    expect(within(segTabs).getByRole("tab", { name: "全部" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    const geminiBox = within(screen.getByTestId("browser-filter-platform-Gemini")).getByRole(
+      "checkbox",
     );
-    fireEvent.click(qwenIntlBox); // uncheck 千问国际 -> only 千问 remains checked
+    fireEvent.click(doubaoBox); // uncheck 豆包 -> 千问, 千问国际 & Gemini remain checked (still "全部")
+    const segTabs = screen.getByTestId("browser-platform-filter");
+    const allTab = within(segTabs).getByRole("tab", { name: "全部" });
+    expect(allTab).toHaveAttribute("aria-selected", "true");
+    expect(allTab).toHaveTextContent("全部");
+    for (const plat of ["豆包", "千问", "千问国际", "Gemini"]) {
+      const platTab = within(segTabs).getByRole("tab", { name: plat });
+      expect(platTab).toHaveTextContent("");
+      expect(platTab.querySelector("img")).toBeInTheDocument();
+    }
+    fireEvent.click(qwenIntlBox); // uncheck 千问国际
+    fireEvent.click(geminiBox); // uncheck Gemini -> only 千问 remains checked
     expect(within(segTabs).getByRole("tab", { name: "千问" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -1008,6 +1362,31 @@ describe("BrowserPage (账号池)", () => {
     expect(screen.queryByTestId("browser-row-1")).not.toBeInTheDocument();
     expect(screen.getByTestId("browser-row-2")).toBeInTheDocument();
     expect(screen.getByTestId("browser-row-3")).toBeInTheDocument();
+  });
+
+  it("exposes top window drag region on PaneHeader only when PageToolbar is hidden", () => {
+    useAppStore.setState({
+      browser: makeBrowserState({
+        ready: true,
+        missingHint: "",
+      }),
+    });
+
+    const { container, rerender } = renderPage(<BrowserPage />);
+    const headerTitle = screen.getByText("账号池");
+    const paneHeader = headerTitle.closest(".app-drag-region");
+    expect(paneHeader).not.toBeNull();
+    expect(screen.getByTestId("browser-new-btn").closest(".app-no-drag")).not.toBeNull();
+
+    useAppStore.setState({
+      browser: makeBrowserState({
+        ready: false,
+        missingHint: "",
+      }),
+    });
+    rerender(<BrowserPage />);
+    expect(screen.getByText("账号池").closest(".app-drag-region")).toBeNull();
+    expect(container.querySelector(".app-drag-region")).not.toBeNull();
   });
 });
 
@@ -1505,6 +1884,20 @@ describe("SettingsPage", () => {
     expect(screen.getByTestId("settings-captcha-ikunocr-fields")).toBeInTheDocument();
   });
 
+  it("renders and commits Gemini daily cap on Tab 1", () => {
+    const setFieldSpy = vi.spyOn(ipc.Settings, "setSettingField").mockResolvedValue(undefined);
+    useAppStore.setState({
+      settings: makeSettingsState({ tab: 1, dailyCapGemini: 100 }),
+    });
+
+    renderPage(<SettingsPage />);
+    const gemInput = screen.getByLabelText("Gemini单日上限") as HTMLInputElement;
+    expect(gemInput.value).toBe("100");
+    fireEvent.change(gemInput, { target: { value: "60" } });
+    fireEvent.blur(gemInput);
+    expect(setFieldSpy).toHaveBeenCalledWith("dailyCapGemini", "60");
+  });
+
   it("renders Fingerprint runtime install controls on Browser & Network tab", () => {
     const installSpy = vi.spyOn(ipc.Browser, "installBrowserRuntime").mockResolvedValue(undefined);
 
@@ -1703,7 +2096,7 @@ describe("SettingsPage", () => {
 
     const err = new Error("mygo: runtime not found");
     vi.spyOn(ipc.Settings, "setSettingField").mockRejectedValue(err);
-    vi.spyOn(ipc.Browser, "refreshBrowsers").mockRejectedValue(err);
+    vi.spyOn(ipc.Browser, "toggleAllBrowserChecks").mockRejectedValue(err);
     vi.spyOn(ipc.Prompts, "selectPrompt").mockRejectedValue(err);
 
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
@@ -1720,7 +2113,8 @@ describe("SettingsPage", () => {
 
       cleanup();
       renderPage(<BrowserPage />);
-      fireEvent.click(screen.getByRole("button", { name: "刷新状态" }));
+      expect(screen.queryByRole("button", { name: "刷新状态" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("browser-select-all"));
 
       cleanup();
       renderPage(<PromptsPage />);

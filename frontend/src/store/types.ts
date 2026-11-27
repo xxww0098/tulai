@@ -91,6 +91,7 @@ export const DEFAULT_PLATFORMS: PlatformNavDTO[] = [
   { id: "doubao", name: "豆包", ready: 0, busy: 0, total: 0 },
   { id: "qianwen", name: "千问", ready: 0, busy: 0, total: 0 },
   { id: "qwen_intl", name: "千问国际", ready: 0, busy: 0, total: 0 },
+  { id: "gemini", name: "Gemini", ready: 0, busy: 0, total: 0 },
 ];
 
 export const DEFAULT_SHELL: ShellStateDTO = {

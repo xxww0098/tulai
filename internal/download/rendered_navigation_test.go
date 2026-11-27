@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 type downloadNavigationExecutor func(string, any, any) error
@@ -107,7 +107,7 @@ func TestDedicatedDownloadPageReplacesPendingNavigation(t *testing.T) {
 	// Arm an in-page replacement trigger before starting /pending: Chromium's CDP
 	// queues concurrent Runtime.evaluate calls behind an in-flight Page.navigate,
 	// whereas real page/script redirects run on the active document immediately.
-	if err := session.run(ctx, chromedp.Evaluate(`void fetch('/trigger').then(() => location.replace('/landing'))`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`void fetch('/trigger').then(() => location.replace('/landing'))`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -129,7 +129,7 @@ func TestDedicatedDownloadPageReplacesPendingNavigation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var current string
-	if err := session.run(ctx, chromedp.Location(&current)); err != nil || current != server.URL+"/landing" || !session.Alive() {
+	if err := session.run(ctx, fingerprint.Location(&current)); err != nil || current != server.URL+"/landing" || !session.Alive() {
 		t.Fatalf("replacement tab = %q, alive = %v, err = %v", current, session.Alive(), err)
 	}
 	stopped, stop := context.WithCancel(ctx)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image/png"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/captcha"
+	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/download"
 	"github.com/xxww0098/tulai/internal/imageedit"
 	"github.com/xxww0098/tulai/internal/images"
@@ -188,6 +190,7 @@ type App struct {
 	platDoubao              bool
 	platQianwen             bool
 	platQwenIntl            bool
+	platGemini              bool
 	sendStrategy            string
 	concurrencyAuto         bool
 	concurrencyMax          float64
@@ -195,6 +198,8 @@ type App struct {
 	concurrencyMaxQianwen   float64
 	concurrencyAutoQwenIntl bool
 	concurrencyMaxQwenIntl  float64
+	concurrencyAutoGemini   bool
+	concurrencyMaxGemini    float64
 	retryCount              float64
 	sendWait                float64
 	dailyCap                float64
@@ -203,6 +208,8 @@ type App struct {
 	dailyCapQianwenSet      bool
 	dailyCapQwenIntl        float64
 	dailyCapQwenIntlSet     bool
+	dailyCapGemini          float64
+	dailyCapGeminiSet       bool
 	riskyWords              string
 	pickFile                func() (string, error)
 	waitBefore              float64
@@ -220,6 +227,7 @@ type App struct {
 	doubaoOutput            outputSizePrefs
 	qianwenOutput           outputSizePrefs
 	qwenIntlOutput          outputSizePrefs
+	geminiOutput            outputSizePrefs
 	washStyle          string
 	removeWatermark    bool
 	autoDeleteHistory  bool
@@ -370,6 +378,14 @@ type App struct {
 	clearHistoryCancel context.CancelFunc
 	syncAccountNameFn  func(context.Context, store.Browser) (string, error)
 	syncNamesCancel    context.CancelFunc
+	syncQwenStatusFn   func(context.Context, store.Browser) (cdp.QwenStatus, error)
+	syncDoubaoStatusFn func(context.Context, store.Browser) (cdp.DoubaoStatus, error)
+	syncGeminiStatusFn func(context.Context, store.Browser) (cdp.GeminiStatus, error)
+	syncQwenCancel     context.CancelFunc
+	qwenStatusProbe    func(context.Context, string) (cdp.QwenStatus, error)
+	doubaoStatusProbe  func(context.Context, string) (cdp.DoubaoStatus, error)
+	geminiStatusProbe  func(context.Context, string) (cdp.GeminiStatus, error)
+	qwenLiveProbing    atomic.Bool
 	loginClosed        []int64
 	afterClose         func()
 
@@ -929,6 +945,26 @@ func (a *App) openPath(path string) error {
 	return h.OpenPath(path)
 }
 
+func (a *App) openExternal(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if (scheme != "http" && scheme != "https") || parsed.Host == "" {
+		return fmt.Errorf("不支持的外部链接: %s", rawURL)
+	}
+	h := a.desktopHost()
+	if h == nil {
+		return nil
+	}
+	return h.OpenExternal(parsed.String())
+}
+
 func (a *App) revealPath(path string) error {
 	path = strings.TrimSpace(path)
 	h := a.desktopHost()
@@ -1000,7 +1036,7 @@ func (a *App) loadSettings() {
 	chosenPlatform := "豆包"
 	for _, p := range s.Platforms() {
 		switch p {
-		case "豆包", "千问", "千问国际":
+		case "豆包", "千问", "千问国际", "Gemini":
 			chosenPlatform = p
 		default:
 			continue
@@ -1036,6 +1072,16 @@ func (a *App) loadSettings() {
 	} else {
 		a.concurrencyMaxQwenIntl = float64(clampInt(s.GetInt("concurrency_max_qwen_intl"), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
 	}
+	if raw := strings.TrimSpace(s.Get("concurrency_gemini")); raw == "" {
+		a.concurrencyAutoGemini = a.concurrencyAuto
+	} else {
+		a.concurrencyAutoGemini = s.GetInt("concurrency_gemini") != 1
+	}
+	if raw := strings.TrimSpace(s.Get("concurrency_max_gemini")); raw == "" {
+		a.concurrencyMaxGemini = a.concurrencyMax
+	} else {
+		a.concurrencyMaxGemini = float64(clampInt(s.GetInt("concurrency_max_gemini"), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+	}
 	a.retryCount = float64(clampInt(s.GetInt("retry_count"), 0, 20))
 	a.sendWait = float64(clampInt(s.GetInt("send_wait_seconds"), 0, 600))
 	a.dailyCap = float64(clampInt(s.GetInt("daily_cap"), 0, 200))
@@ -1048,6 +1094,7 @@ func (a *App) loadSettings() {
 	}
 	a.dailyCapQianwen, a.dailyCapQianwenSet = capOr("daily_cap_qianwen", a.dailyCap)
 	a.dailyCapQwenIntl, a.dailyCapQwenIntlSet = capOr("daily_cap_qwen_intl", 100)
+	a.dailyCapGemini, a.dailyCapGeminiSet = capOr("daily_cap_gemini", 100)
 	a.riskyWords = s.Get("risky_words")
 	if strings.TrimSpace(a.riskyWords) == "" {
 		a.riskyWords = tasks.RiskySetting()
@@ -1132,9 +1179,11 @@ func (a *App) loadSettings() {
 	a.loadPlatformWorkspaceFromStore("豆包", s)
 	a.loadPlatformWorkspaceFromStore("千问", s)
 	a.loadPlatformWorkspaceFromStore("千问国际", s)
+	a.loadPlatformWorkspaceFromStore("Gemini", s)
 	a.platDoubao = false
 	a.platQianwen = false
 	a.platQwenIntl = false
+	a.platGemini = false
 	a.setSinglePlatform(chosenPlatform)
 	if ws, ok := a.platformSpaces[chosenPlatform]; ok {
 		a.restorePlatformWorkspace(ws, chosenPlatform)
@@ -1164,6 +1213,7 @@ func (a *App) loadPlatformWorkspaceFromStore(platform string, s *store.Store) {
 	a.platDoubao = platform == "豆包"
 	a.platQianwen = platform == "千问"
 	a.platQwenIntl = platform == "千问国际"
+	a.platGemini = platform == "Gemini"
 	a.statePage = pageHome
 	a.tab = pageHome
 	a.restorePlatformWorkspace(defaultPlatformWorkspace(platform), platform)
@@ -1279,11 +1329,14 @@ func (a *App) saveSettings() {
 	s.SetInt("concurrency_max_qianwen", a.concurrencyMaxFor("千问"))
 	s.SetInt("concurrency_qwen_intl", a.taskConcurrencyFor("千问国际"))
 	s.SetInt("concurrency_max_qwen_intl", a.concurrencyMaxFor("千问国际"))
+	s.SetInt("concurrency_gemini", a.taskConcurrencyFor("Gemini"))
+	s.SetInt("concurrency_max_gemini", a.concurrencyMaxFor("Gemini"))
 	s.SetInt("retry_count", int(a.retryCount))
 	s.SetInt("send_wait_seconds", int(a.sendWait))
 	s.SetInt("daily_cap", a.shownDailyCap())
 	s.SetInt("daily_cap_qianwen", a.shownDailyCapFor("千问"))
 	s.SetInt("daily_cap_qwen_intl", a.shownDailyCapFor("千问国际"))
+	s.SetInt("daily_cap_gemini", a.shownDailyCapFor("Gemini"))
 	words := a.riskyWords
 	if strings.TrimSpace(words) == "" {
 		words = tasks.RiskySetting()
@@ -1370,6 +1423,7 @@ func (a *App) saveSettings() {
 	savePlatformMeta("豆包")
 	savePlatformMeta("千问")
 	savePlatformMeta("千问国际")
+	savePlatformMeta("Gemini")
 	s.Set("user_prompts", prompts.FormatUser(a.userPrompts))
 	s.Set("prompt_suffix", a.promptSuffix)
 	s.SetInt("use_suffix", boolInt(a.useSuffix))
@@ -1388,7 +1442,7 @@ func (a *App) saveSettings() {
 	s.Set(settingDotMatrixEffect, a.resolvedDotMatrixEffect())
 	a.saveImageEditSettings()
 	a.savePromptParts()
-	for _, plat := range []string{"豆包", "千问", "千问国际"} {
+	for _, plat := range []string{"豆包", "千问", "千问国际", "Gemini"} {
 		if _, ok := a.workspaceSnapshotIfPresent(plat); !ok {
 			continue
 		}
@@ -1484,7 +1538,7 @@ func (a *App) numberingFor(page int) tasks.Numbering {
 
 func (a *App) taskOptions(platforms, promptList, paths []string) tasks.Options {
 	concPlatform := a.selectedPlatform()
-	if len(platforms) == 1 && (platforms[0] == "豆包" || platforms[0] == "千问" || platforms[0] == "千问国际") {
+	if len(platforms) == 1 && (platforms[0] == "豆包" || platforms[0] == "千问" || platforms[0] == "千问国际" || platforms[0] == "Gemini") {
 		concPlatform = platforms[0]
 	}
 	opts := tasks.Options{
@@ -1782,6 +1836,9 @@ func sourcePaths(list []sourceImage) []string {
 
 func currentVersion() string {
 	if v := PackagedVersion(); v != "" {
+		return v
+	}
+	if v := getProductVersion(); v != "" {
 		return v
 	}
 	return "未打包"

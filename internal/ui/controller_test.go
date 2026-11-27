@@ -923,6 +923,11 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.ConfirmLogin(b3.ID)
+	b4, err := st.AddBrowser("Gemini", "g1", filepath.Join(dir, "g1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.ConfirmLogin(b4.ID)
 
 	eng := tasks.NewEngine(st, browser.NewManager(), nil, dir)
 	defer eng.Shutdown()
@@ -931,7 +936,7 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 	defer SetTestApp(nil)
 
 	sh := getShellStateBridge()
-	if sh.Platform != "豆包" || len(sh.Platforms) != 3 {
+	if sh.Platform != "豆包" || len(sh.Platforms) != 4 {
 		t.Fatalf("unexpected shell platform state: %+v", sh)
 	}
 	if sh.Platforms[0].ID != "doubao" || sh.Platforms[0].Ready != 1 || sh.Platforms[0].Total != 1 {
@@ -942,6 +947,9 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 	}
 	if sh.Platforms[2].ID != "qwen_intl" || sh.Platforms[2].Name != "千问国际" || sh.Platforms[2].Ready != 1 || sh.Platforms[2].Total != 1 {
 		t.Fatalf("unexpected qwen_intl nav summary: %+v", sh.Platforms[2])
+	}
+	if sh.Platforms[3].ID != "gemini" || sh.Platforms[3].Name != "Gemini" || sh.Platforms[3].Ready != 1 || sh.Platforms[3].Total != 1 {
+		t.Fatalf("unexpected gemini nav summary: %+v", sh.Platforms[3])
 	}
 	_, ch := a.subscribeEvents()
 	setPlatformSelectedBridge("千问", true)
@@ -955,8 +963,17 @@ func TestShellStateBridgeReportsActivePlatformAndReadyCounts(t *testing.T) {
 		t.Fatalf("shell Platform after switch = %q, want 千问国际", sh3.Platform)
 	}
 	wb := getWorkbenchStateBridge()
-	if wb.Platform != "千问国际" || !wb.QwenIntl || wb.Qianwen || wb.Doubao {
-		t.Fatalf("unexpected workbench state for 千问国际: platform=%q doubao=%v qianwen=%v qwenIntl=%v", wb.Platform, wb.Doubao, wb.Qianwen, wb.QwenIntl)
+	if wb.Platform != "千问国际" || !wb.QwenIntl || wb.Qianwen || wb.Doubao || wb.Gemini {
+		t.Fatalf("unexpected workbench state for 千问国际: platform=%q doubao=%v qianwen=%v qwenIntl=%v gemini=%v", wb.Platform, wb.Doubao, wb.Qianwen, wb.QwenIntl, wb.Gemini)
+	}
+	setPlatformSelectedBridge("Gemini", true)
+	sh4 := getShellStateBridge()
+	if sh4.Platform != "Gemini" {
+		t.Fatalf("shell Platform after switch = %q, want Gemini", sh4.Platform)
+	}
+	wbGem := getWorkbenchStateBridge()
+	if wbGem.Platform != "Gemini" || !wbGem.Gemini || wbGem.QwenIntl || wbGem.Qianwen || wbGem.Doubao {
+		t.Fatalf("unexpected workbench state for Gemini: platform=%q doubao=%v qianwen=%v qwenIntl=%v gemini=%v", wbGem.Platform, wbGem.Doubao, wbGem.Qianwen, wbGem.QwenIntl, wbGem.Gemini)
 	}
 	var topics []string
 	for {
@@ -1037,6 +1054,74 @@ func TestQwenIntlSettingsAndWorkspaceStayIsolatedFromDomesticQianwen(t *testing.
 	}
 	if optsIntl.DailyCaps["千问"] != 25 || optsIntl.DailyCaps["千问国际"] != 80 {
 		t.Fatalf("taskOptions DailyCaps = %+v, want 千问=25 and 千问国际=80", optsIntl.DailyCaps)
+	}
+}
+
+func TestGeminiSettingsWorkspaceAndRatiosStayIsolated(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "config.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	eng := tasks.NewEngine(st, browser.NewManager(), nil, dir)
+	defer eng.Shutdown()
+	a := NewApp(st, nil, eng, dir)
+	SetTestApp(a)
+	defer SetTestApp(nil)
+
+	setSettingFieldBridge("dailyCapGemini", "65")
+	setSettingFieldBridge("concurrencyAutoGemini", "true")
+	setSettingFieldBridge("concurrencyMaxGemini", "5")
+
+	cfg := getSettingsStateBridge()
+	if cfg.DailyCapGemini != 65 || !cfg.ConcurrencyAutoGemini || cfg.ConcurrencyMaxGemini != 5 {
+		t.Fatalf("unexpected gemini settings: cap=%d auto=%v max=%d", cfg.DailyCapGemini, cfg.ConcurrencyAutoGemini, cfg.ConcurrencyMaxGemini)
+	}
+
+	wbSvc := &WorkbenchService{app: a}
+	setPlatformSelectedBridge("豆包", true)
+	setWorkbenchFieldBridge("prompts", "豆包提示词")
+	wbSvc.SetOutputSize(context.Background(), "", "ratio", "3:2")
+
+	setPlatformSelectedBridge("Gemini", true)
+	wbGem := getWorkbenchStateBridge()
+	if wbGem.Platform != "Gemini" || !wbGem.Gemini || wbGem.Doubao || wbGem.Qianwen || wbGem.QwenIntl {
+		t.Fatalf("unexpected gemini workbench flags: %+v", wbGem)
+	}
+	if wbGem.Prompts == "豆包提示词" {
+		t.Fatalf("gemini workspace leaked doubao prompt: %q", wbGem.Prompts)
+	}
+	if !wbGem.ConcurrencyAuto || wbGem.ConcurrencyMax != 5 {
+		t.Fatalf("gemini concurrency = (auto=%v, max=%d), want (true, 5)", wbGem.ConcurrencyAuto, wbGem.ConcurrencyMax)
+	}
+	// Gemini only exposes its 5 web-native aspect ratios (no 3:2 or 2:3).
+	if len(wbGem.OutputRatios) != 5 || slices.Contains(wbGem.OutputRatios, "3:2") || slices.Contains(wbGem.OutputRatios, "2:3") {
+		t.Fatalf("unexpected gemini OutputRatios: %v", wbGem.OutputRatios)
+	}
+	// Unsupported ratio 3:2 must be rejected for Gemini while supported 9:16 applies cleanly.
+	wbSvc.SetOutputSize(context.Background(), "", "ratio", "3:2")
+	if got := getWorkbenchStateBridge().OutputRatio; got != "" {
+		t.Fatalf("gemini accepted unsupported ratio 3:2: got %q", got)
+	}
+	wbSvc.SetOutputSize(context.Background(), "", "ratio", "9:16")
+	setWorkbenchFieldBridge("prompts", "Gemini专属提示词")
+
+	wbGemAfter := getWorkbenchStateBridge()
+	if wbGemAfter.OutputRatio != "9:16" || wbGemAfter.Prompts != "Gemini专属提示词" {
+		t.Fatalf("unexpected gemini state after update: ratio=%q prompts=%q", wbGemAfter.OutputRatio, wbGemAfter.Prompts)
+	}
+
+	setPlatformSelectedBridge("豆包", true)
+	wbDoubao := getWorkbenchStateBridge()
+	if wbDoubao.Prompts != "豆包提示词" || wbDoubao.OutputRatio != "3:2" || len(wbDoubao.OutputRatios) != 7 {
+		t.Fatalf("doubao workspace affected by gemini: prompts=%q ratio=%q ratios=%v", wbDoubao.Prompts, wbDoubao.OutputRatio, wbDoubao.OutputRatios)
+	}
+
+	optsGem := a.taskOptions([]string{"Gemini"}, nil, nil)
+	if optsGem.OutputSize.Ratio != "9:16" || optsGem.DailyCaps["Gemini"] != 65 {
+		t.Fatalf("gemini taskOptions = (ratio=%q, cap=%d), want (9:16, 65)", optsGem.OutputSize.Ratio, optsGem.DailyCaps["Gemini"])
 	}
 }
 

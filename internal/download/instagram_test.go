@@ -19,7 +19,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 func instagramTestHTML(media map[string]any) string {
@@ -223,7 +222,7 @@ func TestInstagramRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithURL("https://www.instagram.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

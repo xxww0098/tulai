@@ -16,7 +16,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 
 	"golang.org/x/net/html"
@@ -301,7 +300,7 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 	}
 	checkCurrent := func() error {
 		var raw string
-		if err := s.run(ctx, chromedp.Location(&raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Location(&raw)); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -453,7 +452,7 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 		return result, errors.New("米画师页面未加载，请在下载浏览器中完成登录或验证")
 	}
 	var childRaw string
-	if err := run(chromedp.Location(&childRaw)); err != nil {
+	if err := run(fingerprint.Location(&childRaw)); err != nil {
 		return result, errors.New("无法读取米画师页面")
 	}
 	current, err := url.Parse(childRaw)
@@ -469,7 +468,7 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 	seenPages := make(map[int]bool)
 	read := func(request mihuashiResponse) ([]byte, error) {
 		var body []byte
-		err := run(chromedp.ActionFunc(func(c context.Context) error {
+		err := run(fingerprint.ActionFunc(func(c context.Context) error {
 			var e error
 			body, e = network.GetResponseBody(request.requestID).Do(c)
 			return e
@@ -613,7 +612,7 @@ func (s *RenderedSession) captureMihuashi(ctx context.Context, doc *html.Node, p
 		if step == mihuashiMaxScrolls {
 			break
 		}
-		if err := run(chromedp.Evaluate(`window.scrollBy({top:window.innerHeight,behavior:"instant"})`, nil)); err != nil {
+		if err := run(fingerprint.Evaluate(`window.scrollBy({top:window.innerHeight,behavior:"instant"})`, nil)); err != nil {
 			if ctx.Err() != nil {
 				return result, ctx.Err()
 			}

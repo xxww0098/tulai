@@ -1,11 +1,15 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Icon } from "./Icon";
+import { Tooltip } from "./Tooltip";
 
 export interface TabOption {
   value: string;
   label: string;
   icon?: string;
+  iconNode?: ReactNode;
+  iconOnly?: boolean;
+  tooltip?: string;
   badge?: string | number;
   disabled?: boolean;
 }
@@ -97,7 +101,7 @@ export function Tabs({
 
       {options.map((opt) => {
         const active = opt.value === value;
-        return (
+        const btn = (
           <button
             key={opt.value}
             ref={(el) => {
@@ -107,6 +111,7 @@ export function Tabs({
             type="button"
             role="tab"
             aria-selected={active}
+            aria-label={opt.iconOnly ? opt.label : undefined}
             disabled={opt.disabled}
             onClick={() => {
               if (!opt.disabled && !active) onValueChange(opt.value);
@@ -116,7 +121,13 @@ export function Tabs({
               "disabled:cursor-not-allowed disabled:opacity-45",
               fullWidth && "min-w-0 flex-1",
               variant === "segmented" ? "rounded-[9px]" : "rounded-full",
-              small ? "h-[26px] px-2.5 text-xs" : "h-7 px-3 text-xs",
+              opt.iconOnly
+                ? small
+                  ? "h-[26px] px-2 text-xs"
+                  : "h-7 px-2.5 text-xs"
+                : small
+                  ? "h-[26px] px-2.5 text-xs"
+                  : "h-7 px-3 text-xs",
               active
                 ? cn(
                     "font-semibold text-on-accent",
@@ -126,8 +137,8 @@ export function Tabs({
                 : "text-muted hover:text-ink hover:bg-sunken-hover/70 font-medium",
             )}
           >
-            {opt.icon ? <Icon name={opt.icon} size={13} /> : null}
-            <span>{opt.label}</span>
+            {opt.iconNode ?? (opt.icon ? <Icon name={opt.icon} size={13} /> : null)}
+            {!opt.iconOnly ? <span>{opt.label}</span> : null}
             {opt.badge !== undefined ? (
               <span
                 className={cn(
@@ -139,6 +150,13 @@ export function Tabs({
               </span>
             ) : null}
           </button>
+        );
+        return opt.tooltip ? (
+          <Tooltip key={opt.value} content={opt.tooltip} side="bottom">
+            {btn}
+          </Tooltip>
+        ) : (
+          btn
         );
       })}
     </div>

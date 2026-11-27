@@ -16,7 +16,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 var (
@@ -250,7 +249,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 			URL   string `json:"url"`
 			First bool   `json:"first"`
 		}
-		err := s.run(ctx, chromedp.Evaluate(`(() => {
+		err := s.run(ctx, fingerprint.Evaluate(`(() => {
   const nav = Array.from(document.querySelectorAll('li.nav_item'));
   return {url:location.href,first:nav.length > 0 && nav[0].classList.contains('active')};
 })()`, &snapshot))
@@ -301,7 +300,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 				}
 			}
 			go func() {
-				var action chromedp.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
+				var action fingerprint.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
 				if allowed {
 					action = fetch.ContinueRequest(e.RequestID)
 				}
@@ -355,7 +354,7 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 			}
 			go func(id network.RequestID) {
 				var body []byte
-				err := fingerprint.Run(child, chromedp.ActionFunc(func(c context.Context) error { var x error; body, x = network.GetResponseBody(id).Do(c); return x }))
+				err := fingerprint.Run(child, fingerprint.ActionFunc(func(c context.Context) error { var x error; body, x = network.GetResponseBody(id).Do(c); return x }))
 				if err != nil || len(body) > pailixiangMaxBody {
 					send(pailixiangMessage{request: req, failed: true})
 					return
@@ -499,14 +498,14 @@ func (s *RenderedSession) capturePailixiang(ctx context.Context, page *url.URL, 
 			return result, true, err
 		}
 		var current string
-		if err := run(chromedp.Location(&current)); err != nil {
+		if err := run(fingerprint.Location(&current)); err != nil {
 			return result, true, err
 		}
 		u, err := url.Parse(current)
 		if err != nil || pailixiangAlbumID(u) != code || u.Scheme != "https" || u.RawQuery != "" || u.Fragment != "" {
 			return result, true, errors.New("拍立享活动已跳转，结果可能不完整")
 		}
-		if err := run(chromedp.Evaluate(`window.scrollTo(0,document.documentElement.scrollHeight)`, nil)); err != nil {
+		if err := run(fingerprint.Evaluate(`window.scrollTo(0,document.documentElement.scrollHeight)`, nil)); err != nil {
 			return result, true, errors.New("拍立享相册滚动失败，结果可能不完整")
 		}
 		if err := Wait(ctx, 1200*time.Millisecond); err != nil {

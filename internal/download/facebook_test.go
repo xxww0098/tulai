@@ -18,7 +18,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const facebookTestPage = "https://www.facebook.com/NASA/photos"
@@ -191,7 +190,7 @@ func TestFacebookAnonymousLoginWall(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if err := session.run(ctx, chromedp.Sleep(8*time.Second)); err != nil {
+	if err := session.run(ctx, fingerprint.Sleep(8*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -262,7 +261,7 @@ func TestFacebookRenderedCapture(t *testing.T) {
 			if err := session.run(ctx, fingerprint.Navigate(facebookTestPage)); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+			if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 				return network.SetCookie("synthetic_session", "example").WithDomain(".facebook.com").WithURL("https://www.facebook.com/").WithHTTPOnly(true).Do(ec)
 			})); err != nil {
 				t.Fatal(err)

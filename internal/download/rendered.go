@@ -20,7 +20,6 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 	"golang.org/x/net/publicsuffix"
 
@@ -235,7 +234,7 @@ func navigateDownloadPage(target *url.URL) fingerprint.Action {
 			params["url"] = home.String()
 		}
 	}
-	return chromedp.ActionFunc(func(ctx context.Context) error {
+	return fingerprint.ActionFunc(func(ctx context.Context) error {
 		var result struct{ ReplacementURL string }
 		err := cdp.Execute(ctx, "Page.navigate", params, &result)
 		if err != nil || result.ReplacementURL == "" {
@@ -504,7 +503,7 @@ func (s *RenderedSession) bindPage(ctx context.Context, rawURL, marker string) e
 			URL   string
 			Match bool
 		}
-		err := runRendered(ctx, tab, chromedp.Evaluate(script, &state))
+		err := runRendered(ctx, tab, fingerprint.Evaluate(script, &state))
 		if err == nil && matches(state.URL) && (marker == "" || state.Match) {
 			if selected != "" {
 				return false, errors.New("有多个标签页符合该网址，请在目标页点击「下载到 tulai」")
@@ -725,7 +724,7 @@ func (s *RenderedSession) captureSnapshot(ctx context.Context, start *url.URL, w
 	var deadline time.Time
 	for {
 		var current renderedSnapshot
-		err := s.run(ctx, chromedp.Evaluate(renderedSnapshotScript, &current))
+		err := s.run(ctx, fingerprint.Evaluate(renderedSnapshotScript, &current))
 		if err == nil {
 			snapshot = current
 		}
@@ -775,7 +774,7 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 		if tab := s.activeTab(); first != nil && tab != nil && tab.Err() == nil {
 			restore, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			_ = runRendered(restore, tab, chromedp.Evaluate(fmt.Sprintf(`if (location.href === %q) window.scrollTo(0, %g)`, firstRaw, originalY), nil))
+			_ = runRendered(restore, tab, fingerprint.Evaluate(fmt.Sprintf(`if (location.href === %q) window.scrollTo(0, %g)`, firstRaw, originalY), nil))
 		}
 	}()
 	for step := 0; step <= maxRenderedScrolls; step++ {
@@ -1497,7 +1496,7 @@ func (s *RenderedSession) Capture(ctx context.Context) (Discovery, error) {
 			}
 			break
 		}
-		if err := s.run(ctx, chromedp.Evaluate(`window.scrollBy({top: window.innerHeight, behavior: "instant"})`, nil)); err != nil {
+		if err := s.run(ctx, fingerprint.Evaluate(`window.scrollBy({top: window.innerHeight, behavior: "instant"})`, nil)); err != nil {
 			return result, err
 		}
 		if err := Wait(ctx, 300*time.Millisecond); err != nil {
@@ -1763,7 +1762,7 @@ func (s *RenderedSession) Get(ctx context.Context, rawURL string, prepare func(*
 
 func (s *RenderedSession) cookies(ctx context.Context, target *url.URL) ([]*network.Cookie, error) {
 	var cookies []*network.Cookie
-	err := s.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	err := s.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		var err error
 		cookies, err = network.GetCookies().WithURLs([]string{target.String()}).Do(ec)
 		return err

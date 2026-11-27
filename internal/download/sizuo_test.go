@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
@@ -266,7 +265,7 @@ func TestSizuoFingerprintCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(root)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(c context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithURL("https://www.sizuo.com/").Do(c)
 	})); err != nil {
 		t.Fatal(err)

@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const mtimeTestData = `{"code":0,"data":{"imageTypes":[{"type":-1,"imageCount":2}],"images":[{"id":11,"imageOrigin":"https://img31.mtime.cn/pi/a.jpg","imageTypeUrlName":"posters","imageTypeDes":"海报"},{"id":12,"imageOrigin":"https://img21.mtime.cn/pi/b.jpg","imageTypeUrlName":"stills","imageSubtypeUrlName":"officialstills","imageTypeDes":"剧照"}]}}`
@@ -157,7 +156,7 @@ func TestMtimeRenderedCapture(t *testing.T) {
 			return
 		}
 		go func() {
-			action := chromedp.Action(fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient))
+			action := fingerprint.Action(fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient))
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == page {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(`<html><body>movie</body></html>`)))
 			}

@@ -81,30 +81,49 @@ type LaneJobDTO struct {
 
 // AccountLaneDTO describes an inline account worker lane in the workbench.
 type AccountLaneDTO struct {
-	ID           int64      `json:"id"`
-	Platform     string     `json:"platform"`
-	Title        string     `json:"title"`
-	State        string     `json:"state"`
-	Action       string     `json:"action"`
-	UsedToday    int        `json:"usedToday"`
-	SuccessToday int        `json:"successToday"`
-	FailedToday  int        `json:"failedToday"`
-	Cap          int        `json:"cap"`
-	ReadyInSec   int        `json:"readyInSec"`
-	CooldownAt   string     `json:"cooldownAt"`
-	CoolUntil    int64      `json:"coolUntil"`
-	UsagePct     int        `json:"usagePct"`
-	UsageLabel   string     `json:"usageLabel"`
-	UsageErr     string     `json:"usageErr"`
-	Job          LaneJobDTO `json:"job"`
-	HasJob       bool       `json:"hasJob"`
-	Disabled     bool       `json:"disabled"`
-	IsRunning    bool       `json:"isRunning"`
-	IsLoggedIn   bool       `json:"isLoggedIn"`
-	Pending      bool       `json:"pending"`
-	PendingOp    string     `json:"pendingOp"`
-	Engine       string     `json:"engine"`
-	LastError    string     `json:"lastError"`
+	ID                 int64      `json:"id"`
+	Platform           string     `json:"platform"`
+	Title              string     `json:"title"`
+	State              string     `json:"state"`
+	Action             string     `json:"action"`
+	UsedToday          int        `json:"usedToday"`
+	SuccessToday       int        `json:"successToday"`
+	FailedToday        int        `json:"failedToday"`
+	Cap                int        `json:"cap"`
+	ReadyInSec         int        `json:"readyInSec"`
+	CooldownAt         string     `json:"cooldownAt"`
+	CoolUntil          int64      `json:"coolUntil"`
+	UsagePct           int        `json:"usagePct"`
+	UsageLabel         string     `json:"usageLabel"`
+	UsageErr           string     `json:"usageErr"`
+	Job                LaneJobDTO `json:"job"`
+	HasJob             bool       `json:"hasJob"`
+	Disabled           bool       `json:"disabled"`
+	IsRunning          bool       `json:"isRunning"`
+	IsLoggedIn         bool       `json:"isLoggedIn"`
+	Pending            bool       `json:"pending"`
+	PendingOp          string     `json:"pendingOp"`
+	Engine             string     `json:"engine"`
+	LastError          string     `json:"lastError"`
+	CreditsSynced      bool       `json:"creditsSynced"`
+	CreditsRemain      int        `json:"creditsRemain"`
+	CreditsTotal       int        `json:"creditsTotal"`
+	CreditCost         int        `json:"creditCost"`
+	CreditsResetAt     int64      `json:"creditsResetAt"`
+	CreditsResetLabel  string     `json:"creditsResetLabel"`
+	CreditsCycle       string     `json:"creditsCycle"`
+	CreditsCycleLabel  string     `json:"creditsCycleLabel"`
+	MemberTier         string     `json:"memberTier"`
+	MemberLabel        string     `json:"memberLabel"`
+	ConcurrencyLimit   int        `json:"concurrencyLimit"`
+	ConcurrencyLabel   string     `json:"concurrencyLabel"`
+	WatermarkFree      bool       `json:"watermarkFree"`
+	UsagePercent       int        `json:"usagePercent"`
+	PlatformLimited    bool       `json:"platformLimited"`
+	LimitTips          string     `json:"limitTips"`
+	ResetCardCount     int        `json:"resetCardCount"`
+	CreditsSyncedAt    int64      `json:"creditsSyncedAt"`
+	CreditsSyncedLabel string     `json:"creditsSyncedLabel"`
 }
 
 // PromptOptionDTO describes a selectable prompt template in the workbench template menu.
@@ -126,6 +145,7 @@ type WorkbenchStateDTO struct {
 	Doubao           bool              `json:"doubao"`
 	Qianwen          bool              `json:"qianwen"`
 	QwenIntl         bool              `json:"qwenIntl"`
+	Gemini           bool              `json:"gemini"`
 	Prompts          string            `json:"prompts"`
 	PromptChoice     string            `json:"promptChoice"`
 	PromptOptions    []string          `json:"promptOptions"`
@@ -376,8 +396,9 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		curChoice = choosePromptLabel
 	}
 
-	outputPrefs := a.activeOutputPrefs()
-	presetLabels := outputPresetLabels()
+	selectedPlatform := a.selectedPlatform()
+	outputPrefs := a.outputPrefsFor(selectedPlatform)
+	presetLabels := outputPresetLabelsFor(selectedPlatform)
 
 	plan := a.workbenchPlan(accounts)
 	canStart := !a.renameUpdateActive() && len(a.browserPending) == 0 && plan.Action == StartGenerate
@@ -421,30 +442,48 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		op, pending := a.browserPending[ln.ID]
 		pendingOp := ""
 		if pending {
-			if op.stopping {
-				pendingOp = "stopping"
-			} else {
-				pendingOp = "starting"
-			}
+			pendingOp = op.opKind()
 		}
+		quotaView := buildAccountQuotaView(row, ln.Cap, now)
 		dto := AccountLaneDTO{
-			ID:           ln.ID,
-			Platform:     ln.Platform,
-			Title:        laneAccountTitle(ln),
-			State:        string(ln.State),
-			Action:       ln.Action,
-			UsedToday:    ln.UsedToday,
-			SuccessToday: ln.SuccessToday,
-			FailedToday:  ln.FailedToday,
-			Cap:          ln.Cap,
-			CoolUntil:    ln.CoolUntil,
-			Disabled:     ln.Disabled || row.Disabled,
-			IsRunning:    row.IsRunning,
-			IsLoggedIn:   row.IsLoggedIn,
-			Pending:      pending,
-			PendingOp:    pendingOp,
-			Engine:       row.Engine,
-			LastError:    row.LastError,
+			ID:                 ln.ID,
+			Platform:           ln.Platform,
+			Title:              laneAccountTitle(ln),
+			State:              string(ln.State),
+			Action:             ln.Action,
+			UsedToday:          ln.UsedToday,
+			SuccessToday:       ln.SuccessToday,
+			FailedToday:        ln.FailedToday,
+			Cap:                ln.Cap,
+			CoolUntil:          ln.CoolUntil,
+			UsagePct:           quotaView.UsagePct,
+			UsageLabel:         quotaView.UsageLabel,
+			Disabled:           ln.Disabled || row.Disabled,
+			IsRunning:          row.IsRunning,
+			IsLoggedIn:         row.IsLoggedIn,
+			Pending:            pending,
+			PendingOp:          pendingOp,
+			Engine:             row.Engine,
+			LastError:          row.LastError,
+			CreditsSynced:      quotaView.CreditsSynced,
+			CreditsRemain:      quotaView.CreditsRemain,
+			CreditsTotal:       quotaView.CreditsTotal,
+			CreditCost:         quotaView.CreditCost,
+			CreditsResetAt:     quotaView.CreditsResetAt,
+			CreditsResetLabel:  quotaView.CreditsResetLabel,
+			CreditsCycle:       quotaView.CreditsCycle,
+			CreditsCycleLabel:  quotaView.CreditsCycleLabel,
+			MemberTier:         quotaView.MemberTier,
+			MemberLabel:        quotaView.MemberLabel,
+			ConcurrencyLimit:   quotaView.ConcurrencyLimit,
+			ConcurrencyLabel:   quotaView.ConcurrencyLabel,
+			WatermarkFree:      quotaView.WatermarkFree,
+			UsagePercent:       quotaView.UsagePercent,
+			PlatformLimited:    quotaView.PlatformLimited,
+			LimitTips:          quotaView.LimitTips,
+			ResetCardCount:     quotaView.ResetCardCount,
+			CreditsSyncedAt:    quotaView.CreditsSyncedAt,
+			CreditsSyncedLabel: quotaView.CreditsSyncedLabel,
 		}
 		if row.Expired(now) {
 			dto.LastError = ""
@@ -512,7 +551,6 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		rewashUndoCount = a.rewashUndo.count
 	}
 
-	selectedPlatform := a.selectedPlatform()
 	return WorkbenchStateDTO{
 		Mode:             mode,
 		Page:             a.statePage,
@@ -522,6 +560,7 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		Doubao:           a.platDoubao,
 		Qianwen:          a.platQianwen,
 		QwenIntl:         a.platQwenIntl,
+		Gemini:           a.platGemini,
 		Prompts:          a.prompts,
 		PromptChoice:     curChoice,
 		PromptOptions:    optLabels,
@@ -534,7 +573,7 @@ func (a *App) buildWorkbenchState() WorkbenchStateDTO {
 		OutputPresets:    presetLabels,
 		OutputMode:       outputPrefs.mode,
 		OutputRatio:      outputPrefs.ratio,
-		OutputRatios:     outputRatios,
+		OutputRatios:     outputRatiosFor(selectedPlatform),
 		Sources:          srcs,
 		SourcesTotal:     len(a.sources),
 		WashedCount:      washedCount,
@@ -768,7 +807,7 @@ func (s *WorkbenchService) SetOutputSize(ctx context.Context, preset, mode, rati
 		if a.running {
 			return
 		}
-		a.activeOutputPrefs().update(preset, mode, ratio)
+		a.activeOutputPrefs().updateFor(a.selectedPlatform(), preset, mode, ratio)
 		a.saveOutputSize()
 		a.emit("workbench")
 	})

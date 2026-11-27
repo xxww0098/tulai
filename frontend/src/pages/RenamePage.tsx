@@ -76,8 +76,9 @@ export function RenamePage() {
   return (
     <div
       onPaste={handleContainerPaste}
-      className="relative flex h-full min-h-0 flex-1 flex-col bg-paper px-3 pt-2.5 pb-3"
+      className="relative flex h-full min-h-0 flex-1 flex-col bg-paper px-3 pb-3"
     >
+      <div className="app-drag-region h-2.5 shrink-0" />
       <DropZoneOverlay
         active={isDragging}
         label="松开以导入待重命名文件"

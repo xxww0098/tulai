@@ -161,6 +161,7 @@ func defaultPlatformNavs() []PlatformNavDTO {
 		{ID: "doubao", Name: "豆包"},
 		{ID: "qianwen", Name: "千问"},
 		{ID: "qwen_intl", Name: "千问国际"},
+		{ID: "gemini", Name: "Gemini"},
 	}
 }
 
@@ -525,6 +526,14 @@ func (s *CoreService) OpenPath(_ context.Context, path string) error {
 		return nil
 	}
 	return s.app.openPath(path)
+}
+
+// OpenExternal opens an http(s) URL in the user's default browser.
+func (s *CoreService) OpenExternal(_ context.Context, rawURL string) error {
+	if s.app == nil {
+		return nil
+	}
+	return s.app.openExternal(rawURL)
 }
 
 // RevealPath reveals a local file in Finder / Explorer / file manager.

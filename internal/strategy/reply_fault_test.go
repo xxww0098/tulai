@@ -57,6 +57,39 @@ func TestReplyFaultAndDoubaoReady(t *testing.T) {
 		if vip.Reason != "error-reply" || vip.Busy || len(vip.Images) != 0 || !strings.Contains(vip.Fault, "会员专属功能") {
 			t.Fatalf("会员专属拦截卡应立即报 error-reply reason=%s busy=%t images=%d fault=%q", vip.Reason, vip.Busy, len(vip.Images), vip.Fault)
 		}
+		if isReplyQuotaFault(vip.Fault) {
+			t.Fatalf("会员专属拦截卡不应误判为积分耗尽: %q", vip.Fault)
+		}
+		noCredit := readLive(t, sess, `window.__tulaiPageHost='www.qianwen.com'; (() => {
+			var card = document.querySelector('[data-qianwen-card="zd_membership_payment_buttons_card"]');
+			card.textContent = '积分不足，请购买积分或开通创作会员 购买积分 开通创作会员';
+			return JSON.stringify(__tulaiLiveImages());
+		})()`)
+		if noCredit.Reason != "error-reply" || !isReplyQuotaFault(noCredit.Fault) {
+			t.Fatalf("积分不足拦截卡应识别为 quota fault: reason=%s fault=%q", noCredit.Reason, noCredit.Fault)
+		}
+		if !sess.EvaluateBool(`(() => {
+			window.__tulaiAssistantBaseline = 0;
+			var f = tulaiAccountFault();
+			return f && f.quota === true;
+		})()`) {
+			t.Fatal("积分不足回复应令 tulaiAccountFault().quota = true")
+		}
+		chatCap := readLive(t, sess, `window.__tulaiPageHost='www.qianwen.com'; (() => {
+			var reply = document.querySelector('.chat-answers-card-wrap[data-chat-answers-wrap]');
+			reply.textContent = '今日对话次数已达上限，请明天再来。';
+			return JSON.stringify(__tulaiLiveImages());
+		})()`)
+		if chatCap.Reason != "error-reply" || !isReplyQuotaFault(chatCap.Fault) {
+			t.Fatalf("今日对话次数已达上限应立即识别为 quota fault: reason=%s fault=%q", chatCap.Reason, chatCap.Fault)
+		}
+		if !sess.EvaluateBool(`(() => {
+			window.__tulaiAssistantBaseline = 0;
+			var f = tulaiAccountFault();
+			return f && f.quota === true;
+		})()`) {
+			t.Fatal("今日对话次数已达上限应令 tulaiAccountFault().quota = true")
+		}
 	})
 
 	t.Run("doubao empty chat while loading", func(t *testing.T) {

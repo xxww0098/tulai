@@ -18,7 +18,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const zcygovTestPage = "https://www.zcygov.cn/items/1399825342223769?skuId=1399825342219143"
@@ -238,7 +237,7 @@ func TestZcygovRenderedCapture(t *testing.T) {
 			if err := session.run(ctx, fingerprint.Navigate(zcygovTestPage)); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+			if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 				return network.SetCookie("synthetic_session", "example").WithDomain(".zcygov.cn").WithURL("https://www.zcygov.cn/").WithHTTPOnly(true).Do(ec)
 			})); err != nil {
 				t.Fatal(err)

@@ -24,6 +24,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/xxww0098/realbrowser/browserkernel"
+	"github.com/xxww0098/realbrowser/browserkernel/downloader"
 )
 
 const Version = FingerprintVersion
@@ -72,10 +75,11 @@ func stageText(stage string) string {
 	return ""
 }
 
-//go:embed driver/bridge.mjs driver/fingerprint-identity.mjs driver/download-watch.mjs driver/package.json driver/package-lock.json
+//go:embed driver/bridge.mjs driver/fingerprint-identity.mjs driver/package.json driver/package-lock.json
 var driver embed.FS
 
 type Runtime struct {
+	Version    string
 	Dir        string
 	Node       string
 	Executable string
@@ -315,9 +319,16 @@ func writeDriver(dir string) error {
 	return writeDriverFiles(dir, append([]string{"package.json", "package-lock.json"}, bridgeScripts...))
 }
 
+func driverFile(name string) ([]byte, error) {
+	if name == "download-watch.mjs" {
+		return downloader.Files.ReadFile(name)
+	}
+	return driver.ReadFile("driver/" + name)
+}
+
 func writeDriverFiles(dir string, files []string) error {
 	for _, name := range files {
-		data, err := driver.ReadFile("driver/" + name)
+		data, err := driverFile(name)
 		if err != nil {
 			return err
 		}
@@ -359,8 +370,8 @@ func writeDriverFiles(dir string, files []string) error {
 func runInstall(ctx context.Context, dir, proxy string, extraEnv []string, onProgress func(Progress), args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, nodePath(dir), args...)
 	cmd.Dir, cmd.Env = dir, append(runtimeEnv(proxy, dir), extraEnv...)
-	configureCommand(cmd)
-	cmd.Cancel = func() error { killCommand(cmd); return nil }
+	browserkernel.ConfigureCommand(cmd, browserkernel.PrivateDriver)
+	cmd.Cancel = func() error { return browserkernel.KillCommand(cmd) }
 	cmd.WaitDelay = 3 * time.Second
 	var stderr limitedLog
 	cmd.Stderr = &stderr

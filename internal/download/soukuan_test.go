@@ -18,7 +18,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const soukuanTestPage = "https://www.vvic.com/item/621a49842d8d110006f94e0a"
@@ -268,7 +267,7 @@ func TestSoukuanRenderedCapture(t *testing.T) {
 			if err := session.run(ctx, fingerprint.Navigate(soukuanTestPage)); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+			if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 				return network.SetCookie("synthetic_session", "example").WithDomain(".vvic.com").WithURL("https://www.vvic.com/").WithHTTPOnly(true).Do(ec)
 			})); err != nil {
 				t.Fatal(err)

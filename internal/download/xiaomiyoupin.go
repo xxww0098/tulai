@@ -16,7 +16,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
@@ -358,7 +357,7 @@ func (s *RenderedSession) captureXiaomiYoupin(ctx context.Context, page *url.URL
 	}
 	checkCurrent := func() error {
 		var state struct{ URL, Title string }
-		if err := s.run(ctx, chromedp.Evaluate(`({URL:location.href,Title:document.title})`, &state)); err != nil {
+		if err := s.run(ctx, fingerprint.Evaluate(`({URL:location.href,Title:document.title})`, &state)); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -422,7 +421,7 @@ func (s *RenderedSession) captureXiaomiYoupin(ctx context.Context, page *url.URL
 	}
 	checkChild := func() error {
 		var state struct{ URL, Title string }
-		if err := run(chromedp.Evaluate(`({URL:location.href,Title:document.title})`, &state)); err != nil {
+		if err := run(fingerprint.Evaluate(`({URL:location.href,Title:document.title})`, &state)); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -460,7 +459,7 @@ func (s *RenderedSession) captureXiaomiYoupin(ctx context.Context, page *url.URL
 				continue
 			}
 			var body []byte
-			err := run(chromedp.ActionFunc(func(c context.Context) error {
+			err := run(fingerprint.ActionFunc(func(c context.Context) error {
 				var e error
 				body, e = network.GetResponseBody(event.requestID).Do(c)
 				return e

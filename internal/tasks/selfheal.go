@@ -254,7 +254,7 @@ func (e *Engine) refreshLoginRow(ctx context.Context, row store.Browser, before 
 	if probe == nil || !loginProbeDue(last, now, before) {
 		return false
 	}
-	if row.Disabled || (row.Platform != "豆包" && row.Platform != "千问" && row.Platform != "千问国际") {
+	if row.Disabled || (row.Platform != "豆包" && row.Platform != "千问" && row.Platform != "千问国际" && row.Platform != "Gemini") {
 		return false
 	}
 	if e.accountBusy(id) {

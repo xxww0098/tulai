@@ -20,7 +20,6 @@ import (
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
@@ -134,7 +133,7 @@ func TestDedicatedBrowserBindsNavigatedTab(t *testing.T) {
 	}
 	defer closeTab()
 	const route = "/search/pins/?q=Wallpaper%20aesthetic"
-	if err := runRendered(ctx, tab, fingerprint.Navigate(server.URL+"/"), chromedp.Evaluate(
+	if err := runRendered(ctx, tab, fingerprint.Navigate(server.URL+"/"), fingerprint.Evaluate(
 		`history.pushState(null, "", "`+route+`"); document.title = "Search results"; document.body.innerHTML = '<img src="/image.png">';`, nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +160,7 @@ func TestDedicatedBrowserBindsNavigatedTab(t *testing.T) {
 	if saved, err := os.ReadFile(filepath.Join(dir, item.Filename)); err != nil || !bytes.Equal(saved, imageData.Bytes()) {
 		t.Fatalf("保存的图片不匹配: %v", err)
 	}
-	if err := runRendered(ctx, tab, chromedp.Evaluate(`history.pushState(null, "", "?q=another")`, nil)); err != nil {
+	if err := runRendered(ctx, tab, fingerprint.Evaluate(`history.pushState(null, "", "?q=another")`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	if found, err := session.Capture(ctx); err == nil || len(found.Items) != 0 {
@@ -224,7 +223,7 @@ func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cookie string
-	if err := session.run(ctx, chromedp.Evaluate(`document.cookie`, &cookie)); err != nil || !strings.Contains(cookie, "session=synthetic") {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.cookie`, &cookie)); err != nil || !strings.Contains(cookie, "session=synthetic") {
 		t.Fatalf("打开目标网址后登录态丢失: %q, %v", cookie, err)
 	}
 	page, err := session.Capture(ctx)
@@ -246,7 +245,7 @@ func TestDedicatedBrowserOpensBlankAndKeepsSession(t *testing.T) {
 	if _, err := session.Getter().Get(ctx, targetURL+"/image.png", nil); err == nil {
 		t.Fatal("切换目标后不应使用旧页面的下载权限")
 	}
-	if err := session.run(ctx, chromedp.Evaluate(`document.cookie`, &cookie)); err != nil || !strings.Contains(cookie, "session=synthetic") {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.cookie`, &cookie)); err != nil || !strings.Contains(cookie, "session=synthetic") {
 		t.Fatalf("切换目标后登录态丢失: %q, %v", cookie, err)
 	}
 	if page, err := session.Capture(ctx); err != nil || len(page.Items) != 1 {
@@ -347,9 +346,9 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 		second.Close()
 		t.Fatal("同一下载资料目录被重复打开")
 	}
-	var fingerprint string
+	var initialFingerprint string
 	const fingerprintScript = `JSON.stringify({ua:navigator.userAgent, platform:navigator.platform, cores:navigator.hardwareConcurrency, width:screen.width, height:screen.height})`
-	if err := first.run(ctx, chromedp.Evaluate(fingerprintScript, &fingerprint), chromedp.Evaluate(`localStorage.setItem('download-test','saved')`, nil)); err != nil {
+	if err := first.run(ctx, fingerprint.Evaluate(fingerprintScript, &initialFingerprint), fingerprint.Evaluate(`localStorage.setItem('download-test','saved')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(profile, ".tulai-fingerprint.json")); err != nil {
@@ -378,7 +377,7 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 	accountCtx, cancelAccount := context.WithTimeout(t.Context(), time.Minute)
 	defer cancelAccount()
 	var separate string
-	if err := account.run(accountCtx, chromedp.Evaluate(`document.cookie + '|' + (localStorage.getItem('download-test') || '')`, &separate)); err != nil {
+	if err := account.run(accountCtx, fingerprint.Evaluate(`document.cookie + '|' + (localStorage.getItem('download-test') || '')`, &separate)); err != nil {
 		t.Fatal(err)
 	}
 	if separate != "|" {
@@ -405,14 +404,14 @@ func TestDedicatedFingerprintBrowserKeepsLoginAndDownloads(t *testing.T) {
 		t.Fatalf("重开专用环境后打开网页: %v", err)
 	}
 	var reopenedFingerprint, savedState string
-	if err := reopened.run(reopenCtx, chromedp.Evaluate(fingerprintScript, &reopenedFingerprint),
-		chromedp.Evaluate(`document.cookie + '|' + (localStorage.getItem('download-test') || '')`, &savedState)); err != nil {
+	if err := reopened.run(reopenCtx, fingerprint.Evaluate(fingerprintScript, &reopenedFingerprint),
+		fingerprint.Evaluate(`document.cookie + '|' + (localStorage.getItem('download-test') || '')`, &savedState)); err != nil {
 		t.Fatal(err)
 	}
-	if reopenedFingerprint != fingerprint || !strings.Contains(savedState, "download_session=synthetic") || !strings.HasSuffix(savedState, "|saved") {
-		t.Fatalf("重启后指纹或登录状态发生变化: fingerprint match=%v state=%q", reopenedFingerprint == fingerprint, savedState)
+	if reopenedFingerprint != initialFingerprint || !strings.Contains(savedState, "download_session=synthetic") || !strings.HasSuffix(savedState, "|saved") {
+		t.Fatalf("重启后指纹或登录状态发生变化: fingerprint match=%v state=%q", reopenedFingerprint == initialFingerprint, savedState)
 	}
-	if err := reopened.run(reopenCtx, chromedp.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
+	if err := reopened.run(reopenCtx, fingerprint.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
 		t.Fatal(err)
 	}
 	select {

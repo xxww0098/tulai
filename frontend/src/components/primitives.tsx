@@ -47,12 +47,12 @@ export function PageToolbar({
   className?: string;
 }) {
   return (
-    <div className={cn("flex shrink-0 flex-col gap-2.5 px-3 pt-2.5 pb-2.5", className)}>
+    <div className={cn("app-drag-region flex shrink-0 flex-col gap-2.5 px-3 pt-2.5 pb-2.5", className)}>
       <div
         className="app-drag-region bento-shadow flex min-h-[42px] flex-wrap items-center justify-between gap-2 rounded-[16px] border border-hairline bg-card py-1.5 pl-3.5"
         style={{ paddingRight: "calc(14px + var(--mygo-titlebar-inset-right, 0px))" }}
       >
-        <div className="app-no-drag flex min-w-0 flex-1 flex-wrap items-center gap-2">
+        <div className="app-no-drag flex min-w-0 flex-initial flex-wrap items-center gap-2">
           {left}
         </div>
         <div className="app-no-drag flex shrink-0 items-center gap-1.5">
@@ -60,7 +60,7 @@ export function PageToolbar({
           <ShellActions />
         </div>
       </div>
-      {bottom}
+      {bottom ? <div className="app-no-drag">{bottom}</div> : null}
     </div>
   );
 }
@@ -203,18 +203,21 @@ export function PaneHeader({
   subtitle,
   icon,
   right,
+  dragRegion = false,
   className,
 }: {
   title: string;
   subtitle?: string;
   icon?: string;
   right?: ReactNode;
+  dragRegion?: boolean;
   className?: string;
 }) {
   return (
     <div
       className={cn(
         "flex shrink-0 items-center justify-between gap-2 border-b border-divider bg-card px-4 py-3",
+        dragRegion && "app-drag-region",
         className,
       )}
     >
@@ -227,7 +230,11 @@ export function PaneHeader({
           ) : null}
         </div>
       </div>
-      {right ? <div className="flex shrink-0 items-center gap-1.5">{right}</div> : null}
+      {right ? (
+        <div className={cn("flex shrink-0 items-center gap-1.5", dragRegion && "app-no-drag")}>
+          {right}
+        </div>
+      ) : null}
     </div>
   );
 }

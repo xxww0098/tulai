@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 var zcygovItemPath = regexp.MustCompile(`^/items/([1-9][0-9]{0,18})$`)
@@ -251,7 +251,7 @@ func zcygovCapture(ctx context.Context, session *RenderedSession, page *url.URL)
 	var state zcygovState
 	for attempt := 0; attempt < 20; attempt++ {
 		state = zcygovState{}
-		if err := session.run(ctx, chromedp.Evaluate(zcygovStateScript, &state)); err != nil {
+		if err := session.run(ctx, fingerprint.Evaluate(zcygovStateScript, &state)); err != nil {
 			return result, fmt.Errorf("读取政采云商品页面: %w", err)
 		}
 		current, err := crawlURL(nil, state.Location)

@@ -1,7 +1,7 @@
 // tulai 结果截获 hook：网络层（fetch/XHR）+ DOM 层（聊天区新增大图）双通道，
 // 把生成图片 URL/数据 记入 window.__tulaiResults，供 Go 侧等待与保存。
 (function () {
-  window.__tulaiAssistantQuery = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-testid="receive_message"],.chat-answers-card-wrap,[id^="chat-response-message-"],.chat-response-message';
+  window.__tulaiAssistantQuery = '[data-message-author-role="assistant"],[data-message-role="assistant"],[data-role="assistant"],[data-testid="receive_message"],.chat-answers-card-wrap,[id^="chat-response-message-"],.chat-response-message,model-response,[data-test-id="model-response"]';
   if (window.__tulaiHookInstalled) return;
   window.__tulaiHookInstalled = true;
   var results = [];
@@ -163,8 +163,11 @@
     var rank = width || 0;
     if (/^https?:/i.test(url)) rank += 1000000;
     if (/rc_gen_image/i.test(url)) rank += 300000;
+    if (/googleusercontent\.com\/(?:gg-(?:dl|mc)|rd-gg-dl)\b/i.test(url)) rank += 120000;
     if (/cgen_lwm|\/orig(?:in)?\b/i.test(url)) rank += 80000;
+    if (/googleusercontent\.com\/.*=s0(?:[-?&#]|$)/i.test(url)) rank += 50000;
     if (/cthumb|thumbnail|downsize/i.test(url)) rank -= 20000;
+    if (/googleusercontent\.com\/.*=s(?:64|128|256|320|512)(?:[-?&#]|$)/i.test(url)) rank -= 20000;
     // 千问缩略图带 x-oss-process=image/resize。同一张图上的无处理地址才是原图。
     if (/[?&]x-oss-process=/i.test(url)) rank -= 80000;
     if (/~tplv-/i.test(url)) rank -= 1000;
@@ -192,20 +195,22 @@
     return null;
   }
   function replyOf(img) {
-    return closestAny(img, ['[data-testid="receive_message"]', '[data-message-author-role="assistant"]', '[data-message-role="assistant"]', '[data-role="assistant"]', '.chat-answers-card-wrap', '[id^="chat-response-message-"]', '.chat-response-message']);
+    return closestAny(img, ['[data-testid="receive_message"]', '[data-message-author-role="assistant"]', '[data-message-role="assistant"]', '[data-role="assistant"]', '.chat-answers-card-wrap', '[id^="chat-response-message-"]', '.chat-response-message', 'model-response', '[data-test-id="model-response"]']);
   }
   // 用户气泡里的 message_image_content 是上传的原图。助手回复里的同名容器才是生成图。
   function inUserBubble(img) {
-    var node = closestAny(img, ['[data-testid="send_message"]', '[data-testid="receive_message"]', '[data-message-role="user"]', '[data-message-role="assistant"]', '[data-message-author-role="user"]', '[data-message-author-role="assistant"]', '.chat-user-message', '.chat-user-message-wrapper', '.chat-user-message-container', '[id^="chat-response-message-"]', '.chat-response-message']);
+    var node = closestAny(img, ['[data-testid="send_message"]', '[data-testid="receive_message"]', '[data-message-role="user"]', '[data-message-role="assistant"]', '[data-message-author-role="user"]', '[data-message-author-role="assistant"]', '.chat-user-message', '.chat-user-message-wrapper', '.chat-user-message-container', '[id^="chat-response-message-"]', '.chat-response-message', 'user-query', '[data-test-id="user-query"]', '.user-query-container', 'model-response', '[data-test-id="model-response"]']);
     if (!node || !node.getAttribute) return false;
+    var tag = String(node.tagName || '').toLowerCase();
     var tid = node.getAttribute('data-testid') || '';
+    var dtid = node.getAttribute('data-test-id') || '';
     var role = node.getAttribute('data-message-role') || node.getAttribute('data-message-author-role') || '';
-    if (tid === 'receive_message' || role === 'assistant') return false;
-    if (tid === 'send_message' || role === 'user') return true;
+    if (tid === 'receive_message' || role === 'assistant' || tag === 'model-response' || dtid === 'model-response') return false;
+    if (tid === 'send_message' || role === 'user' || tag === 'user-query' || dtid === 'user-query') return true;
     var id = node.id || '';
     var cls = String((node.className && node.className.baseVal) || node.className || '');
     if (/^chat-response-message-/.test(id) || /(^|\s)chat-response-message(\s|$)/.test(cls)) return false;
-    return /(^|\s)chat-user-message(?:-wrapper|-container)?(\s|$)/.test(cls);
+    return /(^|\s)(?:chat-user-message(?:-wrapper|-container)?|user-query-container)(\s|$)/.test(cls);
   }
   // 基准只排除发送前已经在的回复。这一轮新出现的 receive_message 整段都算，
   // 即使占位壳的地址在标记时见过。旧回复里换上新地址的壳仍然算。
@@ -298,8 +303,11 @@
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
       if (baselineActions.has(el)) continue;
-      var isStopBtn = !!(el.classList && el.classList.contains('stop-button'));
-      if (!isStopBtn && !/停止生成|^停止$|停止响应|Stop generating/i.test(labelOf(el))) {
+      var isStopBtn = !!(el.classList && (el.classList.contains('stop-button') || (el.classList.contains('send-button') && el.classList.contains('stop'))));
+      if (!isStopBtn && geminiPage() && el.querySelector && el.querySelector('.stop-icon,mat-icon[fonticon="stop"]')) {
+        isStopBtn = true;
+      }
+      if (!isStopBtn && !/停止生成|^停止$|停止响应|Stop generating|Stop response/i.test(labelOf(el))) {
         if (!(qwenIntlPage() && /^Stop$/i.test(labelOf(el)) && el.closest && el.closest('.message-input-container'))) continue;
       }
       var box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 1, height: 1 };
@@ -322,8 +330,24 @@
   }
   function inResult(img) {
     if (!img || !img.closest) return false;
-    if (img.closest('nav') || img.closest('header') || img.closest('button') || img.closest('[role="button"]') || img.closest('svg')) return false;
+    if (img.closest('nav') || img.closest('header') || img.closest('svg')) return false;
     var host = pageHost();
+    if (geminiPage()) {
+      if (img.closest('discovery-images-page,.zero-state-container,modular-zero-state,zero-state-block-picker,zero-state-banners,.zero-state-suggestion-card,image-creation-zero-state')) return false;
+      if (img.closest('user-query,[data-test-id="user-query"],.user-query-container,user-query-file-carousel,user-query-file-preview')) return false;
+      if (img.closest('input-container,input-area-v2,uploader-file-preview-container,uploader-file-preview,file-preview-container')) return false;
+      // 注意：<side-navigation-v2> 包裹整个主内容区（<bard-sidenav-content>），仅排除真正的侧栏 <bard-sidenav>。
+      if (img.closest('bard-sidenav,user-profile-picture,[gem-open-account-menu],message-actions,response-footer')) return false;
+      if (geminiNoise(bestURL(img) || img.currentSrc || img.src)) return false;
+      // Gemini 会将每张生成图包在 <generated-image><single-image><button><img src="blob:..."></button> 中以支持点击放大预览。
+      if (img.closest('generated-image,.generated-images-container,single-image')) {
+        if (img.closest('button[data-test-id*="download"],button[aria-label*="下载"],button[aria-label*="Download" i],button[aria-label*="分享"],button[aria-label*="Share" i]')) return false;
+        return true;
+      }
+      if (img.closest('button') || img.closest('[role="button"]')) return false;
+      return !!img.closest('model-response,model-response-content,[data-test-id="model-response"]');
+    }
+    if (img.closest('button') || img.closest('[role="button"]')) return false;
     if (/(^|\.)doubao\.com$/.test(host)) {
       if (img.closest('[data-testid="attachment-image-card"]')) return false;
       // 生成图就在助手回复的 message_image_content 里。只丢掉用户消息上的那一层。
@@ -401,6 +425,15 @@
     var host = pageHost();
     return /(^|\.)qwen\.ai$/.test(host);
   }
+  function geminiPage() {
+    var host = pageHost();
+    return /(^|\.)gemini\.google\.com$/.test(host);
+  }
+  function geminiNoise(url) {
+    var v = String(url || '');
+    return /\/\/(?:www\.gstatic\.com|ssl\.gstatic\.com|fonts\.gstatic\.com)(?:\/|$)/i.test(v) ||
+      /googleusercontent\.com\/a(?:-|\b|\/)/i.test(v);
+  }
   function qwenLoadingImage(img) {
     if (!qwenPage() || !img || !img.getAttribute) return false;
     if (String(img.getAttribute('alt') || '').trim().toLowerCase() !== 'loading') return false;
@@ -472,11 +505,38 @@
     if (bound.wrap) return false;
     return document.querySelectorAll('[id^="chat-response-message-"],.chat-response-message,.chat-user-message').length > 0;
   }
+  function geminiTopReplies() {
+    var raw = Array.prototype.slice.call(document.querySelectorAll('model-response,[data-test-id="model-response"]'));
+    return raw.filter(function (node) {
+      for (var p = node.parentElement; p; p = p.parentElement) {
+        if (raw.indexOf(p) !== -1) return false;
+      }
+      return true;
+    });
+  }
+  function geminiOnChat() {
+    var bound = qwenBound();
+    if (!bound.url && !bound.wrap) return true;
+    var here = window.__tulaiConversationKey(location.href);
+    if (bound.url && here !== bound.url) return false;
+    if (bound.wrap && document.getElementById && document.getElementById(bound.wrap)) return true;
+    if (bound.url && here === bound.url) {
+      return document.querySelectorAll('model-response,[data-test-id="model-response"],user-query,[data-test-id="user-query"]').length > 0;
+    }
+    if (bound.wrap) return false;
+    return document.querySelectorAll('model-response,[data-test-id="model-response"],user-query,[data-test-id="user-query"]').length > 0;
+  }
   window.__tulaiQwenOnChat = function () {
+    if (geminiPage()) return geminiOnChat();
     return qwenIntlPage() ? qwenIntlOnChat() : qwenOnChat();
   };
   window.__tulaiQwenNote = function () {
     var url = window.__tulaiConversationKey(location.href);
+    if (geminiPage()) {
+      var gemNodes = document.querySelectorAll('model-response[id],[data-test-id="model-response"][id],[id^="model-response-message-content"],user-query[id],[data-test-id="user-query"][id]');
+      var gemWrap = gemNodes.length ? String(gemNodes[gemNodes.length - 1].id || '') : '';
+      return { url: url || '', wrap: gemWrap || '' };
+    }
     if (qwenIntlPage()) {
       var intlNodes = document.querySelectorAll('[id^="chat-response-message-"],[id^="chat-user-message-"]');
       var intlWrap = intlNodes.length ? String(intlNodes[intlNodes.length - 1].id || '') : '';
@@ -490,6 +550,105 @@
     }
     return { url: url || '', wrap: wrap || '' };
   };
+  function geminiReplies() {
+    var all = geminiTopReplies();
+    var fresh = all.filter(function (node) { return !baselineReplies.has(node); });
+    if (fresh.length) return fresh;
+    var floor = window.__tulaiGeminiReplyBaseline || 0;
+    if (floor < 0) floor = 0;
+    if (floor > all.length) floor = all.length;
+    return all.slice(floor);
+  }
+  var geminiFaultPattern = /出了点问题|发生错误|请求异常|网络连接|网络异常|服务异常|服务繁忙|系统繁忙|生成失败|图片生成失败|无法生成图片|暂时无法生成|请稍后重试|请重试|Something went wrong|An error occurred|Failed to generate|Unable to generate|couldn'?t generate|can'?t generate images right now|Network error|Service unavailable|please retry|try again later/i;
+  function geminiFault(root) {
+    if (!root) return '';
+    if (root.querySelector && root.querySelector('generated-image img,.generated-images-container img,single-image img')) return '';
+    var box = root.querySelector('[role="alert"],.error-message,.error-container,[class*="error-message"]');
+    var text = String(((box && (box.innerText || box.textContent)) || root.innerText || root.textContent) || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 220) return '';
+    if (window.TULAIRefuse && window.TULAIRefuse.match(text)) return '';
+    if (/额度|次数已用|次数用完|免费次数|已达上限|已达到.*上限|image generation limit|reached your.*limit|daily limit|try again tomorrow/i.test(text)) return '';
+    return box || geminiFaultPattern.test(text) ? text : '';
+  }
+  function geminiLiveImages() {
+    if (!geminiOnChat()) {
+      return { busy: false, done: false, expect: 0, bar: false, replies: 0, reason: 'off-chat', here: window.__tulaiConversationKey(location.href), images: [] };
+    }
+    var replies = geminiReplies();
+    var images = [];
+    var seen = {};
+    var busy = composerStopping();
+    if (!busy) {
+      var stops = document.querySelectorAll('button.send-button.stop,.stop-icon,mat-icon[fonticon="stop"]');
+      for (var si = 0; si < stops.length; si++) {
+        if (qwenIntlElVisible(stops[si])) { busy = true; break; }
+      }
+    }
+    var hasFooter = false;
+    var pendingImgs = [];
+    replies.forEach(function (root) {
+      if (replyBusy(root)) busy = true;
+      var loaders = root.querySelectorAll('mat-progress-spinner,mat-progress-bar,thinking-overlay,chat-loading-animation,.response-loading,[class*="image-loading"],[class*="generating"],[aria-busy="true"],[role="progressbar"]');
+      for (var li = 0; li < loaders.length; li++) {
+        if (qwenIntlElVisible(loaders[li])) { busy = true; break; }
+      }
+      if (root.querySelector('message-actions,button[data-test-id="download-generated-image-button"],button[aria-label*="下载"],button[aria-label*="Download" i],button[aria-label*="重新生成"],button[aria-label*="Regenerate" i],button[aria-label*="复制"],button[aria-label*="Copy" i]') || actionBar(root)) {
+        hasFooter = true;
+      }
+      var rootImgs = 0;
+      Array.prototype.forEach.call(root.querySelectorAll('img'), function (img) {
+        if (!inResult(img) || isBaselineImage(img)) return;
+        var src = bestURL(img);
+        if (!src || junkURL(src) || geminiNoise(src)) return;
+        var lazy = String((img.loading || (img.getAttribute && img.getAttribute('loading')) || '')).toLowerCase();
+        if (lazy === 'lazy') {
+          try { if (typeof img.setAttribute === 'function') img.setAttribute('loading', 'eager'); } catch (e) {}
+          try { img.loading = 'eager'; } catch (e) {}
+        }
+        if (realImg(img)) {
+          rootImgs++;
+          if (seen[src]) return;
+          seen[src] = true;
+          var aw = parseInt((img.getAttribute && img.getAttribute('width')) || '0', 10) || 0;
+          var ah = parseInt((img.getAttribute && img.getAttribute('height')) || '0', 10) || 0;
+          images.push({
+            url: src,
+            src: 'dom',
+            w: img.naturalWidth || aw || 0,
+            h: img.naturalHeight || ah || 0
+          });
+        } else if (img.closest && img.closest('generated-image,.generated-images-container,single-image')) {
+          pendingImgs.push(img);
+          busy = true;
+        }
+      });
+      if (rootImgs === 0) {
+        var rText = String(root.innerText || root.textContent || '').replace(/\s+/g, ' ').trim();
+        if (/正在生成|正在创建|生成中|绘制中|Generating|Creating image|Just a sec/i.test(rText)) busy = true;
+      }
+    });
+    if (pendingImgs.length) {
+      var target = pendingImgs[0];
+      if (target && typeof target.scrollIntoView === 'function') {
+        try { target.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {
+          try { target.scrollIntoView(); } catch (err) {}
+        }
+      }
+    }
+    var done = !busy && images.length > 0 && (hasFooter || pendingGeneration === 0);
+    var fault = '';
+    if (!busy && !images.length) {
+      replies.forEach(function (root) { if (!fault) fault = geminiFault(root); });
+    }
+    var reason = 'no-reply';
+    if (!replies.length && !images.length) reason = 'no-reply';
+    else if (busy) reason = 'generating';
+    else if (fault) reason = 'error-reply';
+    else if (!images.length) reason = 'no-new-image';
+    else if (!done) reason = 'unfinished';
+    else reason = 'images-ready';
+    return { busy: busy, done: done, expect: 0, bar: hasFooter, replies: replies.length, reason: reason, fault: fault, here: window.__tulaiConversationKey(location.href), images: images };
+  }
   function qwenIntlReplies() {
     var all = qwenIntlTopReplies();
     var fresh = all.filter(function (node) { return !baselineReplies.has(node); });
@@ -666,8 +825,8 @@
     else reason = 'images-ready';
     return { busy: busy, done: done, expect: expect, bar: false, replies: replies.length, reason: reason, fault: fault, here: window.__tulaiConversationKey(location.href), images: images };
   }
-  // 千问拒绝请求或命中会员专属拦截卡时，回复里没有图卡，必须立刻结束等待而不是死等到超时。
-  var qwenFaultPattern = /请求异常|网络连接|网络异常|服务异常|服务繁忙|系统繁忙|出错了|生成失败|请稍后重试|请重试|会员专属功能|开通创作会员|订阅会员后可用/;
+  // 千问拒绝请求、积分不足、对话上限或命中会员专属拦截卡时，回复里没有图卡，必须立刻结束等待而不是死等到超时。
+  var qwenFaultPattern = /请求异常|网络连接|网络异常|服务异常|服务繁忙|系统繁忙|出错了|生成失败|请稍后重试|请重试|会员专属功能|开通创作会员|订阅会员后可用|积分不足|今日对话次数已达上限/;
   function qwenFault(root) {
     var payCard = root.querySelector('[data-qianwen-card="zd_membership_payment_buttons_card"]');
     if (payCard) {
@@ -769,6 +928,7 @@
   // 没有任何 data-finished 时，文字 data-streaming=false 或重新生成/复制也算。
   // 调用方再看地址和 naturalWidth/naturalHeight：像素已够大就只再确认一拍，否则大约 3 秒。
   window.__tulaiLiveImages = function () {
+    if (geminiPage()) return geminiLiveImages();
     if (qwenIntlPage()) return qwenIntlLiveImages();
     if (qwenPage()) return qwenLiveImages();
     var scoped = doubaoTurn && window.__tulaiWashPage;
@@ -829,7 +989,7 @@
       images: images,
     };
   };
-  // /chat/<id> 与 /c/<id> 是已经打开的对话。/chat、/chat/、/、/c/new-chat 才是新对话。
+  // /chat/<id>、/c/<id>、/app/<id> 是已经打开的对话。/chat、/chat/、/、/c/new-chat、/app、/images 才是新对话。
   window.__tulaiConversationKey = function (href) {
     var path = '';
     try { path = new URL(String(href || ''), location.href).pathname; } catch (e) { return ''; }
@@ -838,6 +998,8 @@
     if (i >= 0 && parts[i + 1]) return parts[i + 1];
     var c = parts.indexOf('c');
     if (c >= 0 && parts[c + 1] && !/^(new-chat|new-branch|guest|local)$/i.test(parts[c + 1])) return parts[c + 1];
+    var a = parts.indexOf('app');
+    if (a >= 0 && parts[a + 1] && !/^(new|images|download|gems|settings|mystuff)$/i.test(parts[a + 1])) return parts[a + 1];
     return '';
   };
   function hiddenComposerAncestor(el) {
@@ -855,13 +1017,15 @@
   }
   function composerBox(el) {
     if (!el || el.readOnly || el.disabled) return false;
+    if (el.classList && el.classList.contains('ql-clipboard')) return false;
     if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return false;
     if (hiddenComposerAncestor(el)) return false;
     var box = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
     if (box.width > 5 && box.height > 5) return true;
-    // 窗口在屏幕外时布局盒可以是 0。Slate 输入条和豆包输入框仍然算。
+    // 窗口在屏幕外时布局盒可以是 0。Slate 输入条、豆包输入框和 Gemini Quill 输入框仍然算。
     var mark = el.getAttribute && (el.getAttribute('data-slate-editor') || el.getAttribute('data-testid') || '');
-    return mark === 'true' || mark === 'chat_input_input';
+    if (mark === 'true' || mark === 'chat_input_input') return true;
+    return !!(el.classList && el.classList.contains('ql-editor') && el.closest && el.closest('rich-textarea'));
   }
   // 占位「向千问提问」写在 contenteditable=false 里。innerText 会把它当成没发出去的草稿。
   function composerText(el) {
@@ -887,6 +1051,12 @@
     return out.replace(/\uFEFF/g, '').trim();
   }
   function composerNode() {
+    if (geminiPage()) {
+      var rich = document.querySelectorAll('rich-textarea .ql-editor[contenteditable="true"],rich-textarea [contenteditable="true"]');
+      for (var r = rich.length - 1; r >= 0; r--) {
+        if (composerBox(rich[r])) return rich[r];
+      }
+    }
     var nodes = document.querySelectorAll('textarea,[contenteditable="true"]');
     for (var i = nodes.length - 1; i >= 0; i--) {
       if (composerBox(nodes[i])) return nodes[i];
@@ -905,12 +1075,19 @@
     var chars = composerText(comp).length;
     var qwen = qwenPage();
     var qwenIntl = qwenIntlPage();
+    var gemini = geminiPage();
     var why = [];
     if (!comp) why.push('no-composer');
     // 豆包的长连接让 readyState 一直停在 interactive。输入框已在、对话是空的，就能打字。
     if (!comp && document.readyState !== 'complete') why.push('loading');
     if (chars) why.push('draft');
-    if (qwenIntl) {
+    if (gemini) {
+      var gemMsgs = document.querySelectorAll('model-response,[data-test-id="model-response"],user-query,[data-test-id="user-query"]').length;
+      var gemFiles = document.querySelectorAll('uploader-file-preview,uploader-file-preview-container img,file-preview-container img').length;
+      if (gemMsgs) why.push('replies');
+      if (gemFiles) why.push('files');
+      if (id) why.push('url');
+    } else if (qwenIntl) {
       var intlMsgs = document.querySelectorAll('[id^="chat-response-message-"],.chat-response-message,.chat-user-message').length;
       var intlFiles = document.querySelectorAll('.message-input-column-file .vision-item-container,.message-input-column-file img.vision-item-image').length;
       if (intlMsgs) why.push('replies');
@@ -931,6 +1108,19 @@
     var id = window.__tulaiConversationKey(location.href);
     var qwen = qwenPage();
     var qwenIntl = qwenIntlPage();
+    if (geminiPage()) {
+      var gemDirty = document.querySelectorAll('model-response,[data-test-id="model-response"],user-query,[data-test-id="user-query"],uploader-file-preview,uploader-file-preview-container img,file-preview-container img').length > 0 || composerText(composerNode()).length > 0;
+      if (!id && !gemDirty && composerNode()) return 'ready';
+      var uMatch = String(location.pathname || '').match(/^(\/u\/\d+)\//);
+      var gemUrl = 'https://gemini.google.com' + (uMatch ? uMatch[1] : '') + '/app';
+      var gemHere = String(location.href || '').split('?')[0].replace(/\/$/, '');
+      if (gemHere === gemUrl.replace(/\/$/, '')) {
+        try { location.reload(); } catch (e) {}
+        return 'reload';
+      }
+      location.assign(gemUrl);
+      return 'url';
+    }
     if (qwenIntl) {
       var intlDirty = document.querySelectorAll('[id^="chat-response-message-"],.chat-response-message,.chat-user-message,.message-input-column-file .vision-item-container,.message-input-column-file img.vision-item-image').length > 0 || composerText(composerNode()).length > 0;
       if (!id && !intlDirty && composerNode()) return 'ready';
@@ -982,6 +1172,7 @@
     window.__tulaiAssistantBaseline = assistantNodes().length;
     window.__tulaiQwenReplyBaseline = document.querySelectorAll('.chat-answers-card-wrap[data-chat-answers-wrap]').length;
     window.__tulaiQwenIntlReplyBaseline = qwenIntlTopReplies().length;
+    window.__tulaiGeminiReplyBaseline = geminiTopReplies().length;
     existingImages = new WeakSet();
     ignoredURLs = new Set();
     baselineURLs = new Set();

@@ -20,7 +20,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 type tuchongRoundTrip func(*http.Request) (*http.Response, error)
@@ -318,7 +317,7 @@ func TestTuchongRenderedCapture(t *testing.T) {
 	if err := session.OpenTarget(ctx, postURL); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithURL("https://tuchong.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

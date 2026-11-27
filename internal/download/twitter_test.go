@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
@@ -384,7 +383,7 @@ func TestTwitterRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(twitterTestPage)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithDomain(".x.com").WithURL("https://x.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)
@@ -714,7 +713,7 @@ func TestTwitterProfileRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fetch.Enable(), fingerprint.Navigate(twitterProfileTestPage)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithDomain(".x.com").WithURL("https://x.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)
@@ -748,7 +747,7 @@ func TestTwitterProfileRenderedCapture(t *testing.T) {
 		t.Fatalf("different author accepted: %+v, %v", result.Items, err)
 	}
 	session.start = page
-	if err := session.run(ctx, chromedp.Evaluate(`document.body.insertAdjacentHTML('beforeend', '<svg width="10" height="10" data-testid="icon-lock" aria-label="Protected account"></svg>')`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.body.insertAdjacentHTML('beforeend', '<svg width="10" height="10" data-testid="icon-lock" aria-label="Protected account"></svg>')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	if result, err := session.Capture(ctx); err == nil || len(result.Items) != 0 {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 // Brand marks from @lobehub/icons (MIT).
 import doubaoMark from "@/assets/providers/doubao-avatar.png";
+import geminiMark from "@/assets/providers/gemini-color.svg";
 import qwenMark from "@/assets/providers/qwen-color.svg";
 import qwenIntlMark from "@/assets/providers/qwen-intl-color.svg";
 import { BrowserDrawer } from "@/components/BrowserDrawer";
@@ -21,7 +22,7 @@ import {
   TooltipProvider,
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { Core, fireIpc } from "@/lib/ipc";
+import { Core, fireIpc, openExternalUrl } from "@/lib/ipc";
 import { installGlobalShortcuts, modKeyLabel } from "@/lib/shortcuts";
 import { describeUpdateProgress } from "@/lib/updateProgress";
 import { BrowserPage } from "@/pages/BrowserPage";
@@ -60,6 +61,8 @@ import {
   type NavItem,
 } from "@/store";
 
+const GITHUB_REPO_URL = "https://github.com/xxww0098/tulai";
+
 // Exact workbench mode order required by PRODUCT.md & ui_test.go
 const WORKBENCH_MODE_OPTIONS = [
   { value: String(TAB_WASH), label: "批量洗图" },
@@ -71,6 +74,7 @@ const WORKBENCH_PLATFORM_OPTIONS = [
   { value: "豆包", label: "豆包" },
   { value: "千问", label: "千问" },
   { value: "千问国际", label: "千问国际" },
+  { value: "Gemini", label: "Gemini" },
 ];
 
 const PROVIDER_MARKS: Record<string, string> = {
@@ -80,6 +84,8 @@ const PROVIDER_MARKS: Record<string, string> = {
   千问: qwenMark,
   qwen_intl: qwenIntlMark,
   千问国际: qwenIntlMark,
+  gemini: geminiMark,
+  Gemini: geminiMark,
 };
 
 const WORKBENCH_NAV: NavItem = {
@@ -429,7 +435,7 @@ export function App() {
           <div
             className={cn(
               "app-drag-region flex h-[44px] shrink-0 items-center",
-              folded ? "justify-center px-1" : "justify-between gap-1.5 px-3",
+              folded ? "justify-center px-1" : "justify-between gap-1 px-2",
             )}
           >
             {folded ? (
@@ -445,8 +451,19 @@ export function App() {
               </Tooltip>
             ) : (
               <>
-                <div className="flex min-w-0 items-center gap-2">
-                  <BrandLogo size={18} />
+                <span className="w-6 shrink-0" aria-hidden="true" />
+                <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+                  <Tooltip content="打开 GitHub 仓库" side="right">
+                    <button
+                      type="button"
+                      data-testid="brand-repo-btn"
+                      aria-label="打开 GitHub 仓库"
+                      onClick={() => openExternalUrl(GITHUB_REPO_URL)}
+                      className="app-no-drag inline-flex shrink-0 cursor-pointer items-center justify-center rounded-[5px] transition-transform duration-150 ease-out hover:scale-105 active:scale-95"
+                    >
+                      <BrandLogo size={18} />
+                    </button>
+                  </Tooltip>
                   <div className="flex min-w-0 flex-col leading-tight">
                     <span className="truncate text-xs font-semibold text-ink">图来</span>
                     <span className="tnum truncate text-[10px] text-muted">
@@ -824,7 +841,7 @@ export function App() {
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-paper">
           {/* Floating Workbench-only Topbar */}
           {isWorkbenchTab(tab) ? (
-            <header data-testid="topbar" className="shrink-0 px-3 pt-2.5 pb-3">
+            <header data-testid="topbar" className="app-drag-region shrink-0 px-3 pt-2.5 pb-3">
               <div
                 className="app-drag-region bento-shadow flex min-h-[42px] items-center justify-between gap-2.5 rounded-[16px] border border-hairline bg-card py-1.5 pl-3.5"
                 style={{ paddingRight: "calc(14px + var(--mygo-titlebar-inset-right, 0px))" }}

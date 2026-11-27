@@ -28,13 +28,20 @@ const (
 	PageWashQwenIntl = "qwen_intl:wash"
 	// PageFissionQwenIntl 是千问国际裂变图片页的独立会话。
 	PageFissionQwenIntl = "qwen_intl:fission"
+	// PageGenGemini 是 Gemini 自由生图页的独立会话。
+	PageGenGemini = "gemini:gen"
+	// PageWashGemini 是 Gemini 批量洗图页的独立会话。
+	PageWashGemini = "gemini:wash"
+	// PageFissionGemini 是 Gemini 裂变图片页的独立会话。
+	PageFissionGemini = "gemini:fission"
 )
 
 func validSessionPage(page string) bool {
 	switch page {
 	case PageGen, PageWash, PageFission,
 		PageGenQianwen, PageWashQianwen, PageFissionQianwen,
-		PageGenQwenIntl, PageWashQwenIntl, PageFissionQwenIntl:
+		PageGenQwenIntl, PageWashQwenIntl, PageFissionQwenIntl,
+		PageGenGemini, PageWashGemini, PageFissionGemini:
 		return true
 	default:
 		return false

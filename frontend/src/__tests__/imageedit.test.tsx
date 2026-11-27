@@ -373,6 +373,7 @@ describe("ImageEditPage darkroom studio, split 5..95 fix, inspector, and dialogs
 
     renderImageEditPage();
 
+    const page = screen.getByTestId("imageedit-page");
     const inspector = screen.getByTestId("edit-inspector");
     const mainArea = screen.getByTestId("edit-workspace-main");
     const canvas = screen.getByTestId("edit-canvas");
@@ -382,11 +383,15 @@ describe("ImageEditPage darkroom studio, split 5..95 fix, inspector, and dialogs
     expect(canvas).toBeInTheDocument();
     expect(filesStrip).toBeInTheDocument();
     expect(mainArea).toContainElement(canvas);
-    expect(mainArea).toContainElement(filesStrip);
+    expect(mainArea).not.toContainElement(filesStrip);
+    expect(page).toContainElement(filesStrip);
 
-    // Inspector is placed on the left (before mainArea), canvas above bottom carousel
+    // Inspector is placed on the left (before mainArea), full-width bottom carousel follows both
     expect(
       inspector.compareDocumentPosition(mainArea) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      inspector.compareDocumentPosition(filesStrip) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       canvas.compareDocumentPosition(filesStrip) & Node.DOCUMENT_POSITION_FOLLOWING,

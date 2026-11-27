@@ -37,10 +37,8 @@ func TestClosedBrowserIsReportedAndForgotten(t *testing.T) {
 	if !manager.IsRunning(account.ID) {
 		t.Fatal("fixture browser did not start")
 	}
-	manager.mu.Lock()
-	proc := manager.procs[account.ID]
-	manager.mu.Unlock()
-	if proc == nil {
+	proc, ok := manager.instances.Get(account.ID)
+	if !ok || proc.Process == nil {
 		t.Fatal("missing process record")
 	}
 	handle, err := os.FindProcess(proc.PID())
@@ -61,11 +59,7 @@ func TestClosedBrowserIsReportedAndForgotten(t *testing.T) {
 	if manager.IsRunning(account.ID) {
 		t.Fatal("a closed browser is still reported as running")
 	}
-	manager.mu.Lock()
-	_, keptProc := manager.procs[account.ID]
-	_, keptQuiet := manager.quiet[account.ID]
-	manager.mu.Unlock()
-	if keptProc || keptQuiet {
+	if _, kept := manager.instances.Get(account.ID); kept {
 		t.Fatal("a closed browser left its process record behind")
 	}
 }
@@ -79,10 +73,8 @@ func TestStoppedBrowserKeepsTheExitHandlerQuiet(t *testing.T) {
 	if _, err := manager.StartTask(context.Background(), account, root, KindFingerprint, "about:blank"); err != nil {
 		t.Fatal(err)
 	}
-	manager.mu.Lock()
-	proc := manager.procs[account.ID]
-	manager.mu.Unlock()
-	if proc == nil {
+	proc, ok := manager.instances.Get(account.ID)
+	if !ok || proc.Process == nil {
 		t.Fatal("missing process record")
 	}
 	manager.Stop(account.ID)

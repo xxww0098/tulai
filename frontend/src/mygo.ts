@@ -30,6 +30,25 @@ export interface AccountLaneDTO {
   pendingOp: string;
   engine: string;
   lastError: string;
+  creditsSynced: boolean;
+  creditsRemain: number;
+  creditsTotal: number;
+  creditCost: number;
+  creditsResetAt: number;
+  creditsResetLabel: string;
+  creditsCycle: string;
+  creditsCycleLabel: string;
+  memberTier: string;
+  memberLabel: string;
+  concurrencyLimit: number;
+  concurrencyLabel: string;
+  watermarkFree: boolean;
+  usagePercent: number;
+  platformLimited: boolean;
+  limitTips: string;
+  resetCardCount: number;
+  creditsSyncedAt: number;
+  creditsSyncedLabel: string;
 }
 
 /** BrowserDrawerDTO represents the floating interactive CDP preview drawer state. */
@@ -52,6 +71,15 @@ export interface BrowserDrawerDTO {
   copyReady: boolean;
   frameVersion: number;
   frameUrl: string;
+}
+
+/** BrowserFingerprintDTO contains settings applied by the managed desktop driver. */
+export interface BrowserFingerprintDTO {
+  lang: string;
+  timezone: string;
+  windowWidth: number;
+  windowHeight: number;
+  colorScheme: string;
 }
 
 /**
@@ -97,6 +125,25 @@ export interface BrowserRowDTO {
   todayCount: number;
   usageLabel: string;
   usagePct: number;
+  creditsSynced: boolean;
+  creditsRemain: number;
+  creditsTotal: number;
+  creditCost: number;
+  creditsResetAt: number;
+  creditsResetLabel: string;
+  creditsCycle: string;
+  creditsCycleLabel: string;
+  memberTier: string;
+  memberLabel: string;
+  concurrencyLimit: number;
+  concurrencyLabel: string;
+  watermarkFree: boolean;
+  usagePercent: number;
+  platformLimited: boolean;
+  limitTips: string;
+  resetCardCount: number;
+  creditsSyncedAt: number;
+  creditsSyncedLabel: string;
 }
 
 /** BrowserStateDTO represents the full account browser management page snapshot. */
@@ -127,6 +174,12 @@ export interface BrowserStateDTO {
   dlBrowserBusy: boolean;
   dlBrowserOpen: boolean;
   dlBrowserUrl: string;
+  doubaoConcurrencyAuto: boolean;
+  doubaoConcurrencyMax: number;
+  qianwenConcurrencyAuto: boolean;
+  qianwenConcurrencyMax: number;
+  geminiConcurrencyAuto: boolean;
+  geminiConcurrencyMax: number;
 }
 
 /** DedupFileItemDTO represents one queued input image for deduplication. */
@@ -623,12 +676,19 @@ export interface SettingsStateDTO {
   autoDeleteHistory: boolean;
   concurrencyAuto: boolean;
   concurrencyMax: number;
+  concurrencyAutoQianwen: boolean;
+  concurrencyMaxQianwen: number;
+  concurrencyAutoQwenIntl: boolean;
+  concurrencyMaxQwenIntl: number;
+  concurrencyAutoGemini: boolean;
+  concurrencyMaxGemini: number;
   sendStrategy: string;
   retryCount: number;
   sendWait: number;
   dailyCapDoubao: number;
   dailyCapQianwen: number;
   dailyCapQwenIntl: number;
+  dailyCapGemini: number;
   waitBefore: number;
   waitResult: boolean;
   waitResultSeconds: number;
@@ -645,6 +705,7 @@ export interface SettingsStateDTO {
   customKey: string;
   customModel: string;
   ikunocrKey: string;
+  kernelAutoUpdate: boolean;
   autoCheck: boolean;
   updateMirror: string;
   version: string;
@@ -775,6 +836,7 @@ export interface WorkbenchStateDTO {
   doubao: boolean;
   qianwen: boolean;
   qwenIntl: boolean;
+  gemini: boolean;
   prompts: string;
   promptChoice: string;
   promptOptions: string[];
@@ -857,6 +919,8 @@ export const Core = {
   getLogsState: bind<[], LogsStateDTO>("Core.GetLogsState", () => []),
   /** GetShellState returns the global shell, navigation, toast, pool, and update state. */
   getShellState: bind<[], ShellStateDTO>("Core.GetShellState", () => []),
+  /** OpenExternal opens an http(s) URL in the user's default browser. */
+  openExternal: bind<[string], void>("Core.OpenExternal", (rawURL: string) => [rawURL]),
   /** OpenPath opens a local file or folder with the OS default application. */
   openPath: bind<[string], void>("Core.OpenPath", (path: string) => [path]),
   /** OpenWizard re-opens the onboarding wizard. */
@@ -974,6 +1038,8 @@ export const Workbench = {
 export const Browser = {
   /** BrowserRowAction executes an action on one account row (launch, stop, drawer, restore, toggleDisabled, delete). */
   browserRowAction: bind<[number, string], void>("Browser.BrowserRowAction", (id: number, action: string) => [id, action]),
+  /** CheckBrowserRuntimeUpdate returns a newer compatible version when one is available. */
+  checkBrowserRuntimeUpdate: bind<[], string>("Browser.CheckBrowserRuntimeUpdate", () => []),
   /** ClearBrowserDrawerCopy clears the captured copy notification banner in the drawer. */
   clearBrowserDrawerCopy: bind<[], void>("Browser.ClearBrowserDrawerCopy", () => []),
   /**
@@ -989,6 +1055,7 @@ export const Browser = {
   createBrowser: bind<[string, string], void>("Browser.CreateBrowser", (platform: string, name: string) => [platform, name]),
   /** DismissSharedExitHints dismisses the current shared-exit warnings for the specified platforms. */
   dismissSharedExitHints: bind<[string[]], void>("Browser.DismissSharedExitHints", (platforms: string[]) => [platforms]),
+  getAccountFingerprint: bind<[number], BrowserFingerprintDTO>("Browser.GetAccountFingerprint", (id: number) => [id]),
   /** GetBrowserDrawerState returns the floating CDP preview drawer state and live frame URL. */
   getBrowserDrawerState: bind<[], BrowserDrawerDTO>("Browser.GetBrowserDrawerState", () => []),
   /** GetBrowserState returns the managed accounts and browser runtime status snapshot. */
@@ -997,12 +1064,16 @@ export const Browser = {
   installBrowserRuntime: bind<[], void>("Browser.InstallBrowserRuntime", () => []),
   /** OpenBrowserDrawer opens the floating interactive CDP preview drawer for an account. */
   openBrowserDrawer: bind<[number], void>("Browser.OpenBrowserDrawer", (id: number) => [id]),
-  /** RefreshBrowsers re-checks runtime detection and reloads account browser rows. */
+  /**
+   * RefreshBrowsers re-checks runtime detection and reloads account browser rows.
+   * Any already-running Doubao and Qwen accounts also refresh their live status asynchronously.
+   */
   refreshBrowsers: bind<[], void>("Browser.RefreshBrowsers", () => []),
   /** ResumeBrowserDrawer hands control back from manual intervention to automated tasks. */
   resumeBrowserDrawer: bind<[], void>("Browser.ResumeBrowserDrawer", () => []),
   /** RunBrowserBatch launches or stops all checked account browsers in a batch. */
   runBrowserBatch: bind<[boolean], void>("Browser.RunBrowserBatch", (stopping: boolean) => [stopping]),
+  saveAccountFingerprint: bind<[number, BrowserFingerprintDTO], void>("Browser.SaveAccountFingerprint", (id: number, prefs: BrowserFingerprintDTO) => [id, prefs]),
   /** SaveAccountProxy validates and persists a per-account proxy URL. */
   saveAccountProxy: bind<[number, string], void>("Browser.SaveAccountProxy", (id: number, proxyURL: string) => [id, proxyURL]),
   /**
@@ -1014,17 +1085,39 @@ export const Browser = {
   setPlatformAccountsDisabled: bind<[string, boolean], void>("Browser.SetPlatformAccountsDisabled", (platform: string, disabled: boolean) => [platform, disabled]),
   /** StopClearBrowserHistory cancels an in-progress batch chat history cleanup. */
   stopClearBrowserHistory: bind<[], void>("Browser.StopClearBrowserHistory", () => []),
+  /** StopSyncAccountStatus cancels an in-progress batch account status sync. */
+  stopSyncAccountStatus: bind<[], void>("Browser.StopSyncAccountStatus", () => []),
   /** StopSyncAccountUsernames cancels an in-progress batch account username sync. */
   stopSyncAccountUsernames: bind<[], void>("Browser.StopSyncAccountUsernames", () => []),
+  /** StopSyncGeminiStatus cancels an in-progress batch Gemini status sync. */
+  stopSyncGeminiStatus: bind<[], void>("Browser.StopSyncGeminiStatus", () => []),
+  /** StopSyncQwenStatus cancels an in-progress batch Qwen status sync. */
+  stopSyncQwenStatus: bind<[], void>("Browser.StopSyncQwenStatus", () => []),
+  /**
+   * SyncAccountStatus fetches real-time provider status (credits, subscription, usage percent, rate limits)
+   * for one or more Doubao / Qwen accounts. When ids is empty, all Doubao and Qwen accounts are synced.
+   */
+  syncAccountStatus: bind<[number[]], void>("Browser.SyncAccountStatus", (ids: number[]) => [ids]),
   /**
    * SyncAccountUsernames fetches and applies real platform usernames for one or more accounts.
    * When ids is empty, currently checked accounts are used.
    */
   syncAccountUsernames: bind<[number[]], void>("Browser.SyncAccountUsernames", (ids: number[]) => [ids]),
+  /**
+   * SyncGeminiStatus fetches real-time Gemini remaining quota, reset time, subscription tier, and username.
+   * When ids is empty, all Gemini accounts are synced.
+   */
+  syncGeminiStatus: bind<[number[]], void>("Browser.SyncGeminiStatus", (ids: number[]) => [ids]),
+  /**
+   * SyncQwenStatus fetches real-time Qwen credits, refresh/expiry time, membership tier, and concurrency cap.
+   * When ids is empty, all domestic Qwen accounts are synced.
+   */
+  syncQwenStatus: bind<[number[]], void>("Browser.SyncQwenStatus", (ids: number[]) => [ids]),
   /** ToggleAllBrowserChecks checks or unchecks all local account rows. */
   toggleAllBrowserChecks: bind<[boolean], void>("Browser.ToggleAllBrowserChecks", (on: boolean) => [on]),
   /** ToggleBrowserCheck toggles batch-selection checkbox state for an account row. */
   toggleBrowserCheck: bind<[number, boolean], void>("Browser.ToggleBrowserCheck", (id: number, on: boolean) => [id, on]),
+  updateBrowserRuntime: bind<[], void>("Browser.UpdateBrowserRuntime", () => []),
 } as const;
 
 /** PromptsService exposes prompt template library management IPCs. */

@@ -22,7 +22,6 @@ import (
 
 	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 )
 
 func TestRenderedSiteBoundary(t *testing.T) {
@@ -589,7 +588,7 @@ document.body.style.backgroundImage="url('/background.png')";}, 20);</script>`)
 	if !strings.Contains(gotSourceCookie, "session=synthetic") {
 		t.Fatalf("persistent sign-in cookie was not retained: %q", gotSourceCookie)
 	}
-	if err := reopened.run(reopenCtx, chromedp.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
+	if err := reopened.run(reopenCtx, fingerprint.ActionFunc(func(ec context.Context) error { return cdppage.Close().Do(ec) })); err != nil {
 		t.Fatal(err)
 	}
 	manualCtx, manualCancel := context.WithTimeout(reopenCtx, 5*time.Second)

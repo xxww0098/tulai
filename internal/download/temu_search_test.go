@@ -15,7 +15,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
@@ -172,7 +171,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 			return
 		}
 		go func() {
-			var action chromedp.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == "https://www.temu.com/" {
 				action = fetch.FulfillRequest(paused.RequestID, 200).WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html; charset=utf-8"}}).WithBody(base64.StdEncoding.EncodeToString([]byte(`<html><body>Temu home</body></html>`)))
 			} else if paused.ResourceType == network.ResourceTypeDocument && paused.Request.URL == "https://www.temu.com/bgn_verification.html" {
@@ -195,7 +194,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 	}
 	for i := 0; i < 30; i++ {
 		var ready bool
-		if err := session.run(ctx, chromedp.Evaluate(`(() => { const n = document.querySelector('.goods-img-external img'); return !!n && n.complete && n.naturalWidth > 0 })()`, &ready)); err != nil {
+		if err := session.run(ctx, fingerprint.Evaluate(`(() => { const n = document.querySelector('.goods-img-external img'); return !!n && n.complete && n.naturalWidth > 0 })()`, &ready)); err != nil {
 			t.Fatal(err)
 		}
 		if ready {
@@ -215,7 +214,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	markers := session.downloadMarkers()
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`(() => { const h = document.createElement('div'); h.setAttribute(%q, ''); h.setAttribute(%q, %q); document.documentElement.append(h); })()`, markers.HostAttr, markers.SnapshotAttr, string(cache)), nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(fmt.Sprintf(`(() => { const h = document.createElement('div'); h.setAttribute(%q, ''); h.setAttribute(%q, %q); document.documentElement.append(h); })()`, markers.HostAttr, markers.SnapshotAttr, string(cache)), nil)); err != nil {
 		t.Fatal(err)
 	}
 	got, err = session.Capture(ctx)
@@ -224,13 +223,13 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 	}
 	prior.URL = "https://www.temu.com/search_result.html?search_key=other&filter=black"
 	cache, _ = json.Marshal(prior)
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).setAttribute(%q, %q)`, "["+markers.HostAttr+"]", markers.SnapshotAttr, string(cache)), nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(fmt.Sprintf(`document.querySelector(%q).setAttribute(%q, %q)`, "["+markers.HostAttr+"]", markers.SnapshotAttr, string(cache)), nil)); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := session.Capture(ctx); err == nil || len(got.Items) != 0 || !strings.Contains(err.Error(), "条件已改变") {
 		t.Fatalf("different cached search=%+v err=%v", got.Items, err)
 	}
-	if err := session.run(ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).remove()`, "["+markers.HostAttr+"]"), nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(fmt.Sprintf(`document.querySelector(%q).remove()`, "["+markers.HostAttr+"]"), nil)); err != nil {
 		t.Fatal(err)
 	}
 	wrongStart := temuSearchTestURL(t, "https://www.temu.com/search_result.html?search_key=other&filter=black")
@@ -239,7 +238,7 @@ func TestTemuSearchRenderedCapture(t *testing.T) {
 		t.Fatalf("different search=%+v err=%v", got.Items, err)
 	}
 	session.start = start
-	if err := session.run(ctx, chromedp.Evaluate(`document.body.insertAdjacentHTML('beforeend', '<div role="dialog" style="width:100px;height:40px">Security Verification</div>')`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.body.insertAdjacentHTML('beforeend', '<div role="dialog" style="width:100px;height:40px">Security Verification</div>')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := session.Capture(ctx); err == nil || !strings.Contains(err.Error(), "验证") || len(got.Items) != 0 {

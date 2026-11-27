@@ -49,9 +49,12 @@ function buildFallbackWorkbench(shell: ShellStateDTO): WorkbenchStateDTO {
     shell.tab === TAB_GEN ? "free" : shell.tab === TAB_FISSION ? "fission" : "wash";
   const page = shell.tab <= TAB_FISSION ? shell.tab : TAB_WASH;
   const platform =
-    shell.platform === "千问" || shell.platform === "千问国际" ? shell.platform : "豆包";
+    shell.platform === "千问" || shell.platform === "千问国际" || shell.platform === "Gemini"
+      ? shell.platform
+      : "豆包";
   const qianwen = platform === "千问";
   const qwenIntl = platform === "千问国际";
+  const gemini = platform === "Gemini";
   const startLabel =
     mode === "wash" ? "开始洗图" : mode === "fission" ? "开始裂变" : "开始文生图";
 
@@ -60,10 +63,11 @@ function buildFallbackWorkbench(shell: ShellStateDTO): WorkbenchStateDTO {
     page,
     batchMode: 0,
     platform,
-    platforms: ["豆包", "千问", "千问国际"],
+    platforms: ["豆包", "千问", "千问国际", "Gemini"],
     doubao: platform === "豆包",
     qianwen,
     qwenIntl,
+    gemini,
     prompts: "",
     promptChoice: "",
     promptOptions: [],
@@ -171,7 +175,8 @@ export function WorkbenchPage() {
     [rawWb, shell],
   );
 
-  const platform = wb.platform || (wb.qwenIntl ? "千问国际" : wb.qianwen ? "千问" : "豆包");
+  const platform =
+    wb.platform || (wb.gemini ? "Gemini" : wb.qwenIntl ? "千问国际" : wb.qianwen ? "千问" : "豆包");
   const mode = wb.mode || "wash";
   const isFree = mode === "free";
   const isWash = mode === "wash";

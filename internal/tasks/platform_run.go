@@ -451,7 +451,7 @@ func (e *Engine) runPlatforms(ctx context.Context, _ chan struct{}, queue []Task
 		tasks := groups[name]
 		platform := name
 		g.Go(func() error {
-			if checkLauncher != nil && (platform == "豆包" || platform == "千问" || platform == "千问国际") {
+			if checkLauncher != nil && (platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini") {
 				if err := checkLauncher(platform); err != nil {
 					if ctx.Err() != nil {
 						e.stopQueued(tasks, events)

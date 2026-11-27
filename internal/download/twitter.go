@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -711,7 +711,7 @@ func twitterProfileCapture(ctx context.Context, s *RenderedSession, start, page 
 		return result, errors.New("X 作者主页已跳转到其他账号")
 	}
 	var snapshot twitterProfileSnapshot
-	if err := s.run(ctx, chromedp.Evaluate(twitterProfileSnapshotScript, &snapshot)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(twitterProfileSnapshotScript, &snapshot)); err != nil {
 		return result, err
 	}
 	current, err := crawlInputURL(snapshot.URL)

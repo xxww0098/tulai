@@ -12,7 +12,7 @@ import {
   validateHostDisplay,
   writeHostDisplay,
 } from './fingerprint-identity.mjs';
-import { downloadKernel } from './download-watch.mjs';
+import { downloadArchive } from './download-watch.mjs';
 
 const mode = process.argv[2];
 const downloadFingerprint = mode === 'download-fingerprint';
@@ -317,90 +317,19 @@ function scopedInit(source, url = '') {
     if(!own('done'))throw Error('页面脚本环境不可用');if(own('failed'))throw own('error')})()${url ? `\n//# sourceURL=${url}` : ''}`;
 }
 
-// GitHub 加速镜像 base（ghproxy 形式：base + '/' + 原 URL）。未设置或不是
-// http(s) 地址时返回空串，镜像模式关闭。
-function mirrorBase(value) {
-  const base = String(value ?? '').trim().replace(/\/+$/, '');
-  return /^https?:\/\//i.test(base) ? base : '';
-}
-
-function parseMirrorList(value) {
-  const seen = new Set();
-  const out = [];
-  for (const part of String(value ?? '').split(',')) {
-    const base = mirrorBase(part);
-    if (!base || seen.has(base)) continue;
-    seen.add(base);
-    out.push(base);
-  }
-  return out;
-}
-
-function buildDownloadCandidates(url, { mirror, mirrors, directFirst }) {
-  const allMirrors = [];
-  const seenMirror = new Set();
-  for (const item of [mirror, ...(mirrors ?? [])]) {
-    const base = mirrorBase(item);
-    if (!base || seenMirror.has(base)) continue;
-    seenMirror.add(base);
-    allMirrors.push(base);
-  }
-  let canonical = String(url ?? '').trim();
-  for (const base of allMirrors) {
-    const prefix = `${base}/`;
-    if (canonical.startsWith(prefix)) {
-      canonical = canonical.slice(prefix.length);
-      break;
-    }
-  }
-  const canMirror = /^https:\/\/github\.com\//i.test(canonical);
-  const mirrorUrls = canMirror ? allMirrors.map(base => `${base}/${canonical}`) : [];
-  if (directFirst) {
-    return [canonical, ...mirrorUrls];
-  }
-  if (mirrorUrls.length > 0) {
-    return [...mirrorUrls, canonical];
-  }
-  return [String(url ?? '').trim()];
-}
-
 if (downloadFingerprint) {
-  const url = String(process.env.TULAI_FINGERPRINT_URL ?? '').trim();
   const dest = String(process.env.TULAI_FINGERPRINT_DEST ?? '').trim();
-  if (!url || !dest) {
-    throw new Error('缺少 Fingerprint 内核下载地址或保存路径');
-  }
-  const mirror = mirrorBase(process.env.TULAI_FINGERPRINT_MIRROR);
-  const mirrors = parseMirrorList(process.env.TULAI_FINGERPRINT_MIRRORS);
-  const directFirst = process.env.TULAI_FINGERPRINT_DIRECT_FIRST === '1';
-  const candidates = buildDownloadCandidates(url, { mirror, mirrors, directFirst });
   let last = 0;
-  const file = fs.createWriteStream(dest, { mode: 0o600 });
-  const streamError = new Promise((_, reject) => file.once('error', reject));
-  streamError.catch(() => {});
-  try {
-    await Promise.race([
-      downloadKernel(file, candidates, {
-        label: 'Fingerprint 内核',
-        onProgress: (done, total) => {
-          const now = Date.now();
-          if (done !== total && now - last < 200) return;
-          last = now;
-          emit({ event: 'progress', stage: 'browser', done, total });
-        },
-      }),
-      streamError,
-    ]);
-    await new Promise((resolve, reject) => {
-      file.once('finish', resolve);
-      file.once('error', reject);
-      file.end();
-    });
-  } catch (error) {
-    file.destroy();
-    fs.rmSync(dest, { force: true });
-    throw error;
-  }
+  await downloadArchive(String(process.env.TULAI_FINGERPRINT_URL ?? '').trim(), dest, {
+    mirrors: [process.env.TULAI_FINGERPRINT_MIRROR, ...(process.env.TULAI_FINGERPRINT_MIRRORS ?? '').split(',')],
+    directFirst: process.env.TULAI_FINGERPRINT_DIRECT_FIRST === '1',
+    onProgress: (done, total) => {
+      const now = Date.now();
+      if (done !== total && now - last < 200) return;
+      last = now;
+      emit({ event: 'progress', stage: 'browser', done, total });
+    },
+  });
   emit({ downloaded: dest });
   process.exit(0);
 }
@@ -1145,10 +1074,15 @@ async function start(params) {
   const startProxy = proxyOptions(rawProxy);
   const display = readHostDisplay(params.profile);
   launchMedia = emulatedMedia(display, launchHeadless);
+  const colorScheme = params.colorScheme === 'light' || params.colorScheme === 'dark' ? params.colorScheme : null;
+  if (launchMedia.length && colorScheme) launchMedia.push({ name: 'prefers-color-scheme', value: colorScheme });
   // Service workers stay allowed: Playwright's "block" replaces
   // navigator.serviceWorker.register with a function that says so in its source.
   contextOptions = {
     viewport: null,
+    ...(params.colorScheme ? { colorScheme } : {}),
+    ...(params.lang ? { locale: params.lang } : {}),
+    ...(params.timezone ? { timezoneId: params.timezone } : {}),
     ignoreHTTPSErrors: Boolean(params.ignoreHTTPSErrors),
     ...(startProxy ? { proxy: startProxy } : {}),
   };
@@ -1172,6 +1106,8 @@ async function start(params) {
       headless: Boolean(params.headless),
       timezone: params.timezone,
       lang: params.lang,
+      windowWidth: params.windowWidth,
+      windowHeight: params.windowHeight,
       display,
     }),
   });

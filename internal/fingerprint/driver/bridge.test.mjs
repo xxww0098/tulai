@@ -7,14 +7,16 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-const driverFiles = ['bridge.mjs', 'fingerprint-identity.mjs', 'download-watch.mjs'];
+function copyDriverFiles(root) {
+  for (const file of ['bridge.mjs', 'fingerprint-identity.mjs', '../../../../realbrowser/browserkernel/downloader/download-watch.mjs']) {
+    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, path.basename(file)));
+  }
+}
 
 function setupBridgeSandbox(t, { configurePage } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-bridge-rpc-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const file of driverFiles) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
-  }
+  copyDriverFiles(root);
   const traceFile = path.join(root, 'trace.json');
   const playwright = path.join(root, 'node_modules', 'playwright-core');
   fs.mkdirSync(playwright, { recursive: true });
@@ -245,9 +247,7 @@ test('isolated contexts inherit proxy, scopeBootstrap, bindings, and close clean
 test('fingerprint launch uses persisted seed, ignores --enable-automation, and relays isolated-world CDP bindings', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-fp-bridge-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const file of driverFiles) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
-  }
+  copyDriverFiles(root);
   const traceFile = path.join(root, 'trace.json');
   const playwright = path.join(root, 'node_modules', 'playwright-core');
   fs.mkdirSync(playwright, { recursive: true });
@@ -485,9 +485,7 @@ const displayFakePlaywright = `
 test('headed sessions remember the host display for later headless runs, and document scripts carry the page URL', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-fp-display-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const file of driverFiles) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
-  }
+  copyDriverFiles(root);
   const playwright = path.join(root, 'node_modules', 'playwright-core');
   fs.mkdirSync(playwright, { recursive: true });
   fs.writeFileSync(path.join(playwright, 'package.json'), JSON.stringify({ type: 'module', exports: './index.js' }));
@@ -570,9 +568,7 @@ test('headed sessions remember the host display for later headless runs, and doc
 test('main-frame Runtime.evaluate uses direct CDP runner without Playwright frame.evaluate and recovers stale runner handles', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-cdp-runner-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const file of driverFiles) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
-  }
+  copyDriverFiles(root);
   const traceFile = path.join(root, 'trace.json');
   const playwright = path.join(root, 'node_modules', 'playwright-core');
   fs.mkdirSync(playwright, { recursive: true });
@@ -693,9 +689,7 @@ test('main-frame Runtime.evaluate uses direct CDP runner without Playwright fram
 test('fingerprint launch enforces WebRTC non-proxied UDP blocking only when launched with a proxy', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-fp-proxy-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const file of driverFiles) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
-  }
+  copyDriverFiles(root);
   const traceFile = path.join(root, 'trace.json');
   const playwright = path.join(root, 'node_modules', 'playwright-core');
   fs.mkdirSync(playwright, { recursive: true });
@@ -843,9 +837,7 @@ test('download assistant isolated world relays TEMU_CACHE_* and DOWNLOAD_PAGE vi
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-dl-world-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const file of driverFiles) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
-  }
+  copyDriverFiles(root);
   const addonDir = path.join(root, 'addon');
   fs.mkdirSync(addonDir, { recursive: true });
   fs.writeFileSync(path.join(addonDir, 'settings.js'), `const TULAI_DOWNLOAD = ${JSON.stringify({ endpoint, token: 'secret-token' })}`);
@@ -974,9 +966,7 @@ test('download assistant isolated world relays TEMU_CACHE_* and DOWNLOAD_PAGE vi
 test('download-fingerprint streams through downloadKernel with progress events and cleans up on error', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tulai-fp-dl-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const file of driverFiles) {
-    fs.copyFileSync(new URL(file, import.meta.url), path.join(root, file));
-  }
+  copyDriverFiles(root);
   const playwright = path.join(root, 'node_modules', 'playwright-core');
   fs.mkdirSync(playwright, { recursive: true });
   fs.writeFileSync(path.join(playwright, 'package.json'), JSON.stringify({ type: 'module', exports: './index.js' }));

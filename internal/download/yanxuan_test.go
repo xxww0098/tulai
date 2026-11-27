@@ -18,7 +18,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const yanxuanTestPage = "https://you.163.com/item/detail?id=4248855"
@@ -228,7 +227,7 @@ func TestYanxuanRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(yanxuanTestPage)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithDomain(".163.com").WithURL("https://you.163.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

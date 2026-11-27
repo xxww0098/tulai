@@ -636,8 +636,8 @@ export function buildFingerprintArgs(identity, options = {}) {
   // headless sessions of one account then report the same screen.
   const workWidth = screen.width - screen.availLeft - screen.availRight;
   const workHeight = screen.height - screen.availTop - screen.availBottom;
-  const windowWidth = Math.min(valid.screen.windowWidth, workWidth);
-  const windowHeight = Math.min(valid.screen.windowHeight, workHeight);
+  const windowWidth = Math.min(options.windowWidth || valid.screen.windowWidth, workWidth);
+  const windowHeight = Math.min(options.windowHeight || valid.screen.windowHeight, workHeight);
   args.push(
     `--fingerprint-hardware-concurrency=${valid.hardwareConcurrency}`,
     `--window-size=${windowWidth},${windowHeight}`,

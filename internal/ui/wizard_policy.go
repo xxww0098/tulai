@@ -108,7 +108,7 @@ func planAccountBrowser(engine string, ready, supported bool) wizardBrowserPlan 
 	}
 }
 
-var wizardSupportedPlatforms = []string{"豆包", "千问", "千问国际"}
+var wizardSupportedPlatforms = []string{"豆包", "千问", "千问国际", "Gemini"}
 
 func wizardValidPlatform(name string) bool {
 	for _, p := range wizardSupportedPlatforms {

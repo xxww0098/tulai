@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 )
 
@@ -281,7 +280,7 @@ func TestUnsplashRenderedSearch(t *testing.T) {
 	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, fingerprint.Navigate(page.String()), chromedp.Evaluate(`window.scrollTo(0,333)`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String()), fingerprint.Evaluate(`window.scrollTo(0,333)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := session.Capture(ctx)
@@ -290,7 +289,7 @@ func TestUnsplashRenderedSearch(t *testing.T) {
 	}
 	var current string
 	var scrollY float64
-	if err := session.run(ctx, chromedp.Location(&current), chromedp.Evaluate(`window.scrollY`, &scrollY)); err != nil {
+	if err := session.run(ctx, fingerprint.Location(&current), fingerprint.Evaluate(`window.scrollY`, &scrollY)); err != nil {
 		t.Fatal(err)
 	}
 	if current != page.String() || scrollY != 333 {

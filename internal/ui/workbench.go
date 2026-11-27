@@ -55,6 +55,7 @@ type WorkbenchInput struct {
 	WantDoubao   bool
 	WantQianwen  bool
 	WantQwenIntl bool
+	WantGemini   bool
 	OnlyPlatform string
 	Accounts     []AccountSnap
 	Now          time.Time
@@ -88,6 +89,8 @@ func PlanWorkbench(in WorkbenchInput) WorkbenchPlan {
 			return in.WantQianwen
 		case "千问国际":
 			return in.WantQwenIntl
+		case "Gemini":
+			return in.WantGemini
 		default:
 			return false
 		}
@@ -139,6 +142,9 @@ func platformsFromAccounts(accounts []AccountSnap, now time.Time, want func(stri
 	}
 	if has["千问国际"] {
 		out = append(out, "千问国际")
+	}
+	if has["Gemini"] {
+		out = append(out, "Gemini")
 	}
 	return out
 }
@@ -572,7 +578,7 @@ func HumanReason(raw string) string {
 		return "正在出图，请稍候"
 	case strings.Contains(s, "发送状态未确认"):
 		return "发送结果不确定，请看网页后再试"
-	case strings.Contains(s, "额度") || strings.Contains(lower, "quota") || strings.Contains(lower, "not enough credits") || strings.Contains(lower, "insufficient credits") || strings.Contains(lower, "out of credits") || strings.Contains(lower, "daily free allowance") || strings.Contains(lower, "chat limit"):
+	case strings.Contains(s, "额度") || strings.Contains(s, "已达到图片生成上限") || strings.Contains(s, "已达生成上限") || strings.Contains(lower, "quota") || strings.Contains(lower, "not enough credits") || strings.Contains(lower, "insufficient credits") || strings.Contains(lower, "out of credits") || strings.Contains(lower, "daily free allowance") || strings.Contains(lower, "chat limit") || strings.Contains(lower, "image generation limit") || strings.Contains(lower, "limit for creating images"):
 		return "账号额度已用完"
 	case strings.Contains(s, "频繁") || strings.Contains(lower, "rate limit") || strings.Contains(lower, "too many") || strings.Contains(lower, "too frequent"):
 		return "请求太频繁，请稍后再试"

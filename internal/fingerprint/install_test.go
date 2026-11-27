@@ -82,7 +82,7 @@ func TestConcurrentDriverRefreshUsesUniqueStagingFiles(t *testing.T) {
 		t.Fatalf("unfinished driver refresh: %v %v", entries, err)
 	}
 	for _, entry := range entries {
-		want, _ := driver.ReadFile("driver/" + entry.Name())
+		want, _ := driverFile(entry.Name())
 		got, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil || string(got) != string(want) {
 			t.Fatalf("partial %s: %v", entry.Name(), err)

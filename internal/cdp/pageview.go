@@ -111,6 +111,24 @@ func (v *PageView) AccountUsername(ctx context.Context) (string, error) {
 	return SanitizeAccountUsername(result.Username), err
 }
 
+func (v *PageView) QwenStatus(ctx context.Context) (QwenStatus, error) {
+	var result QwenStatus
+	err := v.conn.evalJSON(ctx, v.target, qwenStatusProbeJS, &result, true, true)
+	return result, err
+}
+
+func (v *PageView) GeminiStatus(ctx context.Context) (GeminiStatus, error) {
+	var result GeminiStatus
+	err := v.conn.evalJSON(ctx, v.target, geminiStatusProbeJS, &result, true, true)
+	return result, err
+}
+
+func (v *PageView) DoubaoStatus(ctx context.Context) (DoubaoStatus, error) {
+	var result DoubaoStatus
+	err := v.conn.evalJSON(ctx, v.target, doubaoStatusProbeJS, &result, true, true)
+	return result, err
+}
+
 // Input 返回复制或剪切的文字，其它操作返回空串。文字作为协议参数发送，不拼成脚本。
 func (v *PageView) Input(ctx context.Context, in PageInput) (string, error) {
 	method := ""

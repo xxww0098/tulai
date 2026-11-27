@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 var (
@@ -310,7 +310,7 @@ func soukuanCapture(ctx context.Context, session *RenderedSession, page *url.URL
 	var state soukuanState
 	for attempt := 0; attempt < 16; attempt++ {
 		state = soukuanState{}
-		if err := session.run(ctx, chromedp.Evaluate(soukuanStateScript, &state)); err != nil {
+		if err := session.run(ctx, fingerprint.Evaluate(soukuanStateScript, &state)); err != nil {
 			return result, fmt.Errorf("读取搜款网商品页面: %w", err)
 		}
 		current, err := crawlURL(nil, state.Location)

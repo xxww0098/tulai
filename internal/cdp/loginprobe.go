@@ -31,7 +31,7 @@ const loginProbeJS = `(async function () {
     return false;
   }
   function loginDialog() {
-    var keys = ['扫码登录', '手机号登录', '短信登录', '验证码登录', '密码登录', '手机登录', '邮箱登录', 'Log in to Qwen', 'Sign in to Qwen', 'Continue with Google', 'Continue with GitHub'];
+    var keys = ['扫码登录', '手机号登录', '短信登录', '验证码登录', '密码登录', '手机登录', '邮箱登录', 'Log in to Qwen', 'Sign in to Qwen', 'Continue with Google', 'Continue with GitHub', 'Sign in to try tools', '登录即可保存活动记录', 'Sign in to save activity', 'Use your Google Account', '使用您的 Google 账号'];
     var nodes = document.querySelectorAll('[role="dialog"],[class*="dialog"],[class*="modal"],[class*="login"],[class*="sign"]');
     for (var i = 0; i < nodes.length; i++) {
       if (!visible(nodes[i])) continue;
@@ -51,7 +51,7 @@ const loginProbeJS = `(async function () {
     return false;
   }
   function toLoginButton() {
-    var nodes = document.querySelectorAll('[data-testid="to_login_button"],.header-right-auth-button');
+    var nodes = document.querySelectorAll('[data-testid="to_login_button"],.header-right-auth-button,[data-test-id="sidenav-error-action-link"],[data-test-id="sign-out-banner"]');
     for (var i = 0; i < nodes.length; i++) if (visible(nodes[i])) return true;
     return false;
   }
@@ -63,11 +63,21 @@ const loginProbeJS = `(async function () {
   // 生成中、进度条、或文档还没画完，都不是「已退出」的证据。
   function generating() {
     if (document.readyState && document.readyState !== 'complete') return true;
-    if (document.querySelector('[aria-busy="true"],[role="progressbar"],button.stop-button')) return true;
+    if (document.querySelector('[aria-busy="true"],[role="progressbar"],button.stop-button,button.send-button.stop')) return true;
     var text = String((document.body && document.body.innerText) || '').slice(0, 2000);
     return /正在生成|生成中|绘制中|\bGenerating\b/.test(text);
   }
   function signedIn() {
+    var h = String(location.hostname || '').toLowerCase();
+    if (/(^|\.)gemini\.google\.com$/.test(h)) {
+      if (document.querySelector('[gem-open-account-menu],a[href*="accounts.google.com/SignOutOptions"],[aria-label*="Google Account"],[aria-label*="Google 账号"],[aria-label*="Google 账户"],[aria-label*="Google 帳戶"],[aria-label*="Google 帳號"],a.gb_B[aria-label]')) return true;
+      var pic = document.querySelector('user-profile-picture img[src]');
+      if (pic && visible(pic)) return true;
+      try {
+        if (window.WIZ_global_data && typeof window.WIZ_global_data.oPEP7c === 'string' && window.WIZ_global_data.oPEP7c.indexOf('@') > 0) return true;
+      } catch (e) {}
+      return false;
+    }
     if (document.querySelector('[class*="avatar"],[class*="Avatar"],[data-testid*="avatar"],.user-menu-btn,.sidebar-user .user-profile-desktop,.user-img')) return true;
     var text = String((document.body && document.body.innerText) || '').slice(0, 2500);
     return text.indexOf('退出登录') >= 0 || text.indexOf('退出登陆') >= 0 || /\b(?:Log out|Sign out)\b/i.test(text);
@@ -80,11 +90,12 @@ const loginProbeJS = `(async function () {
     return /安全验证|滑动验证|拖动滑块|请按住滑块|请完成下方验证|Please complete .* verification|Slide to verify|Security Verification/i.test(body);
   }
   var href = String(location.href || '');
-  if (href.indexOf('/security/doubao-region-ban') >= 0 || href.indexOf('qianwen-region-ban') >= 0 || href.indexOf('tongyi-region-ban') >= 0 || href.indexOf('qwen-region-ban') >= 0) return {state:'region'};
-  var host = String(location.hostname || '');
-  if (/qianwen|tongyi|qwen/i.test(host)) {
-    var top = String((document.body && document.body.innerText) || '').slice(0, 500);
-    if (/受区域限制|当前地区暂不支持|所在地区暂不可用|服务在当前地区不可用|not available in your region|region is not supported|service is not available in your/i.test(top)) return {state:'region'};
+  if (href.indexOf('/security/doubao-region-ban') >= 0 || href.indexOf('qianwen-region-ban') >= 0 || href.indexOf('tongyi-region-ban') >= 0 || href.indexOf('qwen-region-ban') >= 0 || href.indexOf('gemini-region-ban') >= 0 || href.indexOf('gemini.google.com/unsupported') >= 0) return {state:'region'};
+  var host = String(location.hostname || '').toLowerCase();
+  if (/(^|\.)accounts\.google\.com$/.test(host)) return {state:'out', evidence:'google_accounts'};
+  if (/qianwen|tongyi|qwen|gemini\.google\.com/i.test(host)) {
+    var top = String((document.body && document.body.innerText) || '').slice(0, 800);
+    if (/受区域限制|当前地区暂不支持|当前国家\/地区暂不支持|所在地区暂不可用|服务在当前地区不可用|目前尚未在您所在的国家|not available in your (?:region|country)|isn['’]t (?:currently )?(?:supported|available) in your (?:region|country)|region is not supported|service is not available in your/i.test(top)) return {state:'region'};
   }
   if (challenge()) return {state:'challenge', evidence:'challenge'};
   if (generating()) return {state:'unknown', evidence:'generating'};
@@ -106,11 +117,13 @@ const accountUsernameJS = `(async function () {
     '登录': 1, '立即登录': 1, '登录/注册': 1, '扫码登录': 1, '登录千问': 1, '登录豆包': 1,
     '退出登录': 1, '退出登陆': 1, '设置': 1, '个人中心': 1, '我的': 1, '账号': 1, '账户': 1,
     '游客': 1, '未登录': 1, '豆包': 1, '千问': 1, '通义千问': 1, '通义': 1, 'qwen': 1, 'doubao': 1,
+    'gemini': 1, 'google': 1, 'google gemini': 1, '登录 gemini': 1, 'sign in to gemini': 1,
+    'google account': 1, 'google 账号': 1, 'google 账户': 1, 'google 帳戶': 1, 'google 帳號': 1,
     '免费版': 1, '升级': 1, '会员': 1, '开通会员': 1, '新对话': 1, '历史记录': 1, '更多': 1,
     '展开': 1, '收起': 1, '头像': 1, '用户头像': 1, 'avatar': 1,
     'sign in': 1, 'log in': 1, 'login': 1, 'sign up': 1, '注册': 1,
     'log out': 1, 'sign out': 1, 'guest': 1, 'settings': 1,
-    'free': 1, 'plus': 1, 'pro': 1, 'upgrade': 1
+    'free': 1, 'plus': 1, 'pro': 1, 'ultra': 1, 'upgrade': 1
   };
   function clean(raw) {
     var s = String(raw || '').replace(/[\u0000-\u001F\u007F\u200B-\u200D\uFEFF]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -125,7 +138,7 @@ const accountUsernameJS = `(async function () {
     return !!(el.getAttribute && el.getAttribute('aria-hidden') === 'true');
   }
   function extractFromContainer(root) {
-    if (!root) return '';
+    if (!root || typeof root.querySelectorAll !== 'function') return '';
     var nodes = root.querySelectorAll('span,p,div,strong,b,a');
     var fallbackShort = '';
     for (var i = 0; i < nodes.length; i++) {
@@ -252,6 +265,109 @@ const accountUsernameJS = `(async function () {
     }
     return '';
   }
+  function isEmailLike(s) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || '').trim());
+  }
+  function cleanEmailFallback(raw) {
+    var s = clean(raw);
+    if (s) return s;
+    var trimmed = String(raw || '').trim();
+    if (isEmailLike(trimmed)) {
+      var local = clean(trimmed.split('@')[0]);
+      if (local) return local;
+    }
+    return '';
+  }
+  function parseGoogleAccountLabel(raw) {
+    var text = String(raw || '').trim();
+    if (!text) return '';
+    var lines = text.split(/[\r\n]+/).map(function (line) {
+      return line.replace(/\s+/g, ' ').trim();
+    }).filter(Boolean);
+    if (lines.length === 0) return '';
+    lines[0] = lines[0].replace(/^Google\s*(?:Account|账号|账户|帳戶|帳號)\s*[:：]?\s*/i, '').trim();
+    lines = lines.filter(Boolean);
+    if (lines.length === 0) return '';
+    var candidates = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var paren = line.match(/^([^()]+?)\s*\(([^()]+)\)\s*$/);
+      if (paren) {
+        candidates.push(paren[1].trim(), paren[2].trim());
+        continue;
+      }
+      var inlineEmail = line.match(/^(.+?)\s+([^\s@]+@[^\s@]+\.[^\s@]+)$/);
+      if (inlineEmail) {
+        candidates.push(inlineEmail[1].trim(), inlineEmail[2].trim());
+        continue;
+      }
+      var wrapped = line.match(/^\(([^()]+)\)$/);
+      candidates.push(wrapped ? wrapped[1].trim() : line);
+    }
+    var emailFallback = '';
+    for (var j = 0; j < candidates.length; j++) {
+      var c = clean(candidates[j]);
+      if (!c) {
+        if (!emailFallback && isEmailLike(candidates[j])) {
+          emailFallback = cleanEmailFallback(candidates[j]);
+        }
+        continue;
+      }
+      if (isEmailLike(c)) {
+        if (!emailFallback) emailFallback = c;
+        continue;
+      }
+      return c;
+    }
+    return emailFallback;
+  }
+  function fromGeminiDOM() {
+    var sels = [
+      '[gem-open-account-menu]',
+      'a[href*="accounts.google.com/SignOutOptions"]',
+      'a.gb_B[aria-label]',
+      'a.gb_A[aria-label]',
+      '[data-ogsr-up] a[aria-label]',
+      'a[aria-label*="Google Account"]',
+      'button[aria-label*="Google Account"]',
+      'a[aria-label*="Google 账号"]',
+      'button[aria-label*="Google 账号"]',
+      'a[aria-label*="Google 账户"]',
+      'button[aria-label*="Google 账户"]',
+      'a[aria-label*="Google 帳戶"]',
+      'button[aria-label*="Google 帳戶"]',
+      'a[aria-label*="Google 帳號"]',
+      'button[aria-label*="Google 帳號"]'
+    ];
+    for (var i = 0; i < sels.length; i++) {
+      var el = document.querySelector(sels[i]);
+      if (!el) continue;
+      var lbl = el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'));
+      var n = parseGoogleAccountLabel(lbl);
+      if (n) return n;
+      var inner = extractFromContainer(el);
+      if (inner) return inner;
+    }
+    var pic = document.querySelector('user-profile-picture img');
+    if (pic && pic.getAttribute) {
+      var alt = parseGoogleAccountLabel(pic.getAttribute('aria-label') || pic.getAttribute('alt'));
+      if (alt) return alt;
+    }
+    return '';
+  }
+  function fromGeminiGlobal() {
+    try {
+      var wiz = window.WIZ_global_data;
+      if (wiz && typeof wiz === 'object') {
+        var email = typeof wiz.oPEP7c === 'string' ? wiz.oPEP7c.trim() : '';
+        if (email && email.indexOf('@') > 0) {
+          var n = cleanEmailFallback(email);
+          if (n) return n;
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
   function fromGenericSidebar() {
     var btns = document.querySelectorAll('aside button[aria-haspopup="menu"],nav button[aria-haspopup="menu"],header button[aria-haspopup="menu"]');
     for (var i = btns.length - 1; i >= 0; i--) {
@@ -271,8 +387,10 @@ const accountUsernameJS = `(async function () {
     username = fromQwenIntlDOM() || fromQwenGlobal() || fromGenericSidebar();
   } else if (/(qianwen|tongyi|qwen)/i.test(host)) {
     username = fromQwenDOM() || fromQwenGlobal() || fromGenericSidebar();
+  } else if (/(^|\.)gemini\.google\.com$/.test(host)) {
+    username = fromGeminiDOM() || fromGeminiGlobal() || fromGenericSidebar();
   } else {
-    username = fromDoubaoDOM() || fromQwenIntlDOM() || fromQwenDOM() || fromDoubaoRouter() || fromQwenGlobal() || fromGenericSidebar();
+    username = fromDoubaoDOM() || fromQwenIntlDOM() || fromQwenDOM() || fromGeminiDOM() || fromDoubaoRouter() || fromQwenGlobal() || fromGeminiGlobal() || fromGenericSidebar();
   }
   return { username: username || '' };
 })()`
@@ -286,13 +404,15 @@ type accountUsernameResult struct {
 }
 
 var invalidAccountUsernames = map[string]struct{}{
-	"登录": {}, "立即登录": {}, "登录/注册": {}, "扫码登录": {}, "登录千问": {}, "登录豆包": {}, "注册": {},
+	"登录": {}, "立即登录": {}, "登录/注册": {}, "扫码登录": {}, "登录千问": {}, "登录豆包": {}, "登录 gemini": {}, "注册": {},
 	"退出登录": {}, "退出登陆": {}, "设置": {}, "个人中心": {}, "我的": {}, "账号": {}, "账户": {},
 	"游客": {}, "未登录": {}, "豆包": {}, "千问": {}, "千问国际": {}, "通义千问": {}, "通义": {}, "qwen": {}, "doubao": {},
+	"gemini": {}, "google": {}, "google gemini": {}, "sign in to gemini": {},
+	"google account": {}, "google 账号": {}, "google 账户": {}, "google 帳戶": {}, "google 帳號": {},
 	"免费版": {}, "升级": {}, "会员": {}, "开通会员": {}, "新对话": {}, "历史记录": {}, "更多": {},
 	"展开": {}, "收起": {}, "头像": {}, "用户头像": {}, "avatar": {},
 	"sign in": {}, "log in": {}, "login": {}, "sign up": {}, "log out": {}, "sign out": {},
-	"guest": {}, "settings": {}, "free": {}, "plus": {}, "pro": {}, "upgrade": {},
+	"guest": {}, "settings": {}, "free": {}, "plus": {}, "pro": {}, "ultra": {}, "upgrade": {},
 }
 
 // SanitizeAccountUsername 清洗从网页提取的账号用户名，过滤控制字符、过长文本与常见按钮文案。
@@ -337,7 +457,9 @@ func RegionBlockedURL(raw string) bool {
 	return strings.Contains(u, "/security/doubao-region-ban") ||
 		strings.Contains(u, "qianwen-region-ban") ||
 		strings.Contains(u, "tongyi-region-ban") ||
-		strings.Contains(u, "qwen-region-ban")
+		strings.Contains(u, "qwen-region-ban") ||
+		strings.Contains(u, "gemini-region-ban") ||
+		strings.Contains(u, "gemini.google.com/unsupported")
 }
 
 // 返回 in、out、challenge、region 或 unknown。没有页面时返回 unknown，方便继续等。
@@ -470,14 +592,17 @@ func BringToFront(ctx context.Context, endpoint string) error {
 }
 
 func pickLoginTarget(list []sliderTarget) (string, bool) {
-	var https, page string
+	var auth, https, page string
 	for _, item := range list {
 		if item.Type != "page" || item.ID == "" {
 			continue
 		}
 		url := strings.ToLower(item.URL)
-		if strings.Contains(url, "doubao.com") || strings.Contains(url, "qianwen.com") || strings.Contains(url, "tongyi.com") || strings.Contains(url, "qwen.ai") {
+		if strings.Contains(url, "doubao.com") || strings.Contains(url, "qianwen.com") || strings.Contains(url, "tongyi.com") || strings.Contains(url, "qwen.ai") || strings.Contains(url, "gemini.google.com") {
 			return item.ID, true
+		}
+		if auth == "" && strings.Contains(url, "accounts.google.com") {
+			auth = item.ID
 		}
 		if page == "" {
 			page = item.ID
@@ -485,6 +610,9 @@ func pickLoginTarget(list []sliderTarget) (string, bool) {
 		if https == "" && (strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://")) {
 			https = item.ID
 		}
+	}
+	if auth != "" {
+		return auth, true
 	}
 	if https != "" {
 		return https, true

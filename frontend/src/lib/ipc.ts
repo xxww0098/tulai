@@ -76,6 +76,17 @@ export function fireIpc(fn: () => unknown): void {
   }
 }
 
+export function openExternalUrl(url: string): void {
+  fireIpc(() => Core.openExternal(url));
+  if (
+    !isMyGoRuntime() &&
+    typeof window !== "undefined" &&
+    import.meta.env.MODE !== "test"
+  ) {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 export function subscribeTopics(handler: (topicsCsv: string) => void): () => void {
   if (!isMyGoRuntime()) return () => {};
   return events.tulaiTopics.on((payload) => {

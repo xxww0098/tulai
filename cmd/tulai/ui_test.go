@@ -78,7 +78,7 @@ func TestServicesShellAndAllModulesSnapshot(t *testing.T) {
 	if shell.MediaOrigin != ui.MediaOrigin() {
 		t.Fatalf("shell.MediaOrigin = %q, want %q", shell.MediaOrigin, ui.MediaOrigin())
 	}
-	if len(shell.Platforms) != 3 || shell.Platforms[0].ID != "doubao" || shell.Platforms[1].ID != "qianwen" || shell.Platforms[2].ID != "qwen_intl" {
+	if len(shell.Platforms) != 4 || shell.Platforms[0].ID != "doubao" || shell.Platforms[1].ID != "qianwen" || shell.Platforms[2].ID != "qwen_intl" || shell.Platforms[3].ID != "gemini" {
 		t.Fatalf("unexpected shell platforms: %+v", shell.Platforms)
 	}
 	if shell.Pool.Ready != 1 || shell.Pool.Total != 1 {
@@ -115,7 +115,10 @@ func TestServicesShellAndAllModulesSnapshot(t *testing.T) {
 	if ie := svcs.ImageEdit.GetImageEditState(ctx); ie.Files == nil || ie.SizePresets == nil || ie.RatioPresets == nil {
 		t.Fatalf("imageedit DTO returned nil slices: %+v", ie)
 	}
-	if st := svcs.Settings.GetSettingsState(ctx); st.Version == "" || st.SendStrategy == "" {
+	if sh := svcs.Core.GetShellState(ctx); sh.Version != ProductVersion || sh.Update.Current != ProductVersion {
+		t.Fatalf("shell version unexpected: version=%q update.current=%q want=%q", sh.Version, sh.Update.Current, ProductVersion)
+	}
+	if st := svcs.Settings.GetSettingsState(ctx); st.Version != ProductVersion || st.SendStrategy == "" {
 		t.Fatalf("settings DTO unexpected: %+v", st)
 	}
 }
@@ -366,9 +369,15 @@ func TestServicesDTOJSONCamelCaseContract(t *testing.T) {
 	checkKeys("RenameStateDTO", svcs.Rename.GetRenameState(ctx), "aiUrl", "aiKey", "aiModel", "rows", "rules")
 	checkKeys("BrowserDrawerDTO", svcs.Browser.GetBrowserDrawerState(ctx), "accountId", "frameVersion", "frameUrl")
 	checkKeys("ImageEditStateDTO", svcs.ImageEdit.GetImageEditState(ctx), "origUrl", "previewUrl", "origVersion", "outVersion", "showCropUi", "cropAspect")
-	checkKeys("BrowserStateDTO", svcs.Browser.GetBrowserState(ctx), "missingHint", "sharedExitHints", "checkedCount")
+	checkKeys("BrowserStateDTO", svcs.Browser.GetBrowserState(ctx), "missingHint", "sharedExitHints", "checkedCount", "doubaoConcurrencyAuto", "doubaoConcurrencyMax", "qianwenConcurrencyAuto", "qianwenConcurrencyMax", "geminiConcurrencyAuto", "geminiConcurrencyMax")
 	checkKeys("WorkbenchStateDTO", svcs.Workbench.GetWorkbenchState(ctx), "laneCollapsed", "concurrencyAuto", "concurrencyMax", "promptTemplates")
-	checkKeys("SettingsStateDTO", svcs.Settings.GetSettingsState(ctx), "downloadRateKb", "proxyUrl", "customUrl", "sendStrategy", "captchaBackend", "dotMatrixEffect")
+	checkKeys("SettingsStateDTO", svcs.Settings.GetSettingsState(ctx), "downloadRateKb", "proxyUrl", "customUrl", "sendStrategy", "captchaBackend", "dotMatrixEffect", "concurrencyAutoQianwen", "concurrencyMaxQianwen", "concurrencyAutoQwenIntl", "concurrencyMaxQwenIntl")
+	if br := svcs.Browser.GetBrowserState(ctx); len(br.Rows) > 0 {
+		checkKeys("BrowserRowDTO", br.Rows[0], "creditsSynced", "creditsRemain", "creditsTotal", "creditCost", "creditsResetAt", "creditsResetLabel", "creditsCycle", "creditsCycleLabel", "memberTier", "memberLabel", "concurrencyLimit", "concurrencyLabel", "watermarkFree", "usagePercent", "platformLimited", "limitTips", "resetCardCount", "creditsSyncedAt", "creditsSyncedLabel")
+	}
+	if wb := svcs.Workbench.GetWorkbenchState(ctx); len(wb.Lanes) > 0 {
+		checkKeys("AccountLaneDTO", wb.Lanes[0], "creditsSynced", "creditsRemain", "creditsTotal", "creditCost", "creditsResetAt", "creditsResetLabel", "creditsCycle", "creditsCycleLabel", "memberTier", "memberLabel", "concurrencyLimit", "concurrencyLabel", "watermarkFree", "usagePercent", "platformLimited", "limitTips", "resetCardCount", "creditsSyncedAt", "creditsSyncedLabel")
+	}
 }
 
 func TestServicesPromptsLibraryKindsAndBuiltinFork(t *testing.T) {

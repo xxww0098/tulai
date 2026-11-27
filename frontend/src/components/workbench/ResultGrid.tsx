@@ -271,7 +271,6 @@ const ResultTileCard = memo(
   function ResultTileCard({
     tile,
     kind = "done",
-    animPaused = false,
     activePlatform,
     running = false,
     mode = "wash",
@@ -284,7 +283,6 @@ const ResultTileCard = memo(
   }: {
     tile: ResultTileDTO;
     kind?: "done" | "issue" | "active" | "queued";
-    animPaused?: boolean;
     activePlatform?: string;
     running?: boolean;
     mode?: string;
@@ -383,7 +381,7 @@ const ResultTileCard = memo(
             )}
           >
             {live ? (
-              <GenerationStageCard tile={tile} queued={kind === "queued"} animPaused={animPaused} />
+              <GenerationStageCard tile={tile} queued={kind === "queued"} />
             ) : isIssueWithoutOutput ? (
               <DotMatrixImageBox
                 status="error"
@@ -490,7 +488,6 @@ const ResultTileCard = memo(
   },
   (prev, next) =>
     prev.kind === next.kind &&
-    prev.animPaused === next.animPaused &&
     prev.activePlatform === next.activePlatform &&
     prev.running === next.running &&
     prev.mode === next.mode &&
@@ -573,10 +570,6 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
   const storeWb = useWorkbench();
   const wb = propWb ?? storeWb;
   const [density, setDensity] = useState<"sm" | "md">("sm");
-  const [botAnimPaused, setBotAnimPaused] = useState(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  });
   const [doneLimit, setDoneLimit] = useState(30);
   const [pendingExpanded, setPendingExpanded] = useState(false);
   const [doneCollapsed, setDoneCollapsed] = useState(false);
@@ -617,10 +610,14 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
     return out;
   }, [issueRows]);
 
-  const activePlatform = wb?.platform || (wb?.qwenIntl ? "千问国际" : wb?.qianwen ? "千问" : "豆包");
-  const scopeKey = `${activePlatform}:${wb?.mode || "wash"}`;
+  const mode = wb?.mode || "wash";
+  const isWash = mode === "wash";
+  const activePlatform =
+    wb?.platform || (wb?.gemini ? "Gemini" : wb?.qwenIntl ? "千问国际" : wb?.qianwen ? "千问" : "豆包");
+  const scopeKey = `${activePlatform}:${mode}`;
 
-  const liveRun = starting || (wb?.running && wb.runPage === wb.page) || activeTiles.length > 0;
+  const runOnPage = Boolean(wb?.running && wb.runPage === wb.page);
+  const liveRun = starting || runOnPage || activeTiles.length > 0;
   const previousLiveScope = useRef<string | null>(null);
   useEffect(() => {
     previousLiveScope.current = liveRun ? scopeKey : null;
@@ -774,16 +771,19 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
     (Boolean(wb.resultsDoneOpen) ||
       (activeRows.length === 0 && pendingTiles.length === 0 && issueRows.length === 0));
 
-  const runOnPage = wb.running && wb.runPage === wb.page;
   const queuedForRun = starting || runOnPage;
   const liveSlots = [
-    ...activeTiles.map(tile => ({ tile, kind: "active" as const })),
-    ...(queuedForRun ? pendingTiles.map(tile => ({ tile, kind: "queued" as const })) : []),
+    ...activeTiles.map((tile) => ({ tile, kind: "active" as const })),
+    ...(!isWash && queuedForRun
+      ? pendingTiles.map((tile) => ({ tile, kind: "queued" as const }))
+      : []),
   ];
   const waitingForQueue = liveSlots.length === 0 && starting;
+  const showPendingQueueCard = !isWash && !queuedForRun && pendingTiles.length > 0;
+  const showWashLiveSummary = isWash && (liveRun || pendingTiles.length > 0);
   // Keep one position per task even when an earlier task returns several images.
   type ResultSlot = { tile: ResultTileDTO; kind: "active" | "queued" | "done"; key: string };
-  const slots: ResultSlot[] = liveSlots.map(slot => ({
+  const slots: ResultSlot[] = liveSlots.map((slot) => ({
     ...slot,
     key: `${scopeKey}:task:${slot.tile.taskIndex}`,
   }));
@@ -802,7 +802,9 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
   slots.sort((a, b) => a.tile.taskIndex - b.tile.taskIndex);
   for (const slot of extraOutputs) slots.push(slot);
   const hasPipelineWork =
-    waitingForQueue || total > 0 ||
+    waitingForQueue ||
+    showWashLiveSummary ||
+    total > 0 ||
     activeRows.length > 0 ||
     pendingTiles.length > 0 ||
     issueRows.length > 0 ||
@@ -846,7 +848,7 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
                 onClick={() => fireIpc(Workbench.retryAllFailed())}
               />
             ) : null}
-            {hasPipelineWork && !wb.running ? (
+            {hasPipelineWork && !wb.running && !starting ? (
               <Tooltip content="清空当前结果列表（不删除本地图片文件）" side="bottom">
                 <Button
                   data-testid="wb-clear-results-btn"
@@ -974,8 +976,8 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
           )
         ) : (
           <div className="flex flex-col gap-3">
-            {/* Queued items before a run */}
-            {!queuedForRun && pendingTiles.length > 0 ? (
+            {/* Queued items before a run (hidden in wash mode) */}
+            {showPendingQueueCard ? (
               <BentoCard
                 data-testid="wb-pending-queue"
                 compact
@@ -1009,7 +1011,7 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
             ) : null}
 
             {/* Live result slots and completed gallery */}
-            {waitingForQueue || liveSlots.length > 0 || doneTiles.length > 0 ? (
+            {waitingForQueue || liveSlots.length > 0 || showWashLiveSummary || doneTiles.length > 0 ? (
               <BentoCard compact className="rounded-[14px] shadow-none">
                 <div className="flex flex-col gap-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1021,26 +1023,34 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
                             className="animate-tulai-live-ring absolute inset-0 rounded-full bg-status-ok"
                           />
                         ) : null}
-                        <span className="relative size-2 rounded-full bg-status-ok" />
+                        <span
+                          className={cn(
+                            "relative size-2 rounded-full",
+                            isWash && !liveRun && doneTiles.length === 0
+                              ? "bg-subtle"
+                              : "bg-status-ok",
+                          )}
+                        />
                       </span>
-                      <span className="tnum text-[13px] font-semibold text-status-ok">
-                        {liveSlots.length || waitingForQueue
-                          ? `进行中 (${activeTiles.length}) · 排队 (${queuedForRun ? pendingTiles.length : 0}) · 已完成 (${doneTiles.length})`
-                          : wb.doneTasks > 0 && wb.doneTasks !== doneTiles.length
-                          ? `已完成 (${doneTiles.length} 张 / ${wb.doneTasks} 任务)`
-                          : `已完成 (${doneTiles.length} 张)`}
+                      <span
+                        data-testid="wb-results-status-summary"
+                        className={cn(
+                          "tnum text-[13px] font-semibold",
+                          isWash && !liveRun && doneTiles.length === 0
+                            ? "text-muted"
+                            : "text-status-ok",
+                        )}
+                      >
+                        {liveSlots.length > 0 || waitingForQueue || (isWash && liveRun)
+                          ? `进行中 (${activeTiles.length}) · 排队 (${isWash || queuedForRun ? pendingTiles.length : 0}) · 已完成 (${doneTiles.length})`
+                          : isWash && pendingTiles.length > 0
+                            ? `排队 (${pendingTiles.length}) · 已完成 (${doneTiles.length} 张)`
+                            : wb.doneTasks > 0 && wb.doneTasks !== doneTiles.length
+                              ? `已完成 (${doneTiles.length} 张 / ${wb.doneTasks} 任务)`
+                              : `已完成 (${doneTiles.length} 张)`}
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {liveSlots.length > 0 ? (
-                        <Button
-                          data-testid="wb-bot-anim-toggle"
-                          text={botAnimPaused ? "继续动画" : "暂停动画"}
-                          size="small"
-                          variant="ghost"
-                          onClick={() => setBotAnimPaused(prev => !prev)}
-                        />
-                      ) : null}
                       {slots.length > 0 ? (
                         <Tabs
                           data-testid="wb-density-tabs"
@@ -1142,7 +1152,6 @@ export function ResultGrid({ wb: propWb, starting = false }: { wb?: WorkbenchSta
                               key={key}
                               tile={tile}
                               kind={kind}
-                              animPaused={kind !== "done" && botAnimPaused}
                               activePlatform={activePlatform}
                               running={Boolean(wb.running)}
                               mode={wb.mode || "wash"}

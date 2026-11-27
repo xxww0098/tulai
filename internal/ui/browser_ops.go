@@ -40,7 +40,8 @@ func (o browserOperation) opKind() string {
 
 type browserBatchRun struct {
 	stopping                     bool
-	kind                         string // "starting" | "stopping" | "clearing" | "syncing"
+	kind                         string // "starting" | "stopping" | "clearing" | "syncing" | "syncing_status"
+	statusLabel                  string // "千问" | "Gemini" | "账号"
 	fast                         bool
 	total, done, failed, skipped int
 	deleted                      int
@@ -78,9 +79,23 @@ func (b *browserBatchRun) text() string {
 	}
 	if b.opKind() == "syncing" {
 		if b.done >= b.total {
-			return fmt.Sprintf("同步用户名完成：%d/%d（已更新 %d），失败 %d，跳过 %d", b.done, b.total, b.updated, b.failed, b.skipped)
+			return fmt.Sprintf("同步完成：%d/%d（已更新 %d），失败 %d，跳过 %d", b.done, b.total, b.updated, b.failed, b.skipped)
 		}
-		base := fmt.Sprintf("正在同步用户名：%d/%d（已更新 %d）", b.done, b.total, b.updated)
+		base := fmt.Sprintf("正在同步账号：%d/%d（已更新 %d）", b.done, b.total, b.updated)
+		if b.current != "" {
+			base += " · 当前：" + b.current
+		}
+		return base
+	}
+	if b.opKind() == "syncing_status" {
+		subject := strings.TrimSpace(b.statusLabel)
+		if subject == "" {
+			subject = "千问"
+		}
+		if b.done >= b.total {
+			return fmt.Sprintf("%s状态同步完成：%d/%d（已更新 %d），失败 %d，跳过 %d", subject, b.done, b.total, b.updated, b.failed, b.skipped)
+		}
+		base := fmt.Sprintf("正在同步%s状态：%d/%d（已更新 %d）", subject, b.done, b.total, b.updated)
 		if b.current != "" {
 			base += " · 当前：" + b.current
 		}
@@ -101,18 +116,18 @@ type browserDrawerState struct {
 	row             store.Browser
 	startedByDrawer bool
 	cancel          context.CancelFunc
-	done          chan struct{}
-	inputs        chan cdp.PageInput
-	held          atomic.Bool
-	lastInput     atomic.Int64
-	resuming      bool
-	loading       bool
-	err           string
-	title, url    string
-	frameVersion  uint64
-	width, height float64
-	copyText      string
-	copyReady     bool
+	done            chan struct{}
+	inputs          chan cdp.PageInput
+	held            atomic.Bool
+	lastInput       atomic.Int64
+	resuming        bool
+	loading         bool
+	err             string
+	title, url      string
+	frameVersion    uint64
+	width, height   float64
+	copyText        string
+	copyReady       bool
 }
 
 type loginShot struct {
@@ -130,7 +145,7 @@ func (a *App) refreshDetected() {
 	a.detectedDetail = rt.Path
 	if ok {
 		a.detectedNote = kind + " 已安装"
-		a.runtimeStatus = kind + " 就绪"
+		a.runtimeStatus = strings.TrimSpace(kind+" "+rt.Version) + " 就绪"
 	} else if !browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, kind) {
 		a.detectedNote = "当前架构不支持 " + kind
 		a.runtimeStatus = planAccountBrowser(kind, false, false).Blocked
@@ -230,7 +245,9 @@ func (a *App) runtimeTick(done <-chan struct{}) {
 	}
 }
 
-func (a *App) installBrowserRuntime() {
+func (a *App) installBrowserRuntime() { a.prepareBrowserRuntime(false) }
+
+func (a *App) prepareBrowserRuntime(update bool) {
 	if a.runtimeBusy || a.running || a.renameUpdateActive() {
 		return
 	}
@@ -249,7 +266,11 @@ func (a *App) installBrowserRuntime() {
 		defer close(done)
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
-		_, err := browser.EnsureRuntime(ctx, browser.ConfigDir(), kind, func(p fingerprint.Progress) {
+		prepare := browser.EnsureRuntime
+		if update {
+			prepare = browser.UpdateRuntime
+		}
+		rt, err := prepare(ctx, browser.ConfigDir(), kind, func(p fingerprint.Progress) {
 			a.syncUI(func() {
 				a.applyRuntimeProgress(p)
 				a.emit("browsers", "wizard")
@@ -260,9 +281,15 @@ func (a *App) installBrowserRuntime() {
 			defer a.maybeInstallPending()
 			if err != nil {
 				a.runtimeStatus = "安装失败：" + err.Error()
+				if update {
+					a.runtimeStatus = "更新失败：" + err.Error()
+				}
 			} else {
 				a.refreshDetected()
 				a.refreshWizardPlan()
+				if update {
+					a.runtimeStatus = "当前内核版本 " + rt.Version
+				}
 			}
 			a.emit("browsers", "wizard", "workbench", "download")
 		})
@@ -319,7 +346,7 @@ func (a *App) createBrowser(platform, name string) {
 	if platform == "" {
 		platform = "豆包"
 	}
-	if platform != "豆包" && platform != "千问" && platform != "千问国际" {
+	if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "Gemini" {
 		return
 	}
 	explicitName := strings.TrimSpace(name) != ""
@@ -457,7 +484,7 @@ func (a *App) runBrowserBatch(stopping bool) {
 }
 
 func (a *App) clearHistoryAllowed(b store.Browser) bool {
-	if a.running || b.ID <= 0 || (b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际") {
+	if a.running || b.ID <= 0 || (b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" && b.Platform != "Gemini") {
 		return false
 	}
 	if _, pending := a.browserPending[b.ID]; pending {
@@ -474,7 +501,10 @@ func (a *App) clearBrowserHistory(ids []int64, keepRecent int, fastMode bool) er
 		return errors.New("正在清理聊天历史，请等待完成或先停止")
 	}
 	if a.syncNamesCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "syncing") {
-		return errors.New("正在同步账号用户名，请等待完成或先停止")
+		return errors.New("正在同步账号用户名，请等待完成后再清理聊天历史")
+	}
+	if a.syncQwenCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "syncing_status") {
+		return errors.New("正在同步千问状态，请等待完成后再清理聊天历史")
 	}
 	keepRecent = clampInt(keepRecent, 0, 500)
 	var requested []store.Browser
@@ -691,6 +721,9 @@ func (a *App) syncAccountUsernames(ids []int64) error {
 	if a.syncNamesCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "syncing") {
 		return errors.New("正在同步账号用户名，请等待完成或先停止")
 	}
+	if a.syncQwenCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "syncing_status") {
+		return errors.New("正在同步账号状态，请等待完成后再同步用户名")
+	}
 	if a.clearHistoryCancel != nil || (a.browserBatch != nil && a.browserBatch.opKind() == "clearing") {
 		return errors.New("正在清理聊天历史，请等待完成后再同步用户名")
 	}
@@ -807,14 +840,17 @@ func (a *App) syncAccountUsernames(ids []int64) error {
 							if changed {
 								batch.updated++
 							}
+							if cur, ok := a.browserByID(row.ID); ok && (!cur.IsLoggedIn || accountNeedsLogin(cur)) {
+								a.confirmLogin(row.ID, true)
+							}
 							a.finishBrowserOperation(row.ID, nil)
 							a.emit("browsers", "workbench", "shell")
 						})
 						if changed {
 							totalUpdated.Add(1)
-							logging.Log.Success("账号[%s] 已同步用户名：%s", label, renamed)
+							logging.Log.Success("账号[%s] 已同步：%s", label, renamed)
 						} else {
-							logging.Log.Info("账号[%s] 用户名已是最新：%s", label, renamed)
+							logging.Log.Info("账号[%s] 同步完成：%s", label, renamed)
 						}
 						continue
 					}
@@ -877,7 +913,42 @@ func (a *App) syncOneAccountUsername(ctx context.Context, b store.Browser) (stri
 	if err != nil {
 		return "", fmt.Errorf("打开平台页面失败: %w", err)
 	}
-	return a.pollSyncedAccountUsername(ctx, ws)
+	name, pollErr := a.pollSyncedAccountUsername(ctx, ws)
+	if ctx.Err() == nil {
+		switch b.Platform {
+		case "千问":
+			qCtx, qCancel := context.WithTimeout(ctx, 6*time.Second)
+			if st, qErr := a.probeQwenStatus(qCtx, ws); qErr == nil && st.OK {
+				id := b.ID
+				a.postUI(func() { a.applyQwenStatus(id, st) })
+			}
+			qCancel()
+		case "豆包":
+			dCtx, dCancel := context.WithTimeout(ctx, 6*time.Second)
+			if st, dErr := a.probeDoubaoStatus(dCtx, ws); dErr == nil && st.OK {
+				id := b.ID
+				a.postUI(func() { a.applyDoubaoStatus(id, st) })
+			}
+			dCancel()
+		case "Gemini":
+			gCtx, gCancel := context.WithTimeout(ctx, 8*time.Second)
+			if st, gErr := a.probeGeminiStatus(gCtx, ws); gErr == nil && st.OK {
+				if name == "" {
+					if candidate := cdp.SanitizeAccountUsername(st.Username); candidate != "" {
+						name = candidate
+						pollErr = nil
+					} else if candidate := cdp.SanitizeAccountUsername(st.Email); candidate != "" {
+						name = candidate
+						pollErr = nil
+					}
+				}
+				id := b.ID
+				a.postUI(func() { a.applyGeminiStatus(id, st) })
+			}
+			gCancel()
+		}
+	}
+	return name, pollErr
 }
 
 func (a *App) pollSyncedAccountUsername(ctx context.Context, endpoint string) (string, error) {
@@ -1224,6 +1295,12 @@ func accountHealthLabel(b store.Browser, active, signedIn bool, now time.Time) s
 			}
 			return "冷却中"
 		}
+		if b.QuotaExhausted(now) {
+			if b.PlatformLimited && b.CreditsRemain < 0 {
+				return "冷却中"
+			}
+			return "已用尽"
+		}
 		if strings.Contains(b.LastError, "登录") {
 			if signedIn {
 				return accountReadyLabel(b, active)
@@ -1550,6 +1627,42 @@ func (a *App) watchLogin(b store.Browser, endpoint string) {
 					return s
 				})
 			}
+			var qwenSt cdp.QwenStatus
+			var doubaoSt cdp.DoubaoStatus
+			var geminiSt cdp.GeminiStatus
+			switch b.Platform {
+			case "千问":
+				if a.wizardProbe == nil || a.qwenStatusProbe != nil {
+					qCtx, qCancel := context.WithTimeout(context.Background(), 6*time.Second)
+					if st, qErr := a.probeQwenStatus(qCtx, endpoint); qErr == nil && st.OK {
+						qwenSt = st
+					}
+					qCancel()
+				}
+			case "豆包":
+				if a.wizardProbe == nil || a.doubaoStatusProbe != nil {
+					dCtx, dCancel := context.WithTimeout(context.Background(), 6*time.Second)
+					if st, dErr := a.probeDoubaoStatus(dCtx, endpoint); dErr == nil && st.OK {
+						doubaoSt = st
+					}
+					dCancel()
+				}
+			case "Gemini":
+				if a.wizardProbe == nil || a.geminiStatusProbe != nil {
+					gCtx, gCancel := context.WithTimeout(context.Background(), 8*time.Second)
+					if st, gErr := a.probeGeminiStatus(gCtx, endpoint); gErr == nil && st.OK {
+						geminiSt = st
+						if scraped == "" && a.needsAutoAccountName(b.ID, b) {
+							if candidate := cdp.SanitizeAccountUsername(st.Username); candidate != "" {
+								scraped = candidate
+							} else if candidate := cdp.SanitizeAccountUsername(st.Email); candidate != "" {
+								scraped = candidate
+							}
+						}
+					}
+					gCancel()
+				}
+			}
 			var accepted, closeAfterLogin bool
 			a.syncUI(func() {
 				a.mu.Lock()
@@ -1563,6 +1676,15 @@ func (a *App) watchLogin(b store.Browser, endpoint string) {
 					if renamed := a.applyAutoAccountName(b.ID, scraped); renamed != "" {
 						b.Name = renamed
 					}
+				}
+				if qwenSt.OK {
+					a.applyQwenStatus(b.ID, qwenSt)
+				}
+				if doubaoSt.OK {
+					a.applyDoubaoStatus(b.ID, doubaoSt)
+				}
+				if geminiSt.OK {
+					a.applyGeminiStatus(b.ID, geminiSt)
 				}
 				closeAfterLogin = a.loginIsFresh(b.ID) || needsLogin || outCount >= 2
 				if closeAfterLogin {
@@ -1776,6 +1898,7 @@ func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page 
 	defer timer.Stop()
 	lastProbe := time.Time{}
 	lastFrame := time.Time{}
+	qwenStatusSynced := false
 	resetTimer := func(d time.Duration) {
 		if !timer.Stop() {
 			select {
@@ -1837,6 +1960,36 @@ func (a *App) runBrowserDrawer(ctx context.Context, s *browserDrawerState, page 
 									a.refreshBrowsers()
 								}
 							})
+						}
+					}
+					if !qwenStatusSynced {
+						switch rowSnap.Platform {
+						case "千问":
+							if qSt, qErr := page.QwenStatus(frameCtx); qErr == nil && qSt.OK {
+								qwenStatusSynced = true
+								id := rowSnap.ID
+								a.postUI(func() { a.applyQwenStatus(id, qSt) })
+							}
+						case "豆包":
+							if dSt, dErr := page.DoubaoStatus(frameCtx); dErr == nil && dSt.OK {
+								qwenStatusSynced = true
+								id := rowSnap.ID
+								a.postUI(func() { a.applyDoubaoStatus(id, dSt) })
+							}
+						case "Gemini":
+							if gSt, gErr := page.GeminiStatus(frameCtx); gErr == nil && gSt.OK {
+								qwenStatusSynced = true
+								id := rowSnap.ID
+								a.postUI(func() {
+									a.applyGeminiStatus(id, gSt)
+									if a.browserDrawer == s {
+										if row, ok := a.browserByID(id); ok && row.Name != "" && s.row.Name != row.Name {
+											s.row.Name = row.Name
+											a.emit("browserDrawer")
+										}
+									}
+								})
+							}
 						}
 					}
 					a.acceptLogin(rowSnap.ID)

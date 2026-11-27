@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 )
 
@@ -307,7 +306,7 @@ func TestPhotography35PublicRendered(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.run(ctx, chromedp.Sleep(2*time.Second)); err != nil {
+	if err := s.run(ctx, fingerprint.Sleep(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	got, warning := s.Capture(ctx)
@@ -332,7 +331,7 @@ func TestPhotography35PublicAuthorRendered(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.run(ctx, chromedp.Sleep(2*time.Second)); err != nil {
+	if err := s.run(ctx, fingerprint.Sleep(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	got, warning := s.Capture(ctx)

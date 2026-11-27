@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
 
@@ -498,7 +498,7 @@ func googleImagesCapture(ctx context.Context, s *RenderedSession, start, page *u
 		return result, errors.New("Google 图片搜索已跳转或查询条件发生变化")
 	}
 	var snapshot googleImagesSnapshot
-	if err := s.run(ctx, chromedp.Evaluate(googleImagesSnapshotScript, &snapshot)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(googleImagesSnapshotScript, &snapshot)); err != nil {
 		return result, err
 	}
 	current, err := crawlInputURL(snapshot.URL)

@@ -26,8 +26,8 @@ const (
 )
 
 var (
-	quotaPattern = regexp.MustCompile(`额度不足|额度已用尽|额度已用|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|免费次数已|已达上限|超出.{0,8}限额|生成次数已|积分不足|免费额度已用完|今日对话次数已达上限|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|已达上限)|quota exceeded|daily limit|not enough credits|insufficient credits|out of credits|daily free allowance|today['’]s chat limit has been reached|already use(?:d)? up .{0,24}credits`)
-	ratePattern  = regexp.MustCompile(`过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests|operation is too frequent|too many files uploaded|too many requests in the queue|chat limited|global limited|file upload limited`)
+	quotaPattern = regexp.MustCompile(`额度不足|额度已用尽|额度已用|额度用尽|额度用完|次数已用完|次数已用尽|次数用完|免费次数已|已达上限|已达到.{0,8}上限|超出.{0,8}限额|生成次数已|图片生成次数已达上限|暂时无法再生成图片|积分不足|免费额度已用完|今日对话次数已达上限|(?:今日|今天|当日|本周|本月|(?:最?近\s*)?\d+\s*天).{0,12}(?:额度|次数).{0,8}(?:用完|用尽|耗尽|达上限|已达上限)|quota exceeded|daily limit|not enough credits|insufficient credits|out of credits|daily free allowance|today['’]s chat limit has been reached|already use(?:d)? up .{0,24}credits|image generation limit|limit for creating images|reached your .{0,24}limit`)
+	ratePattern  = regexp.MustCompile(`过于频繁|操作频繁|请求过于频繁|请稍后再试|访问太频繁|稍后重试|rate limit|too many requests|sending too many requests|operation is too frequent|too many files uploaded|too many requests in the queue|chat limited|global limited|file upload limited`)
 	authPattern  = regexp.MustCompile(`未登录|请先登录|请登录|登录已失效|登录失效|登录状态失效`)
 )
 
@@ -102,6 +102,13 @@ func (e *Engine) noteFault(id int64, kind faultKind, err error, now time.Time) {
 		msg = err.Error()
 	}
 	e.store.UpdateBrowserHealth(id, health, until, msg)
+	if prev != nil {
+		if kind == faultQuota && (prev.Platform == "千问" || prev.Platform == "Gemini") {
+			e.store.MarkBrowserCreditsExhausted(id, now)
+		} else if (kind == faultQuota || kind == faultRate) && prev.Platform == "豆包" {
+			e.store.MarkBrowserPlatformLimited(id, msg, until, now)
+		}
+	}
 	if kind == faultQuota && (prev == nil || prev.Health != store.HealthExhausted || prev.CoolUntil != until) {
 		logging.Log.Warning("账号[%s] 额度已用完，今日暂停使用（次日恢复）", browserName(e.store, id))
 	}

@@ -13,6 +13,7 @@ func TestRegionBlockedURL(t *testing.T) {
 		"https://www.qianwen.com/security/qianwen-region-ban",
 		"https://www.tongyi.com/security/tongyi-region-ban",
 		"https://chat.qwen.ai/security/qwen-region-ban",
+		"https://gemini.google.com/unsupported-country",
 	}
 	for _, raw := range blocked {
 		if !RegionBlockedURL(raw) {
@@ -24,6 +25,7 @@ func TestRegionBlockedURL(t *testing.T) {
 		"https://www.doubao.com/chat/",
 		"https://www.tongyi.com/",
 		"https://www.qianwen.com/",
+		"https://gemini.google.com/app",
 		"https://example.com/security/not-a-ban",
 	}
 	for _, raw := range open {
@@ -51,6 +53,20 @@ func TestPickLoginTargetPrefersTheOpenSite(t *testing.T) {
 	if !ok || https != "site" {
 		t.Fatalf("https pick = %q", https)
 	}
+	geminiTarget, ok := pickLoginTarget([]sliderTarget{
+		{ID: "other", Type: "page", URL: "https://accounts.google.com/ServiceLogin"},
+		{ID: "gemini", Type: "page", URL: "https://gemini.google.com/app"},
+	})
+	if !ok || geminiTarget != "gemini" {
+		t.Fatalf("gemini pick = %q ok=%v", geminiTarget, ok)
+	}
+	googleAuth, ok := pickLoginTarget([]sliderTarget{
+		{ID: "blank", Type: "page", URL: "about:blank"},
+		{ID: "auth", Type: "page", URL: "https://accounts.google.com/v3/signin"},
+	})
+	if !ok || googleAuth != "auth" {
+		t.Fatalf("google auth pick = %q ok=%v", googleAuth, ok)
+	}
 	if _, ok := pickLoginTarget(nil); ok {
 		t.Fatal("empty target list should keep waiting")
 	}
@@ -62,7 +78,7 @@ func TestLoginProbeUsesComposerAndScanLogin(t *testing.T) {
 			t.Fatalf("probe script missing %q", needle)
 		}
 	}
-	for _, needle := range []string{"evidence:'generating'", "evidence:'login_dialog'", "signedIn()", "passwordField()", ".header-right-auth-button", "button.stop-button", ".user-menu-btn", "Continue with Google"} {
+	for _, needle := range []string{"evidence:'generating'", "evidence:'login_dialog'", "signedIn()", "passwordField()", ".header-right-auth-button", "button.stop-button", ".user-menu-btn", "Continue with Google", "gem-open-account-menu", "sidenav-error-action-link", "button.send-button.stop", "accounts.google.com"} {
 		if !strings.Contains(loginProbeJS, needle) {
 			t.Fatalf("probe script missing %q", needle)
 		}
@@ -112,6 +128,14 @@ func TestSanitizeAccountUsername(t *testing.T) {
 		"千问":                          "",
 		"千问国际":                        "",
 		"Qwen":                        "",
+		"Gemini":                      "",
+		"Google":                      "",
+		"Google Account":              "",
+		"Google 账号":                   "",
+		"Ultra":                       "",
+		"alice@gmail.com":             "alice@gmail.com",
+		"Alice Wang":                  "Alice Wang",
+		"Sign in":                     "",
 		"Free":                        "",
 		"Upgrade":                     "",
 		"Sign up":                     "",
@@ -141,6 +165,10 @@ func TestAccountUsernameScriptAnchors(t *testing.T) {
 		"window._USER_",
 		"fromQwenIntlDOM",
 		".user-menu-btn-text",
+		"fromGeminiDOM",
+		"fromGeminiGlobal",
+		"oPEP7c",
+		"parseGoogleAccountLabel",
 	} {
 		if !strings.Contains(accountUsernameJS, needle) {
 			t.Fatalf("accountUsernameJS missing %q", needle)

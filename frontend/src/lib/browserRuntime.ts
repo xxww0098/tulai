@@ -27,6 +27,12 @@ export const DEFAULT_BROWSER_STATE: BrowserStateDTO = {
   dlBrowserBusy: false,
   dlBrowserOpen: false,
   dlBrowserUrl: "",
+  doubaoConcurrencyAuto: true,
+  doubaoConcurrencyMax: 2,
+  qianwenConcurrencyAuto: true,
+  qianwenConcurrencyMax: 2,
+  geminiConcurrencyAuto: true,
+  geminiConcurrencyMax: 2,
 };
 
 export function formatBytes(n: number): string {

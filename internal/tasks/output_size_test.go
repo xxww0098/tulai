@@ -57,11 +57,28 @@ func TestOutputSizeValidationAndNativeRatio(t *testing.T) {
 		{"qwen_intl native", "千问国际", OutputSize{Ratio: "16:9"}, "16:9"},
 		{"qwen_intl not native", "千问国际", OutputSize{Ratio: "5:4"}, ""},
 		{"qwen_intl empty", "千问国际", OutputSize{}, ""},
+		{"gemini native 1:1", "Gemini", OutputSize{Ratio: "1:1"}, "1:1"},
+		{"gemini native 9:16", "Gemini", OutputSize{Ratio: "9:16"}, "9:16"},
+		{"gemini native 3:4", "Gemini", OutputSize{Ratio: "3:4"}, "3:4"},
+		{"gemini native 4:3", "Gemini", OutputSize{Ratio: "4:3"}, "4:3"},
+		{"gemini native 16:9", "Gemini", OutputSize{Ratio: "16:9"}, "16:9"},
+		{"gemini rejects 2:3", "Gemini", OutputSize{Ratio: "2:3"}, ""},
+		{"gemini rejects 3:2", "Gemini", OutputSize{Ratio: "3:2"}, ""},
+		{"gemini empty", "Gemini", OutputSize{}, ""},
 		{"other platform", "其他", OutputSize{Ratio: "4:3"}, ""},
 	} {
 		if got := tc.size.NativeRatio(tc.platform); got != tc.want {
 			t.Errorf("%s: NativeRatio=%q want %q", tc.name, got, tc.want)
 		}
+	}
+	if err := (OutputSize{Ratio: "16:9"}).ValidateFor("Gemini"); err != nil {
+		t.Fatalf("Gemini 16:9 should be valid: %v", err)
+	}
+	if err := (OutputSize{Ratio: "3:2"}).ValidateFor("Gemini"); err == nil {
+		t.Fatal("Gemini 3:2 should be rejected")
+	}
+	if err := (OutputSize{Ratio: "2:3"}).ValidateFor("Gemini"); err == nil {
+		t.Fatal("Gemini 2:3 should be rejected")
 	}
 
 	if w, h, err := ParseRatioLine("4:3"); w != 4 || h != 3 || err != nil {
@@ -134,7 +151,7 @@ func TestOutputSizeKeepsShuffledWashResultsMatchedWithoutResizing(t *testing.T) 
 
 func TestSaveResultsNeverAltersGeneratedDimensionsAcrossPlatforms(t *testing.T) {
 	data := outputMarkerPNG(t, color.NRGBA{R: 220, A: 255})
-	for _, platform := range []string{"豆包", "千问", "千问国际", "其他"} {
+	for _, platform := range []string{"豆包", "千问", "千问国际", "Gemini", "其他"} {
 		t.Run(platform, func(t *testing.T) {
 			e := NewEngine(nil, nil, nil, "")
 			e.opts = Options{OutputPath: t.TempDir(), OutputSize: OutputSize{Ratio: "16:9"}}
@@ -158,16 +175,19 @@ func TestOutputSizeRejectsInvalidSettingsBeforeStarting(t *testing.T) {
 	e := NewEngine(nil, nil, nil, "")
 	for _, tc := range []struct {
 		platform string
+		ratio    string
 		wantErr  string
 	}{
-		{"豆包", "豆包输出尺寸"},
-		{"千问", "千问输出尺寸"},
-		{"千问国际", "千问国际输出尺寸"},
+		{"豆包", "5:4", "豆包输出尺寸"},
+		{"千问", "5:4", "千问输出尺寸"},
+		{"千问国际", "5:4", "千问国际输出尺寸"},
+		{"Gemini", "3:2", "Gemini输出尺寸"},
+		{"Gemini", "2:3", "Gemini输出尺寸"},
 	} {
 		runs := 0
 		err := e.RunObserved(context.Background(), Options{
 			Platforms: []string{tc.platform}, Prompts: []string{"商品图"},
-			OutputSize: OutputSize{Ratio: "5:4"},
+			OutputSize: OutputSize{Ratio: tc.ratio},
 		}, nil, nil, func(context.Context, *Task) error { runs++; return nil })
 		if err == nil || !strings.Contains(err.Error(), tc.wantErr) || runs != 0 {
 			t.Fatalf("%s invalid task was not rejected: runs=%d err=%v", tc.platform, runs, err)
@@ -390,6 +410,34 @@ func TestSubmitOnceAppliesNativeRatioByClickOnlyWithoutPromptSuffix(t *testing.T
 		}
 		if len(strat.ratios) != 2 || strat.ratios[0] != "自动" || strat.ratios[1] != "自动" {
 			t.Fatalf("ratios = %v, want [自动 自动]", strat.ratios)
+		}
+	})
+
+	t.Run("gemini explicit native ratio sets and reconfirms after upload", func(t *testing.T) {
+		e := NewEngine(nil, nil, nil, "")
+		e.opts = Options{OutputSize: OutputSize{Ratio: "9:16"}}
+		strat := &stubRatioStrategy{}
+		task := &Task{Index: 11, Platform: "Gemini", Prompt: "studio portrait", Images: []string{wideSrc}}
+		if err := e.submitOnce(task, strat, nil); err != nil {
+			t.Fatalf("submitOnce failed: %v", err)
+		}
+		if strat.sentPrompt != "studio portrait" || strat.uploadCalls != 1 || strat.ensureCalls != 1 {
+			t.Fatalf("prompt=%q upload=%d ensure=%d", strat.sentPrompt, strat.uploadCalls, strat.ensureCalls)
+		}
+		if len(strat.ratios) != 2 || strat.ratios[0] != "9:16" || strat.ratios[1] != "9:16" {
+			t.Fatalf("ratios = %v, want [9:16 9:16]", strat.ratios)
+		}
+	})
+
+	t.Run("gemini default ratio leaves native aspect ratio unset", func(t *testing.T) {
+		e := NewEngine(nil, nil, nil, "")
+		strat := &stubRatioStrategy{}
+		task := &Task{Index: 12, Platform: "Gemini", Prompt: "orange cat"}
+		if err := e.submitOnce(task, strat, nil); err != nil {
+			t.Fatalf("submitOnce failed: %v", err)
+		}
+		if len(strat.ratios) != 0 {
+			t.Fatalf("ratios = %v, want empty for Gemini default ratio", strat.ratios)
 		}
 	})
 

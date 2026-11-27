@@ -15,8 +15,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/chromedp/chromedp"
 )
 
 func TestPhotoplusRoutesAndOrigins(t *testing.T) {
@@ -183,7 +181,7 @@ let next=false;document.querySelector('.photo-content').onscroll=()=>{if(!next){
 	if err := fingerprint.Run(tab); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, fingerprint.Navigate(page.String()+"#/live"), chromedp.Sleep(500*time.Millisecond), chromedp.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Navigate(page.String()+"#/live"), fingerprint.Sleep(500*time.Millisecond), fingerprint.Evaluate(`document.cookie='session=synthetic; Secure; Path=/'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	testStarted.Store(true)
@@ -204,16 +202,16 @@ let next=false;document.querySelector('.photo-content').onscroll=()=>{if(!next){
 		}
 	}
 	var location, cookie string
-	if err := session.run(ctx, chromedp.Location(&location), chromedp.Evaluate(`document.cookie`, &cookie)); err != nil || location != page.String()+"#/live" || !strings.Contains(cookie, "session=synthetic") {
+	if err := session.run(ctx, fingerprint.Location(&location), fingerprint.Evaluate(`document.cookie`, &cookie)); err != nil || location != page.String()+"#/live" || !strings.Contains(cookie, "session=synthetic") {
 		t.Fatalf("original tab changed: location=%q cookie=%q err=%v", location, cookie, err)
 	}
-	if err := session.run(ctx, chromedp.Evaluate(`document.querySelector('.nav-bottom__ul li.active').className=''; document.querySelectorAll('.nav-bottom__ul li')[1].className='active'`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.querySelector('.nav-bottom__ul li.active').className=''; document.querySelectorAll('.nav-bottom__ul li')[1].className='active'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	if got, handled, err := session.capturePhotoplus(ctx, page, page.String()+"#/live"); !handled || err == nil || len(got.Items) != 0 {
 		t.Fatalf("selected category: handled=%v items=%d err=%v", handled, len(got.Items), err)
 	}
-	if err := session.run(ctx, chromedp.Evaluate(`document.querySelectorAll('.nav-bottom__ul li')[1].className=''; document.querySelector('.nav-bottom__ul li').className='active'`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.querySelectorAll('.nav-bottom__ul li')[1].className=''; document.querySelector('.nav-bottom__ul li').className='active'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	mode.Store(1)
@@ -265,7 +263,7 @@ func TestPhotoplusPublicLive(t *testing.T) {
 	}
 	defer session.Close()
 	var observed string
-	if err := session.run(ctx, chromedp.Location(&observed)); err != nil {
+	if err := session.run(ctx, fingerprint.Location(&observed)); err != nil {
 		t.Fatal(err)
 	}
 	page, err := crawlInputURL(observed)

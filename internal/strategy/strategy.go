@@ -84,6 +84,8 @@ func Factory(platform string) Strategy {
 		return &Qianwen{}
 	case "千问国际":
 		return &QwenIntl{}
+	case "Gemini":
+		return &Gemini{}
 	}
 	return nil
 }
@@ -390,6 +392,27 @@ type liveShot struct {
 // ErrPlatformReply 是平台回了一行报错、没有图卡。等到超时也不会出图，换新对话或换号。
 var ErrPlatformReply = errors.New("平台回复异常")
 
+// isReplyQuotaFault 判断平台回复的报错文案是否明确属于积分/次数耗尽，避免被当成普通回复异常重复重试。
+func isReplyQuotaFault(fault string) bool {
+	s := strings.TrimSpace(fault)
+	if s == "" {
+		return false
+	}
+	lower := strings.ToLower(s)
+	return strings.Contains(s, "积分不足") ||
+		strings.Contains(s, "今日对话次数已达上限") ||
+		strings.Contains(s, "额度不足") ||
+		strings.Contains(s, "额度已用尽") ||
+		strings.Contains(s, "免费额度已用完") ||
+		strings.Contains(s, "已达到图片生成上限") ||
+		strings.Contains(s, "已达生成上限") ||
+		strings.Contains(s, "图片生成次数已达上限") ||
+		strings.Contains(s, "暂时无法再生成图片") ||
+		strings.Contains(lower, "image generation limit") ||
+		strings.Contains(lower, "limit for creating images") ||
+		strings.Contains(lower, "reached your") && strings.Contains(lower, "limit")
+}
+
 // replyFaultFor 让报错多停一拍再认，避免回复刚开始渲染时误判。
 const replyFaultFor = 1500 * time.Millisecond
 
@@ -498,6 +521,9 @@ func waitForResultFor(s *cdp.Session, platform string, timeout time.Duration, wa
 				}
 				if time.Since(faultSince) >= replyFaultFor {
 					logging.Log.Debugf("%s", detectLine(live, 0))
+					if isReplyQuotaFault(live.Fault) {
+						return nil, fmt.Errorf("%w：%s", ErrAccountQuota, live.Fault)
+					}
 					return nil, fmt.Errorf("%w：%s", ErrPlatformReply, live.Fault)
 				}
 			} else {
@@ -677,7 +703,7 @@ func freshLanded(via, originID string, st chatReady) bool {
 
 func pageIsQwen(s *cdp.Session) bool {
 	host := strings.ToLower(strings.Trim(evalString(s, `window.__tulaiPageHost || location.hostname`), `"`))
-	return strings.Contains(host, "qianwen") || strings.Contains(host, "tongyi") || strings.Contains(host, "qwen")
+	return strings.Contains(host, "qianwen") || strings.Contains(host, "tongyi") || strings.Contains(host, "qwen") || strings.Contains(host, "gemini.google.com")
 }
 
 func chatKey(s *cdp.Session) string {
@@ -699,8 +725,11 @@ func qwenChatURL(s *cdp.Session, id string) string {
 func qwenChatURLFor(s *cdp.Session, platform, id string) string {
 	id = strings.TrimSpace(id)
 	fallback := "https://www.qianwen.com/chat/" + id
-	if platform == "千问国际" {
+	switch platform {
+	case "千问国际":
 		fallback = "https://chat.qwen.ai/c/" + id
+	case "Gemini":
+		fallback = "https://gemini.google.com/app/" + id
 	}
 	if s == nil || id == "" {
 		return fallback
@@ -710,8 +739,28 @@ func qwenChatURLFor(s *cdp.Session, platform, id string) string {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return fallback
 	}
-	if platform == "千问国际" || strings.Contains(strings.ToLower(u.Host), "qwen.ai") {
-		if !strings.Contains(strings.ToLower(u.Host), "qwen.ai") {
+	lowerHost := strings.ToLower(u.Host)
+	if platform == "Gemini" || strings.Contains(lowerHost, "gemini.google.com") {
+		if !strings.Contains(lowerHost, "gemini.google.com") {
+			return "https://gemini.google.com/app/" + id
+		}
+		prefix := ""
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) >= 2 && parts[0] == "u" {
+			allDigits := parts[1] != ""
+			for _, ch := range parts[1] {
+				if ch < '0' || ch > '9' {
+					allDigits = false
+					break
+				}
+			}
+			if allDigits {
+				prefix = "/u/" + parts[1]
+			}
+		}
+		u.Path = prefix + "/app/" + id
+	} else if platform == "千问国际" || strings.Contains(lowerHost, "qwen.ai") {
+		if !strings.Contains(lowerHost, "qwen.ai") {
 			return "https://chat.qwen.ai/c/" + id
 		}
 		u.Path = "/c/" + id
@@ -790,7 +839,28 @@ func browserFetch(err error) bool {
 
 func readPageImage(s *cdp.Session, url string) ([]byte, error) {
 	out, err := s.EvaluateAsync(fmt.Sprintf(`(async function(){
+		function readImgCanvas(u) {
+			var imgs = Array.from(document.images || document.querySelectorAll('img'));
+			var hit = imgs.find(function(img){
+				return img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && (img.currentSrc === u || img.src === u);
+			});
+			if (!hit) return '';
+			try {
+				var c = document.createElement('canvas');
+				c.width = hit.naturalWidth;
+				c.height = hit.naturalHeight;
+				var ctx = c.getContext('2d');
+				if (!ctx) return '';
+				ctx.drawImage(hit, 0, 0);
+				var dataUrl = c.toDataURL('image/png');
+				var comma = dataUrl.indexOf(',');
+				return comma >= 0 ? dataUrl.slice(comma + 1) : '';
+			} catch (e) { return ''; }
+		}
 		async function fetchImage(u) {
+			if (/^blob:/i.test(u)) {
+				return await fetch(u);
+			}
 			var sameOrigin = false;
 			try { sameOrigin = new URL(u, location.href).origin === location.origin; } catch (e) {}
 			var attempts = sameOrigin
@@ -810,8 +880,9 @@ func readPageImage(s *cdp.Session, url string) ([]byte, error) {
 			if (lastResp) return lastResp;
 			throw lastErr || new Error('fetch failed');
 		}
+		var target = %q;
 		try {
-			var resp = await fetchImage(%q);
+			var resp = await fetchImage(target);
 			if (!resp.ok) return JSON.stringify({error: 'HTTP ' + resp.status});
 			var blob = await resp.blob();
 			if (blob.size < 1024) return JSON.stringify({error: '结果过小'});
@@ -821,7 +892,14 @@ func readPageImage(s *cdp.Session, url string) ([]byte, error) {
 				fr.readAsDataURL(blob);
 			});
 			return JSON.stringify({b64: b64});
-		} catch (e) { return JSON.stringify({error: String(e)}); }
+		} catch (e) {
+			// Gemini 等站点会在 img onload 后立即 revokeObjectURL，此时从已解码的同源 DOM <img> 经 canvas 无损读出像素。
+			var fromCanvas = readImgCanvas(target);
+			if (fromCanvas && fromCanvas.length > 1024) {
+				return JSON.stringify({b64: fromCanvas});
+			}
+			return JSON.stringify({error: String(e)});
+		}
 	})()`, url))
 	if err != nil {
 		return nil, err
@@ -850,7 +928,28 @@ func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 		return out
 	}
 	raw, err := s.EvaluateAsync(fmt.Sprintf(`(async function(){
+		function readImgCanvas(u) {
+			var imgs = Array.from(document.images || document.querySelectorAll('img'));
+			var hit = imgs.find(function(img){
+				return img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && (img.currentSrc === u || img.src === u);
+			});
+			if (!hit) return '';
+			try {
+				var c = document.createElement('canvas');
+				c.width = hit.naturalWidth;
+				c.height = hit.naturalHeight;
+				var ctx = c.getContext('2d');
+				if (!ctx) return '';
+				ctx.drawImage(hit, 0, 0);
+				var dataUrl = c.toDataURL('image/png');
+				var comma = dataUrl.indexOf(',');
+				return comma >= 0 ? dataUrl.slice(comma + 1) : '';
+			} catch (e) { return ''; }
+		}
 		async function fetchImage(u) {
+			if (/^blob:/i.test(u)) {
+				return await fetch(u);
+			}
 			var sameOrigin = false;
 			try { sameOrigin = new URL(u, location.href).origin === location.origin; } catch (e) {}
 			var attempts = sameOrigin
@@ -883,7 +982,11 @@ func (base) FetchResultList(s *cdp.Session, urls []string) [][]byte {
 					fr.readAsDataURL(blob);
 				});
 				return {b64:b64};
-			} catch (e) { return {error:String(e)}; }
+			} catch (e) {
+				var fromCanvas = readImgCanvas(url);
+				if (fromCanvas && fromCanvas.length > 1024) return {b64:fromCanvas};
+				return {error:String(e)};
+			}
 		}));
 		return JSON.stringify(items);
 	})()`, string(payload)))

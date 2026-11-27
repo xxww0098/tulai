@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/runtime"
 )
 
 // Page implements tulai's existing typed command vocabulary over the launcher
@@ -30,10 +32,15 @@ func PageContext(ctx context.Context, p *Process, id string) context.Context {
 	return context.WithValue(cdp.WithExecutor(ctx, page), pageKey{}, page)
 }
 
-type Action interface{ Do(context.Context) error }
-type action func(context.Context) error
+var (
+	ErrJSUndefined = errors.New("encountered undefined value")
+	ErrJSNull      = errors.New("encountered null value")
+)
 
-func (fn action) Do(ctx context.Context) error { return fn(ctx) }
+type Action interface{ Do(context.Context) error }
+type ActionFunc func(context.Context) error
+
+func (fn ActionFunc) Do(ctx context.Context) error { return fn(ctx) }
 
 func Run(ctx context.Context, actions ...Action) error {
 	for _, item := range actions {
@@ -48,8 +55,78 @@ func Run(ctx context.Context, actions ...Action) error {
 }
 
 func Navigate(url string) Action {
-	return action(func(ctx context.Context) error {
+	return ActionFunc(func(ctx context.Context) error {
 		return cdp.Execute(ctx, "Page.navigate", map[string]any{"url": url}, nil)
+	})
+}
+
+func Evaluate(expression string, res any) Action {
+	return ActionFunc(func(ctx context.Context) error {
+		p := runtime.Evaluate(expression)
+		if _, ok := res.(**runtime.RemoteObject); !ok {
+			p = p.WithReturnByValue(true)
+		}
+		v, exp, err := p.Do(ctx)
+		if err != nil {
+			return err
+		}
+		if exp != nil {
+			return exp
+		}
+		return parseRemoteObject(v, res)
+	})
+}
+
+func parseRemoteObject(v *runtime.RemoteObject, res any) error {
+	if res == nil {
+		return nil
+	}
+	if v == nil {
+		return ErrJSUndefined
+	}
+	switch x := res.(type) {
+	case **runtime.RemoteObject:
+		*x = v
+		return nil
+	case *[]byte:
+		*x = v.Value
+		return nil
+	}
+	value := v.Value
+	if value == nil {
+		rv := reflect.ValueOf(res)
+		if rv.Kind() == reflect.Ptr {
+			switch rv.Elem().Kind() {
+			case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+			default:
+				if v.Type == runtime.TypeUndefined {
+					return ErrJSUndefined
+				}
+				return ErrJSNull
+			}
+		}
+		value = []byte("null")
+	}
+	return json.Unmarshal(value, res)
+}
+
+func Location(urlstr *string) Action {
+	if urlstr == nil {
+		panic("urlstr cannot be nil")
+	}
+	return Evaluate(`document.location.toString()`, urlstr)
+}
+
+func Sleep(d time.Duration) Action {
+	return ActionFunc(func(ctx context.Context) error {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
 	})
 }
 

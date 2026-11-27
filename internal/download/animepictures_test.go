@@ -22,7 +22,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 
 	"golang.org/x/net/html"
 )
@@ -255,7 +254,7 @@ func animePicturesTestBrowser(t *testing.T, ctx context.Context, target, body st
 	if err := session.run(ctx, fingerprint.Navigate(target)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithDomain(".anime-pictures.net").WithURL("https://anime-pictures.net/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

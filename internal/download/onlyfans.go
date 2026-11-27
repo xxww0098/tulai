@@ -13,7 +13,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
@@ -213,7 +212,7 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 	}
 	checkCurrent := func() error {
 		var raw string
-		if err := s.run(ctx, chromedp.Location(&raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Location(&raw)); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -363,7 +362,7 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 		return result, true, errors.New("OnlyFans 作者主页未加载，请在下载浏览器中完成登录或验证")
 	}
 	var childURL string
-	if err := run(chromedp.Location(&childURL)); err != nil {
+	if err := run(fingerprint.Location(&childURL)); err != nil {
 		return result, true, errors.New("无法读取 OnlyFans 页面")
 	}
 	current, parseErr := url.Parse(childURL)
@@ -376,7 +375,7 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 	seen := make(map[string]bool)
 	read := func(request onlyFansResponse) ([]byte, error) {
 		var body []byte
-		err := run(chromedp.ActionFunc(func(c context.Context) error {
+		err := run(fingerprint.ActionFunc(func(c context.Context) error {
 			var e error
 			body, e = network.GetResponseBody(request.requestID).Do(c)
 			return e
@@ -491,7 +490,7 @@ func (s *RenderedSession) captureOnlyFans(ctx context.Context, page *url.URL, ob
 		if step == onlyFansMaxScrolls {
 			break
 		}
-		if err := run(chromedp.Evaluate(`window.scrollBy({top:window.innerHeight,behavior:"instant"})`, nil)); err != nil {
+		if err := run(fingerprint.Evaluate(`window.scrollBy({top:window.innerHeight,behavior:"instant"})`, nil)); err != nil {
 			if ctx.Err() != nil {
 				return result, true, ctx.Err()
 			}

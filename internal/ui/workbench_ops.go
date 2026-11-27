@@ -57,6 +57,7 @@ var washStyles = []washStylePreset{
 }
 
 var outputRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
+var geminiOutputRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16"}
 
 type outputPresetSpec struct {
 	label string
@@ -74,15 +75,43 @@ var outputPresets = []outputPresetSpec{
 	{label: "2:3（海报竖）", ratio: "2:3"},
 }
 
+var geminiOutputPresets = []outputPresetSpec{
+	{label: "原比例"},
+	{label: "1:1（正方形）", ratio: "1:1"},
+	{label: "4:3（标准横）", ratio: "4:3"},
+	{label: "3:4（标准竖）", ratio: "3:4"},
+	{label: "16:9（宽屏）", ratio: "16:9"},
+	{label: "9:16（竖屏）", ratio: "9:16"},
+}
+
 type outputSizePrefs struct {
 	mode   string
 	preset string
 	ratio  string
 }
 
+func outputRatiosFor(platform string) []string {
+	if platform == "Gemini" {
+		return geminiOutputRatios
+	}
+	return outputRatios
+}
+
+func outputPresetsFor(platform string) []outputPresetSpec {
+	if platform == "Gemini" {
+		return geminiOutputPresets
+	}
+	return outputPresets
+}
+
 func outputPresetLabels() []string {
-	labels := make([]string, 0, len(outputPresets))
-	for _, p := range outputPresets {
+	return outputPresetLabelsFor("")
+}
+
+func outputPresetLabelsFor(platform string) []string {
+	specs := outputPresetsFor(platform)
+	labels := make([]string, 0, len(specs))
+	for _, p := range specs {
 		labels = append(labels, p.label)
 	}
 	return labels
@@ -129,6 +158,9 @@ func (a *App) outputPrefsFor(platform string) *outputSizePrefs {
 	case "千问国际":
 		a.qwenIntlOutput.ensureInit()
 		return &a.qwenIntlOutput
+	case "Gemini":
+		a.geminiOutput.ensureInitFor("Gemini")
+		return &a.geminiOutput
 	default:
 		a.doubaoOutput.ensureInit()
 		return &a.doubaoOutput
@@ -145,23 +177,33 @@ func outputStorePrefix(platform string) string {
 		return "qianwen_output_"
 	case "千问国际":
 		return "qwen_intl_output_"
+	case "Gemini":
+		return "gemini_output_"
 	default:
 		return "doubao_output_"
 	}
 }
 
 func (p *outputSizePrefs) ensureInit() {
+	p.ensureInitFor("")
+}
+
+func (p *outputSizePrefs) ensureInitFor(platform string) {
 	if p.mode == "" {
 		p.mode = outputOriginal
 	}
 	if p.preset == "" {
-		p.syncPreset()
+		p.syncPresetFor(platform)
 	}
 }
 
 func normalizeOutputRatio(raw string) string {
+	return normalizeOutputRatioFor("", raw)
+}
+
+func normalizeOutputRatioFor(platform, raw string) string {
 	norm := strings.TrimSpace(strings.ReplaceAll(raw, "：", ":"))
-	return pickStr(norm, "", outputRatios)
+	return pickStr(norm, "", outputRatiosFor(platform))
 }
 
 func loadPlatformOutputPrefs(s *store.Store, platform string) outputSizePrefs {
@@ -170,14 +212,14 @@ func loadPlatformOutputPrefs(s *store.Store, platform string) outputSizePrefs {
 	}
 	prefix := outputStorePrefix(platform)
 	rawMode := strings.TrimSpace(s.Get(prefix + "size_mode"))
-	ratio := normalizeOutputRatio(s.Get(prefix + "ratio"))
+	ratio := normalizeOutputRatioFor(platform, s.Get(prefix+"ratio"))
 	// Migrate legacy qianwen_output_ratio when qianwen_output_size_mode has not been stored yet.
 	if platform == "千问" && rawMode == "" && ratio != "" {
 		rawMode = outputRatio
 	}
 	if rawMode == outputRatio && ratio != "" {
 		p := outputSizePrefs{mode: outputRatio, ratio: ratio}
-		p.syncPreset()
+		p.syncPresetFor(platform)
 		return p
 	}
 	return outputSizePrefs{mode: outputOriginal, preset: outputOriginal}
@@ -188,8 +230,8 @@ func savePlatformOutputPrefs(s *store.Store, platform string, p outputSizePrefs)
 		return
 	}
 	prefix := outputStorePrefix(platform)
-	p.ensureInit()
-	p.syncPreset()
+	p.ensureInitFor(platform)
+	p.syncPresetFor(platform)
 	s.Set(prefix+"size_mode", p.mode)
 	s.Set(prefix+"ratio", p.ratio)
 	s.Set(prefix+"width", "")
@@ -201,19 +243,25 @@ func (a *App) loadOutputSize() {
 	a.doubaoOutput = loadPlatformOutputPrefs(a.store, "豆包")
 	a.qianwenOutput = loadPlatformOutputPrefs(a.store, "千问")
 	a.qwenIntlOutput = loadPlatformOutputPrefs(a.store, "千问国际")
+	a.geminiOutput = loadPlatformOutputPrefs(a.store, "Gemini")
 }
 
 func (a *App) saveOutputSize() {
 	savePlatformOutputPrefs(a.store, "豆包", a.doubaoOutput)
 	savePlatformOutputPrefs(a.store, "千问", a.qianwenOutput)
 	savePlatformOutputPrefs(a.store, "千问国际", a.qwenIntlOutput)
+	savePlatformOutputPrefs(a.store, "Gemini", a.geminiOutput)
 }
 
 func (p *outputSizePrefs) syncPreset() {
+	p.syncPresetFor("")
+}
+
+func (p *outputSizePrefs) syncPresetFor(platform string) {
 	if p.mode == outputRatio {
-		if picked := normalizeOutputRatio(p.ratio); picked != "" {
+		if picked := normalizeOutputRatioFor(platform, p.ratio); picked != "" {
 			p.ratio = picked
-			for _, spec := range outputPresets {
+			for _, spec := range outputPresetsFor(platform) {
 				if spec.ratio == picked {
 					p.preset = spec.label
 					return
@@ -227,7 +275,11 @@ func (p *outputSizePrefs) syncPreset() {
 }
 
 func (p *outputSizePrefs) applyPreset(label string) bool {
-	for _, spec := range outputPresets {
+	return p.applyPresetFor("", label)
+}
+
+func (p *outputSizePrefs) applyPresetFor(platform, label string) bool {
+	for _, spec := range outputPresetsFor(platform) {
 		if spec.label != label {
 			continue
 		}
@@ -246,20 +298,24 @@ func (p *outputSizePrefs) applyPreset(label string) bool {
 }
 
 func (p *outputSizePrefs) update(preset, mode, ratio string) {
-	p.ensureInit()
+	p.updateFor("", preset, mode, ratio)
+}
+
+func (p *outputSizePrefs) updateFor(platform, preset, mode, ratio string) {
+	p.ensureInitFor(platform)
 	preset = strings.TrimSpace(preset)
 	if preset != "" {
-		if p.applyPreset(preset) {
+		if p.applyPresetFor(platform, preset) {
 			return
 		}
-		if picked := normalizeOutputRatio(preset); picked != "" {
+		if picked := normalizeOutputRatioFor(platform, preset); picked != "" {
 			p.mode = outputRatio
 			p.ratio = picked
-			p.syncPreset()
+			p.syncPresetFor(platform)
 			return
 		}
 		// Reject unsupported or custom preset labels; keep existing valid selection.
-		p.syncPreset()
+		p.syncPresetFor(platform)
 		return
 	}
 	switch strings.TrimSpace(mode) {
@@ -276,19 +332,23 @@ func (p *outputSizePrefs) update(preset, mode, ratio string) {
 			p.preset = outputOriginal
 			return
 		}
-		if picked := normalizeOutputRatio(trimmed); picked != "" {
+		if picked := normalizeOutputRatioFor(platform, trimmed); picked != "" {
 			p.mode = outputRatio
 			p.ratio = picked
-			p.syncPreset()
+			p.syncPresetFor(platform)
 			return
 		}
 	}
-	p.syncPreset()
+	p.syncPresetFor(platform)
 }
 
 func (p outputSizePrefs) taskOutputSize() tasks.OutputSize {
+	return p.taskOutputSizeFor("")
+}
+
+func (p outputSizePrefs) taskOutputSizeFor(platform string) tasks.OutputSize {
 	if p.mode == outputRatio {
-		if picked := normalizeOutputRatio(p.ratio); picked != "" {
+		if picked := normalizeOutputRatioFor(platform, p.ratio); picked != "" {
 			return tasks.OutputSize{Ratio: picked}
 		}
 	}
@@ -296,7 +356,7 @@ func (p outputSizePrefs) taskOutputSize() tasks.OutputSize {
 }
 
 func (a *App) outputSizeFor(platform string) tasks.OutputSize {
-	return a.outputPrefsFor(platform).taskOutputSize()
+	return a.outputPrefsFor(platform).taskOutputSizeFor(platform)
 }
 
 // ---- Page switching & session management ----
@@ -307,6 +367,8 @@ func platformSettingKey(platform, base string) string {
 		return base + "_qianwen"
 	case "千问国际":
 		return base + "_qwen_intl"
+	case "Gemini":
+		return base + "_gemini"
 	default:
 		return base
 	}
@@ -750,7 +812,7 @@ func (a *App) onWorkspace(platform string, page int, fn func()) {
 	}
 	a.syncPage()
 	prevPlatform := a.selectedPlatform()
-	prevDoubao, prevQianwen, prevQwenIntl := a.platDoubao, a.platQianwen, a.platQwenIntl
+	prevDoubao, prevQianwen, prevQwenIntl, prevGemini := a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini
 	if a.platformSpaces == nil {
 		a.platformSpaces = map[string]platformWorkspace{}
 	}
@@ -762,10 +824,11 @@ func (a *App) onWorkspace(platform string, page int, fn func()) {
 	a.platDoubao = platform == "豆包"
 	a.platQianwen = platform == "千问"
 	a.platQwenIntl = platform == "千问国际"
+	a.platGemini = platform == "Gemini"
 	a.restorePlatformWorkspace(targetWS, platform)
 	a.onPage(page, fn)
 	a.platformSpaces[platform] = a.capturePlatformWorkspace()
-	a.platDoubao, a.platQianwen, a.platQwenIntl = prevDoubao, prevQianwen, prevQwenIntl
+	a.platDoubao, a.platQianwen, a.platQwenIntl, a.platGemini = prevDoubao, prevQianwen, prevQwenIntl, prevGemini
 	a.restorePlatformWorkspace(a.platformSpaces[prevPlatform], prevPlatform)
 }
 
@@ -829,6 +892,14 @@ func workspacePageKeyFor(platform string, page int) string {
 			return store.PageWashQwenIntl
 		}
 		return store.PageGenQwenIntl
+	case "Gemini":
+		if page == pageFission {
+			return store.PageFissionGemini
+		}
+		if page == pageWash {
+			return store.PageWashGemini
+		}
+		return store.PageGenGemini
 	}
 	return workspacePageKey(page)
 }
@@ -1394,6 +1465,8 @@ func (a *App) selectedPlatform() string {
 		return "千问"
 	case a.platQwenIntl:
 		return "千问国际"
+	case a.platGemini:
+		return "Gemini"
 	default:
 		return "豆包"
 	}
@@ -1401,13 +1474,14 @@ func (a *App) selectedPlatform() string {
 
 func (a *App) setSinglePlatform(platform string) bool {
 	switch platform {
-	case "豆包", "千问", "千问国际":
-		hadPlatform := a.platDoubao || a.platQianwen || a.platQwenIntl
+	case "豆包", "千问", "千问国际", "Gemini":
+		hadPlatform := a.platDoubao || a.platQianwen || a.platQwenIntl || a.platGemini
 		prevPlatform := a.selectedPlatform()
 		if !hadPlatform {
 			a.platDoubao = platform == "豆包"
 			a.platQianwen = platform == "千问"
 			a.platQwenIntl = platform == "千问国际"
+			a.platGemini = platform == "Gemini"
 			a.platformAuto = false
 			return true
 		}
@@ -1423,6 +1497,7 @@ func (a *App) setSinglePlatform(platform string) bool {
 		a.platDoubao = platform == "豆包"
 		a.platQianwen = platform == "千问"
 		a.platQwenIntl = platform == "千问国际"
+		a.platGemini = platform == "Gemini"
 		a.platformAuto = false
 		a.galleryOn = false
 		a.previewOn = false
@@ -1461,6 +1536,8 @@ func (a *App) stageEnabled(platform string) bool {
 		return a.platQianwen
 	case "千问国际":
 		return a.platQwenIntl
+	case "Gemini":
+		return a.platGemini
 	}
 	return false
 }
@@ -1479,15 +1556,20 @@ func (a *App) shownDailyCapFor(platform string) int {
 		if a.dailyCapQwenIntlSet {
 			return clampInt(int(a.dailyCapQwenIntl), 0, 200)
 		}
+	case "Gemini":
+		if a.dailyCapGeminiSet {
+			return clampInt(int(a.dailyCapGemini), 0, 200)
+		}
 	}
 	return a.shownDailyCap()
 }
 
 func (a *App) dailyCaps() map[string]int {
 	return map[string]int{
-		"豆包":   a.shownDailyCap(),
-		"千问":   a.shownDailyCapFor("千问"),
-		"千问国际": a.shownDailyCapFor("千问国际"),
+		"豆包":     a.shownDailyCap(),
+		"千问":     a.shownDailyCapFor("千问"),
+		"千问国际":   a.shownDailyCapFor("千问国际"),
+		"Gemini": a.shownDailyCapFor("Gemini"),
 	}
 }
 
@@ -1497,6 +1579,8 @@ func (a *App) concurrencyAutoFor(platform string) bool {
 		return a.concurrencyAutoQianwen
 	case "千问国际":
 		return a.concurrencyAutoQwenIntl
+	case "Gemini":
+		return a.concurrencyAutoGemini
 	default:
 		return a.concurrencyAuto
 	}
@@ -1509,6 +1593,8 @@ func (a *App) concurrencyMaxFor(platform string) int {
 		raw = a.concurrencyMaxQianwen
 	case "千问国际":
 		raw = a.concurrencyMaxQwenIntl
+	case "Gemini":
+		raw = a.concurrencyMaxGemini
 	}
 	return clampInt(int(raw), tasks.PlatformInFlight, tasks.MaxPlatformInFlight)
 }
@@ -1572,6 +1658,7 @@ func (a *App) workbenchPlan(rows []store.Browser) WorkbenchPlan {
 		WantDoubao:   a.platDoubao,
 		WantQianwen:  a.platQianwen,
 		WantQwenIntl: a.platQwenIntl,
+		WantGemini:   a.platGemini,
 		Accounts:     snaps,
 		Now:          time.Now(),
 	})
@@ -1652,18 +1739,17 @@ func (a *App) runQueue(platforms, promptList, paths []string, retry []tasks.Task
 		}
 	}
 	for _, platform := range platforms {
-		if platform == "豆包" || platform == "千问" || platform == "千问国际" {
-			if err := a.outputSizeFor(platform).Validate(); err != nil {
+		if platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini" {
+			if err := a.outputSizeFor(platform).ValidateFor(platform); err != nil {
 				a.progText = platform + "输出尺寸：" + err.Error()
 				logging.Log.Errorf("%s", a.progText)
 				return
 			}
-			break
 		}
 	}
 	rows := a.configuredBrowsers()
 	for _, platform := range platforms {
-		if platform != "豆包" && platform != "千问" && platform != "千问国际" {
+		if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "Gemini" {
 			continue
 		}
 		kinds := browser.AccountEngines(rows, platform, a.browserBackend)

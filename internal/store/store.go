@@ -30,26 +30,102 @@ const (
 // EngineFingerprint 标识由 tulai 管理的 fingerprint-chromium 指纹浏览器账号运行环境。
 const EngineFingerprint = "Fingerprint"
 
+// AccountQuota 记录从平台网页同步回来的积分/额度、刷新时间、会员等级、限额比例与单号并发上限等状态。
+type AccountQuota struct {
+	CreditsRemain      int    // -1 表示未同步或无固定余额（如豆包免费版）；>=0 表示真实剩余积分/额度
+	CreditsTotal       int    // 本周期/套餐总积分或总额度（千问免费通常为 40）
+	CreditCost         int    // 单张生图消耗积分（千问 Qwen-Image 2.0 为 1）
+	CreditsResetAt     int64  // 积分到期或下次刷新/恢复时间（Unix 秒，0 表示未知）
+	CreditsCycle       string // "daily" | "7d" | "monthly" | "yearly" | ""
+	MemberTier         string // "free" | "vip" | ""
+	MemberName         string // 如 "免费套餐"、"免费体验"、"标准会员"
+	AccountConcurrency int    // 单号并发上限（-1=不限并发，>0=具体上限，0=未知）
+	WatermarkFree      bool   // 是否支持/已开启去水印
+	UsagePercent       int    // 平台直接上报的窗口已用百分比（-1=未上报，0..100，如豆包 limit_status.used_percent）
+	PlatformLimited    bool   // 平台明确返回已触发限额或发送频控
+	LimitTips          string // 平台返回的限流/限额说明文案
+	ResetCardCount     int    // 可用额度重置卡数量（豆包）
+	SyncedAt           int64  // 最近同步时间（Unix 秒，0 表示未同步）
+}
+
 // Browser 一行 browsers 表。一行是一个受管 Fingerprint 浏览器账号的独立 profile。
 type Browser struct {
-	ID          int64
-	Platform    string
-	Name        string
-	Port        int
-	UserDataDir string
-	Engine      string // Fingerprint or empty on legacy accounts.
-	Proxy       string // 空值继承全局代理，非空时只用于这个网页账号。
-	IsRunning   bool
-	IsLoggedIn  bool
-	Disabled    bool
-	Health      string
-	CoolUntil   int64 // Unix 秒。0 表示不会自动恢复。
-	LastUsed    int64
-	LastError   string
-	DayKey      string // 本地日期 2006-01-02。换日之后 UsedToday 归零。
-	DayCount    int
-	DaySuccess  int
-	DayFailed   int
+	ID                 int64
+	Platform           string
+	Name               string
+	Port               int
+	UserDataDir        string
+	Engine             string // Fingerprint or empty on legacy accounts.
+	Proxy              string // 空值继承全局代理，非空时只用于这个网页账号。
+	IsRunning          bool
+	IsLoggedIn         bool
+	Disabled           bool
+	Health             string
+	CoolUntil          int64 // Unix 秒。0 表示不会自动恢复。
+	LastUsed           int64
+	LastError          string
+	DayKey             string // 本地日期 2006-01-02。换日之后 UsedToday 归零。
+	DayCount           int
+	DaySuccess         int
+	DayFailed          int
+	CreditsRemain      int    // 仅在 CreditsSyncedAt > 0 且 >= 0 时有效；-1 表示未同步或无固定余额。
+	CreditsTotal       int    // 当前周期/套餐总积分或额度。
+	CreditCost         int    // 单张生图消耗积分。
+	CreditsResetAt     int64  // 积分刷新/到期/解限 Unix 秒时间戳。
+	CreditsCycle       string // daily / 7d / monthly / yearly / ""
+	MemberTier         string // free / vip / ""
+	MemberName         string // 套餐或会员名称。
+	AccountConcurrency int    // 单号并发上限（-1=不限并发，>0=上限，0=未知）。
+	WatermarkFree      bool   // 是否享有去水印权益。
+	UsagePercent       int    // 平台直接上报的已用百分比（-1=未上报，0..100）。
+	PlatformLimited    bool   // 平台明确返回限额/频控。
+	LimitTips          string // 平台限额/频控文案。
+	ResetCardCount     int    // 可用额度重置卡张数。
+	CreditsSyncedAt    int64  // 最近一次同步平台状态的时间（Unix 秒）。
+}
+
+// QuotaSynced 报告该账号是否已经同步过平台积分/会员状态。
+func (b Browser) QuotaSynced() bool {
+	return b.CreditsSyncedAt > 0
+}
+
+// QuotaExpired 报告已同步的积分周期是否已经超过刷新/到期时间。
+func (b Browser) QuotaExpired(now time.Time) bool {
+	return b.CreditsSyncedAt > 0 && b.CreditsResetAt > 0 && !now.Before(time.Unix(b.CreditsResetAt, 0))
+}
+
+// QuotaExhausted 报告已同步且未过刷新时间的平台额度是否已耗尽或被限额。
+func (b Browser) QuotaExhausted(now time.Time) bool {
+	if !b.QuotaSynced() || b.QuotaExpired(now) {
+		return false
+	}
+	return b.CreditsRemain == 0 || b.PlatformLimited
+}
+
+// Quota 返回账号的平台额度快照。未同步时 CreditsRemain 和 UsagePercent 返回 -1。
+func (b Browser) Quota() AccountQuota {
+	remain := b.CreditsRemain
+	usagePct := b.UsagePercent
+	if !b.QuotaSynced() {
+		remain = -1
+		usagePct = -1
+	}
+	return AccountQuota{
+		CreditsRemain:      remain,
+		CreditsTotal:       b.CreditsTotal,
+		CreditCost:         b.CreditCost,
+		CreditsResetAt:     b.CreditsResetAt,
+		CreditsCycle:       b.CreditsCycle,
+		MemberTier:         b.MemberTier,
+		MemberName:         b.MemberName,
+		AccountConcurrency: b.AccountConcurrency,
+		WatermarkFree:      b.WatermarkFree,
+		UsagePercent:       usagePct,
+		PlatformLimited:    b.PlatformLimited,
+		LimitTips:          b.LimitTips,
+		ResetCardCount:     b.ResetCardCount,
+		SyncedAt:           b.CreditsSyncedAt,
+	}
 }
 
 // Store 线程安全的配置库。
@@ -106,6 +182,7 @@ var defaults = map[string]string{
 	"daily_cap":               "0",
 	"daily_cap_qianwen":       "100",
 	"daily_cap_qwen_intl":     "100",
+	"daily_cap_gemini":        "100",
 	"risky_words":             "血腥,暴力,裸体,色情,性感,裸露,枪支,武器,自杀,毒品",
 	"dot_matrix_effect":       "grain",
 	"auto_delete_history":     "0",
@@ -263,7 +340,7 @@ func checkIntegrity(path string) error {
 			return fmt.Errorf("配置数据库设置表校验失败: %s", result)
 		}
 		rows, err := probe.Query(`SELECT key,value FROM settings WHERE key IN
-			('daily_cap','daily_cap_qianwen','daily_cap_qwen_intl')`)
+			('daily_cap','daily_cap_qianwen','daily_cap_qwen_intl','daily_cap_gemini')`)
 		if err != nil {
 			return fmt.Errorf("检查每日上限: %w", err)
 		}
@@ -495,7 +572,11 @@ func (s *Store) browsersLocked() ([]Browser, error) {
 	now := time.Now()
 	rows, err := s.db.Query(`SELECT id, platform, name, port, COALESCE(user_data_dir,''), is_running, is_logged_in,
 		COALESCE(health,'ready'), COALESCE(cool_until,0), COALESCE(last_used,0), COALESCE(last_error,''),
-		COALESCE(day_key,''), COALESCE(day_count,0), COALESCE(day_success,0), COALESCE(day_failed,0), COALESCE(proxy,''), COALESCE(disabled,0), COALESCE(browser_engine,'')
+		COALESCE(day_key,''), COALESCE(day_count,0), COALESCE(day_success,0), COALESCE(day_failed,0), COALESCE(proxy,''), COALESCE(disabled,0), COALESCE(browser_engine,''),
+		COALESCE(credits_remain,-1), COALESCE(credits_total,0), COALESCE(credit_cost,0), COALESCE(credits_reset_at,0),
+		COALESCE(credits_cycle,''), COALESCE(member_tier,''), COALESCE(member_name,''), COALESCE(account_concurrency,0),
+		COALESCE(watermark_free,0), COALESCE(usage_percent,-1), COALESCE(platform_limited,0), COALESCE(limit_tips,''), COALESCE(reset_card_count,0),
+		COALESCE(credits_synced_at,0)
 		FROM browsers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -504,14 +585,27 @@ func (s *Store) browsersLocked() ([]Browser, error) {
 	var recovered []int64
 	for rows.Next() {
 		var b Browser
-		var run, login, disabled int
-		if err := rows.Scan(&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError, &b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled, &b.Engine); err != nil {
+		var run, login, disabled, watermarkFree, platformLimited int
+		if err := rows.Scan(
+			&b.ID, &b.Platform, &b.Name, &b.Port, &b.UserDataDir, &run, &login, &b.Health, &b.CoolUntil, &b.LastUsed, &b.LastError,
+			&b.DayKey, &b.DayCount, &b.DaySuccess, &b.DayFailed, &b.Proxy, &disabled, &b.Engine,
+			&b.CreditsRemain, &b.CreditsTotal, &b.CreditCost, &b.CreditsResetAt,
+			&b.CreditsCycle, &b.MemberTier, &b.MemberName, &b.AccountConcurrency,
+			&watermarkFree, &b.UsagePercent, &platformLimited, &b.LimitTips, &b.ResetCardCount,
+			&b.CreditsSyncedAt,
+		); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		b.IsRunning = run != 0
 		b.IsLoggedIn = login != 0
 		b.Disabled = disabled != 0
+		b.WatermarkFree = watermarkFree != 0
+		b.PlatformLimited = platformLimited != 0
+		if b.CreditsSyncedAt <= 0 {
+			b.CreditsRemain = -1
+			b.UsagePercent = -1
+		}
 		// 换日之后，昨天的额度用尽已经到期。读的时候收成就绪，不让旧的错误提示一直挂着。
 		if fixed, ok := b.Recover(now); ok {
 			b = fixed
@@ -572,8 +666,11 @@ func (s *Store) IsBrowserDisabled(id int64) bool {
 	return disabled != 0
 }
 
-// Usable 只判断账号健康状态；冷却或额度到期后自动恢复。
+// Usable 只判断账号健康状态与已同步额度；冷却或额度到期后自动恢复。
 func (b Browser) Usable(now time.Time) bool {
+	if b.QuotaExhausted(now) {
+		return false
+	}
 	switch b.Health {
 	case "", HealthReady:
 		return true
@@ -611,7 +708,7 @@ func (s *Store) AddBrowser(platform, name, dataDir string) (Browser, error) {
 }
 
 func (s *Store) AddManagedBrowser(platform, name, dataDir, engine string) (Browser, error) {
-	if engine != "" && (engine != EngineFingerprint || (platform != "千问" && platform != "千问国际" && platform != "豆包")) {
+	if engine != "" && (engine != EngineFingerprint || (platform != "千问" && platform != "千问国际" && platform != "豆包" && platform != "Gemini")) {
 		return Browser{}, fmt.Errorf("服务商 %s 不支持浏览器 %s", platform, engine)
 	}
 	s.mu.Lock()
@@ -656,7 +753,7 @@ func addBrowserTx(tx *sql.Tx, platform, name, dataDir string, loggedIn bool, eng
 	}
 	return Browser{
 		ID: id, Platform: platform, Name: name, Port: port, UserDataDir: dataDir, Engine: engine,
-		IsRunning: loggedIn, IsLoggedIn: loggedIn, Health: HealthReady,
+		IsRunning: loggedIn, IsLoggedIn: loggedIn, Health: HealthReady, CreditsRemain: -1, UsagePercent: -1,
 	}, nil
 }
 
@@ -805,7 +902,15 @@ func (s *Store) UpdateBrowserHealth(id int64, health string, coolUntil int64, la
 
 // ResetBrowserHealth 把账号标回可使用。用户重新登录或确认额度恢复后点这一下。
 func (s *Store) ResetBrowserHealth(id int64) {
-	s.UpdateBrowserHealth(id, HealthReady, 0, "")
+	if s == nil || id <= 0 {
+		return
+	}
+	s.mu.Lock()
+	_, err := s.db.Exec(`UPDATE browsers SET health=?, cool_until=0, last_error='', platform_limited=0, limit_tips='' WHERE id=?`, HealthReady, id)
+	s.mu.Unlock()
+	if err != nil {
+		logging.Log.Errorf("恢复账号 %d 的健康状态失败: %v", id, err)
+	}
 }
 
 // UsedToday 是这个账号在 now 这一天已经派出的次数。换日之后是 0。
@@ -863,6 +968,139 @@ func (s *Store) TouchBrowser(id int64, now time.Time) {
 	s.db.Exec(`UPDATE browsers SET last_used=? WHERE id=?`, now.Unix(), id)
 }
 
+func quotaHold(health, last string) bool {
+	if health != HealthExhausted && health != HealthCooling {
+		return false
+	}
+	if loginHold(health, last) {
+		return false
+	}
+	lower := strings.ToLower(last)
+	if strings.Contains(last, "积分") || strings.Contains(last, "额度") || strings.Contains(last, "上限") ||
+		strings.Contains(last, "限额") || strings.Contains(lower, "quota") || strings.Contains(lower, "limit") {
+		return true
+	}
+	if health == HealthCooling {
+		return strings.Contains(last, "限流") || strings.Contains(last, "频繁") || strings.Contains(last, "过多") ||
+			strings.Contains(lower, "rate")
+	}
+	return false
+}
+
+// UpdateBrowserQuota 持久化从平台网页实时同步回来的积分、刷新时间、会员等级与并发上限。
+// 若账号先前因额度/积分不足处于 exhausted 且最新剩余积分 > 0，自动恢复为就绪。
+func (s *Store) UpdateBrowserQuota(id int64, q AccountQuota) error {
+	if s == nil || id <= 0 {
+		return nil
+	}
+	if q.SyncedAt <= 0 {
+		q.SyncedAt = time.Now().Unix()
+	}
+	wf := 0
+	if q.WatermarkFree {
+		wf = 1
+	}
+	limited := 0
+	if q.PlatformLimited {
+		limited = 1
+	}
+	usagePct := q.UsagePercent
+	if usagePct < -1 {
+		usagePct = -1
+	}
+	if usagePct > 100 {
+		usagePct = 100
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var health, last string
+	if err := s.db.QueryRow(`SELECT COALESCE(health,'ready'), COALESCE(last_error,'') FROM browsers WHERE id=?`, id).Scan(&health, &last); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("账号不存在: %d", id)
+		}
+		return err
+	}
+	shouldRecover := quotaHold(health, last) && ((q.CreditsRemain > 0) || (q.CreditsRemain < 0 && !q.PlatformLimited && usagePct >= 0 && usagePct < 100))
+	quotaActiveExhausted := (q.CreditsRemain == 0 || q.PlatformLimited) && (q.CreditsResetAt <= 0 || q.CreditsResetAt > q.SyncedAt)
+	if shouldRecover {
+		_, err := s.db.Exec(`UPDATE browsers SET
+			credits_remain=?, credits_total=?, credit_cost=?, credits_reset_at=?,
+			credits_cycle=?, member_tier=?, member_name=?, account_concurrency=?,
+			watermark_free=?, usage_percent=?, platform_limited=?, limit_tips=?, reset_card_count=?,
+			credits_synced_at=?,
+			health=?, cool_until=0, last_error=''
+			WHERE id=?`,
+			q.CreditsRemain, max(q.CreditsTotal, 0), max(q.CreditCost, 0), max(q.CreditsResetAt, int64(0)),
+			strings.TrimSpace(q.CreditsCycle), strings.TrimSpace(q.MemberTier), strings.TrimSpace(q.MemberName), q.AccountConcurrency,
+			wf, usagePct, limited, strings.TrimSpace(q.LimitTips), max(q.ResetCardCount, 0),
+			q.SyncedAt, HealthReady, id)
+		return err
+	}
+	if quotaActiveExhausted && !loginHold(health, last) && (health == "" || health == HealthReady || quotaHold(health, last)) {
+		nextHealth := HealthExhausted
+		if q.PlatformLimited && q.CreditsRemain < 0 {
+			nextHealth = HealthCooling
+		}
+		_, err := s.db.Exec(`UPDATE browsers SET
+			credits_remain=?, credits_total=?, credit_cost=?, credits_reset_at=?,
+			credits_cycle=?, member_tier=?, member_name=?, account_concurrency=?,
+			watermark_free=?, usage_percent=?, platform_limited=?, limit_tips=?, reset_card_count=?,
+			credits_synced_at=?,
+			health=?, cool_until=?
+			WHERE id=?`,
+			q.CreditsRemain, max(q.CreditsTotal, 0), max(q.CreditCost, 0), max(q.CreditsResetAt, int64(0)),
+			strings.TrimSpace(q.CreditsCycle), strings.TrimSpace(q.MemberTier), strings.TrimSpace(q.MemberName), q.AccountConcurrency,
+			wf, usagePct, limited, strings.TrimSpace(q.LimitTips), max(q.ResetCardCount, 0),
+			q.SyncedAt, nextHealth, max(q.CreditsResetAt, int64(0)), id)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE browsers SET
+		credits_remain=?, credits_total=?, credit_cost=?, credits_reset_at=?,
+		credits_cycle=?, member_tier=?, member_name=?, account_concurrency=?,
+		watermark_free=?, usage_percent=?, platform_limited=?, limit_tips=?, reset_card_count=?,
+		credits_synced_at=?
+		WHERE id=?`,
+		q.CreditsRemain, max(q.CreditsTotal, 0), max(q.CreditCost, 0), max(q.CreditsResetAt, int64(0)),
+		strings.TrimSpace(q.CreditsCycle), strings.TrimSpace(q.MemberTier), strings.TrimSpace(q.MemberName), q.AccountConcurrency,
+		wf, usagePct, limited, strings.TrimSpace(q.LimitTips), max(q.ResetCardCount, 0),
+		q.SyncedAt, id)
+	return err
+}
+
+// MarkBrowserCreditsExhausted 在运行期明确触发积分不足时将已知剩余积分记为 0，
+// 保留先前同步的总额度、刷新时间与会员信息。
+func (s *Store) MarkBrowserCreditsExhausted(id int64, now time.Time) {
+	if s == nil || id <= 0 {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = s.db.Exec(`UPDATE browsers SET credits_remain=0, platform_limited=1, credits_synced_at=? WHERE id=?`, now.Unix(), id)
+}
+
+// MarkBrowserPlatformLimited 在运行期明确触发限额或频控（如豆包免费版限额）时标记受限状态，
+// 不覆盖已有订阅余额，保留套餐与重置卡信息。
+func (s *Store) MarkBrowserPlatformLimited(id int64, tips string, resetAt int64, now time.Time) {
+	if s == nil || id <= 0 {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if resetAt > 0 {
+		_, _ = s.db.Exec(`UPDATE browsers SET platform_limited=1, usage_percent=100, limit_tips=?, credits_reset_at=?, credits_synced_at=? WHERE id=?`,
+			strings.TrimSpace(tips), resetAt, now.Unix(), id)
+		return
+	}
+	_, _ = s.db.Exec(`UPDATE browsers SET platform_limited=1, usage_percent=100, limit_tips=?, credits_synced_at=? WHERE id=?`,
+		strings.TrimSpace(tips), now.Unix(), id)
+}
+
 func migrateBrowsers(db *sql.DB) error {
 	alters := []string{
 		`ALTER TABLE browsers ADD COLUMN health TEXT DEFAULT 'ready'`,
@@ -877,6 +1115,20 @@ func migrateBrowsers(db *sql.DB) error {
 		`ALTER TABLE browsers ADD COLUMN proxy TEXT DEFAULT ''`,
 		`ALTER TABLE browsers ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE browsers ADD COLUMN browser_engine TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN credits_remain INTEGER NOT NULL DEFAULT -1`,
+		`ALTER TABLE browsers ADD COLUMN credits_total INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN credit_cost INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN credits_reset_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN credits_cycle TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN member_tier TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN member_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN account_concurrency INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN watermark_free INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN usage_percent INTEGER NOT NULL DEFAULT -1`,
+		`ALTER TABLE browsers ADD COLUMN platform_limited INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN limit_tips TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE browsers ADD COLUMN reset_card_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE browsers ADD COLUMN credits_synced_at INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range alters {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -885,6 +1137,10 @@ func migrateBrowsers(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`DELETE FROM browsers WHERE COALESCE(ext_account,'') <> ''`); err != nil {
 		return fmt.Errorf("清理旧扩展账号: %w", err)
+	}
+	// 已经成功同步过实时额度/套餐的账号说明登录态有效，修复早期同步未回写 is_logged_in 的历史行。
+	if _, err := db.Exec(`UPDATE browsers SET is_logged_in=1 WHERE is_logged_in=0 AND credits_synced_at > 0 AND NOT (COALESCE(health,'')='exhausted' AND COALESCE(last_error,'') LIKE '%登录%')`); err != nil {
+		return fmt.Errorf("修复已同步账号登录态: %w", err)
 	}
 	return nil
 }

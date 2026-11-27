@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 
 	extbundle "github.com/xxww0098/tulai/extension"
 )
@@ -224,7 +224,7 @@ func temuSearchCapture(ctx context.Context, s *RenderedSession, start, page *url
 		return result, errors.New("TEMU 搜索页面已跳转或查询条件发生变化")
 	}
 	var snapshot temuSearchSnapshot
-	if err := s.run(ctx, chromedp.Evaluate(temuSearchSnapshotScript, &snapshot)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(temuSearchSnapshotScript, &snapshot)); err != nil {
 		return result, err
 	}
 	var cached struct {
@@ -236,7 +236,7 @@ func temuSearchCapture(ctx context.Context, s *RenderedSession, start, page *url
   const value = document.querySelector(%q)?.getAttribute(%q) || '';
   return {value: value.length <= 8 * 1024 * 1024 ? value : '', tooLarge: value.length > 8 * 1024 * 1024};
 })()`, fmt.Sprintf("[%s]", markers.HostAttr), markers.SnapshotAttr)
-	if err := s.run(ctx, chromedp.Evaluate(snapshotScript, &cached)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(snapshotScript, &cached)); err != nil {
 		return result, err
 	}
 	if len(snapshot.Rows) == 0 && !snapshot.Blocked && cached.Value == "" && !cached.TooLarge {
@@ -244,12 +244,12 @@ func temuSearchCapture(ctx context.Context, s *RenderedSession, start, page *url
 		if err := Wait(ctx, 600*time.Millisecond); err != nil {
 			return result, err
 		}
-		if err := s.run(ctx, chromedp.Evaluate(temuSearchSnapshotScript, &snapshot)); err != nil {
+		if err := s.run(ctx, fingerprint.Evaluate(temuSearchSnapshotScript, &snapshot)); err != nil {
 			return result, err
 		}
 	}
 	var current string
-	if err := s.run(ctx, chromedp.Location(&current)); err != nil {
+	if err := s.run(ctx, fingerprint.Location(&current)); err != nil {
 		return result, err
 	}
 	if current != snapshot.URL && !temuSearchURLMatches(snapshot.URL, current) {

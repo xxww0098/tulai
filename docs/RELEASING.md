@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.41
+# 发布 tulai 0.1.42
 
-当前桌面端版本是 **0.1.41**，标签 **`v0.1.41`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+当前桌面端版本是 **0.1.42**，标签 **`v0.1.42`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+
+## 0.1.42
+
+新增 Google **Gemini**（`gemini.google.com/app`）服务商支持（独立工作区、自动切入「制作图片」模式、5 档原生宽高比、`=s0` 全分辨率原图拉取与历史对话清理）；新增豆包、千问、Gemini 账号实时额度/会员套餐与限流状态同步；受管指纹浏览器内核下载、校验、版本切换与进程托管抽离至独立共享模块 `realbrowser/browserkernel`（`v0.1.0`），移除 `chromedp` 依赖并支持内核检查更新与在线升级；新增单账号指纹参数设置弹窗（语言、时区、窗口尺寸与网页外观），并优化洗图结果区与图片编辑全宽胶片栏布局。完整更新说明见 [CHANGELOG.md](../CHANGELOG.md)。
 
 ## 0.1.41
 
@@ -188,12 +192,15 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.41` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
-| Go 模块 | `v0.1.41` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
+| 桌面端 | `0.1.42` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.42` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
 
 ## 流水线
 
 `.github/workflows/ci.yml`：
+
+- 图来 CI 将 `tulai/` 和 `realbrowser/browserkernel/` 放在同一工作目录。内核单测在 RealBrowser 运行，图来验证项目集成和打包。CI 从 RealBrowser 取一次源码，所有构建任务共用这一份。
+- CI 默认读取图来 `go.mod` 声明的核心版本，在 RealBrowser 检出对应子模块标签（如 `browserkernel/v0.1.0`）。需要测试指定提交时，通过 `REALBROWSER_REF` 指定提交 SHA。依赖源默认是 `xxww0098/realbrowser`，也可以用 `REALBROWSER_REPOSITORY` 指定承载 Go 模块的仓库。私有源可通过 `REALBROWSER_READ_TOKEN` 提供只读权限。
 
 - pull request 和 `main`：在 Linux 运行 `go test ./... -short -race -timeout 20m`、`go vet ./...`、`go build ./cmd/...`，校验 `go tool mygo generate` 无绑定漂移（`git diff --exit-code frontend/src/mygo.ts`）以及 `bun run --cwd frontend typecheck` / `bun run --cwd frontend test` / `bun run --cwd frontend build`，运行指纹策略测试（`node --test internal/fingerprint/driver/*.test.mjs`）、内置脚本测试与发布脚本测试（`bash scripts/check-release-ci.test.sh` 等）；在 Windows 原生测试浏览器、运行环境、下载与更新器；另跑 Fingerprint 集成测试，并打出 Windows 安装包。浏览器基础测试与策略测试分开并行；`main` 测试 Windows 浏览器，pull request 额外测试 macOS Apple Silicon。产物在 Actions 的 artifacts 里保留 14 天。
 - 标签 `v*` 经由 `scripts/check-release-ci.sh` 校验：必须匹配 `mygo.json` 的版本，且标签指向的提交必须有通过的 `main` CI。标签流水线重新打包并上传 Windows 安装器、便携版和 `SHA256SUMS`。
@@ -221,8 +228,8 @@ git push origin vX.Y.Z
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows 安装器 | `tulai.Setup.0.1.41.amd64.exe`、`tulai.Setup.0.1.41.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
-| Windows 便携版 | `tulai-0.1.41-windows-amd64.exe`、`tulai-0.1.41-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
+| Windows 安装器 | `tulai.Setup.0.1.42.amd64.exe`、`tulai.Setup.0.1.42.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.42-windows-amd64.exe`、`tulai-0.1.42-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
 
 `SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。
 

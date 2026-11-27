@@ -217,6 +217,8 @@ func managedPlatforms(raw string) map[string]struct{} {
 			canonical = "千问"
 		case "千问国际":
 			canonical = "千问国际"
+		case "gemini":
+			canonical = "Gemini"
 		}
 		if canonical == "" {
 			continue

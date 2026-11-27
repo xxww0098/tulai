@@ -36,7 +36,7 @@ import {
   type LoadingPatternId,
   type PatternSpec,
 } from "@/lib/dotmatrix/config";
-import { Browser, Core, Settings } from "@/lib/ipc";
+import { Browser, Core, Settings, isMyGoRuntime } from "@/lib/ipc";
 import { useSyncedDraft } from "@/lib/useSyncedDraft";
 import {
   refreshBrowser,
@@ -101,12 +101,19 @@ const DEFAULT_SETTINGS_STATE: SettingsStateDTO = {
   autoDeleteHistory: false,
   concurrencyAuto: false,
   concurrencyMax: 2,
+  concurrencyAutoQianwen: false,
+  concurrencyMaxQianwen: 2,
+  concurrencyAutoQwenIntl: false,
+  concurrencyMaxQwenIntl: 2,
+  concurrencyAutoGemini: false,
+  concurrencyMaxGemini: 2,
   sendStrategy: "顺序循环",
   retryCount: 0,
   sendWait: 0,
   dailyCapDoubao: 0,
   dailyCapQianwen: 0,
   dailyCapQwenIntl: 100,
+  dailyCapGemini: 100,
   waitBefore: 0,
   waitResult: true,
   waitResultSeconds: 60,
@@ -123,6 +130,7 @@ const DEFAULT_SETTINGS_STATE: SettingsStateDTO = {
   customKey: "",
   customModel: "",
   ikunocrKey: "",
+  kernelAutoUpdate: false,
   autoCheck: true,
   updateMirror: "",
   version: "",
@@ -444,6 +452,15 @@ export function SettingsPage() {
   );
 
   const activeTab = Math.max(0, Math.min(3, st.tab ?? 0));
+  const [kernelUpdate, setKernelUpdate] = useState("");
+  useEffect(() => {
+    if (activeTab !== 2 || !browserSt.ready || browserSt.busy || !isMyGoRuntime()) return;
+    let active = true;
+    void Browser.checkBrowserRuntimeUpdate().then((version) => {
+      if (active) setKernelUpdate(version);
+    }).catch(() => { if (active) setKernelUpdate(""); });
+    return () => { active = false; };
+  }, [activeTab, browserSt.ready, browserSt.busy]);
 
   const installProg = normalizeInstallProgress(browserSt.percent);
   const updateProg = useMemo(() => describeUpdateProgress(upd), [upd]);
@@ -924,6 +941,9 @@ export function SettingsPage() {
                               numeric
                               aria-label="豆包单日上限"
                             />
+                            <span className="tnum text-[10px] text-subtle">
+                              {`免费动态限额 · ${st.concurrencyAuto ? `并发上限 ${st.concurrencyMax}` : "串行 1"}`}
+                            </span>
                           </div>
                           <div className="flex flex-col gap-1 rounded-[10px] border border-hairline bg-card p-2">
                             <span className="text-[11px] font-medium text-muted">千问</span>
@@ -936,6 +956,9 @@ export function SettingsPage() {
                               numeric
                               aria-label="千问单日上限"
                             />
+                            <span className="tnum text-[10px] text-subtle">
+                              {`免费 40 积分/周期 · ${st.concurrencyAutoQianwen ? `并发上限 ${st.concurrencyMaxQianwen}` : "串行 1"}`}
+                            </span>
                           </div>
                           <div className="flex flex-col gap-1 rounded-[10px] border border-hairline bg-card p-2">
                             <span className="text-[11px] font-medium text-muted">千问国际</span>
@@ -947,6 +970,18 @@ export function SettingsPage() {
                               registerFlush={registerFlush}
                               numeric
                               aria-label="千问国际单日上限"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1 rounded-[10px] border border-hairline bg-card p-2">
+                            <span className="text-[11px] font-medium text-muted">Gemini</span>
+                            <SyncedSettingInput
+                              field="dailyCapGemini"
+                              serverValue={String(st.dailyCapGemini)}
+                              syncKey="dailyCapGemini"
+                              onCommit={commitSetting}
+                              registerFlush={registerFlush}
+                              numeric
+                              aria-label="Gemini单日上限"
                             />
                           </div>
                         </div>
@@ -982,6 +1017,12 @@ export function SettingsPage() {
                           variant="outline"
                           onClick={handleRefreshBrowser}
                         />
+                        {browserSt.ready ? (
+                          <Button size="small" variant="outline" icon="download"
+                            text={kernelUpdate ? `更新到 ${kernelUpdate}` : "检查并更新内核"}
+                            disabled={browserSt.busy || browserSt.running}
+                            onClick={() => invokeSafe(() => Browser.updateBrowserRuntime(), refreshBrowser)} />
+                        ) : null}
                         {!browserSt.ready && !browserSt.busy ? (
                           <Button
                             data-testid="browser-install-btn"
@@ -997,6 +1038,13 @@ export function SettingsPage() {
                     }
                   >
                     <div className="flex flex-col gap-2">
+                      <InsetPillRow>
+                        <Checkbox
+                          label="自动更新已安装的浏览器内核"
+                          checked={st.kernelAutoUpdate}
+                          onCheckedChange={(enabled) => commitSetting("kernelAutoUpdate", String(enabled))}
+                        />
+                      </InsetPillRow>
                       {browserSt.busy ? (
                         <InsetPillRow className="gap-1.5">
                           <div className="flex items-center justify-between gap-2">

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxww0098/realbrowser/browserkernel"
+
 	"github.com/xxww0098/tulai/internal/browser"
 	"github.com/xxww0098/tulai/internal/cdp"
 	"github.com/xxww0098/tulai/internal/store"
@@ -21,55 +23,80 @@ type BrowserService struct {
 
 // BrowserRowDTO describes a single managed provider account row.
 type BrowserRowDTO struct {
-	ID         int64  `json:"id"`
-	Platform   string `json:"platform"`
-	Name       string `json:"name"`
-	Email      string `json:"email"`
-	Engine     string `json:"engine"`
-	IsRunning  bool   `json:"isRunning"`
-	IsLoggedIn bool   `json:"isLoggedIn"`
-	Active     bool   `json:"active"`
-	Disabled   bool   `json:"disabled"`
-	Checked    bool   `json:"checked"`
-	Pending    bool   `json:"pending"`
-	PendingOp  string `json:"pendingOp"`
-	Health     string `json:"health"`
-	HealthTone string `json:"healthTone"`
-	Proxy      string `json:"proxy"`
-	LastError  string `json:"lastError"`
-	TodayCount int    `json:"todayCount"`
-	UsageLabel string `json:"usageLabel"`
-	UsagePct   int    `json:"usagePct"`
+	ID                 int64  `json:"id"`
+	Platform           string `json:"platform"`
+	Name               string `json:"name"`
+	Email              string `json:"email"`
+	Engine             string `json:"engine"`
+	IsRunning          bool   `json:"isRunning"`
+	IsLoggedIn         bool   `json:"isLoggedIn"`
+	Active             bool   `json:"active"`
+	Disabled           bool   `json:"disabled"`
+	Checked            bool   `json:"checked"`
+	Pending            bool   `json:"pending"`
+	PendingOp          string `json:"pendingOp"`
+	Health             string `json:"health"`
+	HealthTone         string `json:"healthTone"`
+	Proxy              string `json:"proxy"`
+	LastError          string `json:"lastError"`
+	TodayCount         int    `json:"todayCount"`
+	UsageLabel         string `json:"usageLabel"`
+	UsagePct           int    `json:"usagePct"`
+	CreditsSynced      bool   `json:"creditsSynced"`
+	CreditsRemain      int    `json:"creditsRemain"`
+	CreditsTotal       int    `json:"creditsTotal"`
+	CreditCost         int    `json:"creditCost"`
+	CreditsResetAt     int64  `json:"creditsResetAt"`
+	CreditsResetLabel  string `json:"creditsResetLabel"`
+	CreditsCycle       string `json:"creditsCycle"`
+	CreditsCycleLabel  string `json:"creditsCycleLabel"`
+	MemberTier         string `json:"memberTier"`
+	MemberLabel        string `json:"memberLabel"`
+	ConcurrencyLimit   int    `json:"concurrencyLimit"`
+	ConcurrencyLabel   string `json:"concurrencyLabel"`
+	WatermarkFree      bool   `json:"watermarkFree"`
+	UsagePercent       int    `json:"usagePercent"`
+	PlatformLimited    bool   `json:"platformLimited"`
+	LimitTips          string `json:"limitTips"`
+	ResetCardCount     int    `json:"resetCardCount"`
+	CreditsSyncedAt    int64  `json:"creditsSyncedAt"`
+	CreditsSyncedLabel string `json:"creditsSyncedLabel"`
 }
 
 // BrowserStateDTO represents the full account browser management page snapshot.
 type BrowserStateDTO struct {
-	Backend       string          `json:"backend"`
-	BackendLabel  string          `json:"backendLabel"`
-	Engines       []string        `json:"engines"`
-	Ready         bool            `json:"ready"`
-	Busy          bool            `json:"busy"`
-	BadgeLabel    string          `json:"badgeLabel"`
-	BadgeTone     string          `json:"badgeTone"`
-	Status        string          `json:"status"`
-	Detail        string          `json:"detail"`
-	Percent       float64         `json:"percent"`
-	Done          int64           `json:"done"`
-	Total         int64           `json:"total"`
-	Speed         int64           `json:"speed"`
-	Supported     bool            `json:"supported"`
-	Running       bool            `json:"running"`
-	Rows          []BrowserRowDTO `json:"rows"`
-	SelectedID    int64           `json:"selectedId"`
-	CheckedCount  int             `json:"checkedCount"`
-	BatchActive   bool            `json:"batchActive"`
-	BatchKind     string          `json:"batchKind"`
-	BatchText     string          `json:"batchText"`
-	MissingHint     string              `json:"missingHint"`
-	SharedExitHints []SharedExitHintDTO `json:"sharedExitHints"`
-	DlBrowserBusy   bool                `json:"dlBrowserBusy"`
-	DlBrowserOpen   bool                `json:"dlBrowserOpen"`
-	DlBrowserURL    string              `json:"dlBrowserUrl"`
+	Backend                string              `json:"backend"`
+	BackendLabel           string              `json:"backendLabel"`
+	Engines                []string            `json:"engines"`
+	Ready                  bool                `json:"ready"`
+	Busy                   bool                `json:"busy"`
+	BadgeLabel             string              `json:"badgeLabel"`
+	BadgeTone              string              `json:"badgeTone"`
+	Status                 string              `json:"status"`
+	Detail                 string              `json:"detail"`
+	Percent                float64             `json:"percent"`
+	Done                   int64               `json:"done"`
+	Total                  int64               `json:"total"`
+	Speed                  int64               `json:"speed"`
+	Supported              bool                `json:"supported"`
+	Running                bool                `json:"running"`
+	Rows                   []BrowserRowDTO     `json:"rows"`
+	SelectedID             int64               `json:"selectedId"`
+	CheckedCount           int                 `json:"checkedCount"`
+	BatchActive            bool                `json:"batchActive"`
+	BatchKind              string              `json:"batchKind"`
+	BatchText              string              `json:"batchText"`
+	MissingHint            string              `json:"missingHint"`
+	SharedExitHints        []SharedExitHintDTO `json:"sharedExitHints"`
+	DlBrowserBusy          bool                `json:"dlBrowserBusy"`
+	DlBrowserOpen          bool                `json:"dlBrowserOpen"`
+	DlBrowserURL           string              `json:"dlBrowserUrl"`
+	DoubaoConcurrencyAuto  bool                `json:"doubaoConcurrencyAuto"`
+	DoubaoConcurrencyMax   int                 `json:"doubaoConcurrencyMax"`
+	QianwenConcurrencyAuto bool                `json:"qianwenConcurrencyAuto"`
+	QianwenConcurrencyMax  int                 `json:"qianwenConcurrencyMax"`
+	GeminiConcurrencyAuto  bool                `json:"geminiConcurrencyAuto"`
+	GeminiConcurrencyMax   int                 `json:"geminiConcurrencyMax"`
 }
 
 // SharedExitHintDTO describes a same-platform shared-exit warning in the account pool.
@@ -80,24 +107,24 @@ type SharedExitHintDTO struct {
 
 // BrowserDrawerDTO represents the floating interactive CDP preview drawer state.
 type BrowserDrawerDTO struct {
-	Open         bool    `json:"open"`
-	AccountID    int64   `json:"accountId"`
-	Name         string  `json:"name"`
-	Platform     string  `json:"platform"`
-	Title        string  `json:"title"`
-	URL          string  `json:"url"`
+	Open           bool    `json:"open"`
+	AccountID      int64   `json:"accountId"`
+	Name           string  `json:"name"`
+	Platform       string  `json:"platform"`
+	Title          string  `json:"title"`
+	URL            string  `json:"url"`
 	Loading        bool    `json:"loading"`
 	Manual         bool    `json:"manual"`
 	AwaitingVerify bool    `json:"awaitingVerify"`
 	Resuming       bool    `json:"resuming"`
-	Busy         bool    `json:"busy"`
-	Err          string  `json:"err"`
-	Width        float64 `json:"width"`
-	Height       float64 `json:"height"`
-	CopyText     string  `json:"copyText"`
-	CopyReady    bool    `json:"copyReady"`
-	FrameVersion uint64  `json:"frameVersion"`
-	FrameURL     string  `json:"frameUrl"`
+	Busy           bool    `json:"busy"`
+	Err            string  `json:"err"`
+	Width          float64 `json:"width"`
+	Height         float64 `json:"height"`
+	CopyText       string  `json:"copyText"`
+	CopyReady      bool    `json:"copyReady"`
+	FrameVersion   uint64  `json:"frameVersion"`
+	FrameURL       string  `json:"frameUrl"`
 }
 
 func (a *App) buildBrowserState() BrowserStateDTO {
@@ -123,7 +150,7 @@ func (a *App) buildBrowserState() BrowserStateDTO {
 		selectedID = a.browserRows[a.browserSel].ID
 	}
 	for _, b := range a.browserRows {
-		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" {
+		if b.Platform != "豆包" && b.Platform != "千问" && b.Platform != "千问国际" && b.Platform != "Gemini" {
 			continue
 		}
 		if a.manager != nil {
@@ -150,23 +177,45 @@ func (a *App) buildBrowserState() BrowserStateDTO {
 		if pending {
 			pendingOp = op.opKind()
 		}
+		quotaView := buildAccountQuotaView(b, a.shownDailyCapFor(b.Platform), now)
 		rows = append(rows, BrowserRowDTO{
-			ID:         b.ID,
-			Platform:   b.Platform,
-			Name:       b.Name,
-			Engine:     b.Engine,
-			IsRunning:  b.IsRunning,
-			IsLoggedIn: b.IsLoggedIn,
-			Active:     active,
-			Disabled:   b.Disabled,
-			Checked:    a.browserChecked != nil && a.browserChecked[b.ID],
-			Pending:    pending,
-			PendingOp:  pendingOp,
-			Health:     health,
-			HealthTone: tone,
-			Proxy:      b.Proxy,
-			LastError:  lastErr,
-			TodayCount: b.UsedToday(now),
+			ID:                 b.ID,
+			Platform:           b.Platform,
+			Name:               b.Name,
+			Engine:             b.Engine,
+			IsRunning:          b.IsRunning,
+			IsLoggedIn:         b.IsLoggedIn,
+			Active:             active,
+			Disabled:           b.Disabled,
+			Checked:            a.browserChecked != nil && a.browserChecked[b.ID],
+			Pending:            pending,
+			PendingOp:          pendingOp,
+			Health:             health,
+			HealthTone:         tone,
+			Proxy:              b.Proxy,
+			LastError:          lastErr,
+			TodayCount:         b.UsedToday(now),
+			UsageLabel:         quotaView.UsageLabel,
+			UsagePct:           quotaView.UsagePct,
+			CreditsSynced:      quotaView.CreditsSynced,
+			CreditsRemain:      quotaView.CreditsRemain,
+			CreditsTotal:       quotaView.CreditsTotal,
+			CreditCost:         quotaView.CreditCost,
+			CreditsResetAt:     quotaView.CreditsResetAt,
+			CreditsResetLabel:  quotaView.CreditsResetLabel,
+			CreditsCycle:       quotaView.CreditsCycle,
+			CreditsCycleLabel:  quotaView.CreditsCycleLabel,
+			MemberTier:         quotaView.MemberTier,
+			MemberLabel:        quotaView.MemberLabel,
+			ConcurrencyLimit:   quotaView.ConcurrencyLimit,
+			ConcurrencyLabel:   quotaView.ConcurrencyLabel,
+			WatermarkFree:      quotaView.WatermarkFree,
+			UsagePercent:       quotaView.UsagePercent,
+			PlatformLimited:    quotaView.PlatformLimited,
+			LimitTips:          quotaView.LimitTips,
+			ResetCardCount:     quotaView.ResetCardCount,
+			CreditsSyncedAt:    quotaView.CreditsSyncedAt,
+			CreditsSyncedLabel: quotaView.CreditsSyncedLabel,
 		})
 	}
 	batchText := ""
@@ -179,32 +228,38 @@ func (a *App) buildBrowserState() BrowserStateDTO {
 		missingHint = "以下勾选平台尚未添加账号：" + strings.Join(missing, "、")
 	}
 	return BrowserStateDTO{
-		Backend:       a.browserBackend,
-		BackendLabel:  browser.ChoiceLabel(a.browserBackend),
-		Engines:       []string{browser.KindFingerprint},
-		Ready:         a.runtimeReady,
-		Busy:          a.runtimeBusy,
-		BadgeLabel:    badgeLabel,
-		BadgeTone:     badgeTone,
-		Status:        a.runtimeStatus,
-		Detail:        a.detectedDetail,
-		Percent:       a.runtimePercent,
-		Done:          a.runtimeDone,
-		Total:         a.runtimeTotal,
-		Speed:         a.runtimeSpeed,
-		Supported:     browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, a.browserBackend),
-		Running:       a.running,
-		Rows:          rows,
-		SelectedID:    selectedID,
-		CheckedCount:  len(a.browserChecked),
-		BatchActive:     a.browserBatch != nil,
-		BatchKind:       a.browserBatch.opKind(),
-		BatchText:       batchText,
-		MissingHint:     missingHint,
-		SharedExitHints: a.sharedExitHints(a.browserRows),
-		DlBrowserBusy:   a.dlBrowserBusy,
-		DlBrowserOpen:   a.dlBrowser != nil && a.dlBrowser.Alive(),
-		DlBrowserURL:    a.dlBrowserURL,
+		Backend:                a.browserBackend,
+		BackendLabel:           browser.ChoiceLabel(a.browserBackend),
+		Engines:                []string{browser.KindFingerprint},
+		Ready:                  a.runtimeReady,
+		Busy:                   a.runtimeBusy,
+		BadgeLabel:             badgeLabel,
+		BadgeTone:              badgeTone,
+		Status:                 a.runtimeStatus,
+		Detail:                 a.detectedDetail,
+		Percent:                a.runtimePercent,
+		Done:                   a.runtimeDone,
+		Total:                  a.runtimeTotal,
+		Speed:                  a.runtimeSpeed,
+		Supported:              browser.RuntimeSupported(runtime.GOOS, runtime.GOARCH, a.browserBackend),
+		Running:                a.running,
+		Rows:                   rows,
+		SelectedID:             selectedID,
+		CheckedCount:           len(a.browserChecked),
+		BatchActive:            a.browserBatch != nil,
+		BatchKind:              a.browserBatch.opKind(),
+		BatchText:              batchText,
+		MissingHint:            missingHint,
+		SharedExitHints:        a.sharedExitHints(a.browserRows),
+		DlBrowserBusy:          a.dlBrowserBusy,
+		DlBrowserOpen:          a.dlBrowser != nil && a.dlBrowser.Alive(),
+		DlBrowserURL:           a.dlBrowserURL,
+		DoubaoConcurrencyAuto:  a.concurrencyAutoFor("豆包"),
+		DoubaoConcurrencyMax:   a.concurrencyMaxFor("豆包"),
+		QianwenConcurrencyAuto: a.concurrencyAutoFor("千问"),
+		QianwenConcurrencyMax:  a.concurrencyMaxFor("千问"),
+		GeminiConcurrencyAuto:  a.concurrencyAutoFor("Gemini"),
+		GeminiConcurrencyMax:   a.concurrencyMaxFor("Gemini"),
 	}
 }
 
@@ -224,7 +279,7 @@ func (a *App) loadDismissedSharedExitHints(s *store.Store) {
 	for platform, msg := range parsed {
 		platform = strings.TrimSpace(platform)
 		msg = strings.TrimSpace(msg)
-		if (platform == "豆包" || platform == "千问" || platform == "千问国际") && msg != "" {
+		if (platform == "豆包" || platform == "千问" || platform == "千问国际" || platform == "Gemini") && msg != "" {
 			a.dismissedSharedExitHints[platform] = msg
 		}
 	}
@@ -252,7 +307,7 @@ func (a *App) dismissSharedExitHints(platforms []string) {
 	changed := false
 	for _, raw := range platforms {
 		platform := strings.TrimSpace(raw)
-		if platform != "豆包" && platform != "千问" && platform != "千问国际" {
+		if platform != "豆包" && platform != "千问" && platform != "千问国际" && platform != "Gemini" {
 			continue
 		}
 		msg := a.platformSharedExitHint(a.browserRows, platform)
@@ -276,7 +331,7 @@ func (a *App) dismissSharedExitHints(platforms []string) {
 
 func (a *App) sharedExitHints(accounts []store.Browser) []SharedExitHintDTO {
 	hints := []SharedExitHintDTO{}
-	for _, platform := range []string{"豆包", "千问", "千问国际"} {
+	for _, platform := range []string{"豆包", "千问", "千问国际", "Gemini"} {
 		msg := a.platformSharedExitHint(accounts, platform)
 		if msg == "" {
 			continue
@@ -334,6 +389,17 @@ func (s *BrowserService) GetBrowserState(ctx context.Context) BrowserStateDTO {
 	return out
 }
 
+// CheckBrowserRuntimeUpdate returns a newer compatible version when one is available.
+func (s *BrowserService) CheckBrowserRuntimeUpdate(ctx context.Context) (string, error) {
+	return browser.CheckRuntimeUpdate(ctx, browser.ConfigDir())
+}
+
+func (s *BrowserService) UpdateBrowserRuntime(ctx context.Context) {
+	if s.app != nil {
+		_ = s.app.call(ctx, func() { s.app.prepareBrowserRuntime(true) })
+	}
+}
+
 // InstallBrowserRuntime triggers installation of the project-managed Fingerprint browser runtime.
 func (s *BrowserService) InstallBrowserRuntime(ctx context.Context) {
 	if s.app == nil {
@@ -355,6 +421,7 @@ func (s *BrowserService) DismissSharedExitHints(ctx context.Context, platforms [
 }
 
 // RefreshBrowsers re-checks runtime detection and reloads account browser rows.
+// Any already-running Doubao and Qwen accounts also refresh their live status asynchronously.
 func (s *BrowserService) RefreshBrowsers(ctx context.Context) {
 	if s.app == nil {
 		return
@@ -362,6 +429,7 @@ func (s *BrowserService) RefreshBrowsers(ctx context.Context) {
 	_ = s.app.call(ctx, func() {
 		s.app.refreshDetected()
 		s.app.refreshBrowsers()
+		s.app.probeRunningAccountStatuses()
 	})
 }
 
@@ -559,6 +627,81 @@ func (s *BrowserService) StopSyncAccountUsernames(ctx context.Context) {
 	})
 }
 
+// SyncQwenStatus fetches real-time Qwen credits, refresh/expiry time, membership tier, and concurrency cap.
+// When ids is empty, all domestic Qwen accounts are synced.
+func (s *BrowserService) SyncQwenStatus(ctx context.Context, ids []int64) error {
+	if s.app == nil {
+		return nil
+	}
+	err, callErr := callValue(s.app, ctx, func() error {
+		return s.app.syncQwenStatus(ids)
+	})
+	if callErr != nil {
+		return callErr
+	}
+	return err
+}
+
+// StopSyncQwenStatus cancels an in-progress batch Qwen status sync.
+func (s *BrowserService) StopSyncQwenStatus(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.stopSyncQwenStatus()
+	})
+}
+
+// SyncAccountStatus fetches real-time provider status (credits, subscription, usage percent, rate limits)
+// for one or more Doubao / Qwen accounts. When ids is empty, all Doubao and Qwen accounts are synced.
+func (s *BrowserService) SyncAccountStatus(ctx context.Context, ids []int64) error {
+	if s.app == nil {
+		return nil
+	}
+	err, callErr := callValue(s.app, ctx, func() error {
+		return s.app.syncAccountStatus(ids, "")
+	})
+	if callErr != nil {
+		return callErr
+	}
+	return err
+}
+
+// StopSyncAccountStatus cancels an in-progress batch account status sync.
+func (s *BrowserService) StopSyncAccountStatus(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.stopSyncQwenStatus()
+	})
+}
+
+// SyncGeminiStatus fetches real-time Gemini remaining quota, reset time, subscription tier, and username.
+// When ids is empty, all Gemini accounts are synced.
+func (s *BrowserService) SyncGeminiStatus(ctx context.Context, ids []int64) error {
+	if s.app == nil {
+		return nil
+	}
+	err, callErr := callValue(s.app, ctx, func() error {
+		return s.app.syncGeminiStatus(ids)
+	})
+	if callErr != nil {
+		return callErr
+	}
+	return err
+}
+
+// StopSyncGeminiStatus cancels an in-progress batch Gemini status sync.
+func (s *BrowserService) StopSyncGeminiStatus(ctx context.Context) {
+	if s.app == nil {
+		return
+	}
+	_ = s.app.call(ctx, func() {
+		s.app.stopSyncGeminiStatus()
+	})
+}
+
 // CommitBrowserRename renames an account browser row.
 func (s *BrowserService) CommitBrowserRename(ctx context.Context, id int64, newName string) {
 	if s.app == nil {
@@ -576,6 +719,65 @@ func (s *BrowserService) CommitBrowserRename(ctx context.Context, id int64, newN
 		a.renameID = id
 		a.renameDraft = newName
 		a.commitRename()
+	})
+}
+
+// BrowserFingerprintDTO contains settings applied by the managed desktop driver.
+type BrowserFingerprintDTO struct {
+	Lang         string `json:"lang"`
+	Timezone     string `json:"timezone"`
+	WindowWidth  int    `json:"windowWidth"`
+	WindowHeight int    `json:"windowHeight"`
+	ColorScheme  string `json:"colorScheme"`
+}
+
+func (s *BrowserService) withAccountProfile(ctx context.Context, id int64, create bool, use func(string) error) error {
+	if s.app == nil {
+		return fmt.Errorf("应用尚未就绪")
+	}
+	var opErr error
+	err := s.app.call(ctx, func() {
+		row, ok := s.app.browserByID(id)
+		if !ok {
+			opErr = fmt.Errorf("找不到浏览器账号")
+			return
+		}
+		var dir string
+		dir, opErr = browser.AccountProfileDir(s.app.dataRoot, row, create)
+		if opErr == nil {
+			opErr = use(dir)
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return opErr
+}
+
+func (s *BrowserService) GetAccountFingerprint(ctx context.Context, id int64) (BrowserFingerprintDTO, error) {
+	var prefs BrowserFingerprintDTO
+	err := s.withAccountProfile(ctx, id, false, func(dir string) error {
+		f, err := browserkernel.ReadProfile(dir)
+		prefs = BrowserFingerprintDTO{
+			Lang: f.Lang, Timezone: f.Timezone, WindowWidth: f.WindowWidth,
+			WindowHeight: f.WindowHeight, ColorScheme: string(f.ColorScheme),
+		}
+		return err
+	})
+	return prefs, err
+}
+
+func (s *BrowserService) SaveAccountFingerprint(ctx context.Context, id int64, prefs BrowserFingerprintDTO) error {
+	return s.withAccountProfile(ctx, id, true, func(dir string) error {
+		f, err := browserkernel.ReadProfile(dir)
+		if err != nil {
+			return err
+		}
+		f.Lang = strings.TrimSpace(prefs.Lang)
+		f.Timezone = strings.TrimSpace(prefs.Timezone)
+		f.WindowWidth, f.WindowHeight = prefs.WindowWidth, prefs.WindowHeight
+		f.ColorScheme = browserkernel.ColorSchemeMode(prefs.ColorScheme)
+		return browserkernel.WriteProfile(dir, f)
 	})
 }
 
@@ -664,24 +866,24 @@ func (s *BrowserService) GetBrowserDrawerState(ctx context.Context) BrowserDrawe
 		}
 		st := a.browserDrawer
 		return BrowserDrawerDTO{
-			Open:         true,
-			AccountID:    st.row.ID,
-			Name:         st.row.Name,
-			Platform:     st.row.Platform,
-			Title:        st.title,
-			URL:          st.url,
+			Open:           true,
+			AccountID:      st.row.ID,
+			Name:           st.row.Name,
+			Platform:       st.row.Platform,
+			Title:          st.title,
+			URL:            st.url,
 			Loading:        st.loading,
 			Manual:         st.held.Load(),
 			AwaitingVerify: a.engine != nil && a.engine.AccountAwaitingUser(st.row.ID),
 			Resuming:       st.resuming,
-			Busy:         a.browserDrawerBusy(st.row.ID),
-			Err:          st.err,
-			Width:        st.width,
-			Height:       st.height,
-			CopyText:     st.copyText,
-			CopyReady:    st.copyReady,
-			FrameVersion: st.frameVersion,
-			FrameURL:     a.ensureMedia().DrawerFrameURL(st.frameVersion),
+			Busy:           a.browserDrawerBusy(st.row.ID),
+			Err:            st.err,
+			Width:          st.width,
+			Height:         st.height,
+			CopyText:       st.copyText,
+			CopyReady:      st.copyReady,
+			FrameVersion:   st.frameVersion,
+			FrameURL:       a.ensureMedia().DrawerFrameURL(st.frameVersion),
 		}
 	})
 	if err != nil {

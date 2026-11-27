@@ -13,7 +13,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"golang.org/x/net/html"
 )
 
@@ -325,7 +324,7 @@ func (s *RenderedSession) captureUnsplashSearch(ctx context.Context, page *url.U
 	}
 	checkCurrent := func() error {
 		var raw string
-		if err := s.run(ctx, chromedp.Location(&raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Location(&raw)); err != nil {
 			return err
 		}
 		if raw != observedURL {
@@ -379,7 +378,7 @@ func (s *RenderedSession) captureUnsplashSearch(ctx context.Context, page *url.U
 			allowed = unsplashRouteOf(u).photo == want
 		}
 		go func() {
-			var action chromedp.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if allowed {
 				action = fetch.ContinueRequest(paused.RequestID)
 			}
@@ -407,7 +406,7 @@ func (s *RenderedSession) captureUnsplashSearch(ctx context.Context, page *url.U
 	}
 	read := func() (unsplashBrowserSnapshot, *html.Node, error) {
 		var snapshot unsplashBrowserSnapshot
-		if err := run(ctx, chromedp.Evaluate(unsplashBrowserSnapshotScript, &snapshot)); err != nil {
+		if err := run(ctx, fingerprint.Evaluate(unsplashBrowserSnapshotScript, &snapshot)); err != nil {
 			return snapshot, nil, err
 		}
 		if snapshot.TooLarge || len(snapshot.HTML) > maxPageBytes {
@@ -440,7 +439,7 @@ func (s *RenderedSession) captureUnsplashSearch(ctx context.Context, page *url.U
 		}
 		// This is the reference's visible Load more button. Scroll as well for
 		// pages that append results when the sentinel enters the viewport.
-		if err := run(ctx, chromedp.Evaluate(`(() => {
+		if err := run(ctx, fingerprint.Evaluate(`(() => {
   const button = Array.from(document.querySelectorAll("button")).find(x => x.textContent.trim() === "Load more" && !x.disabled);
   if (button) button.click();
   window.scrollBy({top:window.innerHeight,behavior:"instant"});

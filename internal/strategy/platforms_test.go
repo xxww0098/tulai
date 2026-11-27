@@ -132,3 +132,63 @@ func TestQwenIntlFactoryAndURLHelpers(t *testing.T) {
 		t.Fatalf("Qianwen.HomeURL() = %q, want https://www.qianwen.com/", got)
 	}
 }
+
+func TestGeminiFactoryAndURLHelpers(t *testing.T) {
+	strat := Factory("Gemini")
+	if strat == nil {
+		t.Fatal("Factory(\"Gemini\") returned nil")
+	}
+	if _, ok := strat.(*Gemini); !ok {
+		t.Fatalf("unexpected strategy type: %T", strat)
+	}
+	if strat.Platform() != "Gemini" {
+		t.Fatalf("Platform() = %q, want Gemini", strat.Platform())
+	}
+	if strat.HomeURL() != "https://gemini.google.com/app" {
+		t.Fatalf("HomeURL() = %q, want https://gemini.google.com/app", strat.HomeURL())
+	}
+	if _, ok := strat.(HistoryCleaner); !ok {
+		t.Fatal("Gemini must implement HistoryCleaner")
+	}
+
+	urlCases := []struct {
+		in   string
+		want string
+	}{
+		{
+			in:   "https://lh3.googleusercontent.com/gg-dl/ABC123=s1024-rj",
+			want: "https://lh3.googleusercontent.com/gg-dl/ABC123=s0",
+		},
+		{
+			in:   "https://lh3.googleusercontent.com/gg-dl/ABC123=w512-h512-rw",
+			want: "https://lh3.googleusercontent.com/gg-dl/ABC123=s0",
+		},
+		{
+			in:   "https://lh3.googleusercontent.com/gg-dl/ABC123=s0",
+			want: "https://lh3.googleusercontent.com/gg-dl/ABC123=s0",
+		},
+		{
+			in:   "https://lh3.googleusercontent.com/gg-dl/ABC123",
+			want: "https://lh3.googleusercontent.com/gg-dl/ABC123",
+		},
+		{
+			in:   "https://cdn.example.com/path/img=s1024-rj",
+			want: "https://cdn.example.com/path/img=s1024-rj",
+		},
+	}
+	for _, tc := range urlCases {
+		if got := geminiOriginalImageURL(tc.in); got != tc.want {
+			t.Fatalf("geminiOriginalImageURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	if got := qwenChatURLFor(nil, "Gemini", "conv99"); got != "https://gemini.google.com/app/conv99" {
+		t.Fatalf("qwenChatURLFor(Gemini) = %q, want https://gemini.google.com/app/conv99", got)
+	}
+	if !isReplyQuotaFault("You've reached your daily image generation limit.") {
+		t.Fatal("expected Gemini EN quota reply to be classified as quota fault")
+	}
+	if !isReplyQuotaFault("你已达到图片生成上限，请明天再试") {
+		t.Fatal("expected Gemini CN quota reply to be classified as quota fault")
+	}
+}

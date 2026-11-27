@@ -22,3 +22,4 @@ BrowserData/
 /tulai.exe
 node_modules/
 /internal/fingerprint/bundled/*.zip
+/test_files/

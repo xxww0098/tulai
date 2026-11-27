@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
 // qzonePageAuthority identifies QQ Space page hosts, not its picture CDNs.
@@ -219,7 +219,7 @@ const qzoneIdentityScript = `(() => {
 
 func (s *RenderedSession) qzoneGroupIdentity(ctx context.Context, observedURL, groupID, albumID string) (qzoneIdentity, error) {
 	var identity qzoneIdentity
-	if err := s.run(ctx, chromedp.Evaluate(fmt.Sprintf(qzoneIdentityScript, observedURL, groupID, albumID), &identity)); err != nil {
+	if err := s.run(ctx, fingerprint.Evaluate(fmt.Sprintf(qzoneIdentityScript, observedURL, groupID, albumID), &identity)); err != nil {
 		if ctx.Err() != nil {
 			return identity, ctx.Err()
 		}
@@ -258,7 +258,7 @@ func (s *RenderedSession) captureQzoneGroupAlbum(ctx context.Context, page *url.
 	}
 	checkPage := func() error {
 		var current string
-		if err := s.run(ctx, chromedp.Location(&current)); err != nil {
+		if err := s.run(ctx, fingerprint.Location(&current)); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -826,7 +826,7 @@ func (s *RenderedSession) qzonePersonalGet(ctx context.Context, page *url.URL, o
 	defer func() { stop(); cancel() }()
 	checkPage := func() error {
 		var current string
-		if err := s.run(requestCtx, chromedp.Location(&current)); err != nil {
+		if err := s.run(requestCtx, fingerprint.Location(&current)); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}

@@ -21,7 +21,6 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
@@ -108,7 +107,7 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 			return
 		}
 		go func() {
-			var action chromedp.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
+			var action fingerprint.Action = fetch.FailRequest(paused.RequestID, network.ErrorReasonBlockedByClient)
 			if paused.ResourceType == network.ResourceTypeDocument {
 				html := ""
 				switch paused.Request.URL {
@@ -138,7 +137,7 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 		var b bounds
 		markers := session.downloadMarkers()
 		script := fmt.Sprintf(`(() => { const h=document.querySelector(%q); if (!h) return {}; const r=h.getBoundingClientRect(); return {ready:getComputedStyle(h).display!=='none'&&r.width>0&&r.height>0,x:r.x,y:r.y,w:r.width,h:r.height}; })()`, "["+markers.HostAttr+"]")
-		if err := session.run(ctx, chromedp.Evaluate(script, &b)); err != nil {
+		if err := session.run(ctx, fingerprint.Evaluate(script, &b)); err != nil {
 			t.Fatal(err)
 		}
 		return b
@@ -157,7 +156,7 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 	}
 	click := func(x, y float64) {
 		for _, kind := range []string{"mousePressed", "mouseReleased"} {
-			if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+			if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 				return cdp.Execute(ec, "Input.dispatchMouseEvent", map[string]any{"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}, nil)
 			})); err != nil {
 				t.Fatal(err)
@@ -171,7 +170,7 @@ func TestTemuAssistantAutoLoadKeepsEarlierCards(t *testing.T) {
 	deadline = time.Now().Add(20 * time.Second)
 	var loaded bool
 	for time.Now().Before(deadline) {
-		if err := session.run(ctx, chromedp.Evaluate(`!!document.getElementById('new')`, &loaded)); err != nil {
+		if err := session.run(ctx, fingerprint.Evaluate(`!!document.getElementById('new')`, &loaded)); err != nil {
 			t.Fatal(err)
 		}
 		if loaded {
@@ -302,7 +301,7 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		var state buttonState
 		markers := s.downloadMarkers()
 		script := fmt.Sprintf(`(() => { const host=document.querySelector(%q); if(!host)return {found:false}; const r=host.getBoundingClientRect(); return {found:true,visible:r.width>0&&r.height>0,position:getComputedStyle(host).position,x:r.x+r.width/2,y:r.y+r.height/2}; })()`, "["+markers.HostAttr+"]")
-		err := runRendered(ctx, tab, chromedp.Evaluate(script, &state))
+		err := runRendered(ctx, tab, fingerprint.Evaluate(script, &state))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -328,7 +327,7 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 			t.Fatalf("下载按钮位置不正确: %q", state.Position)
 		}
 		for _, kind := range []string{"mousePressed", "mouseReleased"} {
-			if err := runRendered(ctx, tab, chromedp.ActionFunc(func(ec context.Context) error {
+			if err := runRendered(ctx, tab, fingerprint.ActionFunc(func(ec context.Context) error {
 				return cdp.Execute(ec, "Input.dispatchMouseEvent", map[string]any{"type": kind, "x": state.X, "y": state.Y, "button": "left", "clickCount": 1}, nil)
 			})); err != nil {
 				t.Fatal(err)
@@ -336,31 +335,31 @@ func TestDownloadAssistantBrowserButton(t *testing.T) {
 		}
 	}
 	waitButton(ctx, session.tab, false)
-	if err := session.run(ctx, chromedp.Evaluate(`document.cookie='session=synthetic; path=/'; const img=document.createElement('img'); img.id='dynamic'; img.src='/image.png'; document.body.append(img)`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.cookie='session=synthetic; path=/'; const img=document.createElement('img'); img.id='dynamic'; img.src='/image.png'; document.body.append(img)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, true)
-	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('dynamic').remove()`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.getElementById('dynamic').remove()`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, false)
-	if err := session.run(ctx, chromedp.Evaluate(`const tile=document.createElement('div'); tile.id='tile'; tile.className='tile'; document.body.append(tile)`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`const tile=document.createElement('div'); tile.id='tile'; tile.className='tile'; document.body.append(tile)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, true)
-	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('tile').remove()`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.getElementById('tile').remove()`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, false)
-	if err := session.run(ctx, chromedp.Evaluate(`const link=document.createElement('a'); link.id='direct'; link.textContent='image'; document.body.append(link)`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`const link=document.createElement('a'); link.id='direct'; link.textContent='image'; document.body.append(link)`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, false)
-	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('direct').href='/image.png'`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.getElementById('direct').href='/image.png'`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, true)
-	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('direct').remove()`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.getElementById('direct').remove()`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	waitButton(ctx, session.tab, false)
@@ -482,7 +481,7 @@ func TestDownloadAssistantPopupAndMultiTabLifecycle(t *testing.T) {
 	defer cancel()
 
 	// Open a site-initiated target=_blank popup tab from the index page.
-	if err := session.run(ctx, chromedp.Evaluate(`document.getElementById('open').click()`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.getElementById('open').click()`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	var popupTarget string
@@ -523,7 +522,7 @@ func TestDownloadAssistantPopupAndMultiTabLifecycle(t *testing.T) {
 	deadline = time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		script := fmt.Sprintf(`(() => { const h=document.querySelector(%q); if(!h)return {}; const r=h.getBoundingClientRect(); return {visible:r.width>0&&r.height>0,x:r.x+r.width/2,y:r.y+r.height/2}; })()`, "["+markers.HostAttr+"]")
-		if err := runRendered(ctx, popupTab, chromedp.Evaluate(script, &state)); err == nil && state.Visible {
+		if err := runRendered(ctx, popupTab, fingerprint.Evaluate(script, &state)); err == nil && state.Visible {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -532,7 +531,7 @@ func TestDownloadAssistantPopupAndMultiTabLifecycle(t *testing.T) {
 		t.Fatal("target=_blank 新开标签页未显示下载助手按钮")
 	}
 	for _, kind := range []string{"mousePressed", "mouseReleased"} {
-		if err := runRendered(ctx, popupTab, chromedp.ActionFunc(func(ec context.Context) error {
+		if err := runRendered(ctx, popupTab, fingerprint.ActionFunc(func(ec context.Context) error {
 			return cdp.Execute(ec, "Input.dispatchMouseEvent", map[string]any{"type": kind, "x": state.X, "y": state.Y, "button": "left", "clickCount": 1}, nil)
 		})); err != nil {
 			t.Fatal(err)
@@ -569,7 +568,7 @@ func TestDownloadAssistantPopupAndMultiTabLifecycle(t *testing.T) {
 	}
 
 	// Closing the last remaining tab MUST end the session and close Done().
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return cdp.Execute(ec, "Page.close", nil, nil)
 	})); err != nil {
 		t.Fatal(err)

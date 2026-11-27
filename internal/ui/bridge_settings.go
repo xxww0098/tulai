@@ -30,14 +30,21 @@ type SettingsStateDTO struct {
 	DownloadRateKB     int    `json:"downloadRateKb"`
 	RemoveWatermark    bool   `json:"removeWatermark"`
 	AutoDeleteHistory  bool   `json:"autoDeleteHistory"`
-	ConcurrencyAuto    bool   `json:"concurrencyAuto"`
-	ConcurrencyMax     int    `json:"concurrencyMax"`
+	ConcurrencyAuto         bool   `json:"concurrencyAuto"`
+	ConcurrencyMax          int    `json:"concurrencyMax"`
+	ConcurrencyAutoQianwen  bool   `json:"concurrencyAutoQianwen"`
+	ConcurrencyMaxQianwen   int    `json:"concurrencyMaxQianwen"`
+	ConcurrencyAutoQwenIntl bool   `json:"concurrencyAutoQwenIntl"`
+	ConcurrencyMaxQwenIntl  int    `json:"concurrencyMaxQwenIntl"`
+	ConcurrencyAutoGemini   bool   `json:"concurrencyAutoGemini"`
+	ConcurrencyMaxGemini    int    `json:"concurrencyMaxGemini"`
 	SendStrategy       string `json:"sendStrategy"`
 	RetryCount         int    `json:"retryCount"`
 	SendWait           int    `json:"sendWait"`
 	DailyCapDoubao     int    `json:"dailyCapDoubao"`
 	DailyCapQianwen    int    `json:"dailyCapQianwen"`
 	DailyCapQwenIntl   int    `json:"dailyCapQwenIntl"`
+	DailyCapGemini     int    `json:"dailyCapGemini"`
 	WaitBefore         int    `json:"waitBefore"`
 	WaitResult         bool   `json:"waitResult"`
 	WaitResultSeconds  int    `json:"waitResultSeconds"`
@@ -54,6 +61,7 @@ type SettingsStateDTO struct {
 	CustomKey          string `json:"customKey"`
 	CustomModel        string `json:"customModel"`
 	IkunocrKey         string `json:"ikunocrKey"`
+	KernelAutoUpdate   bool   `json:"kernelAutoUpdate"`
 	AutoCheck          bool   `json:"autoCheck"`
 	UpdateMirror       string `json:"updateMirror"`
 	Version            string `json:"version"`
@@ -90,14 +98,21 @@ func (s *SettingsService) GetSettingsState(ctx context.Context) SettingsStateDTO
 			DownloadRateKB:     int(a.downloadRateKB),
 			RemoveWatermark:    a.removeWatermark,
 			AutoDeleteHistory:  a.autoDeleteHistory,
-			ConcurrencyAuto:    a.concurrencyAutoFor("豆包"),
-			ConcurrencyMax:     a.concurrencyMaxFor("豆包"),
+			ConcurrencyAuto:         a.concurrencyAutoFor("豆包"),
+			ConcurrencyMax:          a.concurrencyMaxFor("豆包"),
+			ConcurrencyAutoQianwen:  a.concurrencyAutoFor("千问"),
+			ConcurrencyMaxQianwen:   a.concurrencyMaxFor("千问"),
+			ConcurrencyAutoQwenIntl: a.concurrencyAutoFor("千问国际"),
+			ConcurrencyMaxQwenIntl:  a.concurrencyMaxFor("千问国际"),
+			ConcurrencyAutoGemini:   a.concurrencyAutoFor("Gemini"),
+			ConcurrencyMaxGemini:    a.concurrencyMaxFor("Gemini"),
 			SendStrategy:       a.sendStrategy,
 			RetryCount:         int(a.retryCount),
 			SendWait:           int(a.sendWait),
 			DailyCapDoubao:     a.shownDailyCap(),
 			DailyCapQianwen:    a.shownDailyCapFor("千问"),
 			DailyCapQwenIntl:   a.shownDailyCapFor("千问国际"),
+			DailyCapGemini:     a.shownDailyCapFor("Gemini"),
 			WaitBefore:         int(a.waitBefore),
 			WaitResult:         a.waitResult,
 			WaitResultSeconds:  int(a.waitResultS),
@@ -114,6 +129,7 @@ func (s *SettingsService) GetSettingsState(ctx context.Context) SettingsStateDTO
 			CustomKey:          a.customKey,
 			CustomModel:        a.customModel,
 			IkunocrKey:         a.ikunocrKey,
+			KernelAutoUpdate:   a.store != nil && a.store.GetBool(settingKernelAutoUpdate),
 			AutoCheck:          a.autoCheck,
 			UpdateMirror:       a.updateMirror,
 			Version:            currentVersion(),
@@ -187,6 +203,16 @@ func (a *App) setSettingFieldInternal(field, value string) {
 		if a.engine != nil {
 			a.engine.SetConcurrency("千问国际", a.taskConcurrencyFor("千问国际"))
 		}
+	case "concurrencyAutoGemini":
+		a.concurrencyAutoGemini = value == "true" || value == "1"
+		if a.engine != nil {
+			a.engine.SetConcurrency("Gemini", a.taskConcurrencyFor("Gemini"))
+		}
+	case "concurrencyMaxGemini":
+		a.concurrencyMaxGemini = float64(clampInt(parseIntDefault(value, tasks.PlatformInFlight), tasks.PlatformInFlight, tasks.MaxPlatformInFlight))
+		if a.engine != nil {
+			a.engine.SetConcurrency("Gemini", a.taskConcurrencyFor("Gemini"))
+		}
 	case "sendStrategy":
 		a.sendStrategy = pickStr(value, "顺序循环", []string{"顺序循环", "随机循环"})
 	case "retryCount":
@@ -202,6 +228,9 @@ func (a *App) setSettingFieldInternal(field, value string) {
 	case "dailyCapQwenIntl":
 		a.dailyCapQwenIntl = float64(clampInt(parseIntDefault(value, 0), 0, 200))
 		a.dailyCapQwenIntlSet = true
+	case "dailyCapGemini":
+		a.dailyCapGemini = float64(clampInt(parseIntDefault(value, 0), 0, 200))
+		a.dailyCapGeminiSet = true
 	case "waitBefore":
 		a.waitBefore = float64(clampInt(parseIntDefault(value, 0), 0, 60))
 	case "waitResult":
@@ -245,6 +274,10 @@ func (a *App) setSettingFieldInternal(field, value string) {
 		a.customModel = value
 	case "ikunocrKey":
 		a.ikunocrKey = value
+	case "kernelAutoUpdate":
+		if a.store != nil {
+			a.store.SetInt(settingKernelAutoUpdate, boolInt(value == "true" || value == "1"))
+		}
 	case "autoCheck":
 		a.autoCheck = value == "true" || value == "1"
 		a.persistUpdatePrefs()
@@ -255,7 +288,11 @@ func (a *App) setSettingFieldInternal(field, value string) {
 		a.dotMatrixEffect = normalizeDotMatrixEffect(value)
 	}
 	a.saveSettings()
-	if field == "proxyCustom" || field == "proxyURL" || field == "proxyUrl" {
+	if field == "proxyCustom" || field == "proxyURL" || field == "proxyUrl" ||
+		field == "concurrencyAuto" || field == "concurrencyAutoDoubao" || field == "concurrencyMax" || field == "concurrencyMaxDoubao" ||
+		field == "concurrencyAutoQianwen" || field == "concurrencyMaxQianwen" ||
+		field == "concurrencyAutoGemini" || field == "concurrencyMaxGemini" ||
+		field == "dailyCapDoubao" || field == "dailyCapQianwen" || field == "dailyCapQwenIntl" || field == "dailyCapGemini" {
 		a.emit("settings", "shell", "workbench", "browsers")
 		return
 	}

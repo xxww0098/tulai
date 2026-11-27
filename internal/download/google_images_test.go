@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 )
 
@@ -350,7 +349,7 @@ func TestGoogleImagesRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fetch.Enable(), fingerprint.Navigate(googleImagesTestPage)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithDomain(".google.com").WithURL("https://www.google.com/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)
@@ -384,7 +383,7 @@ func TestGoogleImagesRenderedCapture(t *testing.T) {
 		t.Fatalf("different query accepted: %+v, %v", result.Items, err)
 	}
 	session.start = page
-	if err := session.run(ctx, chromedp.Evaluate(`document.body.insertAdjacentHTML('beforeend', '<input name="captcha" style="width:100px;height:20px">')`, nil)); err != nil {
+	if err := session.run(ctx, fingerprint.Evaluate(`document.body.insertAdjacentHTML('beforeend', '<input name="captcha" style="width:100px;height:20px">')`, nil)); err != nil {
 		t.Fatal(err)
 	}
 	if result, err := session.Capture(ctx); err == nil || !strings.Contains(err.Error(), "验证") || len(result.Items) != 0 {

@@ -31,6 +31,8 @@ var (
 var (
 	appIconMu               sync.RWMutex
 	appIconData             []byte
+	productVersionMu        sync.RWMutex
+	productVersion          string
 	packagedVersionOverride string
 )
 
@@ -47,6 +49,20 @@ func getAppIconData() []byte {
 	data := appIconData
 	appIconMu.RUnlock()
 	return data
+}
+
+// SetProductVersion registers the fallback display version used when running unpackaged/dev builds.
+func SetProductVersion(version string) {
+	productVersionMu.Lock()
+	productVersion = strings.TrimSpace(version)
+	productVersionMu.Unlock()
+}
+
+func getProductVersion() string {
+	productVersionMu.RLock()
+	v := productVersion
+	productVersionMu.RUnlock()
+	return v
 }
 
 // PackagedVersion returns the version linked into a production packaged build
@@ -73,6 +89,7 @@ type DesktopHost interface {
 	PickDirectories(ctx context.Context, title string, multiple bool) ([]string, error)
 	SaveFile(ctx context.Context, defaultName, mime string, data []byte) (saved bool, path string, err error)
 	OpenPath(path string) error
+	OpenExternal(rawURL string) error
 	RevealPath(path string) error
 	TrashPath(path string) error
 	SetClipboard(text string) error
@@ -229,6 +246,10 @@ func (h *mygoHost) SaveFile(ctx context.Context, defaultName, mime string, data 
 
 func (h *mygoHost) OpenPath(path string) error {
 	return mygo.Shell.OpenPath(path)
+}
+
+func (h *mygoHost) OpenExternal(rawURL string) error {
+	return mygo.Shell.OpenExternal(rawURL)
 }
 
 func (h *mygoHost) RevealPath(path string) error {

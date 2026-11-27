@@ -85,6 +85,25 @@ function makeLane(overrides: Partial<AccountLaneDTO> = {}): AccountLaneDTO {
     pendingOp: "",
     engine: "Fingerprint",
     lastError: "",
+    creditsSynced: false,
+    creditsRemain: -1,
+    creditsTotal: 0,
+    creditCost: 0,
+    creditsResetAt: 0,
+    creditsResetLabel: "",
+    creditsCycle: "",
+    creditsCycleLabel: "",
+    memberTier: "",
+    memberLabel: "",
+    concurrencyLimit: 0,
+    concurrencyLabel: "",
+    watermarkFree: false,
+    usagePercent: -1,
+    platformLimited: false,
+    limitTips: "",
+    resetCardCount: 0,
+    creditsSyncedAt: 0,
+    creditsSyncedLabel: "",
     ...overrides,
   };
 }
@@ -118,16 +137,17 @@ function makeTile(overrides: Partial<ResultTileDTO> = {}): ResultTileDTO {
 function makeWorkbench(overrides: Partial<WorkbenchStateDTO> = {}): WorkbenchStateDTO {
   const inferredPlatform =
     overrides.platform ??
-    (overrides.qwenIntl ? "千问国际" : overrides.qianwen ? "千问" : "豆包");
+    (overrides.gemini ? "Gemini" : overrides.qwenIntl ? "千问国际" : overrides.qianwen ? "千问" : "豆包");
   return {
     mode: "wash",
     page: TAB_WASH,
     batchMode: 0,
     platform: inferredPlatform,
-    platforms: ["豆包", "千问", "千问国际"],
+    platforms: ["豆包", "千问", "千问国际", "Gemini"],
     doubao: true,
     qianwen: false,
     qwenIntl: false,
+    gemini: false,
     prompts: "提取主画，纯白背景",
     promptChoice: "",
     promptOptions: ["电商白底", "极简棚拍"],
@@ -931,10 +951,268 @@ describe("AccountLanes", () => {
     expect(row2).not.toHaveClass("border-b");
     expect(row2).not.toHaveClass("rounded-[12px]");
   });
+
+  it("displays Qwen credits, refresh time, membership, concurrency cap, and sync triggers in lanes and collapsed pills", () => {
+    const syncQwenSpy = vi.spyOn(Browser, "syncQwenStatus").mockResolvedValue(undefined);
+    const lanes = [
+      makeLane({
+        id: 11,
+        platform: "千问",
+        title: "千问主号",
+        creditsSynced: true,
+        creditsRemain: 31,
+        creditsTotal: 40,
+        creditCost: 1,
+        creditsResetAt: 1795795199,
+        creditsResetLabel: "今日 23:59 刷新",
+        creditsCycle: "daily",
+        creditsCycleLabel: "每日刷新",
+        memberTier: "free",
+        memberLabel: "免费套餐",
+        concurrencyLimit: 6,
+        concurrencyLabel: "单号≤6(建议2)",
+        usagePct: 23,
+        usageLabel: "余 31/40 积分",
+      }),
+      makeLane({
+        id: 12,
+        platform: "千问",
+        title: "千问会员号",
+        creditsSynced: true,
+        creditsRemain: 760,
+        creditsTotal: 800,
+        creditCost: 1,
+        creditsResetLabel: "12-27 23:59 到期",
+        creditsCycle: "monthly",
+        creditsCycleLabel: "会员月度",
+        memberTier: "vip",
+        memberLabel: "标准会员",
+        concurrencyLimit: -1,
+        concurrencyLabel: "不限并发",
+        watermarkFree: true,
+        usagePct: 5,
+        usageLabel: "余 760/800 积分",
+      }),
+    ];
+
+    const { rerender } = renderWorkbench(
+      makeWorkbench({
+        doubao: false,
+        qianwen: true,
+        lanes,
+        laneCollapsed: false,
+        concurrencyAuto: true,
+        concurrencyMax: 3,
+      }),
+    );
+
+    expect(screen.getByTestId("lanes-qwen-summary")).toHaveTextContent("余 791/840 积分 · 今日 23:59 刷新");
+    expect(screen.getByTestId("lane-qwen-credits-11")).toHaveTextContent("余 31 / 40 积分");
+    expect(screen.getByTestId("lane-qwen-meta-11")).toHaveTextContent("今日 23:59 刷新 · 1分/张 · 单号≤6(建议2)");
+    expect(screen.getByTestId("lane-qwen-credits-12")).toHaveTextContent("余 760 / 800 积分");
+    expect(screen.getByTestId("lane-qwen-meta-12")).toHaveTextContent("12-27 23:59 到期 · 1分/张 · 不限并发 · 去水印");
+
+    expect(screen.getByTestId("lanes-sync-qwen-btn")).toHaveTextContent("同步");
+    fireEvent.click(screen.getByTestId("lanes-sync-qwen-btn"));
+    expect(syncQwenSpy).toHaveBeenCalledWith([11, 12]);
+
+    fireEvent.click(screen.getByTestId("lane-sync-qwen-11"));
+    expect(syncQwenSpy).toHaveBeenCalledWith([11]);
+
+    // Collapsed mode shows compact credits in pills
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          doubao: false,
+          qianwen: true,
+          lanes,
+          laneCollapsed: true,
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+    expect(screen.getByTestId("lane-pill-11")).toHaveTextContent("31分");
+    expect(screen.getByTestId("lane-pill-12")).toHaveTextContent("760分");
+  });
+
+  it("displays Gemini remaining quota, reset time, subscription tier, and sync triggers in lanes and collapsed pills", () => {
+    const syncGeminiSpy = vi.spyOn(Browser, "syncGeminiStatus").mockResolvedValue(undefined);
+    const lanes = [
+      makeLane({
+        id: 21,
+        platform: "Gemini",
+        title: "Alice Wang",
+        creditsSynced: true,
+        creditsRemain: 85,
+        creditsTotal: 100,
+        creditsResetAt: 1795771800,
+        creditsResetLabel: "今日 17:30 刷新",
+        creditsCycle: "5h",
+        creditsCycleLabel: "5小时窗口",
+        memberTier: "pro",
+        memberLabel: "AI Pro",
+        usagePct: 15,
+        usageLabel: "余 85%",
+      }),
+      makeLane({
+        id: 22,
+        platform: "Gemini",
+        title: "bob@gmail.com",
+        creditsSynced: true,
+        creditsRemain: 0,
+        creditsTotal: 100,
+        creditsResetAt: 1796241060,
+        creditsResetLabel: "12-03 03:51 刷新",
+        creditsCycle: "weekly",
+        creditsCycleLabel: "每周上限",
+        memberTier: "free",
+        memberLabel: "免费版",
+        usagePct: 100,
+        usageLabel: "剩余 0% · 已耗尽",
+      }),
+    ];
+
+    const { rerender } = renderWorkbench(
+      makeWorkbench({
+        platform: "Gemini",
+        doubao: false,
+        qianwen: false,
+        gemini: true,
+        lanes,
+        laneCollapsed: false,
+        concurrencyAuto: true,
+        concurrencyMax: 3,
+      }),
+    );
+
+    expect(screen.getByTestId("lanes-gemini-summary")).toHaveTextContent("均余 43% · 今日 17:30 刷新");
+    expect(screen.getByTestId("lane-gemini-quota-21")).toHaveTextContent("余 85%");
+    expect(screen.getByTestId("lane-gemini-meta-21")).toHaveTextContent("5小时窗口 · 今日 17:30 刷新");
+    expect(screen.getByTestId("lane-gemini-quota-22")).toHaveTextContent("剩余 0% · 已耗尽");
+    expect(screen.getByTestId("lane-gemini-meta-22")).toHaveTextContent("每周上限 · 12-03 03:51 刷新");
+
+    expect(screen.getByTestId("lanes-sync-gemini-btn")).toHaveTextContent("同步");
+    fireEvent.click(screen.getByTestId("lanes-sync-gemini-btn"));
+    expect(syncGeminiSpy).toHaveBeenCalledWith([21, 22]);
+
+    fireEvent.click(screen.getByTestId("lane-sync-gemini-21"));
+    expect(syncGeminiSpy).toHaveBeenCalledWith([21]);
+
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          platform: "Gemini",
+          doubao: false,
+          qianwen: false,
+          gemini: true,
+          lanes,
+          laneCollapsed: true,
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+    expect(screen.getByTestId("lane-pill-21")).toHaveTextContent("85%");
+    expect(screen.getByTestId("lane-pill-22")).toHaveTextContent("0%");
+  });
+
+  it("displays Doubao subscription, window usage, rate-limit status, and sync triggers in lanes and collapsed pills", () => {
+    const syncAccountSpy = vi.spyOn(Browser, "syncAccountStatus").mockResolvedValue(undefined);
+    const lanes = [
+      makeLane({
+        id: 31,
+        platform: "豆包",
+        title: "猪大派",
+        usedToday: 4,
+        creditsSynced: true,
+        creditsRemain: -1,
+        creditsTotal: 0,
+        memberTier: "free",
+        memberLabel: "免费体验",
+        usagePercent: 24,
+        platformLimited: false,
+        resetCardCount: 2,
+        usagePct: 24,
+        usageLabel: "窗口已用 24%",
+      }),
+      makeLane({
+        id: 32,
+        platform: "豆包",
+        title: "豆包副号",
+        usedToday: 12,
+        creditsSynced: true,
+        creditsRemain: -1,
+        creditsTotal: 0,
+        creditsResetAt: 1795795200,
+        creditsResetLabel: "预计 15:00 恢复",
+        memberTier: "free",
+        memberLabel: "免费体验",
+        usagePercent: 100,
+        platformLimited: true,
+        limitTips: "今日额度已达上限",
+        resetCardCount: 0,
+        usagePct: 100,
+        usageLabel: "已触发限额",
+      }),
+    ];
+
+    const { rerender } = renderWorkbench(
+      makeWorkbench({
+        platform: "豆包",
+        doubao: true,
+        qianwen: false,
+        gemini: false,
+        lanes,
+        laneCollapsed: false,
+        concurrencyAuto: true,
+        concurrencyMax: 3,
+      }),
+    );
+
+    expect(screen.getByTestId("lanes-doubao-summary")).toHaveTextContent("已限额 1 个 · 预计 15:00 恢复");
+    expect(screen.getByTestId("lane-doubao-status-31")).toHaveTextContent("窗口已用 24%");
+    expect(screen.getByTestId("lane-doubao-meta-31")).toHaveTextContent("重置卡 2 张 · 今日 4 次");
+    expect(screen.getByTestId("lane-doubao-status-32")).toHaveTextContent("已触发限额");
+    expect(screen.getByTestId("lane-doubao-meta-32")).toHaveTextContent("预计 15:00 恢复 · 今日 12 次");
+
+    expect(screen.getByTestId("lanes-sync-doubao-btn")).toHaveTextContent("同步");
+    fireEvent.click(screen.getByTestId("lanes-sync-doubao-btn"));
+    expect(syncAccountSpy).toHaveBeenCalledWith([31, 32]);
+
+    fireEvent.click(screen.getByTestId("lane-sync-doubao-31"));
+    expect(syncAccountSpy).toHaveBeenCalledWith([31]);
+
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          platform: "豆包",
+          doubao: true,
+          qianwen: false,
+          gemini: false,
+          lanes,
+          laneCollapsed: true,
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+    expect(screen.getByTestId("lane-pill-31")).toHaveTextContent("已用24%");
+    expect(screen.getByTestId("lane-pill-32")).toHaveTextContent("限额");
+  });
 });
 
 describe("GenerationStageCard (DotMatrix) & ResultGrid pipeline, density, Shift+Click multi-select & rewash", () => {
-  it("renders procedural dot-matrix generation stage, moving-sheen status progression, animation pause toggle, issue frozen dots, and pending queue", () => {
+  it("renders procedural dot-matrix generation stage, moving-sheen status progression, issue frozen dots, and pending queue without animation pause toggle", () => {
     vi.useFakeTimers();
     const activeTile = makeTile({
       taskIndex: 1,
@@ -961,6 +1239,9 @@ describe("GenerationStageCard (DotMatrix) & ResultGrid pipeline, density, Shift+
 
     renderWorkbench(
       makeWorkbench({
+        mode: "free",
+        page: TAB_GEN,
+        runPage: TAB_GEN,
         activeCount: 1,
         activeRows: [{ key: "r1", header: false, issue: false, title: "工位A", summary: "", tiles: [activeTile] }],
         pendingTiles: [pendingTile],
@@ -982,11 +1263,9 @@ describe("GenerationStageCard (DotMatrix) & ResultGrid pipeline, density, Shift+
     });
     expect(stage).toHaveTextContent("正在细化细节…");
 
-    // Toggle animation pause freezes dot-matrix stage
-    fireEvent.click(screen.getByTestId("wb-bot-anim-toggle"));
-    expect(stage).toHaveTextContent("点阵已暂停");
-    fireEvent.click(screen.getByTestId("wb-bot-anim-toggle"));
-    expect(stage.querySelector("canvas")).toBeInTheDocument();
+    // Manual pause/resume animation toggle button has been removed
+    expect(screen.queryByTestId("wb-bot-anim-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "暂停动画" })).not.toBeInTheDocument();
 
     // Pending tile has #02 and 二次洗 chip, and NO redundant 等待 label
     const pendingCard = screen.getByTestId("pending-tile-2");
@@ -1002,11 +1281,167 @@ describe("GenerationStageCard (DotMatrix) & ResultGrid pipeline, density, Shift+
     vi.useRealTimers();
   });
 
+  it("shows animated active tiles and completed outputs in wash results while hiding queued images/animations and removing the pause-animation toggle", () => {
+    vi.spyOn(Workbench, "retryTask").mockResolvedValue(undefined);
+    const activeTile = makeTile({
+      taskIndex: 1,
+      status: "进行中",
+      phase: "generating",
+      fileUrl: "",
+      accountName: "工位A",
+    });
+    const pendingTile = makeTile({
+      taskIndex: 2,
+      status: "排队中",
+      fileUrl: "",
+      rewashCount: 1,
+      title: "二次图.png",
+    });
+    const failedTile = makeTile({
+      taskIndex: 9,
+      status: "失败",
+      fileUrl: "",
+      reason: "上游模型超时",
+      actionText: "重试",
+      title: "失败图.png",
+    });
+
+    const { rerender } = renderWorkbench(
+      makeWorkbench({
+        mode: "wash",
+        page: TAB_WASH,
+        runPage: TAB_WASH,
+        running: true,
+        activeCount: 1,
+        activeRows: [{ key: "r1", header: false, issue: false, title: "工位A", summary: "", tiles: [activeTile] }],
+        pendingTiles: [pendingTile],
+        issueRows: [{ key: "i1", header: false, issue: true, title: "待处理", summary: "1 项", tiles: [failedTile] }],
+        doneTiles: [],
+      }),
+    );
+
+    // Active tile animates with DotMatrix stage; queued/waiting tile is hidden; pause toggle is removed
+    const activeStage = screen.getByTestId("dotmatrix-stage-1");
+    expect(activeStage.querySelector("canvas")).toBeInTheDocument();
+    expect(screen.queryByTestId("result-slot-2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dotmatrix-stage-2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wb-pending-queue")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("pending-tile-2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wb-bot-anim-toggle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wb-results-status-summary")).toHaveTextContent(
+      "进行中 (1) · 排队 (1) · 已完成 (0)",
+    );
+
+    // Issue tile stays visible with retry action
+    const issueBox = screen.getByTestId("issue-dotmatrix-9");
+    expect(issueBox).toHaveAttribute("data-phase", "error");
+    expect(issueBox).toHaveTextContent("上游模型超时");
+    fireEvent.click(within(issueBox).getByRole("button", { name: "重试" }));
+    expect(Workbench.retryTask).toHaveBeenCalledWith(9);
+
+    // Active tile finishes -> moves to doneTiles while still hiding queued item #2
+    const doneTile = makeTile({
+      taskIndex: 1,
+      status: "完成",
+      title: "洗好成图.png",
+      path: "/tmp/washed-1.png",
+      fileUrl: "tulaimedia://localhost/file?t=washed1&v=1",
+    });
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          mode: "wash",
+          page: TAB_WASH,
+          runPage: TAB_WASH,
+          running: true,
+          activeCount: 0,
+          activeRows: [],
+          pendingTiles: [pendingTile],
+          issueRows: [],
+          doneTiles: [doneTile],
+          doneCount: 1,
+          doneTasks: 1,
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByTestId("result-tile-image-1")).toHaveAttribute(
+      "src",
+      expect.stringContaining("washed1"),
+    );
+    expect(screen.getByTestId("done-dotmatrix-1")).not.toHaveAttribute("data-phase", "settled");
+    expect(screen.queryByTestId("result-slot-2")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wb-pending-queue")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wb-results-status-summary")).toHaveTextContent(
+      "进行中 (0) · 排队 (1) · 已完成 (1)",
+    );
+
+    // Idle wash mode with pending rewash items hides waiting thumbnails while showing counts
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          mode: "wash",
+          page: TAB_WASH,
+          runPage: TAB_WASH,
+          running: false,
+          pendingTiles: [pendingTile],
+          doneTiles: [doneTile],
+          doneCount: 1,
+          doneTasks: 1,
+          canUndoRewash: true,
+          rewashUndoCount: 1,
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+    expect(screen.queryByTestId("wb-pending-queue")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("pending-tile-2")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wb-results-status-summary")).toHaveTextContent(
+      "排队 (1) · 已完成 (1 张)",
+    );
+    expect(screen.getByTestId("wb-undo-rewash-btn")).toBeInTheDocument();
+
+    // Idle wash mode with only pending items (0 done) still shows clean summary without blank pane or thumbnails
+    act(() => {
+      useAppStore.setState({
+        workbench: makeWorkbench({
+          mode: "wash",
+          page: TAB_WASH,
+          runPage: TAB_WASH,
+          running: false,
+          pendingTiles: [pendingTile],
+          doneTiles: [],
+          doneCount: 0,
+          doneTasks: 0,
+        }),
+      });
+    });
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
+    expect(screen.queryByTestId("wb-pending-queue")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("pending-tile-2")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wb-results-status-summary")).toHaveTextContent(
+      "排队 (1) · 已完成 (0 张)",
+    );
+  });
+
   it("holds each queued position when tasks finish out of order and one task returns multiple images", () => {
     const first = makeTile({ taskIndex: 1, fileUrl: "", path: "" });
     const second = makeTile({ taskIndex: 2, fileUrl: "", path: "" });
     const third = makeTile({ taskIndex: 3, fileUrl: "", path: "" });
-    const run = makeWorkbench({ running: true, pendingTiles: [first, second, third] });
+    const run = makeWorkbench({ mode: "free", page: TAB_GEN, runPage: TAB_GEN, running: true, pendingTiles: [first, second, third] });
     renderWorkbench(run);
 
     const firstSlot = screen.getByTestId("result-slot-1");
@@ -1029,9 +1464,21 @@ describe("GenerationStageCard (DotMatrix) & ResultGrid pipeline, density, Shift+
     expect(thirdSlot.querySelector("img")).toBeNull();
   });
 
-  it("reveals every output when a run starts and finishes between task snapshots", () => {
-    const run = makeWorkbench({ running: true, pendingTiles: [], activeRows: [] });
-    renderWorkbench(run);
+  it("shows starting animation immediately in non-wash mode and reveals every output when a run finishes between snapshots", () => {
+    const { rerender } = renderWorkbench(
+      makeWorkbench({ mode: "free", page: TAB_GEN, runPage: TAB_GEN, running: false, canStart: true }),
+    );
+    fireEvent.click(screen.getByTestId("wb-start-btn"));
+    expect(Workbench.startTasks).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("wb-starting-animation").querySelector("canvas")).toBeInTheDocument();
+
+    const run = makeWorkbench({ mode: "free", page: TAB_GEN, runPage: TAB_GEN, running: true, pendingTiles: [], activeRows: [] });
+    act(() => useAppStore.setState({ workbench: run }));
+    rerender(
+      <TooltipProvider>
+        <WorkbenchPage />
+      </TooltipProvider>,
+    );
     const doneTiles = [makeTile(), makeTile({ key: "extra", fileUrl: "second.png" })];
     act(() => useAppStore.setState({ workbench: {
       ...run, running: false, doneTiles, doneCount: 2, doneTasks: 1,
@@ -1257,6 +1704,9 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
 
     renderWorkbench(
       makeWorkbench({
+        mode: "free",
+        page: TAB_GEN,
+        runPage: TAB_GEN,
         activeCount: 1,
         activeRows: [{ key: "r1", header: false, issue: false, title: "工位A", summary: "", tiles: [activeTile] }],
         doneTiles: [doneTile],
@@ -1286,7 +1736,9 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
 
     const { rerender, unmount } = renderWorkbench(
       makeWorkbench({
-        mode: "wash",
+        mode: "free",
+        page: TAB_GEN,
+        runPage: TAB_GEN,
         running: true,
         activeCount: 1,
         activeRows: [{ key: "r1", header: false, issue: false, title: "工位A", summary: "", tiles: [uploadingTile] }],
@@ -1305,7 +1757,9 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     act(() => {
       useAppStore.setState({
         workbench: makeWorkbench({
-          mode: "wash",
+          mode: "free",
+          page: TAB_GEN,
+          runPage: TAB_GEN,
           running: true,
           activeCount: 1,
           activeRows: [{ key: "r1", header: false, issue: false, title: "工位A", summary: "", tiles: [generatingTile] }],
@@ -1328,7 +1782,9 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     act(() => {
       useAppStore.setState({
         workbench: makeWorkbench({
-          mode: "wash",
+          mode: "free",
+          page: TAB_GEN,
+          runPage: TAB_GEN,
           running: true,
           activeCount: 1,
           activeRows: [{ key: "r1", header: false, issue: false, title: "工位A", summary: "", tiles: [downloadingTile] }],
@@ -1357,7 +1813,9 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     act(() => {
       useAppStore.setState({
         workbench: makeWorkbench({
-          mode: "wash",
+          mode: "free",
+          page: TAB_GEN,
+          runPage: TAB_GEN,
           running: false,
           activeCount: 0,
           activeRows: [],
@@ -1377,11 +1835,13 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     expect(slot.querySelector("img")).toHaveAttribute("src", expect.stringContaining("fresh1"));
     expect(screen.getByTestId("done-dotmatrix-1")).not.toHaveAttribute("data-phase", "settled");
 
-    // Switching mode (wash -> free -> wash) MUST NOT replay dot-matrix animation
+    // Switching mode (free -> fission -> free) MUST NOT replay dot-matrix animation
     act(() => {
       useAppStore.setState({
         workbench: makeWorkbench({
-          mode: "free",
+          mode: "fission",
+          page: TAB_FISSION,
+          runPage: TAB_FISSION,
           running: false,
           doneTiles: [],
           resultsDoneOpen: true,
@@ -1396,7 +1856,9 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     act(() => {
       useAppStore.setState({
         workbench: makeWorkbench({
-          mode: "wash",
+          mode: "free",
+          page: TAB_GEN,
+          runPage: TAB_GEN,
           running: false,
           doneTiles: [downloadedDone],
           doneCount: 1,
@@ -1416,7 +1878,9 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
     unmount();
     renderWorkbench(
       makeWorkbench({
-        mode: "wash",
+        mode: "free",
+        page: TAB_GEN,
+        runPage: TAB_GEN,
         running: true,
         activeCount: 1,
         activeRows: [
@@ -1627,6 +2091,12 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
         dlBrowserBusy: false,
         dlBrowserOpen: false,
         dlBrowserUrl: "",
+        doubaoConcurrencyAuto: true,
+        doubaoConcurrencyMax: 2,
+        qianwenConcurrencyAuto: true,
+        qianwenConcurrencyMax: 2,
+        geminiConcurrencyAuto: true,
+        geminiConcurrencyMax: 2,
       });
 
       const inflight = refreshTopics("shell,workbench");
@@ -1986,5 +2456,37 @@ describe("WorkbenchDialogs & Upgraded Lightbox", () => {
 
     fireEvent.click(screen.getByTestId("lanes-concurrency-switch"));
     expect(setSettingSpy).toHaveBeenCalledWith("concurrencyAutoQwenIntl", "false");
+  });
+
+  it("isolates Gemini lanes and dispatches concurrencyAutoGemini / concurrencyMaxGemini", () => {
+    const setSettingSpy = vi.spyOn(Settings, "setSettingField").mockResolvedValue(undefined);
+    renderWorkbench(
+      makeWorkbench({
+        mode: "free",
+        page: TAB_GEN,
+        platform: "Gemini",
+        doubao: false,
+        qianwen: false,
+        qwenIntl: false,
+        gemini: true,
+        concurrencyAuto: true,
+        concurrencyMax: 3,
+        outputPresets: ["原比例", "1:1（正方形）", "4:3（标准横）", "3:4（标准竖）", "16:9（宽屏）", "9:16（竖屏）"],
+        outputRatios: ["1:1", "4:3", "3:4", "16:9", "9:16"],
+        lanes: [
+          makeLane({ id: 10, platform: "千问国际", title: "国际站主号" }),
+          makeLane({ id: 30, platform: "Gemini", title: "Gemini主号" }),
+        ],
+      }),
+    );
+
+    expect(screen.getByTestId("lane-row-30")).toBeInTheDocument();
+    expect(screen.queryByTestId("lane-row-10")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("lanes-concurrency-inc"));
+    expect(setSettingSpy).toHaveBeenCalledWith("concurrencyMaxGemini", "4");
+
+    fireEvent.click(screen.getByTestId("lanes-concurrency-switch"));
+    expect(setSettingSpy).toHaveBeenCalledWith("concurrencyAutoGemini", "false");
   });
 });

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xxww0098/realbrowser/browserkernel"
+
 	"github.com/xxww0098/tulai/internal/fingerprint"
 	"github.com/xxww0098/tulai/internal/logging"
 	"github.com/xxww0098/tulai/internal/store"
@@ -32,12 +34,16 @@ func AccountEndpoint(b store.Browser) string {
 	return fingerprint.FingerprintEndpoint(b.Port)
 }
 
+type accountProcess struct {
+	*fingerprint.Process
+	headless bool
+}
+
 type Manager struct {
 	lifecycle sync.RWMutex
 	mu        sync.Mutex
 	starts    sync.Map
-	procs     map[int64]*fingerprint.Process
-	quiet     map[int64]bool
+	instances browserkernel.Registry[int64, accountProcess]
 	configDir string
 	store     *store.Store
 	headless  bool
@@ -50,7 +56,7 @@ type Manager struct {
 func NewManager() *Manager { return NewManagerWithConfig("") }
 
 func NewManagerWithConfig(configDir string) *Manager {
-	return &Manager{procs: map[int64]*fingerprint.Process{}, configDir: configDir}
+	return &Manager{configDir: configDir}
 }
 
 func (m *Manager) runtimeConfigDir() string {
@@ -125,16 +131,15 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	running, _ := m.instances.Get(b.ID)
 	m.mu.Lock()
-	running := m.procs[b.ID]
-	quiet := m.quiet[b.ID]
 	st := m.store
 	headless := background || m.headless
 	if task {
 		headless = !m.taskVisible || m.headless
 	}
 	m.mu.Unlock()
-	reuse := quiet == headless
+	reuse := running.headless == headless
 	if !task {
 		reuse = true
 	}
@@ -171,10 +176,7 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 	warnSharedExit(st, b, proxy, globalProxy)
 	if running.Alive() {
 		// 先摘掉记录再关进程：这是换形态重开，不是用户关窗口，不该通知界面。
-		m.mu.Lock()
-		delete(m.procs, b.ID)
-		delete(m.quiet, b.ID)
-		m.mu.Unlock()
+		m.instances.RemoveIf(b.ID, nil)
 		running.Close()
 	}
 	roots := collisionRoots(dataRoot, dir, configDir, st)
@@ -197,13 +199,7 @@ func (m *Manager) start(ctx context.Context, b store.Browser, dataRoot, startURL
 			return "", fmt.Errorf("打开账号页面: %w", err)
 		}
 	}
-	m.mu.Lock()
-	m.procs[b.ID] = proc
-	if m.quiet == nil {
-		m.quiet = map[int64]bool{}
-	}
-	m.quiet[b.ID] = headless
-	m.mu.Unlock()
+	m.instances.Set(b.ID, accountProcess{Process: proc, headless: headless})
 	fingerprint.Register(b.Port, proc)
 	go m.watchExit(b.ID, b.Port, proc)
 	logging.Log.Info("账号[%s] 已使用 %s 打开", b.Name, KindFingerprint)
@@ -228,12 +224,8 @@ func (m *Manager) SetExitHandler(fn func(id int64)) {
 func (m *Manager) watchExit(id int64, port int, proc *fingerprint.Process) {
 	<-proc.Context().Done()
 	fingerprint.Unregister(port, proc)
+	_, owner := m.instances.RemoveIf(id, func(e accountProcess) bool { return e.Process == proc })
 	m.mu.Lock()
-	owner := m.procs[id] == proc
-	if owner {
-		delete(m.procs, id)
-		delete(m.quiet, id)
-	}
 	handler := m.onExit
 	m.mu.Unlock()
 	if owner && handler != nil {
@@ -255,30 +247,19 @@ func (m *Manager) stop(id int64, visibleOnly bool) bool {
 	gate := lock.(chan struct{})
 	gate <- struct{}{}
 	defer func() { <-gate }()
-	m.mu.Lock()
-	if visibleOnly && m.quiet[id] {
-		m.mu.Unlock()
-		return false
+	entry, removed := m.instances.RemoveIf(id, func(e accountProcess) bool { return !visibleOnly || !e.headless })
+	if !removed {
+		return !entry.headless
 	}
-	proc := m.procs[id]
-	delete(m.procs, id)
-	delete(m.quiet, id)
-	m.mu.Unlock()
-	proc.Close()
+	entry.Close()
 	return true
 }
 
 func (m *Manager) StopAll() {
 	m.lifecycle.Lock()
 	defer m.lifecycle.Unlock()
-	m.mu.Lock()
-	ids := make([]int64, 0, len(m.procs))
-	for id := range m.procs {
-		ids = append(ids, id)
-	}
-	m.mu.Unlock()
 	var wg sync.WaitGroup
-	for _, id := range ids {
+	for id := range m.instances.Snapshot() {
 		wg.Go(func() {
 			m.Stop(id)
 		})
@@ -287,15 +268,13 @@ func (m *Manager) StopAll() {
 }
 
 func (m *Manager) IsRunning(id int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.procs[id].Alive()
+	entry, _ := m.instances.Get(id)
+	return entry.Alive()
 }
 
 func (m *Manager) IsHeadless(id int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.procs[id].Alive() && m.quiet[id]
+	entry, _ := m.instances.Get(id)
+	return entry.Alive() && entry.headless
 }
 
 // RunningVisibleIDs returns account IDs that currently have an alive visible browser window.
@@ -303,11 +282,9 @@ func (m *Manager) RunningVisibleIDs() []int64 {
 	if m == nil {
 		return nil
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	var ids []int64
-	for id, proc := range m.procs {
-		if proc.Alive() && !m.quiet[id] {
+	for id, proc := range m.instances.Snapshot() {
+		if proc.Alive() && !proc.headless {
 			ids = append(ids, id)
 		}
 	}
@@ -320,14 +297,11 @@ func (m *Manager) ProbeVisible(ctx context.Context, id int64) bool {
 	if m == nil {
 		return false
 	}
-	m.mu.Lock()
-	proc := m.procs[id]
-	quiet := m.quiet[id]
-	m.mu.Unlock()
+	proc, _ := m.instances.Get(id)
 	if !proc.Alive() {
 		return false
 	}
-	if quiet {
+	if proc.headless {
 		return true
 	}
 	var res struct {
@@ -342,7 +316,7 @@ func (m *Manager) ProbeVisible(ctx context.Context, id int64) bool {
 	return proc.Alive()
 }
 
-func (m *Manager) pid(id int64) int { m.mu.Lock(); defer m.mu.Unlock(); return m.procs[id].PID() }
+func (m *Manager) pid(id int64) int { entry, _ := m.instances.Get(id); return entry.PID() }
 
 // RemoveProfile only deletes the current account directory inside dataRoot.
 func RemoveProfile(dataRoot, _ string, b store.Browser) error {
@@ -390,6 +364,12 @@ func RemoveProfile(dataRoot, _ string, b store.Browser) error {
 		return fmt.Errorf("配置目录还在")
 	}
 	return last
+}
+
+// AccountProfileDir resolves one application's managed account for preference I/O.
+func AccountProfileDir(dataRoot string, b store.Browser, create bool) (string, error) {
+	dir := accountProfilePath(dataRoot, KindFingerprint, b)
+	return dir, checkManagedProfile(dataRoot, "Fingerprint", KindFingerprint, dir, create)
 }
 
 func accountProfilePath(dataRoot, backend string, b store.Browser) string {

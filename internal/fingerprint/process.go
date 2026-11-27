@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/xxww0098/realbrowser/browserkernel"
 )
 
 var ansiEscapeRe = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
@@ -27,16 +29,19 @@ func stripANSI(s string) string {
 }
 
 type Options struct {
-	Profile           string   `json:"profile"`
-	Proxy             string   `json:"proxy,omitempty"`
-	DirectNetwork     bool     `json:"directNetwork,omitempty"`
-	Headless          bool     `json:"headless"`
-	Executable        string   `json:"executable,omitempty"`
-	Addons            []string `json:"addons,omitempty"`
-	CollisionRoots    []string `json:"collisionRoots,omitempty"`
-	IgnoreHTTPSErrors bool     `json:"ignoreHTTPSErrors,omitempty"`
-	Timezone          string   `json:"timezone,omitempty"`
-	Lang              string   `json:"lang,omitempty"`
+	Profile           string                        `json:"profile"`
+	Proxy             string                        `json:"proxy,omitempty"`
+	DirectNetwork     bool                          `json:"directNetwork,omitempty"`
+	Headless          bool                          `json:"headless"`
+	Executable        string                        `json:"executable,omitempty"`
+	Addons            []string                      `json:"addons,omitempty"`
+	CollisionRoots    []string                      `json:"collisionRoots,omitempty"`
+	IgnoreHTTPSErrors bool                          `json:"ignoreHTTPSErrors,omitempty"`
+	Timezone          string                        `json:"timezone,omitempty"`
+	Lang              string                        `json:"lang,omitempty"`
+	WindowWidth       int                           `json:"windowWidth,omitempty"`
+	WindowHeight      int                           `json:"windowHeight,omitempty"`
+	ColorScheme       browserkernel.ColorSchemeMode `json:"colorScheme,omitempty"`
 }
 
 type Event struct {
@@ -53,7 +58,7 @@ type reply struct {
 }
 
 type Process struct {
-	cmd       *exec.Cmd
+	child     *browserkernel.Process
 	in        io.WriteCloser
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -67,7 +72,7 @@ type Process struct {
 	Page      string
 }
 
-// Start uses an already installed, version-pinned Fingerprint runtime. It never searches for a system browser.
+// Start opens the active managed Fingerprint runtime for this profile.
 func Start(ctx context.Context, dataDir string, options Options, stderr io.Writer) (*Process, error) {
 	options.Proxy = strings.TrimSpace(options.Proxy)
 	if options.DirectNetwork && options.Proxy != "" {
@@ -93,6 +98,17 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 	if err != nil {
 		return nil, err
 	}
+	prefs, err := browserkernel.ReadProfile(profile)
+	if err != nil {
+		return nil, fmt.Errorf("读取指纹配置: %w", err)
+	}
+	if options.Timezone == "" {
+		options.Timezone = prefs.Timezone
+	}
+	if options.Lang == "" {
+		options.Lang = prefs.Lang
+	}
+	options.WindowWidth, options.WindowHeight, options.ColorScheme = prefs.WindowWidth, prefs.WindowHeight, prefs.ColorScheme
 	options.Profile = profile
 	roots, err := absUniquePaths(options.CollisionRoots)
 	if err != nil {
@@ -105,26 +121,29 @@ func Start(ctx context.Context, dataDir string, options Options, stderr io.Write
 	cmd.Dir = runtime.Dir
 	cmd.Env = browserRuntimeEnv(runtime.Dir, options.DirectNetwork)
 	cmd.Stderr = stderr
-	configureCommand(cmd)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
-	out, err := cmd.StdoutPipe()
+	out, writer, err := os.Pipe()
 	if err != nil {
 		in.Close()
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	cmd.Stdout = writer
+	child, err := browserkernel.StartProcess(cmd, browserkernel.PrivateDriver)
+	_ = writer.Close()
+	if err != nil {
 		in.Close()
 		out.Close()
 		return nil, err
 	}
 	life, cancel := context.WithCancel(context.Background())
-	p := &Process{cmd: cmd, in: in, ctx: life, cancel: cancel, done: make(chan struct{}), pending: map[int64]chan reply{}, listeners: map[int64]func(Event){}}
+	p := &Process{child: child, in: in, ctx: life, cancel: cancel, done: make(chan struct{}), pending: map[int64]chan reply{}, listeners: map[int64]func(Event){}}
 	go func() {
 		p.read(out)
-		_ = cmd.Wait()
+		_ = out.Close()
+		child.Wait()
 		cancel()
 		close(p.done)
 	}()
@@ -243,10 +262,10 @@ func (p *Process) Call(ctx context.Context, target, method string, params, out a
 func (p *Process) Context() context.Context { return p.ctx }
 func (p *Process) Alive() bool              { return p != nil && p.ctx.Err() == nil }
 func (p *Process) PID() int {
-	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+	if p == nil || p.child == nil {
 		return 0
 	}
-	return p.cmd.Process.Pid
+	return p.child.PID()
 }
 
 // Subscribe callbacks must return promptly; page calls belong in a separate goroutine.
@@ -271,7 +290,7 @@ func (p *Process) Close() {
 		select {
 		case <-p.done:
 		case <-time.After(3 * time.Second):
-			killCommand(p.cmd)
+			_ = p.child.Kill()
 			<-p.done
 		}
 	})

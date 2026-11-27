@@ -10,6 +10,7 @@ import {
   toThumbUrl,
 } from "@/lib/assets";
 import { dispatchTopEscape, pushEscapeHandler } from "@/lib/shortcuts";
+import { Core } from "@/lib/ipc";
 import { useSyncedDraft } from "@/lib/useSyncedDraft";
 import {
   TAB_BROWSER,
@@ -157,6 +158,7 @@ describe("App shell contracts", () => {
     expect(screen.getByTestId("nav-platform-doubao")).toBeInTheDocument();
     expect(screen.getByTestId("nav-platform-qianwen")).toBeInTheDocument();
     expect(screen.getByTestId("nav-platform-qwen_intl")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-platform-gemini")).toBeInTheDocument();
   });
 
   it("shows running pill and hides pool pill on utility pages without workbench topbar", () => {
@@ -461,5 +463,16 @@ describe("App shell contracts", () => {
     const bodyEvent = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     document.body.dispatchEvent(bodyEvent);
     expect(bodyEvent.defaultPrevented).toBe(true);
+  });
+
+  it("opens GitHub repository when clicking the sidebar brand logo", () => {
+    const spy = vi.spyOn(Core, "openExternal").mockResolvedValue(undefined);
+    try {
+      render(<App />);
+      fireEvent.click(screen.getByTestId("brand-repo-btn"));
+      expect(spy).toHaveBeenCalledWith("https://github.com/xxww0098/tulai");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

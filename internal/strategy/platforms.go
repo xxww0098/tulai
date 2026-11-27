@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1263,6 +1264,691 @@ func stripOSSProcessURL(raw string) string {
 	}
 	q.Del("x-oss-process")
 	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// Gemini Google Gemini（https://gemini.google.com/）策略。
+type Gemini struct{ base }
+
+// Platform 平台名。
+func (Gemini) Platform() string { return "Gemini" }
+
+// HomeURL Gemini 入口。
+func (Gemini) HomeURL() string { return "https://gemini.google.com/app" }
+
+// geminiImageModeActive 快速同步检查 Gemini 当前是否仍处于「制作图片 / Create image」模式。
+func geminiImageModeActive(s *cdp.Session) (bool, error) {
+	if s == nil {
+		return true, nil
+	}
+	out, err := s.Evaluate(`(() => {
+		function norm(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
+		function cleanText(el) {
+			if (!el) return '';
+			if (document.createTreeWalker && typeof NodeFilter !== 'undefined') {
+				var out = '', w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n;
+				while ((n = w.nextNode())) {
+					var skip = false;
+					for (var p = n.parentElement; p && p !== el; p = p.parentElement) {
+						var tag = String(p.tagName || '').toLowerCase();
+						if (tag === 'mat-icon' || tag === 'svg' || p.getAttribute('aria-hidden') === 'true') { skip = true; break; }
+					}
+					if (!skip) out += ' ' + (n.nodeValue || '');
+				}
+				return norm(out);
+			}
+			return norm(el.innerText || el.textContent);
+		}
+		function shown(el) {
+			if (!el || !el.isConnected) return false;
+			if (el.closest && el.closest('[aria-hidden="true"]')) return false;
+			var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
+			if (r.width <= 5 || r.height <= 5) return false;
+			var st = getComputedStyle(el);
+			return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.05;
+		}
+		var ed = document.querySelector('rich-textarea .ql-editor[contenteditable="true"],textarea');
+		if (ed) {
+			var ph = norm((ed.getAttribute && (ed.getAttribute('data-placeholder') || ed.getAttribute('aria-label') || ed.getAttribute('placeholder'))) || '');
+			if (/描述你的图片|描述你的图像|Describe your image/i.test(ph)) return true;
+		}
+		var scope = document.querySelector('input-area-v2,input-container') || document;
+		var btns = Array.from(scope.querySelectorAll('button,[role="button"]')).filter(shown);
+		return btns.some(function (el) {
+			var txt = cleanText(el);
+			var lbl = norm((el.getAttribute && el.getAttribute('aria-label')) || '');
+			var icon = el.querySelector && el.querySelector('mat-icon');
+			var iconName = (icon && (icon.getAttribute('fonticon') || icon.getAttribute('data-mat-icon-name') || norm(icon.textContent))) || '';
+			if (iconName === 'aspect_ratio' || /^(?:宽高比|Aspect ratio)(?:\s|$)/i.test(txt) || /^(?:宽高比|Aspect ratio)(?:\s|$)/i.test(lbl)) return true;
+			if (el.closest && el.closest('toolbox-drawer') && !el.getAttribute('aria-haspopup')) {
+				if (el.classList && (el.classList.contains('toolbox-drawer-item-deselect-button') || el.classList.contains('has-selected-item'))) {
+					if (/图片|图像|image/i.test(txt + ' ' + lbl) || iconName === 'image_create' || iconName === 'photo_prints') return true;
+				}
+				if (iconName === 'image_create' || iconName === 'photo_prints') return true;
+				if (/^(?:图片|制作图片|生成图片|Image|Create image)$/i.test(txt)) return true;
+			}
+			if (el.classList && el.classList.contains('toolbox-drawer-item-deselect-button')) {
+				if (/图片|图像|image/i.test(txt + ' ' + lbl) || iconName === 'image_create' || iconName === 'photo_prints') return true;
+			}
+			return false;
+		});
+	})()`)
+	if err != nil {
+		return false, err
+	}
+	var active bool
+	if err := cdp.ParseJSValue(out, &active); err != nil {
+		return false, err
+	}
+	return active, nil
+}
+
+// ensureGeminiImageMode 在 Gemini 输入区通过「+ → 制作图片」切换并确认进入图像生成模式，并保证输出格式停留在「图片」（非 GIF）。
+func ensureGeminiImageMode(s *cdp.Session) error {
+	return ensureGeminiImageModeWithTimeout(s, 10000)
+}
+
+func ensureGeminiImageModeWithTimeout(s *cdp.Session, timeoutMs int) error {
+	if s == nil {
+		return nil
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 10000
+	}
+	s.EnsureBase()
+	out, err := s.EvaluateAsync(`(async () => {
+		var timeoutMs = ` + fmt.Sprintf("%d", timeoutMs) + `;
+		function norm(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
+		function cleanText(el) {
+			if (!el) return '';
+			if (document.createTreeWalker && typeof NodeFilter !== 'undefined') {
+				var out = '', w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n;
+				while ((n = w.nextNode())) {
+					var skip = false;
+					for (var p = n.parentElement; p && p !== el; p = p.parentElement) {
+						var tag = String(p.tagName || '').toLowerCase();
+						if (tag === 'mat-icon' || tag === 'svg' || p.getAttribute('aria-hidden') === 'true') { skip = true; break; }
+					}
+					if (!skip) out += ' ' + (n.nodeValue || '');
+				}
+				return norm(out);
+			}
+			return norm(el.innerText || el.textContent);
+		}
+		function iconNameOf(el) {
+			if (!el || !el.querySelector) return '';
+			var icon = el.querySelector('mat-icon');
+			if (!icon) return '';
+			return norm(icon.getAttribute('fonticon') || icon.getAttribute('data-mat-icon-name') || icon.textContent || '');
+		}
+		function shown(el) {
+			if (!el || !el.isConnected) return false;
+			if (el.closest && el.closest('[aria-hidden="true"]')) return false;
+			var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
+			if (r.width <= 5 || r.height <= 5) return false;
+			var st = getComputedStyle(el);
+			return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.05;
+		}
+		function visible(el) {
+			if (!shown(el)) return false;
+			var st = getComputedStyle(el);
+			return st.pointerEvents !== 'none' && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+		}
+		async function press(el) {
+			if (!el || !el.isConnected) return false;
+			if (typeof window.tulaiClick === 'function') {
+				try { if (await window.tulaiClick(el)) return true; } catch (e) {}
+			}
+			if (!el.isConnected) return false;
+			try {
+				if (typeof el.focus === 'function') el.focus();
+				var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+				var opts = { bubbles: true, cancelable: true, button: 0, buttons: 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+				if (typeof PointerEvent === 'function') {
+					el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts)));
+				}
+				el.dispatchEvent(new MouseEvent('mousedown', opts));
+				if (typeof PointerEvent === 'function') {
+					el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts)));
+				}
+				el.dispatchEvent(new MouseEvent('mouseup', opts));
+				el.click();
+				return true;
+			} catch (e) { return false; }
+		}
+		function composerScope() {
+			return document.querySelector('input-area-v2,input-container') || document;
+		}
+		function isCreateImageLabel(text) {
+			var t = norm(text);
+			return /^(?:制作图片|生成图片|创建图片|Create image|Create images|Generate image)$/i.test(t);
+		}
+		function isImageModeActive() {
+			var ed = document.querySelector('rich-textarea .ql-editor[contenteditable="true"],textarea');
+			if (ed) {
+				var ph = norm((ed.getAttribute && (ed.getAttribute('data-placeholder') || ed.getAttribute('aria-label') || ed.getAttribute('placeholder'))) || '');
+				if (/描述你的图片|描述你的图像|Describe your image/i.test(ph)) return true;
+			}
+			var btns = Array.from(composerScope().querySelectorAll('button,[role="button"]')).filter(shown);
+			return btns.some(function (el) {
+				var txt = cleanText(el);
+				var lbl = norm((el.getAttribute && el.getAttribute('aria-label')) || '');
+				var ic = iconNameOf(el);
+				if (ic === 'aspect_ratio' || /^(?:宽高比|Aspect ratio)(?:\s|$)/i.test(txt) || /^(?:宽高比|Aspect ratio)(?:\s|$)/i.test(lbl)) return true;
+				if (el.closest && el.closest('toolbox-drawer') && !el.getAttribute('aria-haspopup')) {
+					if (el.classList && (el.classList.contains('toolbox-drawer-item-deselect-button') || el.classList.contains('has-selected-item'))) {
+						if (/图片|图像|image/i.test(txt + ' ' + lbl) || ic === 'image_create' || ic === 'photo_prints') return true;
+					}
+					if (ic === 'image_create' || ic === 'photo_prints') return true;
+					if (/^(?:图片|制作图片|生成图片|Image|Create image)$/i.test(txt)) return true;
+				}
+				if (el.classList && el.classList.contains('toolbox-drawer-item-deselect-button')) {
+					if (/图片|图像|image/i.test(txt + ' ' + lbl) || ic === 'image_create' || ic === 'photo_prints') return true;
+				}
+				return false;
+			});
+		}
+		function openMenus() {
+			return Array.from(document.querySelectorAll('.cdk-overlay-container [role="menu"],.cdk-overlay-container .mat-mdc-menu-panel,mat-action-list[role="menu"],[role="menu"],[role="listbox"]')).filter(function (m) {
+				return m.getAttribute('data-state') !== 'closed' && visible(m);
+			});
+		}
+		async function closeOpenMenus() {
+			if (!openMenus().length) return;
+			try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); } catch (e) {}
+			for (var i = 0; i < 6 && openMenus().length; i++) {
+				await new Promise(function (r) { setTimeout(r, 25); });
+			}
+		}
+		function findMenuCreateImageItem() {
+			var menus = openMenus();
+			for (var i = menus.length - 1; i >= 0; i--) {
+				var items = Array.from(menus[i].querySelectorAll('button,[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="option"]'));
+				var hit = items.find(function (el) {
+					if (!visible(el)) return false;
+					var ic = iconNameOf(el);
+					if (ic === 'image_create' || ic === 'photo_prints') return true;
+					var txt = cleanText(el);
+					var lbl = norm((el.getAttribute && el.getAttribute('aria-label')) || '');
+					return isCreateImageLabel(txt) || isCreateImageLabel(lbl);
+				});
+				if (hit) return hit;
+			}
+			return null;
+		}
+		function findMoreToolsMenuItem() {
+			var menus = openMenus();
+			for (var i = menus.length - 1; i >= 0; i--) {
+				var items = Array.from(menus[i].querySelectorAll('button,[role="menuitem"],[role="menuitemcheckbox"]'));
+				var hit = items.find(function (el) {
+					if (!visible(el)) return false;
+					var txt = cleanText(el);
+					return /^(?:更多工具|More tools)$/i.test(txt);
+				});
+				if (hit) return hit;
+			}
+			return null;
+		}
+		function findPlusMenuTrigger() {
+			var scope = composerScope();
+			var preferred = [
+				'simplified-input-menu button[aria-haspopup="menu"]',
+				'gem-icon-button.gem-menu-button button',
+				'button[aria-label="上传和工具"]',
+				'button[aria-label="Upload & tools"]',
+				'button[aria-label*="上传和工具"]',
+				'button[aria-label*="Upload & tools" i]',
+				'toolbox-drawer button[aria-label*="工具"]',
+				'toolbox-drawer button[aria-label*="Tools" i]'
+			];
+			for (var i = 0; i < preferred.length; i++) {
+				var hit = Array.from(scope.querySelectorAll(preferred[i])).find(visible);
+				if (hit) return hit;
+			}
+			return Array.from(scope.querySelectorAll('button')).find(function (el) {
+				if (!visible(el)) return false;
+				var ic = iconNameOf(el);
+				return ic === 'add' || ic === 'tune' || ic === 'build';
+			}) || null;
+		}
+		function findConflictingChip() {
+			var scope = composerScope();
+			return Array.from(scope.querySelectorAll('.toolbox-drawer-item-deselect-button')).find(function (el) {
+				if (!visible(el)) return false;
+				var txt = cleanText(el);
+				var ic = iconNameOf(el);
+				return !/图片|图像|image/i.test(txt) && ic !== 'image_create' && ic !== 'photo_prints';
+			}) || null;
+		}
+		// 若格式下拉意外停在 GIF，切回「图片 / Image」（当前为「图片」时不触碰，避免与模式胶囊混淆）。
+		async function ensureStillImageFormat(deadline) {
+			var scope = composerScope();
+			var gifBtn = Array.from(scope.querySelectorAll('button,[role="button"]')).find(function (el) {
+				if (!visible(el)) return false;
+				var txt = cleanText(el);
+				var ic = iconNameOf(el);
+				return /^GIF$/i.test(txt) || ic === 'gif_box';
+			});
+			if (!gifBtn) return;
+			await press(gifBtn);
+			var waitUntil = Math.min(deadline, Date.now() + 1800);
+			while (Date.now() < waitUntil) {
+				var menus = openMenus();
+				for (var i = menus.length - 1; i >= 0; i--) {
+					var opt = Array.from(menus[i].querySelectorAll('button,[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="option"]')).find(function (el) {
+						if (!visible(el)) return false;
+						var t = cleanText(el);
+						return /^(?:图片|图像|Image)$/i.test(t);
+					});
+					if (opt) {
+						await press(opt);
+						await new Promise(function (r) { setTimeout(r, 80); });
+						await closeOpenMenus();
+						return;
+					}
+				}
+				await new Promise(function (r) { setTimeout(r, 30); });
+			}
+			await closeOpenMenus();
+		}
+		function hasLoginWall() {
+			if (Array.from(document.querySelectorAll('[gem-open-account-menu],a[href*="accounts.google.com/SignOutOptions"],user-profile-picture img[src]')).some(visible)) return false;
+			if (Array.from(document.querySelectorAll('[data-test-id="sidenav-error-action-link"],[data-test-id="sign-out-banner"]')).some(visible)) return true;
+			return Array.from(document.querySelectorAll('button,[role="button"],a')).some(function (el) {
+				return visible(el) && /^(Sign in|Log in|登录|立即登录)$/i.test(cleanText(el));
+			});
+		}
+		var deadline = Date.now() + timeoutMs;
+		if (isImageModeActive()) {
+			await ensureStillImageFormat(deadline);
+			return JSON.stringify({ ok: true, already: true });
+		}
+		var clicks = 0, lastClick = 0;
+		var opens = 0, lastOpen = 0;
+		var moreOpens = 0, lastMoreOpen = 0;
+		var exits = 0, lastExit = 0;
+		while (Date.now() < deadline) {
+			if (isImageModeActive()) {
+				await closeOpenMenus();
+				await ensureStillImageFormat(deadline);
+				return JSON.stringify({ ok: true });
+			}
+			var item = findMenuCreateImageItem();
+			if (item) {
+				if (clicks < 3 && (clicks === 0 || Date.now() - lastClick >= 1400)) {
+					await press(item);
+					clicks++;
+					lastClick = Date.now();
+				}
+			} else if (openMenus().length) {
+				var more = findMoreToolsMenuItem();
+				if (more && moreOpens < 2 && (moreOpens === 0 || Date.now() - lastMoreOpen >= 1000)) {
+					await press(more);
+					moreOpens++;
+					lastMoreOpen = Date.now();
+				}
+			} else {
+				var conflict = findConflictingChip();
+				if (conflict && exits < 2 && (exits === 0 || Date.now() - lastExit >= 1000)) {
+					await press(conflict);
+					exits++;
+					lastExit = Date.now();
+				} else {
+					var trigger = findPlusMenuTrigger();
+					if (trigger && opens < 3 && (opens === 0 || Date.now() - lastOpen >= 1400)) {
+						await press(trigger);
+						opens++;
+						lastOpen = Date.now();
+					}
+				}
+			}
+			await new Promise(function (r) { setTimeout(r, 30); });
+		}
+		if (isImageModeActive()) {
+			await closeOpenMenus();
+			await ensureStillImageFormat(deadline);
+			return JSON.stringify({ ok: true });
+		}
+		await closeOpenMenus();
+		if (clicks === 0 && opens === 0 && hasLoginWall()) {
+			return JSON.stringify({ ok: false, error: '请先登录 Gemini 账号' });
+		}
+		return JSON.stringify({ ok: false, error: clicks ? '点击 Gemini「制作图片」后模式未生效' : '未找到 Gemini「制作图片」入口' });
+	})()`)
+	if err != nil {
+		return err
+	}
+	var res struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := cdp.ParseJSValue(out, &res); err != nil {
+		return err
+	}
+	if !res.OK {
+		if res.Error == "" {
+			res.Error = "模式未生效"
+		}
+		return fmt.Errorf("进入 Gemini 制作图片模式: %s", res.Error)
+	}
+	return nil
+}
+
+// EnsureImageMode 确认 Gemini 处于「制作图片 / Create image」模式。
+func (Gemini) EnsureImageMode(s *cdp.Session) error {
+	return ensureGeminiImageMode(s)
+}
+
+// CleanComposer 清理输入区后自动切入 Gemini「制作图片 / Create image」模式。
+func (g Gemini) CleanComposer(s *cdp.Session) error {
+	if err := g.base.CleanComposer(s); err != nil {
+		return err
+	}
+	return ensureGeminiImageMode(s)
+}
+
+var geminiNativeRatioSet = map[string]bool{
+	"1:1":  true,
+	"9:16": true,
+	"3:4":  true,
+	"4:3":  true,
+	"16:9": true,
+}
+
+// SetOutputRatio 在 Gemini「制作图片」模式下切换原生「宽高比」下拉菜单（支持 1:1 / 9:16 / 3:4 / 4:3 / 16:9）。
+func (Gemini) SetOutputRatio(s *cdp.Session, ratio string) (bool, string) {
+	ratio = strings.TrimSpace(ratio)
+	if s == nil || ratio == "" {
+		return false, ""
+	}
+	if !geminiNativeRatioSet[ratio] {
+		return false, fmt.Sprintf("Gemini 原生宽高比不支持 %s（仅支持 1:1、9:16、3:4、4:3、16:9）", ratio)
+	}
+	arg, err := json.Marshal(ratio)
+	if err != nil {
+		return false, err.Error()
+	}
+	s.EnsureBase()
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			if err := ensureGeminiImageMode(s); err != nil {
+				return false, err.Error()
+			}
+		}
+		out, err := s.EvaluateAsync(`(async () => {
+		var want = String(` + string(arg) + ` || '').trim();
+		var fastMiss = ` + fmt.Sprintf("%t", attempt == 0) + `;
+		function norm(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
+		function cleanText(el) {
+			if (!el) return '';
+			if (document.createTreeWalker && typeof NodeFilter !== 'undefined') {
+				var out = '', w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n;
+				while ((n = w.nextNode())) {
+					var skip = false;
+					for (var p = n.parentElement; p && p !== el; p = p.parentElement) {
+						var tag = String(p.tagName || '').toLowerCase();
+						if (tag === 'mat-icon' || tag === 'svg' || p.getAttribute('aria-hidden') === 'true') { skip = true; break; }
+					}
+					if (!skip) out += ' ' + (n.nodeValue || '');
+				}
+				return norm(out);
+			}
+			return norm(el.innerText || el.textContent);
+		}
+		function iconNameOf(el) {
+			if (!el || !el.querySelector) return '';
+			var icon = el.querySelector('mat-icon');
+			if (!icon) return '';
+			return norm(icon.getAttribute('fonticon') || icon.getAttribute('data-mat-icon-name') || icon.textContent || '');
+		}
+		function shown(el) {
+			if (!el || !el.isConnected) return false;
+			if (el.closest && el.closest('[aria-hidden="true"]')) return false;
+			var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
+			if (r.width <= 5 || r.height <= 5) return false;
+			var st = getComputedStyle(el);
+			return st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.05;
+		}
+		function visible(el) {
+			if (!shown(el)) return false;
+			var st = getComputedStyle(el);
+			return st.pointerEvents !== 'none' && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+		}
+		function ratioOf(el) {
+			if (!el) return '';
+			var txt = cleanText(el);
+			var lbl = norm((el.getAttribute && el.getAttribute('aria-label')) || '');
+			var m = /\b(1:1|9:16|3:4|4:3|16:9)\b/.exec(txt) || /\b(1:1|9:16|3:4|4:3|16:9)\b/.exec(lbl);
+			if (m) return m[1];
+			var ic = iconNameOf(el);
+			if (ic === 'aspect_ratio' || /^(?:宽高比|Aspect ratio)$/i.test(txt) || /(?:宽高比|Aspect ratio)/i.test(lbl)) return 'default';
+			return '';
+		}
+		function composerScope() {
+			return document.querySelector('input-area-v2,input-container') || document;
+		}
+		function findShownControl() {
+			var all = Array.from(composerScope().querySelectorAll('button,[role="button"]')).filter(function (el) {
+				if (!shown(el)) return false;
+				if (el.closest && el.closest('.cdk-overlay-container,[role="menu"],[role="listbox"]')) return false;
+				return ratioOf(el) !== '';
+			});
+			if (!all.length) return null;
+			return all.find(function (el) { return iconNameOf(el) === 'aspect_ratio' || el.getAttribute('aria-haspopup'); }) || all[0];
+		}
+		function findControl() {
+			var all = Array.from(composerScope().querySelectorAll('button,[role="button"]')).filter(function (el) {
+				if (!visible(el)) return false;
+				if (el.closest && el.closest('.cdk-overlay-container,[role="menu"],[role="listbox"]')) return false;
+				return ratioOf(el) !== '';
+			});
+			if (!all.length) return null;
+			return all.find(function (el) { return iconNameOf(el) === 'aspect_ratio' || el.getAttribute('aria-haspopup'); }) || all[0];
+		}
+		function findMenu() {
+			return Array.from(document.querySelectorAll('.cdk-overlay-container [role="menu"],.cdk-overlay-container [role="listbox"],.cdk-overlay-container .mat-mdc-menu-panel,[role="menu"],[role="listbox"]')).find(function (m) {
+				if (m.getAttribute('data-state') === 'closed') return false;
+				if (!visible(m)) return false;
+				var txt = norm(m.innerText || m.textContent);
+				return /\b1:1\b/.test(txt) && /\b16:9\b/.test(txt) && /\b9:16\b/.test(txt);
+			}) || null;
+		}
+		function findOption(menu) {
+			if (!menu) return null;
+			var items = Array.from(menu.querySelectorAll('[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="option"],button,.mat-mdc-menu-item'));
+			var exact = items.find(function (el) { return visible(el) && cleanText(el) === want; });
+			if (exact) return exact;
+			return items.find(function (el) {
+				if (!visible(el)) return false;
+				var m = /\b(1:1|9:16|3:4|4:3|16:9)\b/.exec(cleanText(el));
+				return !!(m && m[1] === want);
+			}) || null;
+		}
+		async function press(el) {
+			if (!el || !el.isConnected) return false;
+			if (typeof window.tulaiClick === 'function') {
+				try { if (await window.tulaiClick(el)) return true; } catch (e) {}
+			}
+			if (!el.isConnected) return false;
+			try {
+				if (typeof el.focus === 'function') el.focus();
+				var r = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+				var opts = { bubbles: true, cancelable: true, button: 0, buttons: 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+				if (typeof PointerEvent === 'function') {
+					el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts)));
+				}
+				el.dispatchEvent(new MouseEvent('mousedown', opts));
+				if (typeof PointerEvent === 'function') {
+					el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts)));
+				}
+				el.dispatchEvent(new MouseEvent('mouseup', opts));
+				el.click();
+				return true;
+			} catch (e) { return false; }
+		}
+		async function closeMenu(ctrl, waitNatural) {
+			if (waitNatural) {
+				for (var w = 0; w < 10 && findMenu(); w++) {
+					await new Promise(function (r) { setTimeout(r, 25); });
+				}
+				if (!findMenu()) return;
+			}
+			if (!findMenu()) return;
+			try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); } catch (e) {}
+			for (var i = 0; i < 6 && findMenu(); i++) {
+				await new Promise(function (r) { setTimeout(r, 25); });
+			}
+			if (findMenu() && ctrl && visible(ctrl)) {
+				try { await press(ctrl); } catch (e) {}
+				await new Promise(function (r) { setTimeout(r, 40); });
+			}
+		}
+		var ctrl = findShownControl();
+		if (!ctrl && fastMiss) {
+			return JSON.stringify({ ok: false, lostMode: true, error: '未找到 Gemini 宽高比入口' });
+		}
+		var deadline = Date.now() + 8000;
+		while (!ctrl && Date.now() < deadline) {
+			ctrl = findShownControl();
+			if (ctrl) break;
+			await new Promise(function (r) { setTimeout(r, 30); });
+		}
+		if (!ctrl) return JSON.stringify({ ok: false, lostMode: true, error: '未找到 Gemini 宽高比入口' });
+		if (ratioOf(ctrl) === want) {
+			if (findMenu()) await closeMenu(ctrl, false);
+			return JSON.stringify({ ok: true, already: true });
+		}
+		var lastError = 'Gemini 宽高比 ' + want + ' 未生效';
+		for (var round = 0; round < 3 && Date.now() < deadline; round++) {
+			var liveCtrl = findControl();
+			if (liveCtrl) ctrl = liveCtrl;
+			else if (!ctrl || !ctrl.isConnected) {
+				await closeMenu(null, false);
+				return JSON.stringify({ ok: false, lostMode: true, error: '未找到 Gemini 宽高比入口' });
+			}
+			if (ctrl && ratioOf(ctrl) === want) {
+				await closeMenu(ctrl, true);
+				return JSON.stringify({ ok: true });
+			}
+			var menu = findMenu();
+			var openUntil = Math.min(deadline, Date.now() + 2400);
+			var lastOpen = 0;
+			while (!menu && Date.now() < openUntil) {
+				liveCtrl = findControl();
+				if (liveCtrl) ctrl = liveCtrl;
+				else if (!ctrl || !ctrl.isConnected) {
+					await closeMenu(null, false);
+					return JSON.stringify({ ok: false, lostMode: true, error: '未找到 Gemini 宽高比入口' });
+				}
+				if (lastOpen === 0 || Date.now() - lastOpen >= 1000) {
+					if (!await press(ctrl)) {
+						lastError = '无法点击 Gemini 宽高比入口';
+						break;
+					}
+					lastOpen = Date.now();
+				}
+				await new Promise(function (r) { setTimeout(r, 30); });
+				menu = findMenu();
+			}
+			if (!menu) {
+				lastError = 'Gemini 宽高比菜单未出现';
+				continue;
+			}
+			await new Promise(function (r) { setTimeout(r, 25); });
+			var item = findOption(menu);
+			if (!item) {
+				await closeMenu(ctrl, false);
+				return JSON.stringify({ ok: false, error: 'Gemini 宽高比菜单没有 ' + want });
+			}
+			if (!await press(item)) {
+				await closeMenu(ctrl, false);
+				lastError = '无法点击 Gemini 宽高比 ' + want;
+				continue;
+			}
+			var confirmUntil = Math.min(deadline, Date.now() + 1800);
+			while (Date.now() < confirmUntil) {
+				var again = findShownControl();
+				if (again && ratioOf(again) === want) {
+					await closeMenu(again, true);
+					return JSON.stringify({ ok: true });
+				}
+				await new Promise(function (r) { setTimeout(r, 30); });
+			}
+			await closeMenu(findControl(), false);
+		}
+		await closeMenu(findControl(), false);
+		return JSON.stringify({ ok: false, error: lastError });
+	})()`)
+		if err != nil {
+			return false, err.Error()
+		}
+		var res struct {
+			OK       bool   `json:"ok"`
+			Error    string `json:"error"`
+			LostMode bool   `json:"lostMode"`
+		}
+		if err := cdp.ParseJSValue(out, &res); err != nil {
+			return false, err.Error()
+		}
+		if res.OK || !res.LostMode {
+			return res.OK, res.Error
+		}
+	}
+	return false, "未找到 Gemini 宽高比入口"
+}
+
+// SendPrompt 发送前确认 Gemini 仍处于「制作图片 / Create image」模式。
+func (g Gemini) SendPrompt(s *cdp.Session, prompt string) error {
+	if err := ensureGeminiImageMode(s); err != nil {
+		return err
+	}
+	return g.base.sendPromptWithPostInsertGuard(s, prompt, ensureGeminiImageMode, geminiImageModeActive)
+}
+
+// WaitForResult 等待 Gemini 生成结果，断页重开时始终回到 https://gemini.google.com/app/<id>。
+func (Gemini) WaitForResult(s *cdp.Session, timeout time.Duration) ([]Result, error) {
+	return waitForResultFor(s, "Gemini", timeout, nil)
+}
+
+// FetchResultBytes Gemini 优先尝试将 lh3.googleusercontent.com 尺寸后缀升级为 =s0 拉取全分辨率原图，签名拒绝时回退原始地址。
+func (g Gemini) FetchResultBytes(s *cdp.Session, raw string) ([]byte, error) {
+	tried := map[string]bool{}
+	var last error
+	for _, candidate := range []string{geminiOriginalImageURL(raw), raw} {
+		if candidate == "" || tried[candidate] {
+			continue
+		}
+		tried[candidate] = true
+		body, err := g.base.FetchResultBytes(s, candidate)
+		if err == nil {
+			return body, nil
+		}
+		last = err
+	}
+	if last == nil {
+		last = fmt.Errorf("缺少图片地址")
+	}
+	return nil, last
+}
+
+var geminiSizeModifierRe = regexp.MustCompile(`=(?:[swh]\d+)(?:-[a-zA-Z0-9]+)*$`)
+
+func geminiOriginalImageURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	u, err := url.Parse(trimmed)
+	if err != nil || !strings.Contains(strings.ToLower(u.Host), "googleusercontent.com") {
+		return trimmed
+	}
+	slash := strings.LastIndex(u.Path, "/")
+	eq := strings.LastIndex(u.Path, "=")
+	if eq <= slash+1 {
+		return trimmed
+	}
+	suffix := u.Path[eq:]
+	if strings.EqualFold(suffix, "=s0") || !geminiSizeModifierRe.MatchString(suffix) {
+		return trimmed
+	}
+	u.Path = u.Path[:eq] + "=s0"
 	return u.String()
 }
 

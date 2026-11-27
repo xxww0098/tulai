@@ -17,7 +17,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 const yahooJPTestURL = "https://store.shopping.yahoo.co.jp/favras/fn02131.html"
@@ -193,7 +192,7 @@ func TestYahooJPRenderedCapture(t *testing.T) {
 	if err := session.run(ctx, fingerprint.Navigate(yahooJPTestURL)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.run(ctx, chromedp.ActionFunc(func(ec context.Context) error {
+	if err := session.run(ctx, fingerprint.ActionFunc(func(ec context.Context) error {
 		return network.SetCookie("synthetic_session", "example").WithURL("https://store.shopping.yahoo.co.jp/").WithHTTPOnly(true).Do(ec)
 	})); err != nil {
 		t.Fatal(err)

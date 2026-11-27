@@ -2,7 +2,7 @@
   "name": "tulai",
   "slug": "tulai",
   "identifier": "dev.tulai.app",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "copyright": "Copyright (c) 2026 xxww0098",
   "publisher": "xxww0098",
   "license": "MIT",
@@ -23,7 +23,7 @@
     "installDirName": "tulai"
   },
   "linux": {
-    "comment": "批量生图（豆包 / 千问）",
+    "comment": "批量生图（豆包 / 千问 / 千问国际 / Gemini）",
     "categories": ["Graphics", "Utility"],
     "webview": true,
     "formats": ["deb"]

@@ -437,3 +437,24 @@ func TestCoreCopyImageAndEditOpenPath(t *testing.T) {
 		t.Fatalf("expected EditOpenPath to select existing pngPath without dupes, got selected=%d len=%d", a.edit.selected, len(a.edit.files))
 	}
 }
+
+func TestCoreOpenExternalValidation(t *testing.T) {
+	a := &App{}
+	host := &stubDesktopHost{}
+	a.BindHost(host)
+
+	coreSvc := &CoreService{app: a}
+	const repoURL = "https://github.com/xxww0098/tulai"
+	if err := coreSvc.OpenExternal(context.Background(), repoURL); err != nil {
+		t.Fatalf("OpenExternal(https) failed: %v", err)
+	}
+	if len(host.openedURLs) != 1 || host.openedURLs[0] != repoURL {
+		t.Fatalf("expected %q recorded, got %v", repoURL, host.openedURLs)
+	}
+
+	for _, bad := range []string{"file:///etc/passwd", "javascript:alert(1)", "https://"} {
+		if err := coreSvc.OpenExternal(context.Background(), bad); err == nil {
+			t.Fatalf("expected OpenExternal(%q) to fail", bad)
+		}
+	}
+}

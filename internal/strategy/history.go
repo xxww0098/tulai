@@ -23,6 +23,9 @@ var qwenHistoryJS string
 //go:embed js/qwen_intl_history.js
 var qwenIntlHistoryJS string
 
+//go:embed js/gemini_history.js
+var geminiHistoryJS string
+
 //go:embed js/history_fast.js
 var historyFastJS string
 
@@ -61,7 +64,7 @@ type HistoryCleaner interface {
 	ClearHistory(ctx context.Context, s *cdp.Session, opts ClearHistoryOptions) (ClearHistoryResult, error)
 }
 
-// CurrentConversationID 返回当前页面 URL 对应的会话 ID（豆包/千问为 /chat/<id>，千问国际为 /c/<id>）。
+// CurrentConversationID 返回当前页面 URL 对应的会话 ID（豆包/千问为 /chat/<id>，千问国际为 /c/<id>，Gemini 为 /app/<id>）。
 func CurrentConversationID(s *cdp.Session) string {
 	if s == nil {
 		return ""
@@ -76,6 +79,8 @@ func CurrentConversationID(s *cdp.Session) string {
 			if (i >= 0 && parts[i + 1]) return parts[i + 1];
 			const c = parts.indexOf('c');
 			if (c >= 0 && parts[c + 1] && !/^(new-chat|new-branch|guest|local)$/i.test(parts[c + 1])) return parts[c + 1];
+			const a = parts.indexOf('app');
+			if (a >= 0 && parts[a + 1] && !/^(new|images|download|gems|settings|mystuff)$/i.test(parts[a + 1])) return parts[a + 1];
 			return '';
 		} catch (e) { return ''; }
 	})()`), `"`)
@@ -568,6 +573,9 @@ func WaitHistorySidebarReady(ctx context.Context, sess *cdp.Session, platform st
 	} else if platform == "千问国际" {
 		readyExpr = `document.readyState !== 'loading' && !!(document.querySelector('a.chat-item-drag-link[aria-label="chat-item"],a[href*="/c/"]') || document.querySelector('.header-right-auth-button') || Array.from(document.querySelectorAll('button,[role="button"],a')).some(function(el){ return /^(Log in|Sign in|登录|立即登录)$/i.test(String(el.innerText||'').trim()); }))`
 		shellExpr = `document.readyState !== 'loading' && !!document.querySelector('.sidebar-user,.user-menu-btn,textarea.message-input-textarea')`
+	} else if platform == "Gemini" {
+		readyExpr = `document.readyState !== 'loading' && !!(document.querySelector('[data-test-id="conversation"],a[href*="/app/"]') || document.querySelector('[data-test-id="sidenav-error-action-link"],[data-test-id="sign-out-banner"]') || Array.from(document.querySelectorAll('button,[role="button"],a')).some(function(el){ return /^(Sign in|Log in|登录|立即登录)$/i.test(String(el.innerText||'').trim()); }))`
+		shellExpr = `document.readyState !== 'loading' && !!document.querySelector('side-navigation-v2,bard-sidenav,rich-textarea .ql-editor')`
 	}
 	var shellSeen time.Time
 	for time.Now().Before(deadline) {
@@ -1043,6 +1051,110 @@ func (q QwenIntl) ClearHistory(ctx context.Context, s *cdp.Session, opts ClearHi
 		},
 		reloadAndWait: func(stepCtx context.Context) error {
 			return reloadHistoryPage(stepCtx, s, q.HomeURL(), q.Platform())
+		},
+	})
+}
+
+// ---- Gemini 历史记录删除 ----
+
+func evalGeminiHistoryRaw(ctx context.Context, s *cdp.Session, body string) (string, error) {
+	if s == nil {
+		return "", errors.New("缺少浏览器会话")
+	}
+	s.EnsureBase()
+	rev := fmt.Sprintf("%x", sha256.Sum256([]byte(geminiHistoryJS)))
+	expr := `(async () => {
+		if (!window.__tulaiGeminiHistory || window.__tulaiGeminiHistoryRev !== ` + fmt.Sprintf("%q", rev) + `) {
+			delete window.__tulaiGeminiHistory;` + geminiHistoryJS + `
+			window.__tulaiGeminiHistoryRev = ` + fmt.Sprintf("%q", rev) + `;
+		}
+		` + body + `
+	})()`
+	var raw string
+	if err := s.EvaluateContext(ctx, expr, &raw); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+func evalGeminiHistory(ctx context.Context, s *cdp.Session, body string) (historyStepOutcome, error) {
+	raw, err := evalGeminiHistoryRaw(ctx, s, body)
+	if err != nil {
+		return historyStepOutcome{}, err
+	}
+	var out historyStepOutcome
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return historyStepOutcome{}, fmt.Errorf("解析 Gemini 删除结果: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteConversation 删除指定 Gemini 对话（convID 为空时删除当前页对话）。
+func (Gemini) DeleteConversation(ctx context.Context, s *cdp.Session, convID string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	convID = strings.TrimSpace(convID)
+	arg, err := json.Marshal(convID)
+	if err != nil {
+		return err
+	}
+	out, err := evalGeminiHistory(ctx, s, `return JSON.stringify(await window.__tulaiGeminiHistory.deleteConversation(document, `+string(arg)+`, null, 10000));`)
+	if err != nil {
+		return err
+	}
+	if !out.OK && out.NotFound && convID != "" {
+		FocusQwenChatFor(s, "Gemini", convID, "")
+		out, err = evalGeminiHistory(ctx, s, `return JSON.stringify(await window.__tulaiGeminiHistory.deleteConversation(document, `+string(arg)+`, null, 10000));`)
+		if err != nil {
+			return err
+		}
+	}
+	if !out.OK {
+		return out.stoppedError()
+	}
+	return nil
+}
+
+// ClearHistory 批量清理 Gemini 聊天历史记录（FastMode 下尝试捕获删除模板并自动回退逐条侧边栏 DOM 删除）。
+func (g Gemini) ClearHistory(ctx context.Context, s *cdp.Session, opts ClearHistoryOptions) (ClearHistoryResult, error) {
+	return clearHistoryExec(ctx, s, opts, historyDriver{
+		installFast: func(stepCtx context.Context) error {
+			return ensureHistoryFast(stepCtx, s)
+		},
+		domStep: func(stepCtx context.Context, skipIDs []string, keepRecent int) (historyStepOutcome, error) {
+			skipJSON, err := json.Marshal(skipIDs)
+			if err != nil {
+				return historyStepOutcome{}, err
+			}
+			return evalGeminiHistory(stepCtx, s, fmt.Sprintf(`return JSON.stringify(await window.__tulaiGeminiHistory.deleteNextHistoryItem(document, %s, %d, null, 10000));`, string(skipJSON), keepRecent))
+		},
+		takeTemplate: func(stepCtx context.Context) (json.RawMessage, error) {
+			return takeFastTemplate(stepCtx, s)
+		},
+		collectIDs: func(stepCtx context.Context, skipIDs []string, keepRecent, maxCount int) (historyCollectResult, error) {
+			skipJSON, err := json.Marshal(skipIDs)
+			if err != nil {
+				return historyCollectResult{}, err
+			}
+			raw, err := evalGeminiHistoryRaw(stepCtx, s, fmt.Sprintf(`return JSON.stringify(await window.__tulaiGeminiHistory.collectHistoryIds(document, %s, %d, %d));`, string(skipJSON), keepRecent, maxCount))
+			if err != nil {
+				return historyCollectResult{}, err
+			}
+			var out historyCollectResult
+			if err := json.Unmarshal([]byte(raw), &out); err != nil {
+				return historyCollectResult{}, err
+			}
+			return out, nil
+		},
+		replayOne: func(stepCtx context.Context, tpl json.RawMessage, id string, stripSign bool) (fastReplayResult, error) {
+			return replayFastOne(stepCtx, s, tpl, id, stripSign)
+		},
+		replayWave: func(stepCtx context.Context, tpl json.RawMessage, ids []string, concurrency int, stripSign bool) (fastReplayResult, error) {
+			return replayFastWave(stepCtx, s, tpl, ids, concurrency, stripSign)
+		},
+		reloadAndWait: func(stepCtx context.Context) error {
+			return reloadHistoryPage(stepCtx, s, g.HomeURL(), g.Platform())
 		},
 	})
 }

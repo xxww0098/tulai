@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/chromedp/chromedp"
+	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -132,7 +132,7 @@ func (s *RenderedSession) Post(ctx context.Context, rawURL string, body []byte, 
 	cleanup := func() { stop(); cancel() }
 	currentPage := func() (*url.URL, error) {
 		var currentRaw string
-		if err := s.run(requestCtx, chromedp.Location(&currentRaw)); err != nil {
+		if err := s.run(requestCtx, fingerprint.Location(&currentRaw)); err != nil {
 			return nil, err
 		}
 		current, err := postTarget(currentRaw)

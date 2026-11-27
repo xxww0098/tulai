@@ -14,7 +14,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 	"github.com/xxww0098/tulai/internal/fingerprint"
 	"golang.org/x/net/html"
 )
@@ -290,7 +289,7 @@ func (s *RenderedSession) captureTikTok(ctx context.Context, doc *html.Node, pag
 	}
 	checkOriginal := func() error {
 		var raw string
-		if err := s.run(ctx, chromedp.Location(&raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Location(&raw)); err != nil {
 			return err
 		}
 		current, err := crawlURL(nil, raw)
@@ -455,7 +454,7 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 	}
 	checkOriginal := func() error {
 		var raw string
-		if err := s.run(ctx, chromedp.Location(&raw)); err != nil {
+		if err := s.run(ctx, fingerprint.Location(&raw)); err != nil {
 			return err
 		}
 		current, err := crawlURL(nil, raw)
@@ -528,7 +527,7 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 		var snapshot tiktokProfileSnapshot
 		for attempt := 0; attempt < 12; attempt++ {
 			script := fmt.Sprintf(tiktokProfileScript, !profileChecked, tiktokProfileMaxCards, tiktokProfileMaxCards)
-			if err := run(chromedp.Evaluate(script, &snapshot)); err != nil {
+			if err := run(fingerprint.Evaluate(script, &snapshot)); err != nil {
 				return result, err
 			}
 			if snapshot.URL != target.String() {
@@ -595,7 +594,7 @@ func (s *RenderedSession) captureTikTokProfile(ctx context.Context, doc *html.No
 		if truncated || unchanged >= 4 || step == tiktokProfileMaxScrolls {
 			break
 		}
-		if err := run(chromedp.Evaluate(`window.scrollBy(0, Math.max(200, window.innerHeight * 0.8))`, nil)); err != nil {
+		if err := run(fingerprint.Evaluate(`window.scrollBy(0, Math.max(200, window.innerHeight * 0.8))`, nil)); err != nil {
 			return result, err
 		}
 		if err := Wait(ctx, 750*time.Millisecond); err != nil {
@@ -707,7 +706,7 @@ func (s *RenderedSession) captureTikTokPhotoTarget(ctx context.Context, page *ur
 	  const text = nodes.length === 1 ? (nodes[0].textContent || '') : '';
 	  return {url:location.href,count:nodes.length,tooLarge:text.length > 8388608,state:text.length > 8388608 ? '' : text};
 	})()`
-	if err := run(chromedp.Evaluate(stateScript, &snapshot)); err != nil {
+	if err := run(fingerprint.Evaluate(stateScript, &snapshot)); err != nil {
 		return result, err
 	}
 	current, err := crawlURL(nil, snapshot.URL)
@@ -725,7 +724,7 @@ func (s *RenderedSession) captureTikTokPhotoTarget(ctx context.Context, page *ur
 	parsed.AppendChild(script)
 	result, err = tiktokPhotoPage(ctx, parsed, current)
 	var childURL string
-	if childErr := run(chromedp.Location(&childURL)); childErr != nil {
+	if childErr := run(fingerprint.Location(&childURL)); childErr != nil {
 		return Discovery{IsPage: true}, childErr
 	}
 	if childURL != snapshot.URL {

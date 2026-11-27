@@ -15,6 +15,8 @@ import (
 	"github.com/xxww0098/tulai/internal/update"
 )
 
+const settingKernelAutoUpdate = "browser_kernel_auto_update"
+
 func (a *App) persistUpdatePrefs() {
 	if a == nil || a.store == nil {
 		return
@@ -70,6 +72,11 @@ func (a *App) silentCheck() {
 	auto := false
 	busy := false
 	a.syncUI(func() {
+		if a.store != nil && a.store.GetBool(settingKernelAutoUpdate) {
+			if _, installed := browser.InstalledRuntime(browser.ConfigDir(), a.browserBackend); installed {
+				a.prepareBrowserRuntime(true)
+			}
+		}
 		auto = a.autoCheck
 		busy = a.updateBusy
 	})

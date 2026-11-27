@@ -15,7 +15,6 @@ import (
 
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/chromedp"
 )
 
 var photoplusPath = regexp.MustCompile(`^/live/pc/([0-9]{1,20})/?$`)
@@ -186,7 +185,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 		}
 		// A category is page state, not a URL fragment. Inspect only the visible
 		// menu; do not turn a locked category into a request for all pictures.
-		if err := s.run(ctx, chromedp.Evaluate(`(() => {
+		if err := s.run(ctx, fingerprint.Evaluate(`(() => {
   const visible = n => n.getClientRects().length > 0 && getComputedStyle(n).display !== 'none';
   const lists = Array.from(document.querySelectorAll('ul.nav-bottom__ul')).filter(visible);
   const selected = lists.flatMap(n => Array.from(n.querySelectorAll('li.active')).filter(visible));
@@ -233,7 +232,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 			u, parseErr := url.Parse(e.Request.URL)
 			allowed := parseErr == nil && u.Scheme == "https" && photoplusActivityID(u) == id
 			go func() {
-				var action chromedp.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
+				var action fingerprint.Action = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient)
 				if allowed {
 					action = fetch.ContinueRequest(e.RequestID)
 				}
@@ -268,7 +267,7 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 			}
 			go func(requestID network.RequestID) {
 				var body []byte
-				err := fingerprint.Run(child, chromedp.ActionFunc(func(c context.Context) error {
+				err := fingerprint.Run(child, fingerprint.ActionFunc(func(c context.Context) error {
 					var getErr error
 					body, getErr = network.GetResponseBody(requestID).Do(c)
 					return getErr
@@ -412,14 +411,14 @@ func (s *RenderedSession) capturePhotoplus(ctx context.Context, page *url.URL, o
 			return result, true, err
 		}
 		var current string
-		if err := run(chromedp.Location(&current)); err != nil {
+		if err := run(fingerprint.Location(&current)); err != nil {
 			return result, true, err
 		}
 		currentURL, parseErr := url.Parse(current)
 		if parseErr != nil || photoplusActivityID(currentURL) != id || currentURL.Scheme != "https" || (currentURL.Fragment != "" && currentURL.Fragment != "/live" && currentURL.Fragment != "/live/") {
 			return result, true, errors.New("Photoplus 活动已跳转，结果可能不完整")
 		}
-		if err := run(chromedp.Evaluate(`(() => { const c = document.querySelector('.photo-live .photo-content'); if (c) c.scrollTop = c.scrollHeight; })()`, nil)); err != nil {
+		if err := run(fingerprint.Evaluate(`(() => { const c = document.querySelector('.photo-live .photo-content'); if (c) c.scrollTop = c.scrollHeight; })()`, nil)); err != nil {
 			return result, true, errors.New("Photoplus 活动滚动失败，结果可能不完整")
 		}
 		if err := Wait(ctx, 1200*time.Millisecond); err != nil {

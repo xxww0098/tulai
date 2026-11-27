@@ -47,6 +47,11 @@ func TestMapLaneStates(t *testing.T) {
 			f.UsedToday = 2
 			return f
 		}(), state: LaneFull},
+		{name: "synced quota exhausted", fact: func() LaneFact {
+			f := base
+			f.QuotaExhausted = true
+			return f
+		}(), state: LaneQuota},
 		{name: "login", fact: func() LaneFact { f := base; f.LoggedIn = false; f.UsedToday = 20; return f }(), state: LaneLogin, action: "去重登"},
 		{name: "captcha", fact: func() LaneFact {
 			f := base

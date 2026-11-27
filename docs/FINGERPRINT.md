@@ -1,27 +1,29 @@
 # Fingerprint 受管浏览器环境
 
-tulai 的服务商网页账号与网页下载专用环境统一使用项目管理的 **Fingerprint**（基于 `adryfish/fingerprint-chromium`，锁定版本 `148.0.7778.215`）。Go 桌面程序与受管 Node 子进程通过 stdin/stdout 私有管道通信，Node 通过 Playwright Core 与私有 CDP 管道控制账号浏览器，不连接系统浏览器或外部调试端口。
+tulai 的服务商网页账号与网页下载专用环境统一使用项目管理的 **Fingerprint**（基于 `adryfish/fingerprint-chromium`，首次安装版本 `148.0.7778.215`）。Go 桌面程序与受管 Node 子进程通过 stdin/stdout 私有管道通信，Node 通过 Playwright Core 与私有 CDP 管道控制账号浏览器，不连接系统浏览器或外部调试端口。
 
 ## 平台支持与架构边界
 
 - **支持平台**：Windows x64（`windows/amd64`）、macOS Apple Silicon（`darwin/arm64`）与 Linux x64（`linux/amd64`）。
 - **未提供预编译内核的平台**：上游未发布 macOS Intel（`darwin/amd64`）、Windows ARM64（`windows/arm64`）与 Linux ARM64（`linux/arm64`）预编译包；Windows ARM64 设备需通过 x64 仿真运行 x64 版应用。
-- **版本锁定**：当前固定在 `148.0.7778.215`（所有官方归档均写入固定 SHA-256 强制校验）；更高版本 `150.0.7871.186` 缺失 macOS 构建并存在 Canvas 读回崩溃问题，暂不升级。
+- 首次安装使用 `../realbrowser/browserkernel/pinned.go` 的版本与 SHA-256。打开「设置 → 浏览器与网络」会检查适配当前平台的稳定版，可直接更新。开启「自动更新已安装的浏览器内核」后，桌面端在启动及后续每六小时尝试更新。图来会跳过已知存在 Canvas 崩溃问题的 `150.0.7871.186`。
+- 共享模块校验发行包的 SHA-256，安装到 `kernels/versions/` 新目录，成功后原子切换 `kernels/active.json`。后续启动读取新版本，现有进程继续使用原目录。
 
 ## 安装、镜像与内置运行环境
 
 - `internal/fingerprint/driver/package-lock.json` 仅锁定 `playwright-core 1.62.0`（无外部第三方指纹包或原生二进制依赖）。
 - Windows x64 的安装包与免安装程序通过 `-tags=tulai_fingerprint_bundle` 内置 Node `v24.22.2` 与 `playwright-core`；首次准备时直接解压并校验清单和依赖锁摘要，不再联网下载 Node 或执行 npm。浏览器内核仍在首次安装时单独联网下载（`scripts/collect-dist.sh` 强制禁止将浏览器二进制打进安装包）。
 - 其他平台及未开启打包标签的开发构建按当前系统与架构下载 Node 并校验 SHA-256。官方源失败、长时间无字节或低速时自动切换 `npmmirror`（仍强制校验固定 SHA-256）；npm 依赖在超时或失败后改用 `npmmirror` registry（仍按 lockfile `integrity` 校验）。
-- 内核下载自动在多个 GitHub 加速镜像与直连源之间测速选优（支持 HTTP Range 的源采用多路并发分段下载与容错续传），并始终校验固定 SHA-256：镜像仅用于加速、无法篡改。
+- 首次内核下载自动在多个 GitHub 加速镜像与直连源之间测速选优（支持 HTTP Range 的源采用多路并发分段下载与容错续传），并始终校验固定 SHA-256：镜像仅用于加速、无法篡改。
   - `TULAI_FINGERPRINT_MIRROR`：指定自建镜像前缀（ghproxy 形式：base + `/` + 原 URL），设为 `off` 关闭镜像。
   - `TULAI_FINGERPRINT_ARCHIVE`：测试时指定本机已校验归档路径，跳过联网下载。
-- 多个应用进程同时安装运行环境时使用跨进程锁，等待前一项安装完成并复用结果。CI 按 `install.go`、`fingerprint.go` 与 `package-lock.json` 缓存 `runtime/fingerprint/` 目录。
+- 多个应用进程同时安装运行环境时使用跨进程锁，等待前一项安装完成并复用结果。CI 按 `../realbrowser/browserkernel/pinned.go`、`install.go`、`fingerprint.go` 与 `package-lock.json` 缓存 `runtime/fingerprint/` 目录。
 
 ## 目录结构、指纹连续性与隔离世界桥
 
 - **运行环境目录**：`runtime/fingerprint/<version>-<playwright>-<node>-<os>-<arch>/`
 - **账号资料目录**：`BrowserData/Fingerprint/account-*`
+- 在账号操作区点「指纹设置」可调整语言、时区、窗口宽高和网页外观。设置保存到该账号的 `.browserkernel.json`，下次打开时生效。
 - **下载专用环境**：`BrowserData/DownloadBrowser/`
 - **指纹持久化与冲突检查**：
   - 每个账号（及 `DownloadBrowser`）在自身资料目录持久化 `.tulai-fingerprint.json`，保存唯一的全 31 位（含奇偶数）`--fingerprint` 种子、宿主平台、真实操作系统版本 `--fingerprint-platform-version`、`Chrome` 品牌、合理的 `hardwareConcurrency` 与动态随机化的桌面屏幕/窗口尺寸及无头窗口位置。
@@ -43,7 +45,7 @@ tulai 的服务商网页账号与网页下载专用环境统一使用项目管�
 - **内核噪声层只保留能带来区分度的部分**：启动参数固定 `--disable-spoofing=audio,clientrects`。
   - `audio` 层会让 `OfflineAudioContext` 报告的 `sampleRate` 不等于创建时传入的值，`clientrects` 层会把 `getBoundingClientRect` / `getClientRects` 返回的矩形整体平移最多 0.001px（`Element` 与 `Range` 都是），与 CSS 位置、`offsetLeft` 等对不上。两者都是页面可以当场证伪的谎言，而带来的账号区分度可以忽略，因此关闭。
   - `canvas` 层**保留**：它按种子稳定（同一账号多次读取、跨会话一致），是同机多账号在 canvas / WebGL 渲染哈希上互不相同的唯一来源。关闭它会让所有账号渲染出完全相同的 canvas 与 WebGL 图像，等于主动把账号关联到同一台设备。
-- **已知缺陷（所固定的内核版本）**：`canvas` 层同时把 `measureText` 的各项度量乘以一个约 `±5e-6` 的种子常量（上游补丁本意是 `1 + 噪声`），导致页面里 `measureText(...).width` 恒约为 0。上游 `150.0.7871.186` 的补丁源码尚未公开，无法确认已修复，且该版本暂不可升级（见上文版本锁定）。页面脚本与策略代码不要依赖 `measureText` 的数值；需要真实文字宽度时用 DOM 测量（`getBoundingClientRect` / `offsetWidth`）。
+- **已知缺陷（首次安装版本）**：`canvas` 层同时把 `measureText` 的各项度量乘以一个约 `±5e-6` 的种子常量（上游补丁本意是 `1 + 噪声`），导致页面里 `measureText(...).width` 恒约为 0。上游 `150.0.7871.186` 的补丁源码尚未公开，无法确认已修复，且该版本暂不可升级（见上文版本选择）。页面脚本与策略代码不要依赖 `measureText` 的数值；需要真实文字宽度时用 DOM 测量（`getBoundingClientRect` / `offsetWidth`）。
 - **显示器一致**：内核不改写 `screen.*`，有头窗口看到的始终是宿主真实显示器，而无头窗口由启动参数描述。于是每次有头启动都会把页面看到的显示器（宽高、可用区域、`devicePixelRatio`、色深、是否广色域、是否 HDR、是否多屏）写入账号资料目录旁的 `.tulai-host-display.json`，同目录账号共用；随后的无头启动用 `--screen-info`（物理像素）复刻它，窗口尺寸与位置按其工作区收敛。色域与 HDR 也能对上：HDR 主机附带 `--force-color-profile=hdr10`（原生报告 P3 与 HDR，截图取色不变）；广色域但非 HDR 的主机没有既对齐查询又不让截图偏色的开关（`display-p3-d65` 会把纯红截成 `234,51,35`），因此改为在每个页面用 `Emulation.setEmulatedMedia` 模拟 `color-gamut: p3`——只影响 `matchMedia` 与 CSS 媒体查询，实际渲染和截图不变。同一账号在有头与无头之间切换时，`screen`、`devicePixelRatio`、`colorDepth`、`color-gamut`、`dynamic-range` 保持一致；没有记录时退回账号自己的屏幕预设。
 - **macOS 硬件取值联动**：内核按种子奇偶选择 Apple M4 / M2、按 `seed % 3` 给出 `deviceMemory`（8 / 16 / 32）。新账号只在真实存在的机型组合里取值：M4 为 10 / 14 / 16 核、系统 15.x、内存不取 8 GiB；M2 的 8 GiB 机型为 8 核、32 GiB 机型为 10 / 12 核。
 - **Playwright 默认行为**：Service Worker 保持开启（Playwright 的 `block` 会把 `navigator.serviceWorker.register` 替换成一个源码里写着 "blocked by Playwright" 的函数）；`Element.prototype.fakeShadowRoot`（内核为方便自动化而暴露的属性，原生 Chrome 没有）由文档启动脚本删除。
@@ -73,7 +75,8 @@ tulai 的服务商网页账号与网页下载专用环境统一使用项目管�
 
 ```sh
 npm ci --prefix internal/fingerprint/driver --ignore-scripts --omit=dev --no-audit --no-fund
-node --test internal/fingerprint/driver/*.test.mjs
+node --test ../realbrowser/browserkernel/downloader/*.test.mjs internal/fingerprint/driver/*.test.mjs
+go -C ../realbrowser/browserkernel test -race ./...
 go test -short -race ./internal/fingerprint ./internal/browser ./internal/cdp ./internal/captcha ./internal/store ./internal/strategy ./internal/download ./internal/tasks
 ```
 
