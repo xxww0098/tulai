@@ -1,7 +1,9 @@
 package cdp
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -82,8 +84,9 @@ func TestDoubaoStatusProbeSendsUTF8EncodingHeaderForRateLimit(t *testing.T) {
 	}
 	script := `
 const assert = require('assert');
+const fs = require('fs');
 const vm = require('vm');
-const probeJS = process.env.PROBE_JS;
+const probeJS = fs.readFileSync(process.argv[2], 'utf8');
 
 async function runCase(rateResponse) {
   const seenHeaders = {};
@@ -144,9 +147,16 @@ async function runCase(rateResponse) {
   console.log('doubao status probe ok');
 })().catch(err => { console.error(err); process.exit(1); });
 `
-	cmd := exec.Command("node", "-e", script)
-	cmd.Env = append(cmd.Environ(), "PROBE_JS="+doubaoStatusProbeJS)
-	out, err := cmd.CombinedOutput()
+	dir := t.TempDir()
+	probePath := filepath.Join(dir, "doubao_probe.js")
+	if err := os.WriteFile(probePath, []byte(doubaoStatusProbeJS), 0o600); err != nil {
+		t.Fatalf("write probe script: %v", err)
+	}
+	harnessPath := filepath.Join(dir, "doubao_probe_harness.cjs")
+	if err := os.WriteFile(harnessPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("write harness script: %v", err)
+	}
+	out, err := exec.Command("node", harnessPath, probePath).CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "doubao status probe ok") {
 		t.Fatalf("node probe check failed: err=%v out=%s", err, string(out))
 	}

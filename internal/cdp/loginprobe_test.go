@@ -2,7 +2,9 @@ package cdp
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -290,7 +292,11 @@ async function runCase(cfg) {
   process.stdout.write(JSON.stringify(results));
 })().catch((err) => { console.error(err); process.exit(1); });
 `
-	out, err := exec.Command(nodeBin, "-e", harness).CombinedOutput()
+	harnessPath := filepath.Join(t.TempDir(), "login_probe_harness.cjs")
+	if err := os.WriteFile(harnessPath, []byte(harness), 0o600); err != nil {
+		t.Fatalf("write node harness: %v", err)
+	}
+	out, err := exec.Command(nodeBin, harnessPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node harness failed: %v\n%s", err, string(out))
 	}
@@ -399,7 +405,11 @@ async function runCase(cfg) {
   process.stdout.write(JSON.stringify(results));
 })().catch((err) => { console.error(err); process.exit(1); });
 `
-	out, err := exec.Command(nodeBin, "-e", harness).CombinedOutput()
+	harnessPath := filepath.Join(t.TempDir(), "login_probe_harness.cjs")
+	if err := os.WriteFile(harnessPath, []byte(harness), 0o600); err != nil {
+		t.Fatalf("write node harness: %v", err)
+	}
+	out, err := exec.Command(nodeBin, harnessPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node harness failed: %v\n%s", err, string(out))
 	}

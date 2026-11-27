@@ -2,7 +2,9 @@ package cdp
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -464,7 +466,11 @@ async function runTargetCostSwitchCase() {
   process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 `
-	raw, err := exec.Command(nodeBin, "-e", harness).CombinedOutput()
+	harnessPath := filepath.Join(t.TempDir(), "jimeng_status_harness.cjs")
+	if err := os.WriteFile(harnessPath, []byte(harness), 0o600); err != nil {
+		t.Fatalf("write node harness: %v", err)
+	}
+	raw, err := exec.Command(nodeBin, harnessPath).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node harness failed: %v\n%s", err, string(raw))
 	}

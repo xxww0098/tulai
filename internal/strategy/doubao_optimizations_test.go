@@ -1,7 +1,9 @@
 package strategy
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,10 +17,11 @@ func TestHookSyncsWindowDoubaoTurnAndComposerDetectsTurnFaults(t *testing.T) {
 	// 在 Node vm 中真实执行 hook.js + refuse.js + composer.js，验证 __tulaiDoubaoTurn 同步与复用回合额度/审核识别。
 	script := `
 const assert = require('assert');
+const fs = require('fs');
 const vm = require('vm');
-const hookJS = process.env.HOOK_JS;
-const refuseJS = process.env.REFUSE_JS;
-const composerJS = process.env.COMPOSER_JS;
+const hookJS = fs.readFileSync(process.argv[2], 'utf8');
+const refuseJS = fs.readFileSync(process.argv[3], 'utf8');
+const composerJS = fs.readFileSync(process.argv[4], 'utf8');
 
 let replyText = '';
 const ctx = vm.createContext({
@@ -65,13 +68,25 @@ ctx.__tulaiMarkTask();
 assert.strictEqual(ctx.__tulaiDoubaoTurn, null, '下一轮 MarkTask 必须清掉上一轮的 window.__tulaiDoubaoTurn');
 console.log('doubao turn state ok');
 `
-	cmd := exec.Command("node", "-e", script)
-	cmd.Env = append(cmd.Environ(),
-		"HOOK_JS="+hookJS,
-		"REFUSE_JS="+extbundle.RefuseJS(),
-		"COMPOSER_JS="+composerJS,
-	)
-	out, err := cmd.CombinedOutput()
+	dir := t.TempDir()
+	hookPath := filepath.Join(dir, "hook.js")
+	refusePath := filepath.Join(dir, "refuse.js")
+	composerPath := filepath.Join(dir, "composer.js")
+	harnessPath := filepath.Join(dir, "doubao_turn_harness.cjs")
+	for _, f := range []struct {
+		path string
+		body string
+	}{
+		{hookPath, hookJS},
+		{refusePath, extbundle.RefuseJS()},
+		{composerPath, composerJS},
+		{harnessPath, script},
+	} {
+		if err := os.WriteFile(f.path, []byte(f.body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", filepath.Base(f.path), err)
+		}
+	}
+	out, err := exec.Command("node", harnessPath, hookPath, refusePath, composerPath).CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "doubao turn state ok") {
 		t.Fatalf("node verification failed: err=%v out=%s", err, string(out))
 	}
@@ -92,8 +107,9 @@ func TestComposerCleanRemovesFullTenImageWashBatch(t *testing.T) {
 	}
 	script := `
 const assert = require('assert');
+const fs = require('fs');
 const vm = require('vm');
-const composerJS = process.env.COMPOSER_JS;
+const composerJS = fs.readFileSync(process.argv[2], 'utf8');
 
 let clicks = 0;
 const dels = Array.from({ length: 10 }, (_, i) => ({ id: 'del-' + i }));
@@ -135,9 +151,16 @@ ctx.tulaiCleanComposer().then((ok) => {
   console.log('clean 10 ok');
 }).catch((err) => { console.error(err); process.exit(1); });
 `
-	cmd := exec.Command("node", "-e", script)
-	cmd.Env = append(cmd.Environ(), "COMPOSER_JS="+composerJS)
-	out, err := cmd.CombinedOutput()
+	dir := t.TempDir()
+	composerPath := filepath.Join(dir, "composer.js")
+	harnessPath := filepath.Join(dir, "composer_clean_harness.cjs")
+	if err := os.WriteFile(composerPath, []byte(composerJS), 0o600); err != nil {
+		t.Fatalf("write composer.js: %v", err)
+	}
+	if err := os.WriteFile(harnessPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("write harness: %v", err)
+	}
+	out, err := exec.Command("node", harnessPath, composerPath).CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "clean 10 ok") {
 		t.Fatalf("node verification failed: err=%v out=%s", err, string(out))
 	}

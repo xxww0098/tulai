@@ -333,7 +333,7 @@ func TestRestartScriptStagedMacOpenSwapAndRollback(t *testing.T) {
 		// Mock /usr/bin/open that requires -n and invokes Contents/MacOS/tulai inside the bundle.
 		openLog := filepath.Join(root, "open.args")
 		mockOpen := filepath.Join(root, "mock-open")
-		mockOpenScript := "#!/bin/sh\necho \"$@\" >> " + shellQuote(openLog) + "\nif [ \"$1\" != \"-n\" ]; then exit 2; fi\n\"$2/Contents/MacOS/tulai\" &\n"
+		mockOpenScript := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(openLog) + "\nif [ \"$1\" != \"-n\" ]; then exit 2; fi\n\"$2/Contents/MacOS/tulai\" &\n"
 		if err := os.WriteFile(mockOpen, []byte(mockOpenScript), 0o755); err != nil {
 			t.Fatal(err)
 		}

@@ -1,7 +1,9 @@
 package captcha
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,7 +25,11 @@ for(const state of ['absent','none','visible','hidden','zero']){
  const result=vm.runInNewContext(source,{window,getComputedStyle:()=>({display:state==='hidden'?'none':'block',visibility:'visible',opacity:'1'})});
  assert.equal(result,state==='visible',state);assert.equal(actions,0,state+' must not alter challenge');
 }`
-	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+	scriptPath := filepath.Join(t.TempDir(), "verify_fixture.cjs")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("write verification fixture: %v", err)
+	}
+	if out, err := exec.Command(node, scriptPath).CombinedOutput(); err != nil {
 		t.Fatalf("read-only verification fixture: %v\n%s", err, out)
 	}
 }
