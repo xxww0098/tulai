@@ -227,24 +227,6 @@ func launcherComponentError(component string, err error) error {
 	return fmt.Errorf("Fingerprint 启动组件 %s 无法加载: %w", component, err)
 }
 
-func publishRuntime(stage, final string) error {
-	backup := final + ".old"
-	if _, err := os.Stat(final); err == nil {
-		if err := os.RemoveAll(backup); err != nil {
-			return err
-		}
-		if err := os.Rename(final, backup); err != nil {
-			return err
-		}
-	}
-	if err := os.Rename(stage, final); err != nil {
-		_ = os.Rename(backup, final)
-		return err
-	}
-	_ = os.RemoveAll(backup)
-	return nil
-}
-
 func prepareRuntime(ctx context.Context, stage, proxy string, artifact nodeArtifact, progress func(Progress)) error {
 	if source, size, bundled := embeddedRuntimeBundle(); bundled {
 		if progress != nil {
@@ -336,39 +318,39 @@ func writeDriverFiles(dir string, files []string) error {
 		if err != nil {
 			return err
 		}
-		dest := filepath.Join(dir, name)
-		if current, err := os.ReadFile(dest); err == nil && bytes.Equal(current, data) {
-			continue
-		}
-		temporary, err := os.CreateTemp(dir, "."+name+"-*")
-		if err != nil {
-			return err
-		}
-		_, err = temporary.Write(data)
-		err = errors.Join(err, temporary.Close())
-		if err == nil {
-			// On Windows a concurrent reader can briefly prevent replacing a file.
-			// Another refresher may also have already written exactly these bytes.
-			for attempt := 0; attempt < 8; attempt++ {
-				err = os.Rename(temporary.Name(), dest)
-				if err == nil {
-					break
-				}
-				if current, readErr := os.ReadFile(dest); readErr == nil && bytes.Equal(current, data) {
-					err = nil
-					break
-				}
-				if attempt < 7 {
-					time.Sleep(25 * time.Millisecond)
-				}
-			}
-		}
-		_ = os.Remove(temporary.Name())
-		if err != nil {
+		if err := writeRuntimeFile(filepath.Join(dir, name), data); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func writeRuntimeFile(dest string, data []byte) error {
+	if current, err := os.ReadFile(dest); err == nil && bytes.Equal(current, data) {
+		return nil
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+"-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	_, err = tmp.Write(data)
+	if err = errors.Join(err, tmp.Close()); err != nil {
+		return err
+	}
+	// A Windows reader can briefly block replacement. Another writer may already have finished.
+	for attempt := 0; attempt < 8; attempt++ {
+		if err = os.Rename(tmp.Name(), dest); err == nil {
+			return nil
+		}
+		if current, readErr := os.ReadFile(dest); readErr == nil && bytes.Equal(current, data) {
+			return nil
+		}
+		if attempt < 7 {
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+	return err
 }
 
 func runInstall(ctx context.Context, dir, proxy string, extraEnv []string, onProgress func(Progress), args ...string) ([]byte, error) {

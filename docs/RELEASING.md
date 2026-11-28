@@ -1,6 +1,10 @@
-# 发布 tulai 0.1.43
+# 发布 tulai 0.1.44
 
-当前桌面端版本是 **0.1.43**，标签 **`v0.1.43`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+当前桌面端版本是 **0.1.44**，标签 **`v0.1.44`**。受管浏览器页面脚本与下载助手已随桌面端内置嵌入，不再单独发布外部浏览器扩展。
+
+## 0.1.44
+
+修复 Windows x64 上 Fingerprint 内核下载并校验成功后，启用运行目录时出现的 `Access is denied` 错误。已安装的内核可离线复用。
 
 ## 0.1.43
 
@@ -196,8 +200,8 @@ Windows 更新改为先写临时副本再替换，替换失败会重试并保留
 
 | 东西 | 当前版本 | 写在哪 | 作用 |
 |---|---|---|---|
-| 桌面端 | `0.1.43` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
-| Go 模块 | `v0.1.43` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
+| 桌面端 | `0.1.44` | 根目录 `mygo.json` 的 `version` 和 `cmd/tulai/version.go` 的 `ProductVersion` | 安装包文件名、系统版本信息和应用内版本。`TestProductVersionMatchesConfig` 检查两处版本是否一致。 |
+| Go 模块 | `v0.1.44` | git 标签，模块路径为 `github.com/xxww0098/tulai` | 推送标签后，该标签即为模块版本。 |
 
 ## 流水线
 
@@ -230,8 +234,8 @@ git push origin vX.Y.Z
 
 | 系统 | 文件 | 怎么用 |
 |---|---|---|
-| Windows 安装器 | `tulai.Setup.0.1.43.amd64.exe`、`tulai.Setup.0.1.43.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
-| Windows 便携版 | `tulai-0.1.43-windows-amd64.exe`、`tulai-0.1.43-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
+| Windows 安装器 | `tulai.Setup.0.1.44.amd64.exe`、`tulai.Setup.0.1.44.arm64.exe` | 选择与系统架构相符的文件，安装到当前用户目录。 |
+| Windows 便携版 | `tulai-0.1.44-windows-amd64.exe`、`tulai-0.1.44-windows-arm64.exe` | 选择与系统架构相符的文件，直接运行。 |
 
 `SHA256SUMS` 覆盖上表所有附件，格式是 `sha256sum` 的两空格文本行，Windows 安装器使用上传前带空格的原名。Actions artifact 另有 `SHA256SUMS.txt`。
 

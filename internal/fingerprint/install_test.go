@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -152,16 +153,13 @@ func TestNodeArtifactsMatchPlatform(t *testing.T) {
 	}
 }
 
-func TestInstalledRequiresPinnedPlaywrightAndBinary(t *testing.T) {
-	root := t.TempDir()
-	dir := fingerprintRuntimeDir(root)
-	exe := filepath.Join(dir, "browsers", "chrome")
-	pwMeta := []byte(`{"version":"` + driverVersion + `"}`)
+func writeTestRuntime(t *testing.T, dir string) {
+	t.Helper()
 	files := map[string][]byte{
-		nodePath(dir):                      []byte("x"),
-		exe:                                []byte("x"),
-		filepath.Join(dir, "browser-path"): []byte("chrome"),
-		filepath.Join(dir, "node_modules", "playwright-core", "package.json"): pwMeta,
+		nodePath(dir):                            []byte("x"),
+		filepath.Join(dir, "browsers", "chrome"): []byte("x"),
+		filepath.Join(dir, "browser-path"):       []byte("chrome"),
+		filepath.Join(dir, "node_modules", "playwright-core", "package.json"): []byte(`{"version":"` + driverVersion + `"}`),
 	}
 	for p, body := range files {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -174,6 +172,122 @@ func TestInstalledRequiresPinnedPlaywrightAndBinary(t *testing.T) {
 	if err := writeDriver(dir); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestPublishRuntimeWithOpenDirectory(t *testing.T) {
+	data := t.TempDir()
+	final := fingerprintRuntimeDir(data)
+	if err := os.MkdirAll(filepath.Dir(final), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(final), "runtime-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestRuntime(t, dir)
+	// On Windows this handle prevents moving the prepared directory until it closes.
+	held, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	if _, ok := InstalledFingerprint(data); ok {
+		t.Fatal("unpublished runtime is visible")
+	}
+	if _, err := publishRuntime(dir, final); err != nil {
+		t.Fatal(err)
+	}
+	rt, ok := InstalledFingerprint(data)
+	if !ok || rt.Dir != dir || rt.Node != nodePath(dir) || rt.Executable != filepath.Join(dir, "browsers", "chrome") {
+		t.Fatalf("published runtime = %+v, found %v, want original directory %s", rt, ok, dir)
+	}
+	if FingerprintSupported(runtime.GOOS, runtime.GOARCH) {
+		t.Setenv("TULAI_FINGERPRINT_ARCHIVE", filepath.Join(data, "missing.zip"))
+		again, err := EnsureFingerprint(t.Context(), data, "", func(p Progress) {
+			t.Errorf("unexpected installation progress on reuse: %+v", p)
+		})
+		if err != nil || again != rt {
+			t.Fatalf("offline reuse = %+v, %v", again, err)
+		}
+	}
+}
+
+func TestFailedRuntimePublicationKeepsLastInstallation(t *testing.T) {
+	data := t.TempDir()
+	final := fingerprintRuntimeDir(data)
+	writeTestRuntime(t, final)
+	dir, err := os.MkdirTemp(filepath.Dir(final), "runtime-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestRuntime(t, dir)
+	want, err := publishRuntime(dir, final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publishRuntime(t.TempDir(), final); err == nil {
+		t.Fatal("accepted incomplete runtime")
+	}
+	if got, ok := InstalledFingerprint(data); !ok || got != want {
+		t.Fatalf("failed install changed the active runtime to %+v", got)
+	}
+	if err := os.Remove(want.Node); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := InstalledFingerprint(data); !ok || got.Dir != final {
+		t.Fatalf("legacy runtime unavailable after damaged installation: %+v", got)
+	}
+}
+
+func TestRuntimeMarkerCannotSelectOutsideDirectory(t *testing.T) {
+	data := t.TempDir()
+	final := fingerprintRuntimeDir(data)
+	// Both a path containing a separator and the absolute path reach a valid external fixture.
+	outside := filepath.Join(data, "outside")
+	writeTestRuntime(t, outside)
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(final), "runtime-decoy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"runtime-decoy/../../../outside", outside}
+	if err := os.Symlink(outside, filepath.Join(filepath.Dir(final), "runtime-link")); err == nil {
+		names = append(names, "runtime-link")
+	}
+	for _, name := range names {
+		if err := os.WriteFile(final+".active", []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if rt, ok := InstalledFingerprint(data); ok {
+			t.Fatalf("marker %q selected %+v", name, rt)
+		}
+	}
+}
+
+func TestCancelledRuntimeInstallationCleansUp(t *testing.T) {
+	if !FingerprintSupported(runtime.GOOS, runtime.GOARCH) {
+		t.Skip("requires a supported runtime")
+	}
+	data := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err := EnsureFingerprint(ctx, data, "", func(Progress) { cancel() })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled install = %v", err)
+	}
+	if _, ok := InstalledFingerprint(data); ok {
+		t.Fatal("cancelled installation is visible")
+	}
+	dirs, err := filepath.Glob(filepath.Join(filepath.Dir(fingerprintRuntimeDir(data)), "runtime-*"))
+	if err != nil || len(dirs) != 0 {
+		t.Fatalf("unpublished runtime left behind: %v, %v", dirs, err)
+	}
+}
+
+func TestInstalledRequiresPinnedPlaywrightAndBinary(t *testing.T) {
+	root := t.TempDir()
+	dir := fingerprintRuntimeDir(root)
+	writeTestRuntime(t, dir)
+	exe := filepath.Join(dir, "browsers", "chrome")
+	pwMeta := []byte(`{"version":"` + driverVersion + `"}`)
 	if _, ok := Installed(root); !ok {
 		t.Fatal("complete Fingerprint runtime rejected")
 	}

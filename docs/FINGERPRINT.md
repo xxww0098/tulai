@@ -21,7 +21,7 @@ tulai 的服务商网页账号与网页下载专用环境统一使用项目管�
 
 ## 目录结构、指纹连续性与隔离世界桥
 
-- **运行环境目录**：`runtime/fingerprint/<version>-<playwright>-<node>-<os>-<arch>/`
+- 新安装的运行环境保存在 `runtime/fingerprint/runtime-*/`。校验完成后，图来把目录名写入同级的 `<version>-<playwright>-<node>-<os>-<arch>.active` 文件，重启后继续复用。旧版安装在同级版本目录中的运行环境也可直接使用。
 - **账号资料目录**：`BrowserData/Fingerprint/account-*`
 - 在账号操作区点「指纹设置」可调整语言、时区、窗口宽高和网页外观。设置保存到该账号的 `.browserkernel.json`，下次打开时生效。
 - **下载专用环境**：`BrowserData/DownloadBrowser/`

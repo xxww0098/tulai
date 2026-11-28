@@ -691,8 +691,8 @@ func TestRestartScriptStagedMacOpenSwapAndRollback(t *testing.T) {
 				t.Fatalf("direct mode falsely rolled back when stamp appeared during final round: %v\n%s", err, out)
 			}
 			body, err := os.ReadFile(target)
-			if err != nil || strings.Contains(string(body), "old") {
-				t.Fatalf("direct mode rolled back to old binary: %q err=%v", body, err)
+			if err != nil || string(body) != newScript {
+				t.Fatalf("unexpected installed script after direct restart: %q err=%v", body, err)
 			}
 			if _, err := os.Stat(backup); !os.IsNotExist(err) {
 				t.Fatal("direct mode left backup behind after confirmed start")

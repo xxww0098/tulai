@@ -13,6 +13,7 @@ import (
 )
 
 const FingerprintVersion = engine.PinnedVersion
+const runtimeDirPrefix = "runtime-"
 
 func FingerprintSupported(goos, goarch string) bool {
 	if _, ok := nodeArtifacts[goos+"/"+goarch]; !ok {
@@ -30,7 +31,21 @@ func InstalledFingerprint(dataDir string) (Runtime, bool) {
 	if strings.TrimSpace(dataDir) == "" {
 		return Runtime{}, false
 	}
-	return fingerprintAt(fingerprintRuntimeDir(dataDir))
+	return installedRuntime(fingerprintRuntimeDir(dataDir))
+}
+
+func installedRuntime(versionDir string) (Runtime, bool) {
+	marker, err := os.ReadFile(versionDir + ".active")
+	name := string(marker)
+	if err == nil && strings.HasPrefix(name, runtimeDirPrefix) && filepath.IsLocal(name) && filepath.Base(name) == name {
+		dir := filepath.Join(filepath.Dir(versionDir), name)
+		if info, err := os.Lstat(dir); err == nil && info.IsDir() {
+			if rt, ok := fingerprintAt(dir); ok {
+				return rt, true
+			}
+		}
+	}
+	return fingerprintAt(versionDir)
 }
 
 func fingerprintAt(dir string) (Runtime, bool) {
@@ -108,14 +123,19 @@ func EnsureFingerprint(ctx context.Context, dataDir, proxy string, progress func
 		return Runtime{}, err
 	}
 	defer engine.ReleaseInstallLock(lock)
-	if rt, ok := fingerprintAt(final); ok {
-		return rt, writeDriver(final)
+	if rt, ok := installedRuntime(final); ok {
+		return rt, writeDriver(rt.Dir)
 	}
-	stage, err := os.MkdirTemp(root, ".install-")
+	stage, err := os.MkdirTemp(root, runtimeDirPrefix)
 	if err != nil {
 		return Runtime{}, err
 	}
-	defer os.RemoveAll(stage)
+	published := false
+	defer func() {
+		if !published {
+			_ = os.RemoveAll(stage)
+		}
+	}()
 	if err := prepareRuntime(ctx, stage, proxy, nodeArt, progress); err != nil {
 		return Runtime{}, err
 	}
@@ -144,18 +164,28 @@ func EnsureFingerprint(ctx context.Context, dataDir, proxy string, progress func
 	if _, err := kernels.Ensure(ctx, nil); err != nil {
 		return Runtime{}, fmt.Errorf("安装 Fingerprint 内核: %w", err)
 	}
-	if _, ok := fingerprintAt(stage); !ok {
-		return Runtime{}, errors.New("Fingerprint 浏览器安装不完整")
-	}
-	if err := publishRuntime(stage, final); err != nil {
+	if err := ctx.Err(); err != nil {
 		return Runtime{}, err
 	}
-	rt, ok := fingerprintAt(final)
-	if !ok {
-		return Runtime{}, errors.New("无法读取已安装的 Fingerprint 浏览器")
+	rt, err := publishRuntime(stage, final)
+	if err != nil {
+		return Runtime{}, err
 	}
+	published = true
 	if progress != nil {
 		progress(Progress{Stage: StageDone, Text: "Fingerprint 已就绪", Done: 1, Total: 1})
+	}
+	return rt, nil
+}
+
+// Windows can hold the prepared directory open. Publish its name and keep the files in place.
+func publishRuntime(dir, versionDir string) (Runtime, error) {
+	rt, ok := fingerprintAt(dir)
+	if !ok {
+		return Runtime{}, errors.New("Fingerprint 浏览器安装不完整")
+	}
+	if err := writeRuntimeFile(versionDir+".active", []byte(filepath.Base(dir))); err != nil {
+		return Runtime{}, fmt.Errorf("启用已校验的 Fingerprint 运行环境: %w", err)
 	}
 	return rt, nil
 }
